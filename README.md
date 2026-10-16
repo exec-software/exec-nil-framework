@@ -170,6 +170,20 @@ interpreter, bundled executables, LLVM JIT, native ahead-of-time, and
 assembler/linker — verifies the SDK payload against its sealed manifest before
 and after every run, and refuses to execute an SDK that changed underneath it.
 
+[`validation/matrix-3d`](validation/matrix-3d) is the same discipline applied
+to a single raytracer written in **Matrix**. It checks every route twice —
+against an independent float64 oracle and against every other route — so a pass
+means the interpreted and LLVM backends produce byte-identical images that also
+match the reference exactly. All eight routes currently do.
+
+![Five lambert-shaded spheres on a checkered ground plane, rendered in Matrix](validation/matrix-3d/images/matrix-spheres.png)
+
+It also turned up a real defect: numeric-to-text casts (`say (5 becomes text)`)
+compile on all four interpreted routes but are rejected by the LLVM native
+backend. The renderer works around it and the
+[README](validation/matrix-3d/README.md#known-limitation-number-to-text-casts-on-native-routes)
+records the reproduction.
+
 ## Project status
 
 The current version is **1.0.0-rc.1**. Linux x86_64 is the validated development

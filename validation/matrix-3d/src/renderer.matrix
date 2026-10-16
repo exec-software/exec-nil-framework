@@ -1,0 +1,293 @@
+!!! renderer.matrix -- a basic CPU raytracer written in Matrix.
+!!!
+!!! Renders a fixed scene of spheres over a checkered ground plane and writes a
+!!! P3 PPM image to standard output. Redirect it to a file:
+!!!
+!!!     nilcompiler --no-bundle -o render.nil src/renderer.matrix
+!!!     nilinterpreter render.nil > render.ppm
+!!!
+!!! The scene is small and entirely static, so this exercises the parts of the
+!!! language a real workload needs rather than the parts a toy needs: parallel
+!!! arrays, records returned from paragraphs, nested loops, floating arithmetic
+!!! and the standard library's transcendental functions.
+!!!
+!!! Output shape: one channel per line. P3 separates pixel samples with
+!!! arbitrary whitespace, and a newline is whitespace, so this is a valid PPM.
+!!! See the README -- writing "r g b" per pixel needs a number-to-text cast,
+!!! which the LLVM native backend currently rejects.
+
+book matrix.render
+
+read everything from ny.lang.math
+
+
+!!! --- The scene, struct of arrays -----------------------------------------
+!!!
+!!! Parallel arrays rather than an array of records: the layout is indexable
+!!! without a record allocation per element, and the whole scene is a handful
+!!! of named arrays that the intersection loop walks in lockstep.
+
+constant SPHERE-COUNT as number is 5
+constant GROUND-Y as floating is (minus 1.0)
+
+scene-centre-x returns array of floating begin paragraph
+    give [0.0, minus 1.6, 1.6, minus 0.55, 0.75]
+end paragraph
+
+scene-centre-y returns array of floating begin paragraph
+    give [minus 0.1, minus 0.35, minus 0.35, minus 0.55, minus 0.6]
+end paragraph
+
+scene-centre-z returns array of floating begin paragraph
+    give [minus 3.0, minus 3.4, minus 3.4, minus 2.2, minus 2.4]
+end paragraph
+
+scene-radius returns array of floating begin paragraph
+    give [0.9, 0.65, 0.65, 0.45, 0.4]
+end paragraph
+
+scene-red returns array of floating begin paragraph
+    give [0.85, 0.3, 0.95, 0.55, 0.4]
+end paragraph
+
+scene-green returns array of floating begin paragraph
+    give [0.3, 0.75, 0.8, 0.4, 0.85]
+end paragraph
+
+scene-blue returns array of floating begin paragraph
+    give [0.3, 0.85, 0.3, 0.9, 0.45]
+end paragraph
+
+
+!!! --- A hit ---------------------------------------------------------------
+!!!
+!!! What the ray found: whether it struck anything, how far away, and which
+!!! primitive. The ground plane is reported as sphere index minus 1, so a
+!!! single record describes both kinds of hit.
+
+Hit begin record
+    field struck as boolean
+    field distance as floating
+    field sphere as number
+end record
+
+
+!!! --- Vector helpers -------------------------------------------------------
+!!!
+!!! Kept as three separate floating values rather than a Vector record. The
+!!! inner loop runs once per pixel and would otherwise allocate a handle for
+!!! every intermediate vector in the scene.
+
+normalise-x receives x as floating, y as floating, z as floating returns floating begin paragraph
+    give x over (sqrt with x being ((x times x) plus (y times y) plus (z times z)))
+end paragraph
+
+normalise-y receives x as floating, y as floating, z as floating returns floating begin paragraph
+    give y over (sqrt with x being ((x times x) plus (y times y) plus (z times z)))
+end paragraph
+
+normalise-z receives x as floating, y as floating, z as floating returns floating begin paragraph
+    give z over (sqrt with x being ((x times x) plus (y times y) plus (z times z)))
+end paragraph
+
+dot3 receives ax as floating, ay as floating, az as floating,
+             bx as floating, by as floating, bz as floating returns floating begin paragraph
+    give (ax times bx) plus (ay times by) plus (az times bz)
+end paragraph
+
+
+!!! --- Intersection ---------------------------------------------------------
+!!!
+!!! Nearest hit in front of the camera. Spheres first, then the ground plane,
+!!! so an opaque sphere always wins over the floor behind it.
+
+intersect receives ox as floating, oy as floating, oz as floating,
+                   dx as floating, dy as floating, dz as floating,
+                   cx as array of floating, cy as array of floating,
+                   cz as array of floating, radii as array of floating
+           returns Hit begin paragraph
+    variable nearest as floating is 1000000.0
+    variable struck as boolean is false
+    variable which as number is 0
+
+    variable index as number is 0
+    repeat while index is less than SPHERE-COUNT
+        !!! Origin minus centre: the standard oc vector. Taking it the other
+        !!! way round flips the sign of half-b and makes every root negative.
+        value to-x is ox minus (cx at index)
+        value to-y is oy minus (cy at index)
+        value to-z is oz minus (cz at index)
+        value radius is radii at index
+
+        value a is dot3 with ax being dx, ay being dy, az being dz,
+                              bx being dx, by being dy, bz being dz
+        value half-b is dot3 with ax being to-x, ay being to-y, az being to-z,
+                                 bx being dx, by being dy, bz being dz
+        value c is (dot3 with ax being to-x, ay being to-y, az being to-z,
+                             bx being to-x, by being to-y, bz being to-z)
+                    minus (radius times radius)
+        value discriminant is (half-b times half-b) minus (a times c)
+
+        when discriminant is at least 0.0 then
+            value root is sqrt with x being discriminant
+            value near is ((minus half-b) minus root) over a
+            when near is greater than 0.001 and near is less than nearest then
+                set nearest to near
+                set struck to true
+                set which to index
+            end when
+        end when
+        set index to index plus 1
+    end repeat
+
+    !!! The floor. A downward ray meets the plane at y = GROUND-Y.
+    when dy is less than 0.0 then
+        value floor-distance is (GROUND-Y minus oy) over dy
+        when floor-distance is greater than 0.001 and floor-distance is less than nearest then
+            set nearest to floor-distance
+            set struck to true
+            set which to (minus 1)
+        end when
+    end when
+
+    give build Hit with struck being struck, distance being nearest, sphere being which
+end paragraph
+
+
+!!! --- Shading --------------------------------------------------------------
+
+clamp01 receives v as floating returns floating begin paragraph
+    when v is less than 0.0 then give 0.0 end when
+    when v is greater than 1.0 then give 1.0 end when
+    give v
+end paragraph
+
+!!! A checkerboard, for the floor. Integer parity of the two ground axes.
+checker receives px as floating, pz as floating returns boolean begin paragraph
+    value cell is (floor with x being px) plus (floor with x being pz)
+    give ((cell becomes number) remainder 2) equals 0
+end paragraph
+
+!!! Integer output, since PPM samples are whole numbers. `becomes number`
+!!! truncates toward zero, so the add-half turns that into round-half-up.
+sample-of receives channel as floating returns number begin paragraph
+    give ((clamp01 with v being channel) times 255.0 plus 0.5) becomes number
+end paragraph
+
+
+main returns number begin paragraph
+    constant WIDTH as number is 512
+    constant HEIGHT as number is 384
+
+    value cx is scene-centre-x with nothing
+    value cy is scene-centre-y with nothing
+    value cz is scene-centre-z with nothing
+    value radii is scene-radius with nothing
+    value reds is scene-red with nothing
+    value greens is scene-green with nothing
+    value blues is scene-blue with nothing
+
+    !!! One fixed directional light, pre-normalised.
+    value light-x is normalise-x with x being minus 0.4, y being 0.8, z being minus 0.45
+    value light-y is normalise-y with x being minus 0.4, y being 0.8, z being minus 0.45
+    value light-z is normalise-z with x being minus 0.4, y being 0.8, z being minus 0.45
+
+    say "P3"
+    say WIDTH
+    say HEIGHT
+    say 255
+
+    value aspect is (WIDTH becomes floating) over (HEIGHT becomes floating)
+
+    variable row as number is 0
+    repeat while row is less than HEIGHT
+        variable column as number is 0
+        repeat while column is less than WIDTH
+            !!! Pixel centre, mapped into [-1, 1] with y up, then stretched by
+            !!! the aspect ratio so the spheres stay round. Both axes need the
+            !!! doubling: without it v never leaves (0, 1] and every ray points
+            !!! upward, which renders sky and nothing else.
+            value u is ((((column becomes floating) plus 0.5) over (WIDTH becomes floating))
+                        times 2.0 minus 1.0) times aspect
+            value v is 1.0 minus ((((row becomes floating) plus 0.5)
+                                   over (HEIGHT becomes floating)) times 2.0)
+
+            value dir-x is normalise-x with x being u, y being v, z being (minus 1.0)
+            value dir-y is normalise-y with x being u, y being v, z being (minus 1.0)
+            value dir-z is normalise-z with x being u, y being v, z being (minus 1.0)
+
+            value strike is intersect with ox being 0.0, oy being 0.0, oz being 0.0,
+                                        dx being dir-x, dy being dir-y, dz being dir-z,
+                                        cx being cx, cy being cy, cz being cz, radii being radii
+
+            variable red as floating is 0.0
+            variable green as floating is 0.0
+            variable blue as floating is 0.0
+            variable hit-x as floating is 0.0
+            variable hit-y as floating is 0.0
+            variable hit-z as floating is 0.0
+            variable normal-x as floating is 0.0
+            variable normal-y as floating is 0.0
+            variable normal-z as floating is 0.0
+
+            when strike.struck then
+                set hit-x to (dir-x times strike.distance)
+                set hit-y to (dir-y times strike.distance)
+                set hit-z to (dir-z times strike.distance)
+
+                when strike.sphere is at least 0 then
+                    set normal-x to normalise-x with x being (hit-x minus (cx at strike.sphere)),
+                                                       y being (hit-y minus (cy at strike.sphere)),
+                                                       z being (hit-z minus (cz at strike.sphere))
+                    set normal-y to normalise-y with x being (hit-x minus (cx at strike.sphere)),
+                                                       y being (hit-y minus (cy at strike.sphere)),
+                                                       z being (hit-z minus (cz at strike.sphere))
+                    set normal-z to normalise-z with x being (hit-x minus (cx at strike.sphere)),
+                                                       y being (hit-y minus (cy at strike.sphere)),
+                                                       z being (hit-z minus (cz at strike.sphere))
+                    set red to (reds at strike.sphere)
+                    set green to (greens at strike.sphere)
+                    set blue to (blues at strike.sphere)
+                otherwise
+                    !!! Floor: unlit white or unlit slate, by checker parity.
+                    set normal-x to 0.0
+                    set normal-y to 1.0
+                    set normal-z to 0.0
+                    when checker with px being hit-x, pz being hit-z then
+                        set red to 0.86
+                        set green to 0.86
+                        set blue to 0.86
+                    otherwise
+                        set red to 0.24
+                        set green to 0.3
+                        set blue to 0.36
+                    end when
+                end when
+
+                !!! Lambert plus a floor of ambient, so the shaded side of a
+                !!! sphere still reads as its own colour.
+                value lambert is dot3 with ax being normal-x, ay being normal-y, az being normal-z,
+                                        bx being light-x, by being light-y, bz being light-z
+                value lit is 0.22 plus (0.85 times (clamp01 with v being lambert))
+                set red to red times lit
+                set green to green times lit
+                set blue to blue times lit
+            otherwise
+                !!! Sky: a vertical gradient.
+                value t is 0.5 times (dir-y plus 1.0)
+                set red to (1.0 minus t) plus (t times 0.35)
+                set green to (1.0 minus t) plus (t times 0.58)
+                set blue to (1.0 minus t) plus (t times 0.95)
+            end when
+
+            say (sample-of with channel being red)
+            say (sample-of with channel being green)
+            say (sample-of with channel being blue)
+
+            set column to column plus 1
+        end repeat
+        set row to row plus 1
+    end repeat
+
+    give 0
+end paragraph
