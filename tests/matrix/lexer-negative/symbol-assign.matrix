@@ -1,0 +1,6 @@
+area t
+main returns integer begin function
+    value x as integer is 1
+    x = 2
+    give x
+end function

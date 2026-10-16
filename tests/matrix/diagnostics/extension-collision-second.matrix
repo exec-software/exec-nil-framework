@@ -1,0 +1,7 @@
+book pkg.second
+
+number begin extension
+    do-something returns number begin paragraph
+        give my plus 1000
+    end paragraph
+end extension

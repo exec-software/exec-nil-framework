@@ -1,0 +1,101 @@
+!!! 07-contracts.matrix
+!!! Contracts (Ny traits), implementations, generic bounds and associated
+!!! functions.
+!!!
+!!! Implementations use static dispatch. There are no dynamic contract objects
+!!! in Matrix, because NIL does not execute them.
+
+book tour.contracts
+
+!!! A contract declares signatures with no bodies. Default method bodies are
+!!! rejected in Ny and therefore have no Matrix spelling.
+read everything from ny.lang.core
+
+Reading of type T begin contract
+    read-level returns T
+    replace receives replacement as T on mutable receiver returns nothing
+end contract
+
+Fingerprint begin contract
+    fingerprint returns number
+end contract
+
+Meter begin record
+    field level as number
+end record
+
+!!! An implementation of a named contract must supply every required
+!!! signature, after substituting the contract arguments. Numeric assignment
+!!! conversions do not make different signatures equivalent: "integer" is not
+!!! an implementation of a "long" result.
+Meter provides Reading of number begin implementation
+
+    read-level returns number begin paragraph
+        give my level
+    end paragraph
+
+    replace receives replacement as number on mutable receiver returns nothing begin paragraph
+        set my level to replacement
+    end paragraph
+
+    !!! An extra concrete helper is allowed and does not become a contract
+    !!! requirement.
+    doubled returns number begin paragraph
+        give my level times 2
+    end paragraph
+end implementation
+
+Meter provides Fingerprint begin implementation
+    fingerprint returns number begin paragraph
+        give my level bitwise xor 255
+    end paragraph
+end implementation
+
+!!! An inherent implementation block, with no contract named.
+Counter begin record
+    field level as number
+end record
+
+Counter begin implementation
+    increment returns number begin paragraph
+        give my level plus 1
+    end paragraph
+end implementation
+
+!!! A generic implementation constrained by a bound. The bound restricts which
+!!! concrete types may instantiate the generic code; it does not relax the
+!!! native layout restrictions, which still apply independently.
+Envelope of type T begin record
+    field item as T
+end record
+
+Envelope of type T meeting Fingerprint begin implementation
+    item_fingerprint returns number begin paragraph
+        give my item.fingerprint with nothing
+    end paragraph
+end implementation
+
+!!! An associated function has no receiver and can be called through a bounded
+!!! type parameter. Two different bounds exposing the same associated function
+!!! are ambiguous and are rejected rather than resolved by declaration order.
+build_default of type T meeting Default returns T begin paragraph
+    give T.default with nothing
+end paragraph
+
+main returns number begin paragraph
+    variable gauge is build Meter with level being 20
+
+    say gauge.read-level with nothing
+    evaluate gauge.replace with replacement being 42
+    say gauge.read-level with nothing
+    say gauge.doubled with nothing
+    say gauge.fingerprint with nothing
+
+    value tally is build Counter with level being 41
+    say tally.increment with nothing
+
+    value wrapped is build Envelope of Meter with item being gauge
+    say wrapped.item_fingerprint with nothing
+
+    give 0
+end paragraph

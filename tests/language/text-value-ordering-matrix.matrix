@@ -1,0 +1,241 @@
+!!! Literal lexical snapshots plus independent multiset/permutation checks.
+!!! Strings exclude embedded NUL, whose cross-route contract remains open.
+book validation.text-value-ordering
+read everything from ny.lang.core
+read everything from ny.lang.collections
+read everything from ny.lang.text.string_utils
+
+require receives ok as boolean, label as text returns nothing begin paragraph
+    evaluate assert-true with condition being ok, message being label
+end paragraph
+
+copy-items of type T receives items as array of T returns array of T begin paragraph
+    variable result as array of T is []
+    repeat for index from 0 to (the length of items)
+        append (items at index) to result
+    end repeat
+    give result
+end paragraph
+
+same of type T receives actual as array of T, expected as array of T returns nothing begin paragraph
+    evaluate require with ok being ((the length of actual) equals (the length of expected)), label being "snapshot length"
+    repeat for index from 0 to (the length of actual)
+        evaluate require with ok being ((actual at index) equals (expected at index)), label being "snapshot values"
+    end repeat
+end paragraph
+
+occurrences receives items as array of text, item-value as text returns override integer begin paragraph
+    variable count as override integer is 0
+    repeat for index from 0 to (the length of items)
+        when (items at index) equals item-value then set count to count plus 1 end when
+    end repeat
+    give count
+end paragraph
+
+same-bag receives actual as array of text, original as array of text returns nothing begin paragraph
+    evaluate require with ok being ((the length of actual) equals (the length of original)), label being "sort length"
+    variable checked as array of text is []
+    repeat for index from 0 to (the length of original)
+        value item-value is original at index
+        when (occurrences with items being checked, item-value being item-value) equals 0 then
+            value actual-count is occurrences with items being actual, item-value being item-value
+            value original-count is occurrences with items being original, item-value being item-value
+            evaluate require with ok being (actual-count equals original-count), label being "sort preserves multiset"
+            append item-value to checked
+        end when
+    end repeat
+end paragraph
+
+check-text receives keys as array of text returns nothing begin paragraph
+    value original is copy-items of text with items being keys
+    repeat for direction from 0 to 2
+        value items is copy-items of text with items being keys
+        value alias is items
+        variable ordered as array of text is []
+        when direction equals 0 then
+            set ordered to sort-text with arr being items
+        otherwise
+            set ordered to sort-text-desc with arr being items
+        end when
+        evaluate same-bag with actual being ordered, original being keys
+        evaluate same of text with actual being alias, expected being ordered
+        repeat for index from 1 to (the length of ordered)
+            when direction equals 0 then
+                evaluate require with ok being ((ordered at (index minus 1)) is at most (ordered at index)), label being "text ascending"
+            otherwise
+                evaluate require with ok being ((ordered at (index minus 1)) is at least (ordered at index)), label being "text descending"
+            end when
+        end repeat
+        append "return growth" to ordered
+        evaluate require with ok being ((the length of alias) equals ((the length of keys) plus 1)), label being "sort returned handle aliases input"
+        set alias at (the length of keys) to "alias write"
+        evaluate require with ok being ((ordered at (the length of keys)) equals "alias write"), label being "input writes reach return"
+        append "input growth" to alias
+        evaluate require with ok being ((the length of ordered) equals ((the length of keys) plus 2)), label being "input growth reaches return"
+
+        value order is stable-sort-indices-text with keys being keys, descending being (direction equals 1)
+        evaluate require with ok being ((the length of order) equals (the length of keys)), label being "permutation length"
+        value seen is new-with-value of boolean with size being (the length of keys), `value` being false
+        repeat for position from 0 to (the length of order)
+            value index is order at position
+            evaluate require with ok being (index is at least 0 and index is less than (the length of keys)), label being "permutation range"
+            evaluate require with ok being (not (seen at index)), label being "permutation uniqueness"
+            set seen at index to true
+        end repeat
+        repeat for position from 1 to (the length of order)
+            value left is order at (position minus 1)
+            value right is order at position
+            when direction equals 0 then
+                evaluate require with ok being ((keys at left) is at most (keys at right)), label being "index ascending"
+            otherwise
+                evaluate require with ok being ((keys at left) is at least (keys at right)), label being "index descending"
+            end when
+            when (keys at left) equals (keys at right) then
+                evaluate require with ok being (left is less than right), label being "equal text keys keep original indices"
+            end when
+        end repeat
+        append 99 to order
+        set order at 0 to 99
+        evaluate same of text with actual being keys, expected being original
+    end repeat
+end paragraph
+
+make-owned returns array of text begin paragraph
+    value prefix is ny.lang.text::repeat with s being "common-", count being 64
+    value sliced is ny.lang.text::substring with s being "~alpha!", start being 1, length being 5
+    value trimmed is ny.lang.text::trim with s being "  alpha  "
+    value repeated is ny.lang.text::repeat with s being "alpha", count being 1
+    give [prefix plus "b", prefix plus "a", prefix, sliced, trimmed, repeated, prefix plus "a"]
+end paragraph
+
+make-sorted-owned receives descending as boolean returns array of text begin paragraph
+    value items is make-owned with nothing
+    when descending then give sort-text-desc with arr being items end when
+    give sort-text with arr being items
+end paragraph
+
+churn returns override integer begin paragraph
+    variable total as override integer is 0
+    !!! Cross the initial native collection threshold after helper frames return.
+    repeat for index from 0 to 1600
+        value values is new-with-value of override integer with size being 1024, `value` being index
+        set total to total plus (values at 1)
+    end repeat
+    give total
+end paragraph
+
+main returns override integer begin paragraph
+    value keys as array of text is ["é", "a", "", "😀", "A", "a", "aa", newline, "Ω", tab, "中", " ", "Å", "a" plus newline, "a" plus tab, "ab", "b", "z", quote, "AA", "Aa", "B"]
+    !!! Fixed byte-lexical expectations; no sorter computes this oracle.
+    value ascending as array of text is ["", tab, newline, " ", quote, "A", "AA", "Aa", "B", "a", "a", "a" plus tab, "a" plus newline, "aa", "ab", "b", "z", "Å", "é", "Ω", "中", "😀"]
+    value descending as array of text is ["😀", "中", "Ω", "é", "Å", "z", "b", "ab", "aa", "a" plus newline, "a" plus tab, "a", "a", "B", "Aa", "AA", "A", quote, " ", newline, tab, ""]
+    value ascending-input is copy-items of text with items being keys
+    value descending-input is copy-items of text with items being keys
+    evaluate same of text with actual being (sort-text with arr being ascending-input), expected being ascending
+    evaluate same of text with actual being (sort-text-desc with arr being descending-input), expected being descending
+    value ascending-indices is stable-sort-indices-text with keys being keys, descending being false
+    value descending-indices is stable-sort-indices-text with keys being keys, descending being true
+    evaluate same of override integer with actual being ascending-indices, expected being [2, 9, 7, 11, 18, 4, 19, 20, 21, 1, 5, 14, 13, 6, 15, 16, 17, 12, 0, 8, 10, 3]
+    evaluate same of override integer with actual being descending-indices, expected being [3, 10, 8, 0, 12, 17, 16, 15, 6, 13, 14, 1, 5, 21, 20, 19, 4, 18, 11, 7, 9, 2]
+    repeat for left from 0 to (the length of ascending)
+        repeat for right from 0 to (the length of ascending)
+            value a is ascending at left
+            value b is ascending at right
+            value equal is a equals b
+            evaluate require with ok being ((a is less than b) equals (left is less than right and not equal)), label being "raw text less"
+            evaluate require with ok being ((a is greater than b) equals (left is greater than right and not equal)), label being "raw text greater"
+            evaluate require with ok being ((a is at most b) equals (left is at most right or equal)), label being "raw text at most"
+            evaluate require with ok being ((a is at least b) equals (left is at least right or equal)), label being "raw text at least"
+            value relation is compare-text with a being a, b being b
+            evaluate require with ok being ((relation.is-less with nothing) equals (left is less than right and not equal)), label being "text comparator less"
+            evaluate require with ok being ((relation.is-eq with nothing) equals equal), label being "text comparator equal"
+            evaluate require with ok being ((relation.is-gt with nothing) equals (left is greater than right and not equal)), label being "text comparator greater"
+        end repeat
+    end repeat
+    say "text lexical snapshots and comparisons"
+
+    value sizes as array of override integer is [0, 1, 2, 15, 16, 17, 31, 32, 33, 257]
+    repeat for slot from 0 to (the length of sizes)
+        variable items as array of text is []
+        repeat for index from 0 to (sizes at slot)
+            append (keys at ((index times 37 plus 11) remainder (the length of keys))) to items
+        end repeat
+        evaluate check-text with keys being items
+    end repeat
+    evaluate check-text with keys being ascending
+    evaluate check-text with keys being descending
+    variable equal-keys as array of text is []
+    repeat for index from 0 to 2048
+        append (ny.lang.text::repeat with s being "equal", count being 1) to equal-keys
+    end repeat
+    evaluate check-text with keys being equal-keys
+    say "text sorts preserve multisets aliases and stable indices"
+
+    value insertion-input is copy-items of text with items being keys
+    value inserted is insertion-sort-text with arr being insertion-input
+    evaluate same of text with actual being inserted, expected being ascending
+    append "tail" to inserted
+    evaluate require with ok being ((the length of insertion-input) equals ((the length of keys) plus 1)), label being "insertion keeps handle"
+    value reverse-input is copy-items of text with items being ascending
+    value reversed is reverse-text with arr being reverse-input
+    evaluate same of text with actual being reversed, expected being descending
+    append "tail" to reversed
+    evaluate require with ok being ((the length of reverse-input) equals ((the length of ascending) plus 1)), label being "reverse keeps handle"
+    evaluate same of text with actual being (insertion-sort-text with arr being []), expected being []
+    evaluate same of text with actual being (insertion-sort-text with arr being ["only"]), expected being ["only"]
+    evaluate same of text with actual being (reverse-text with arr being []), expected being []
+    evaluate same of text with actual being (reverse-text with arr being ["only"]), expected being ["only"]
+    evaluate same of text with actual being (unique-text with arr being []), expected being []
+    evaluate same of text with actual being (unique-text with arr being ["only"]), expected being ["only"]
+    value runs as array of text is ["b", "b", "a", "a", "b", "", "", "é", "é"]
+    evaluate same of text with actual being (unique-text with arr being runs), expected being ["b", "a", "b", "", "é"]
+    evaluate same of text with actual being runs, expected being ["b", "b", "a", "a", "b", "", "", "é", "é"]
+    evaluate same of text with actual being (unique-text with arr being ascending), expected being ["", tab, newline, " ", quote, "A", "AA", "Aa", "B", "a", "a" plus tab, "a" plus newline, "aa", "ab", "b", "z", "Å", "é", "Ω", "中", "😀"]
+    say "text insertion reverse and consecutive uniqueness"
+
+    value snapshot is copy-items of text with items being ascending
+    evaluate require with ok being (is-sorted-text with arr being ascending), label being "ascending text sorted"
+    evaluate require with ok being ((is-sorted-text with arr being []) and (is-sorted-text with arr being ["only"])), label being "empty and singleton sorted"
+    evaluate require with ok being (is-sorted-text with arr being ["same", "same"]), label being "equal text sorted"
+    evaluate require with ok being (not (is-sorted-text with arr being ["a", "A"])), label being "case inversion"
+    evaluate require with ok being (not (is-sorted-text with arr being ["aa", "a"])), label being "prefix inversion"
+    evaluate require with ok being (not (is-sorted-text with arr being ["😀", "é"])), label being "UTF8 inversion"
+    repeat for index from 0 to (the length of ascending)
+        value found is binary-search-text with arr being ascending, target being (ascending at index)
+        evaluate require with ok being (found is at least 0 and found is less than (the length of ascending)), label being "search finds text class"
+        evaluate require with ok being ((ascending at found) equals (ascending at index)), label being "search returns equal text"
+    end repeat
+    evaluate require with ok being ((binary-search-text with arr being ascending, target being "missing") equals minus 1), label being "absent text"
+    evaluate require with ok being ((binary-search-text with arr being ascending, target being "a ") equals minus 1), label being "absent prefix extension"
+    evaluate require with ok being ((binary-search-text with arr being [], target being "") equals minus 1), label being "empty search"
+    evaluate require with ok being ((binary-search-text with arr being ["same", "same"], target being "same") is at least 0), label being "duplicate search"
+    evaluate same of text with actual being ascending, expected being snapshot
+    say "text sorted checks and search leave input unchanged"
+
+    value owned-items is make-owned with nothing
+    value owned-ascending is make-sorted-owned with descending being false
+    value owned-descending is make-sorted-owned with descending being true
+    evaluate require with ok being ((churn with nothing) equals 1279200), label being "allocation churn completed"
+    value prefix is ny.lang.text::repeat with s being "common-", count being 64
+    value expected as array of text is ["alpha", "alpha", "alpha", prefix, prefix plus "a", prefix plus "a", prefix plus "b"]
+    evaluate same of text with actual being owned-ascending, expected being expected
+    evaluate same of text with actual being owned-descending, expected being [prefix plus "b", prefix plus "a", prefix plus "a", prefix, "alpha", "alpha", "alpha"]
+    value owned-ascending-indices is stable-sort-indices-text with keys being owned-items, descending being false
+    value owned-descending-indices is stable-sort-indices-text with keys being owned-items, descending being true
+    evaluate same of override integer with actual being owned-ascending-indices, expected being [3, 4, 5, 2, 1, 6, 0]
+    evaluate same of override integer with actual being owned-descending-indices, expected being [0, 1, 6, 2, 3, 4, 5]
+    evaluate check-text with keys being owned-items
+    evaluate same of text with actual being (unique-text with arr being owned-ascending), expected being ["alpha", prefix, prefix plus "a", prefix plus "b"]
+    value owned-alias is owned-ascending
+    repeat for index from 0 to 80
+        append (ny.lang.text::repeat with s being "grown", count being 2) to owned-ascending
+    end repeat
+    evaluate require with ok being ((churn with nothing) equals 1279200), label being "second allocation churn completed"
+    evaluate require with ok being ((the length of owned-alias) equals 87), label being "grown owned return keeps alias"
+    repeat for index from 0 to (the length of expected)
+        evaluate require with ok being ((owned-alias at index) equals (expected at index)), label being "owned text retained through growth and collection"
+    end repeat
+    evaluate require with ok being ((owned-alias at 86) equals "growngrown"), label being "grown text retained"
+    say "dynamic equal strings and sorted returns survive collection"
+    give 0
+end paragraph

@@ -1,0 +1,21 @@
+SELECT users.id, users.name FROM users LEFT JOIN teams ON teams.id = users.team_id WHERE users.active = $1 AND users.deleted_at IS NULL AND users.name LIKE $2 ORDER BY users.name DESC LIMIT 25 OFFSET 5
+2
+true
+%son%
+SELECT id FROM events INNER JOIN streams ON streams.id = events.stream_id WHERE kind <> $1 AND sequence > $2 AND sequence < $3 AND payload IS NOT NULL ORDER BY id ASC
+3
+debug
+10
+20
+1
+SELECT * FROM health
+INSERT INTO users (name, active) VALUES ($1, $2)
+Ada
+true
+INSERT INTO audit_log DEFAULT VALUES
+UPDATE users SET name = $1, active = $2 WHERE id = $3
+3
+42
+DELETE FROM sessions WHERE user_id = $1 AND state = $2
+2
+expired

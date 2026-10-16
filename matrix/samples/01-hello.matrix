@@ -1,0 +1,27 @@
+!!! 01-hello.matrix
+!!! The smallest complete Matrix program, and every lexical form.
+!!!
+!!! Equivalent Ny:
+!!!     module hello
+!!!     fn main() -> i32
+!!!         println("Hello from Matrix")
+!!!         return 0
+!!!     end fn
+
+book hello
+
+!!! A comment. Anything after the three marks is ignored.
+!!!
+!!! A bare line of three marks is an empty comment line, which is how a
+!!! multi-line comment is written: every line carries its own marker.
+!!!
+!!! The draft also proposed a block form, opened and closed by a line that is
+!!! exactly three marks. It was dropped because the two forms cannot coexist:
+!!! the blank line two lines above this one would be a block delimiter, and a
+!!! file header is full of such lines. Ny has line comments only for the same
+!!! reason.
+
+main returns number begin paragraph
+    say "Hello from Matrix"
+    give 0
+end paragraph

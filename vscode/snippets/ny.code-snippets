@@ -1,0 +1,291 @@
+{
+  "Module declaration": {
+    "prefix": "module",
+    "description": "Declare a Ny module",
+    "body": [
+      "module ${1:ny.app}"
+    ]
+  },
+  "Package declaration": {
+    "prefix": "package",
+    "description": "Declare a Ny package",
+    "body": [
+      "package ${1:ny.app}"
+    ]
+  },
+  "Import": {
+    "prefix": "import",
+    "description": "Import a Ny module or symbol",
+    "body": [
+      "import ${1:ny.lang.core}"
+    ]
+  },
+  "Function": {
+    "prefix": "fn",
+    "description": "Declare a function",
+    "body": [
+      "fn ${1:name}(${2}) -> ${3:void}",
+      "    ${0}",
+      "end fn"
+    ]
+  },
+  "Public function": {
+    "prefix": "pubfn",
+    "description": "Declare a public function",
+    "body": [
+      "pub fn ${1:name}(${2}) -> ${3:void}",
+      "    ${0}",
+      "end fn"
+    ]
+  },
+  "Main function": {
+    "prefix": "main",
+    "description": "Declare the program entry point",
+    "body": [
+      "fn main() -> i32",
+      "    ${0}",
+      "    return 0",
+      "end fn"
+    ]
+  },
+  "Intrinsic function": {
+    "prefix": [
+      "intrinsicfn",
+      "@intrinsic"
+    ],
+    "description": "Declare a runtime intrinsic",
+    "body": [
+      "@intrinsic(\"${1:runtime.name}\")",
+      "pub fn ${2:name}(${3}) -> ${4:void}",
+      "end fn"
+    ]
+  },
+  "Interop function": {
+    "prefix": [
+      "interopfn",
+      "@interop"
+    ],
+    "description": "Declare a native interop function",
+    "body": [
+      "@interop(\"${1:library}\")",
+      "fn ${2:name}(${3}) -> ${4:void}",
+      "end fn"
+    ]
+  },
+  "Struct": {
+    "prefix": "struct",
+    "description": "Declare a struct",
+    "body": [
+      "struct ${1:Name}",
+      "    ${2:field}: ${3:type}",
+      "end struct"
+    ]
+  },
+  "Public struct": {
+    "prefix": "pubstruct",
+    "description": "Declare a public struct",
+    "body": [
+      "pub struct ${1:Name}",
+      "    ${2:field}: ${3:type}",
+      "end struct"
+    ]
+  },
+  "Enum": {
+    "prefix": "enum",
+    "description": "Declare an enum",
+    "body": [
+      "enum ${1:Name}",
+      "    ${2:Variant}",
+      "end enum"
+    ]
+  },
+  "Trait": {
+    "prefix": "trait",
+    "description": "Declare a trait",
+    "body": [
+      "pub trait ${1:Name}",
+      "    fn ${2:method}(self) -> ${3:void}",
+      "end trait"
+    ]
+  },
+  "Trait implementation": {
+    "prefix": "impl",
+    "description": "Implement a trait for a type",
+    "body": [
+      "impl ${1:Trait} for ${2:Type}",
+      "    fn ${3:method}(self) -> ${4:void}",
+      "        ${0}",
+      "    end fn",
+      "end impl"
+    ]
+  },
+  "Class": {
+    "prefix": "class",
+    "description": "Declare a class",
+    "body": [
+      "class ${1:Name}",
+      "    ${0}",
+      "end class"
+    ]
+  },
+  "Let binding": {
+    "prefix": "let",
+    "description": "Declare an immutable binding",
+    "body": [
+      "let ${1:name}: ${2:type} = ${0:value}"
+    ]
+  },
+  "Mutable binding": {
+    "prefix": "letmut",
+    "description": "Declare a mutable binding",
+    "body": [
+      "let mut ${1:name}: ${2:type} = ${0:value}"
+    ]
+  },
+  "Constant": {
+    "prefix": "const",
+    "description": "Declare a module constant",
+    "body": [
+      "const ${1:NAME}: ${2:type} = ${0:value}"
+    ]
+  },
+  "If statement": {
+    "prefix": "if",
+    "description": "Insert an if block",
+    "body": [
+      "if ${1:condition} then",
+      "    ${0}",
+      "end if"
+    ]
+  },
+  "If/else statement": {
+    "prefix": "ifelse",
+    "description": "Insert an if/else block",
+    "body": [
+      "if ${1:condition} then",
+      "    ${2}",
+      "else",
+      "    ${0}",
+      "end if"
+    ]
+  },
+  "While loop": {
+    "prefix": "while",
+    "description": "Insert a while loop",
+    "body": [
+      "while ${1:condition} do",
+      "    ${0}",
+      "end while"
+    ]
+  },
+  "For loop": {
+    "prefix": "for",
+    "description": "Iterate over a value",
+    "body": [
+      "for ${1:item} in ${2:items} do",
+      "    ${0}",
+      "end for"
+    ]
+  },
+  "Loop": {
+    "prefix": "loop",
+    "description": "Insert an unconditional loop",
+    "body": [
+      "loop",
+      "    ${0}",
+      "end loop"
+    ]
+  },
+  "Match": {
+    "prefix": "match",
+    "description": "Match a value against patterns",
+    "body": [
+      "match ${1:value}",
+      "    when ${2:pattern} => ${0}",
+      "end match"
+    ]
+  },
+  "Fault handling": {
+    "prefix": "attempt",
+    "description": "Handle and recover from Ny faults",
+    "body": [
+      "attempt",
+      "    ${1}",
+      "fault ${2:FaultType} as ${3:error}",
+      "    ${4}",
+      "recover",
+      "    ${0}",
+      "end attempt"
+    ]
+  },
+  "Unit test block": {
+    "prefix": "test",
+    "description": "Declare a Ny unit test block",
+    "body": [
+      "test \"${1:description}\"",
+      "    ${0}",
+      "end test"
+    ]
+  },
+  "Example block": {
+    "prefix": "example",
+    "description": "Declare an executable example block",
+    "body": [
+      "example \"${1:description}\"",
+      "    ${0}",
+      "end example"
+    ]
+  },
+  "Property block": {
+    "prefix": "property",
+    "description": "Declare a property test block",
+    "body": [
+      "property \"${1:description}\"",
+      "    ${0}",
+      "end property"
+    ]
+  },
+  "Inline annotation": {
+    "prefix": "@inline",
+    "description": "Request function inlining",
+    "body": [
+      "@inline"
+    ]
+  },
+  "Documentation annotation": {
+    "prefix": "@doc",
+    "description": "Attach structured documentation",
+    "body": [
+      "@doc(",
+      "    summary=\"${1:summary}\",",
+      "    description=\"${2:description}\",",
+      "    returns=\"${3:return value}\"",
+      ")"
+    ]
+  },
+  "AI context annotation": {
+    "prefix": "@ai_context",
+    "description": "Attach structured intent and constraints for AI tooling",
+    "body": [
+      "@ai_context(",
+      "    intent=\"${1:intent}\",",
+      "    assumptions=[\"${2:assumption}\"],",
+      "    constraints=[\"${3:constraint}\"]",
+      ")"
+    ]
+  },
+  "Preprocessor include": {
+    "prefix": "@include",
+    "description": "Include a Ny source file through the preprocessor",
+    "body": [
+      "@include \"${1:path.ny}\""
+    ]
+  },
+  "Native link pragma": {
+    "prefix": "@pragma-link",
+    "description": "Request a native link library",
+    "body": [
+      "@pragma link(\"${1:library}\")"
+    ]
+  }
+}

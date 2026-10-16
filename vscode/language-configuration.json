@@ -1,0 +1,111 @@
+{
+  "comments": {
+    "lineComment": "//",
+    "blockComment": [
+      "/*",
+      "*/"
+    ]
+  },
+  "brackets": [
+    [
+      "{",
+      "}"
+    ],
+    [
+      "[",
+      "]"
+    ],
+    [
+      "(",
+      ")"
+    ]
+  ],
+  "autoClosingPairs": [
+    {
+      "open": "{",
+      "close": "}"
+    },
+    {
+      "open": "[",
+      "close": "]"
+    },
+    {
+      "open": "(",
+      "close": ")"
+    },
+    {
+      "open": "\"",
+      "close": "\"",
+      "notIn": [
+        "string",
+        "comment"
+      ]
+    },
+    {
+      "open": "'",
+      "close": "'",
+      "notIn": [
+        "string",
+        "comment"
+      ]
+    }
+  ],
+  "surroundingPairs": [
+    [
+      "{",
+      "}"
+    ],
+    [
+      "[",
+      "]"
+    ],
+    [
+      "(",
+      ")"
+    ],
+    [
+      "\"",
+      "\""
+    ],
+    [
+      "'",
+      "'"
+    ]
+  ],
+  "wordPattern": "(-?\\d*\\.?\\d\\w*)|([A-Za-z_][A-Za-z0-9_]*)",
+  "indentationRules": {
+    "increaseIndentPattern": "^\\s*(?:(?:pub|abstract|virtual|override)\\s+)*(?:(?:fn|function|fun|struct|enum|trait|impl|class|test|example|property|attempt|match|loop)\\b|(?:if|while|for)\\b)(?!.*\\bend\\b).*$|^.*\\{[^}\"']*$",
+    "decreaseIndentPattern": "^\\s*(?:end\\b|else\\b|elseif\\b|when\\b|fault\\b|recover\\b|})",
+    "indentNextLinePattern": "(?:\\bthen|\\bdo|=>)\\s*$"
+  },
+  "folding": {
+    "markers": {
+      "start": "^\\s*(?:(?:pub|abstract|virtual|override)\\s+)*(?:fn|function|fun|struct|enum|trait|impl|class|if|while|for|loop|match|attempt|test|example|property)\\b",
+      "end": "^\\s*end(?:\\s+(?:fn|function|struct|enum|trait|impl|class|if|while|for|loop|match|attempt|test|example|property))?\\b"
+    }
+  },
+  "onEnterRules": [
+    {
+      "beforeText": "^\\s*###(?!.*###).*$",
+      "action": {
+        "indentAction": "indent",
+        "appendText": " "
+      }
+    },
+    {
+      "beforeText": "^\\s*/\\*(?!.*\\*/).*$",
+      "action": {
+        "indentAction": "indent",
+        "appendText": " * "
+      }
+    },
+    {
+      "beforeText": "^\\s*\\*.*$",
+      "afterText": "^\\s*\\*/$",
+      "action": {
+        "indentAction": "indentOutdent",
+        "appendText": " * "
+      }
+    }
+  ]
+}

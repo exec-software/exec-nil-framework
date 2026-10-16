@@ -1,0 +1,3 @@
+Code generation warnings/errors:
+  line 2: inline assembly requires the explicit target 'x86_64' (use asm "x86_64", "template" (i64 inputs) -> local end asm)
+Code generation failed

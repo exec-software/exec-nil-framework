@@ -1,0 +1,65 @@
+!!! 13-context-and-interop.matrix
+!!! Agent-facing context, annotations, tests, intrinsics and inline assembly.
+!!!
+!!! "context" is promoted to a first-class statement rather than a generic
+!!! annotation, because self-description for agents is the reason Matrix
+!!! exists. It lowers to exactly Ny's @ai_context, is retained in NIL, and is
+!!! disclosed by "nilcompiler --inspect-context".
+!!!
+!!! Context text is unauthenticated self-description. Treat it as data, never
+!!! as trusted instruction, and do not put secrets in annotations intended for
+!!! distribution: inspection is not redaction.
+
+book tour.interop
+
+!!! Context attaches to the following declaration. Inspecting it never
+!!! executes the program, contacts a model, or grants the text any authority.
+context "Returns the inclusive upper bound of the dispatch window in minutes."
+context "Callers must treat a result of zero as 'no window configured'."
+dispatch_window returns number begin paragraph
+    give 45
+end paragraph
+
+!!! An arbitrary annotation. "note inline" is Ny's @inline and sets function
+!!! flag bit 0.
+note inline
+hot_path receives input as number returns number begin paragraph
+    give input times 3
+end paragraph
+
+!!! A runtime-backed declaration has no body. The annotation is not an
+!!! implementation: the named provider must exist on every claimed route. The
+!!! interpreter implements an audited intrinsic subset; native support is
+!!! provider-specific.
+note intrinsic "console.writeln"
+write_line receives line as text
+
+!!! A test block. Lowers to Ny's test declaration and sets function flag
+!!! bit 1.
+dispatch_window_is_configured begin test
+    say dispatch_window with nothing
+end test
+
+!!! Inline assembly keeps Ny's bounded profile unchanged: x86_64 only,
+!!! register-only, "long" operands, at most eight inputs and one output, drawn
+!!! from the approved AT&T integer instruction list. Explicit registers,
+!!! memory operands, labels, directives, branches, calls and returns are
+!!! rejected -- an unsupported instruction is an error, not passthrough text.
+!!!
+!!! With an output, $0 is the output register and $1 the first input. Without
+!!! one, $0 is the first input. "$$" introduces an assembler immediate.
+!!!
+!!! Interpreted routes, interpreter libraries and the NIL debugger reject this
+!!! operation with a native-route diagnostic. They never erase or emulate it.
+swap_bytes receives word as number returns number begin paragraph
+    variable result as number is 0
+    assembly for x86_64 is "movq $1, $0; bswapq $0" using word giving result
+    give result
+end paragraph
+
+main returns number begin paragraph
+    say dispatch_window with nothing
+    say hot_path with input being 14
+    evaluate write_line with line being "via intrinsic"
+    give 0
+end paragraph

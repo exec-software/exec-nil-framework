@@ -1,0 +1,7 @@
+# NIL Textual Module
+module root
+
+function helper:
+    PUSH_CONST 0
+    RET
+end function

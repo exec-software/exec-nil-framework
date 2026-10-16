@@ -1,0 +1,13 @@
+!!! Constructing a type nothing declares.
+!!!
+!!! This compiled silently, and ran, and the only sign of trouble was a later
+!!! "has no member" on the value it produced -- which sends the author to the
+!!! type's definition when the real fault is a misspelled name or a file that
+!!! was never given to the compiler. It cost a project several turns and a
+!!! wrong conclusion about how imports work.
+book diagnostic.unknown-type
+
+main returns number begin paragraph
+    value panel is build rectangle with width being 3, height being 4
+    give 0
+end paragraph

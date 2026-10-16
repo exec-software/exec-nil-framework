@@ -1,0 +1,25 @@
+!!! A record declared in one book, extended from another.
+!!!
+!!! This is the shape a project uses when it keeps one type to a file: the
+!!! record lives in its own book and the operations on it live beside it in
+!!! another. It compiled and then failed at run time, because an
+!!! implementation's symbol was keyed on the EXTENDING book while the call
+!!! site mangled it from the receiver's inferred type -- the type's own book:
+!!!
+!!!     declared  oculus__window__geometry__util__rectangle__area
+!!!     called    oculus__window__geometry__rectangle__area
+book tour.shape
+
+!!! A class, extended the same way. A class declaration knows only the
+!!! members written inside it, so the member lookup has to consult the
+!!! extension table before concluding a member does not exist -- it used to
+!!! return early and report "has no member", in its own book as well.
+public surface begin class
+    field label as text
+    field scale as number
+end class
+
+public rectangle begin record
+    field width  as number
+    field height as number
+end record

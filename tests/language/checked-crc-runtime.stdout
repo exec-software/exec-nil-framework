@@ -1,0 +1,5 @@
+crc32 known vectors ok
+crc32 subwindows and finalized seeds ok
+crc32 every split and chunk chain ok
+crc32 invalid windows and states rejected
+crc32 input bytes unchanged

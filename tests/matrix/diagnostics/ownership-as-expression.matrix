@@ -1,0 +1,13 @@
+!!! Ownership operations are STATEMENTS, not values. Ny accepts an ownership
+!!! operation only as a direct local declaration initialiser, so there is no
+!!! expression form to lower to; expressing that as a parse rule means the
+!!! rejection lands on the construct rather than surfacing later as a type
+!!! error on a value that never existed.
+book bad.ownership
+
+main returns number begin paragraph
+    own variable samples as array of number sized 4
+    value copy is own variable samples as array of number sized 4
+    say move samples into final
+    give 0
+end paragraph

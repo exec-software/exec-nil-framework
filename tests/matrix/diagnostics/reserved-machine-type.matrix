@@ -1,0 +1,8 @@
+!!! 'unsigned' is reserved and rejected: NIL's only unsigned type is byte.
+book bad.reserved
+
+main returns number begin paragraph
+    value count as override unsigned is 7
+    say count
+    give 0
+end paragraph

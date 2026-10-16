@@ -1,0 +1,1 @@
+NIL interpreter runtime error: CALL: builtin 'String__len' expects 1 argument, got 0

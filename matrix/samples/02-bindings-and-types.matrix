@@ -1,0 +1,85 @@
+!!! 02-bindings-and-types.matrix
+!!! Scalars, bindings, casts, arrays and raw pointers.
+!!!
+!!! Matrix keeps Ny's scalar contract exactly: wrapping integer arithmetic at
+!!! the resolved width, promotion order real > long > integer > byte, and
+!!! byte storage that retains the low eight bits.
+
+book tour.values
+
+main returns number begin paragraph
+
+    !!! Three kinds of binding. "is" declares and initialises; "set ... to"
+    !!! mutates an existing binding. Ny spells both of these "=".
+    value   limit   as number is 10        !!! immutable
+    variable total  as number is 0         !!! mutable
+    constant MARGIN as number is 3         !!! compile-time constant
+
+    set total to total plus 1
+
+    !!! Every scalar type Matrix spells. There is deliberately no spelling
+    !!! for i8, i16, u16, u32, u64 or f32: Ny rejects their arithmetic.
+    value count    as number is 42
+    value population as number  is 10000000000
+    value flag     as override byte    is 255 becomes override byte
+    value fraction as floating    is 0.5
+    value ready    as boolean is true
+    value label    as text    is "dispatch"
+    value hex      as number is 0xFF
+
+    !!! "converted to" is a cast. "as" is a type annotation. Ny spells both
+    !!! "as", which hides whether a value changed representation.
+    value widened  as number    is count becomes number
+    value truthy   as boolean is count becomes boolean
+
+    !!! Word operators, conventional precedence: times/over/remainder bind
+    !!! tighter than plus/minus. Parentheses group.
+    value area     as number is limit times limit
+    value average  as number is (count plus limit) over 2
+    value leftover as number is count remainder limit
+    value negated  as number is minus count
+
+    !!! Comparisons and logic.
+    value in_range as boolean is count is at least 0 and count is at most 100
+    value exact    as boolean is count equals 42
+    value differs  as boolean is count does not equal limit
+    value either   as boolean is ready or in_range
+    value inverted as boolean is not ready
+
+    !!! Bitwise operations require integer operands.
+    value masked   as number is count bitwise and 0x0F
+    value flipped  as number is count bitwise xor 0xFF
+    value doubled  as number is count shifted left by 1
+    value halved   as number is count shifted right by 1
+    value complement as number is bitwise not count
+
+    !!! Dynamic arrays. Indexing reads with "at"; writing is a "set"
+    !!! statement. An out-of-range read yields the element's zero value and
+    !!! an out-of-range write is a no-op, exactly as in Ny.
+    variable values as array of number is [1, 2, 3]
+    set values at 1 to 7
+    say values at 0
+
+    !!! "len" and "push" are compiler builtins on an array receiver, not
+    !!! library functions, and they take positional arguments with no declared
+    !!! parameter names. Matrix gives them dedicated spellings rather than a
+    !!! "with ... being ..." clause that would have nothing to bind against.
+    say the length of values
+    append 9 to values
+
+    !!! Raw pointers. Allocation and release are explicit statements.
+    allocate buffer as pointer to number sized 2
+    set buffer at 0 to 40
+    set buffer at 1 to MARGIN
+    say (buffer at 0) plus (buffer at 1)
+    release buffer
+
+    !!! say takes exactly one value. Use separate statements for several, and
+    !!! say "" for a blank line.
+    say widened
+    say fraction
+    say label
+    say ""
+
+    give 0
+end paragraph

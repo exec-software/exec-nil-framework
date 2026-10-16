@@ -1,0 +1,59 @@
+!!! 14-cross-language-app.matrix  --  page 3 of 3
+!!!
+!!! The entry point. This Matrix book reads BOTH earlier pages and uses them
+!!! without caring which surface declared what:
+!!!
+!!!   - it calls 'scale', a paragraph declared in Ny;
+!!!   - it constructs Measurement, a record declared in Matrix, and also
+!!!     receives one built by Ny's 'describe';
+!!!   - it constructs OffsetSampler, a class declared in Ny that derives from
+!!!     Sampler, a class declared in Matrix, and dispatches virtually through
+!!!     a Matrix-typed ancestor view of it.
+!!!
+!!! Note how the Ny names are spelled. An Ny declaration's own spelling is the
+!!! NIL symbol, so Matrix writes 'ny_helper' with its underscore and
+!!! 'OffsetSampler' with its capitals. Matrix-internal names fold case; a name
+!!! declared in Ny does not, because Ny is case-sensitive and its spelling is
+!!! the one in the artifact.
+
+book tour.app
+
+read tour.mixed
+read tour.ny_helper
+
+
+!!! Calling across the boundary in both directions within one paragraph: an Ny
+!!! paragraph supplies the value, a Matrix record carries it back.
+public summarise receives raw as number returns Measurement begin paragraph
+    value adjusted is tour.ny_helper::scale with input being raw
+    give build Measurement with sensor being "primary", reading being adjusted
+end paragraph
+
+main returns number begin paragraph
+
+    !!! Matrix -> Ny: a paragraph call.
+    value doubled is tour.ny_helper::scale with input being 21
+    say doubled
+
+    !!! Matrix -> Ny -> Matrix: an Ny paragraph returns a Matrix record.
+    value from-ny is tour.ny_helper::describe with reading being 84
+    say from-ny.sensor
+    say from-ny.reading
+
+    !!! A Matrix record built in Matrix, carrying a value computed in Ny.
+    value result is summarise with raw being 20
+    say result.sensor
+    say result.reading
+
+    !!! An Ny class deriving from a Matrix class, viewed as the Matrix base.
+    !!! The override declared in Ny is selected through a Matrix-typed view.
+    value derived is build tour.ny_helper::OffsetSampler with offset being 1, bonus being 1
+    value viewed as Sampler is derived
+    say viewed.sample with raw being 40
+
+    !!! The Matrix base on its own, for comparison: no bonus is added.
+    value base is build Sampler with offset being 2
+    say base.sample with raw being 40
+
+    give 0
+end paragraph

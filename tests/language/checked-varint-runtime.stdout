@@ -1,0 +1,6 @@
+varint exact vectors and every truncated prefix ok
+varint all one-byte values ok
+varint invalid windows and values preserve bytes
+varint overflow and canonicality errors ok
+varint caller cursor and trailing bytes ok
+varint CRC record composition and tamper detection ok

@@ -1,0 +1,1 @@
+NIL interpreter runtime error: Entry function 'main' must declare 0 parameters, found 1

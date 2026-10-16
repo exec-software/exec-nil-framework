@@ -1,0 +1,243 @@
+!!! Verbatim constructs from MATRIX-GUIDE.md, compiled as one page so the
+!!! guide cannot drift from the language.
+book tour.guide
+
+read everything from ny.lang.core
+
+point begin record
+    field x as override long
+    field y as override long
+end record
+
+envelope of type T begin record
+    field item as T
+end record
+
+coordinate means override long
+
+job-state begin choice
+    when Queued   holding number
+    when Complete holding number
+    when Shutdown
+end choice
+
+read-fault begin record
+    field reason as text
+end record
+
+abstract reader begin class
+    field level as number
+    public abstract read-level returns number
+    public relay returns number begin paragraph
+        give (my read-level with nothing) plus 1
+    end paragraph
+end class
+
+constant-reader inherits reader begin class
+    public replaces read-level returns number begin paragraph
+        give my level
+    end paragraph
+end class
+
+reading begin contract
+    current returns number
+    replace receives amount as number on mutable receiver returns nothing
+end contract
+
+meter begin record
+    field value-held as number
+end record
+
+meter provides reading begin implementation
+    current returns number begin paragraph
+        give my value-held
+    end paragraph
+    replace receives amount as number on mutable receiver returns nothing begin paragraph
+        set my value-held to amount
+    end paragraph
+end implementation
+
+meter begin implementation
+    doubled returns number begin paragraph
+        give my value-held times 2
+    end paragraph
+end implementation
+
+text begin extension
+    shouted returns text begin paragraph
+        give my plus "!"
+    end paragraph
+end extension
+
+greet receives name as text returns text begin paragraph
+    give "hello " plus name
+end paragraph
+
+add receives left as number, right as number returns number begin paragraph
+    give left plus right
+end paragraph
+
+answer returns number begin paragraph give 42 end paragraph
+
+total-of receives more values as number returns number begin paragraph
+    variable sum as number is 0
+    variable i as number is 0
+    repeat while i is less than (the length of values)
+        set sum to sum plus (values at i)
+        set i to i plus 1
+    end repeat
+    give sum
+end paragraph
+
+read-value receives available as boolean returns number begin paragraph
+    when not available then
+        raise read-fault with reason being "unavailable"
+    end when
+    give 7
+end paragraph
+
+guarded receives available as boolean returns number begin paragraph
+    attempt
+        give read-value with available being available
+    caught read-fault as problem provided problem.reason does not equal ""
+        say problem.reason
+        give 0
+    always
+        say "cleanup"
+    end attempt
+end paragraph
+
+clamp-sample receives s as override long returns override long begin paragraph
+    when s is less than 0 then give 0 end when
+    give s
+end paragraph
+
+encode-sample receives raw as override long returns override long begin paragraph
+    give clamp-sample with s being (raw times 3)
+end paragraph
+
+stage returns override long begin paragraph
+    own variable samples as array of override byte sized 64
+    when true then
+        borrow writable from samples exclusively
+        set writable at 0 to 255 becomes override byte
+    end when
+    when true then
+        borrow viewer from samples
+        say viewer at 0
+    end when
+    move samples into sealed
+    give (sealed at 0) becomes override long
+end paragraph
+
+main returns number begin paragraph
+    say greet with name being "world"
+    say add with left being 1, right being 2
+    say add with right being 2, left being 1
+    say answer with nothing
+    say total-of with more 1, 2, 3, 4
+
+    value limit as number is 10
+    variable total as number is 0
+    constant MAX as number is 100
+    set total to total plus 1
+    say total; say MAX.
+
+    value path as text is "C:\dir\file.txt"
+    say path
+    say "he said " plus quote plus "hi" plus quote
+    say "one" plus newline plus "two"
+    value banner as text is begin text
+        He said "hi" and the path was C:\Users\me\file.txt
+          this line keeps its extra indent
+    end text
+    say banner
+
+    value area    is limit times limit
+    value average is (limit plus 4) over 2
+    value masked  is 0x1234 bitwise and 0xFF
+    value shift-result is 3 shifted left by 1
+    value ok      is limit is at least 0 and limit is at most 100
+    say area; say average; say masked; say shift-result; say ok.
+
+    variable values as array of number is [1, 2, 3]
+    set values at 0 to 7
+    say values at 0
+    say the length of values
+    append 9 to values
+    say the length of values
+    say values at 99
+
+    value widened is limit becomes override long
+    say widened
+
+    when limit is greater than 0 then
+        say "positive"
+    otherwise when limit is less than 0 then
+        say "negative"
+    otherwise
+        say "zero"
+    end when
+
+    value sign as number is when limit is greater than 0 give 1 otherwise give minus 1 end when
+    say sign
+
+    repeat for step from 0 to 5
+        when step equals 2 then continue repeating end when
+        when step equals 4 then stop repeating end when
+        say step
+    end repeat
+
+    value names as array of text is ["alpha", "beta"]
+    repeat for each name in names
+        say name
+    end repeat
+
+    value corner is build point with x being 3, y being 4
+    say corner.x
+    value boxed is build envelope of number with item being 42
+    say boxed.item
+    value here as coordinate is 7
+    say here
+
+    value state as job-state is job-state.Queued holding 41
+    consider state
+        when job-state.Queued holding ticket then say ticket
+        when job-state.Complete holding n then say n
+        otherwise say "other"
+    end consider
+
+    value label as text is consider state
+        when job-state.Queued holding ticket give "queued"
+        otherwise give "other"
+    end consider
+    say label
+
+    value concrete is build constant-reader with level being 41
+    value viewed as reader is concrete
+    say viewed.read-level with nothing
+    say viewed.relay with nothing
+
+    variable gauge is build meter with value-held being 20
+    say gauge.current with nothing
+    evaluate gauge.replace with amount being 42
+    say gauge.current with nothing
+    say gauge.doubled with nothing
+
+    value greeting as text is "hi"
+    say greeting.shouted with nothing
+
+    say guarded with available being true
+    say guarded with available being false
+    say stage with nothing
+
+    value pixels as array of override long is [1, 2, 3]
+    value encoded is apply encode-sample across pixels
+    say encoded at 0
+
+    value started as override long is now in milliseconds
+    sleep for 1 milliseconds
+    say (now in milliseconds) is at least started
+
+    give 0
+end paragraph

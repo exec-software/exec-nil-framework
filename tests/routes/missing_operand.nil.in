@@ -1,0 +1,8 @@
+# NIL Textual Module
+module root
+
+function main:
+    CALL helper
+    PUSH_CONST 0
+    RET
+end function

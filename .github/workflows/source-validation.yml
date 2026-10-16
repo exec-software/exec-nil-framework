@@ -1,0 +1,108 @@
+name: Source validation
+
+"on":
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+# Source checks only: this workflow does not qualify, tag, or publish an SDK.
+jobs:
+  framework:
+    name: Framework (LLVM ${{ matrix.llvm }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        llvm: ["ON", "OFF"]
+    env:
+      NIL_CI_LLVM: ${{ matrix.llvm }}
+      NIL_TEST_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+      NIL_TEST_POSTGRES_SHARE: /usr/share/postgresql/16
+    steps:
+      # Official v4 tag commits verified through GitHub's git/refs API.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential cmake ninja-build python3 pandoc \
+            libffi-dev libtinfo-dev libx11-dev zlib1g-dev libzstd-dev \
+            libsqlite3-dev libpq-dev postgresql-16
+          if [ "$NIL_CI_LLVM" = ON ]; then
+            sudo apt-get install --no-install-recommends -y llvm-18-dev
+          fi
+          test -x "$NIL_TEST_POSTGRES_BIN/initdb"
+          test -f "$NIL_TEST_POSTGRES_SHARE/postgres.bki"
+      - name: Configure Release
+        run: |
+          nil_cmake_args=()
+          if [ "$NIL_CI_LLVM" = ON ]; then
+            nil_cmake_args+=("-DLLVM_DIR=$(llvm-config-18 --cmakedir)")
+          fi
+          cmake -S . -B build/ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DNIL_ENABLE_LLVM="$NIL_CI_LLVM" \
+            "${nil_cmake_args[@]}"
+      - name: Build
+        run: cmake --build build/ci --parallel 2
+      - name: Verify native backend selection
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "scripts")
+          from sdk_qualification import native_backend_available
+          expected = os.environ["NIL_CI_LLVM"] == "ON"
+          available = native_backend_available(Path("build/ci/bin/nilassembler").resolve())
+          assert available == expected, ("native backend selection", expected, available)
+          PY
+      - name: Run complete CTest suite
+        # The PostgreSQL fixture creates its own Unix-socket-only server and
+        # disposable cluster; it never connects to a runner's existing server.
+        run: >-
+          ctest --test-dir build/ci --output-on-failure --parallel 2
+          --no-tests=error --output-junit ctest-results.xml
+      - name: Require full LLVM-enabled coverage
+        if: matrix.llvm == 'ON'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          root = ET.parse(Path("build/ci/ctest-results.xml")).getroot()
+          skipped = [test.attrib["name"] for test in root.iter("testcase")
+                     if test.find("skipped") is not None]
+          assert not skipped, "LLVM-enabled suite unexpectedly skipped: " + ", ".join(skipped)
+          PY
+
+  extension:
+    name: VS Code extension
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: vscode
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: vscode/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build

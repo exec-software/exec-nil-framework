@@ -1,0 +1,24 @@
+!!! A statement ends at end of line. A period or a semicolon ends one
+!!! explicitly. Periods are accepted because a model writing prose-shaped
+!!! code ends sentences with them, and a period between names is still
+!!! member access.
+area demo.prose
+
+reading begin record
+    field sensor as number
+    field level as number
+end record
+
+main returns number begin function
+    value sample is build reading with sensor being 1, level being 42.
+    say sample.sensor.
+    say sample.level.
+
+    set a-total to 0; set a-total to a-total plus 1.
+    say "done".
+
+    value ratio as floating is 0.5.
+    say ratio.
+
+    give 0.
+end function

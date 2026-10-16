@@ -1,0 +1,93 @@
+!!! Read-only value views exported by nilcompiler's analysis snapshot generator.
+!!! IDs belong to one snapshot. No compiler pointers or mutable AST are exposed.
+!!! A missing parent is -1; an unavailable source line is 0.
+
+book nil.std.reflection
+
+read everything from nil.std.core
+read everything from nil.std.reflection.controls
+
+public declaration-info begin record
+    field kind as text
+    field name as text
+    field qualified-name as text
+    field type-name as text
+    field source-path as text
+    field line as override integer
+    field parent-id as override integer
+    field is-public as boolean
+    field semantic-checked as boolean
+end record
+
+public annotation-info begin record
+    field owner-id as override integer
+    field name as text
+    field arguments as text
+    field line as override integer
+end record
+
+public is-function receives info as declaration-info returns boolean begin paragraph
+    give info.kind equals "function"
+end paragraph
+
+public is-record receives info as declaration-info returns boolean begin paragraph
+    give info.kind equals "record"
+end paragraph
+
+public is-public-api receives info as declaration-info returns boolean begin paragraph
+    give info.is-public
+end paragraph
+
+public has-checked-semantics receives info as declaration-info returns boolean begin paragraph
+    give info.semantic-checked
+end paragraph
+
+!!! JSON escaping preserves UTF-8 bytes and supports the source escape controls.
+!!! Other ASCII controls fail explicitly, as companion source export does.
+!!! The native text contract remains NUL-free. This formats data; it executes
+!!! no compiler/plugin commands and does not imply an analyzer sandbox.
+public json-text receives value-text as text returns text begin paragraph
+    value quote-mark is quote
+    value slash as text is "\"
+    variable result as text is quote-mark
+    variable index as override integer is 0
+    repeat while index is less than (the length of value-text)
+        value character is value-text.substr with start being index, length being 1
+        when character equals quote-mark or character equals slash then
+            set result to result plus slash plus character
+        otherwise when character is less than " " then
+            variable escaped as text is ""
+            when character equals tab then
+                set escaped to "u0009"
+            otherwise when character equals newline then
+                set escaped to "u000a"
+            otherwise when character equals (json-carriage-return with nothing) then
+                set escaped to "u000d"
+            otherwise when character equals (json-form-feed with nothing) then
+                set escaped to "u000c"
+            otherwise when character equals (json-vertical-tab with nothing) then
+                set escaped to "u000b"
+            otherwise
+                evaluate panic with "Reflection JSON contains an unsupported control byte"
+            end when
+            set result to result plus slash plus escaped
+        otherwise
+            set result to result plus character
+        end when
+        set index to index plus 1
+    end repeat
+    give result plus quote-mark
+end paragraph
+
+!!! A single diagnostic JSON object, suitable for newline-delimited output.
+!!! Severity uses error/warning/note/help; line is one-based, or 0 if unknown.
+public diagnostic-json receives code as text, severity as text, message as text,
+    source-path as text, line as override integer returns text begin paragraph
+    value q is quote
+    value code-json is json-text with value-text being code
+    value severity-json is json-text with value-text being severity
+    value message-json is json-text with value-text being message
+    value path-json is json-text with value-text being source-path
+    value line-json is Convert.i32-to-text with line
+    give "{" plus q plus "code" plus q plus ":" plus code-json plus "," plus q plus "severity" plus q plus ":" plus severity-json plus "," plus q plus "message" plus q plus ":" plus message-json plus "," plus q plus "path" plus q plus ":" plus path-json plus "," plus q plus "line" plus q plus ":" plus line-json plus "}"
+end paragraph

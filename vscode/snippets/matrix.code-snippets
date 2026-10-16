@@ -1,0 +1,244 @@
+{
+  "Book declaration": {
+    "prefix": "book",
+    "description": "Declare a Matrix book (namespace)",
+    "body": [
+      "book ${1:tour.app}"
+    ]
+  },
+  "Library declaration": {
+    "prefix": "library",
+    "description": "Declare a Matrix library (package)",
+    "body": [
+      "library ${1:tour.application}"
+    ]
+  },
+  "Read book": {
+    "prefix": "read",
+    "description": "Read a book into scope",
+    "body": [
+      "read ${1:ny.lang.core}"
+    ]
+  },
+  "Cite from book": {
+    "prefix": "cite",
+    "description": "Re-export or link names from a book",
+    "body": [
+      "cite ${1:name} from ${2:ny.lang.core}"
+    ]
+  },
+  "Paragraph": {
+    "prefix": "paragraph",
+    "description": "Declare a Matrix paragraph (function)",
+    "body": [
+      "${1:compute} receives ${2:argument} as ${3:number} returns ${4:number} begin paragraph",
+      "    ${0}",
+      "    give ${2:argument}",
+      "end paragraph"
+    ]
+  },
+  "Main paragraph": {
+    "prefix": "main",
+    "description": "Declare the Matrix program entry point",
+    "body": [
+      "main returns number begin paragraph",
+      "    ${0}",
+      "    give 0",
+      "end paragraph"
+    ]
+  },
+  "Record": {
+    "prefix": "record",
+    "description": "Declare a Matrix record (struct)",
+    "body": [
+      "${1:record-item} begin record",
+      "    field ${2:item-value} as ${3:number}",
+      "end record"
+    ]
+  },
+  "Choice": {
+    "prefix": "choice",
+    "description": "Declare a Matrix choice (enum)",
+    "body": [
+      "${1:Name} begin choice",
+      "    when ${2:Variant}",
+      "end choice"
+    ]
+  },
+  "Class": {
+    "prefix": "class",
+    "description": "Declare a Matrix class",
+    "body": [
+      "${1:Name} begin class",
+      "    ${0}",
+      "end class"
+    ]
+  },
+  "Contract": {
+    "prefix": "contract",
+    "description": "Declare a Matrix contract (trait)",
+    "body": [
+      "${1:Readable} begin contract",
+      "    ${2:describe} returns ${3:text}",
+      "end contract"
+    ]
+  },
+  "Implementation": {
+    "prefix": "implementation",
+    "description": "Implement a contract for a type",
+    "body": [
+      "${1:Widget} provides ${2:Readable} begin implementation",
+      "    ${0}",
+      "end implementation"
+    ]
+  },
+  "Extension": {
+    "prefix": "extension",
+    "description": "Add paragraphs to an existing type",
+    "body": [
+      "${1:Widget} begin extension",
+      "    ${0}",
+      "end extension"
+    ]
+  },
+  "Value binding": {
+    "prefix": "value",
+    "description": "Declare an immutable binding",
+    "body": [
+      "value ${1:item-value} as ${2:number} is ${3:0}"
+    ]
+  },
+  "Variable binding": {
+    "prefix": "variable",
+    "description": "Declare a mutable binding",
+    "body": [
+      "variable ${1:total} as ${2:number} is ${3:0}"
+    ]
+  },
+  "Constant": {
+    "prefix": "constant",
+    "description": "Declare a constant",
+    "body": [
+      "constant ${1:LIMIT} as ${2:number} is ${3:100}"
+    ]
+  },
+  "When block": {
+    "prefix": "when",
+    "description": "Insert a conditional block",
+    "body": [
+      "when ${1:condition} then",
+      "    ${0}",
+      "end when"
+    ]
+  },
+  "Consider block": {
+    "prefix": "consider",
+    "description": "Match a value against choices",
+    "body": [
+      "consider ${1:subject}",
+      "    when ${2:pattern} then",
+      "        ${0}",
+      "end consider"
+    ]
+  },
+  "Repeat loop": {
+    "prefix": "repeat",
+    "description": "Insert a counted loop",
+    "body": [
+      "repeat for step from ${1:0} to ${2:count}",
+      "    ${0}",
+      "end repeat"
+    ]
+  },
+  "Attempt block": {
+    "prefix": "attempt",
+    "description": "Handle Matrix faults",
+    "body": [
+      "attempt",
+      "    ${1}",
+      "caught ${2:ReadFault} as ${3:problem}",
+      "    ${4}",
+      "always",
+      "    ${0}",
+      "end attempt"
+    ]
+  },
+  "Apply across": {
+    "prefix": "apply",
+    "description": "Map a worker across an array in parallel",
+    "body": [
+      "value ${1:result} is apply ${2:worker} across ${3:inputs}"
+    ]
+  },
+  "Say": {
+    "prefix": "say",
+    "description": "Print a value",
+    "body": [
+      "say ${1:message}"
+    ]
+  },
+  "Test block": {
+    "prefix": "test",
+    "description": "Declare a Matrix test block",
+    "body": [
+      "${1:name} begin test",
+      "    ${0}",
+      "end test"
+    ]
+  },
+  "Context annotation": {
+    "prefix": "context",
+    "description": "Attach agent-facing context to the following declaration",
+    "body": [
+      "context \"${1:text}\""
+    ]
+  },
+  "Assembly block": {
+    "prefix": "assembly",
+    "description": "Insert inline assembly",
+    "body": [
+      "assembly for ${1:x86_64} is \"${2:nop}\"${0}"
+    ]
+  },
+  "Raw text block": {
+    "prefix": "begin-text",
+    "description": "Raw multiline text; quotes and backslashes need no escaping",
+    "body": [
+      "begin text",
+      "    ${0:text}",
+      "end text"
+    ]
+  },
+  "Type alias": {
+    "prefix": "means",
+    "description": "Name a type or an explicit machine representation",
+    "body": [
+      "${1:byte-count} means ${2:number}"
+    ]
+  },
+  "Named call": {
+    "prefix": "call",
+    "description": "Call a paragraph using a named argument",
+    "body": [
+      "${1:compute} with ${2:argument} being ${3:0}"
+    ]
+  },
+  "Primitive extension": {
+    "prefix": "extend-text",
+    "description": "Add a paragraph to text with an implicit receiver",
+    "body": [
+      "text begin extension",
+      "    ${1:shouted} returns text begin paragraph",
+      "        give my plus \"${2:!}\"",
+      "    end paragraph",
+      "end extension"
+    ]
+  },
+  "Exact-width binding": {
+    "prefix": "override",
+    "description": "Declare an explicitly sized machine representation",
+    "body": [
+      "value ${1:packed} as override ${2|integer,long,byte,double|} is ${3:0}"
+    ]
+  }
+}

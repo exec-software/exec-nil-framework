@@ -1,0 +1,3 @@
+Code generation warnings/errors:
+  line 6: error propagation is unavailable: NIL has no lowering for the '?' operator (match the Option or Result explicitly until propagation is implemented)
+Code generation failed

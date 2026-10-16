@@ -1,0 +1,109 @@
+!!! 04-paragraphs.matrix
+!!! Declarations, named arguments, mutable parameters, variadics, recursion
+!!! and paragraph values.
+!!!
+!!! The universal declaration shape is:
+!!!     <modifiers> <name> <clauses...> begin <kind>
+!!!         ...
+!!!     end <kind>
+!!! "returns" terminates the parameter list. Omitting it means
+!!! "returns nothing".
+
+book tour.functions
+
+!!! Two parameters, separated by a comma.
+add_two receives left as number, right as number returns number begin paragraph
+    give left plus right
+end paragraph
+
+!!! The same declaration written with the draft's "and". It is accepted
+!!! between parameter declarations only, because each item there has the
+!!! fixed shape <name> as <type>. Elsewhere "and" is boolean conjunction.
+add_three receives a as number and b as number and c as number returns number begin paragraph
+    give a plus b plus c
+end paragraph
+
+!!! No result. "returns nothing" may be written or omitted.
+announce receives message as text begin paragraph
+    say message
+end paragraph
+
+!!! No parameters.
+answer returns number begin paragraph
+    give 42
+end paragraph
+
+!!! A mutable parameter is the callee's own binding. It does not mutate the
+!!! caller's scalar, exactly as Ny's "mut" parameter does not.
+increment_local receives variable amount as number returns number begin paragraph
+    set amount to amount plus 1
+    give amount
+end paragraph
+
+!!! Ordinary recursion.
+factorial receives count as number returns number begin paragraph
+    when count is at most 1 then
+        give 1
+    end when
+    give count times (factorial with count being count minus 1)
+end paragraph
+
+!!! A trailing variadic collects the remaining arguments into an array.
+sum_all receives more values as number returns number begin paragraph
+    variable total as number is 0
+    variable index as number is 0
+    repeat while index is less than (the length of values)
+        set total to total plus (values at index)
+        set index to index plus 1
+    end repeat
+    give total
+end paragraph
+
+!!! A default is retained in the syntax tree and is restricted to a literal
+!!! atom. Ny currently rejects omitted arguments at the call site, so every
+!!! caller must still pass every parameter.
+retry receives attempts as number defaulting to 3 returns number begin paragraph
+    give attempts
+end paragraph
+
+main returns number begin paragraph
+
+    !!! Named arguments cannot be mis-ordered. They lower to positional NIL
+    !!! arguments in declaration order. Because Ny has no overload
+    !!! resolution, argument names are checked against the one declaration
+    !!! and never select between candidates.
+    say add_two with left being 1, right being 2
+    say add_two with right being 2, left being 1
+    say add_three with a being 1, b being 2, c being 3
+
+    !!! A zero-argument call is still syntactically a call.
+    say answer with nothing
+    evaluate announce with message being "dispatching"
+
+    value original as number is 5
+    say increment_local with amount being original
+    say original                                 !!! still 5
+
+    say factorial with count being 5
+    !!! A variadic tail is introduced by "more", mirroring "receives more
+    !!! values as integer" in the declaration, so a trailing list of values is
+    !!! never confusable with further named arguments.
+    say sum_all with nothing                     !!! zero variadic arguments
+    say sum_all with more 1, 2, 3, 4
+    say retry with attempts being 5
+
+    !!! A named paragraph value. Captures are rejected, so a paragraph value is
+    !!! a reference to a declared function. Paragraph values and anonymous
+    !!! functions are covered on interpreted routes only: native indirect
+    !!! calls are not implemented.
+    value operation is the paragraph add_two
+    say operation with left being 20, right being 22
+
+    !!! An anonymous paragraph. Noncapturing only; it may not read "original".
+    value doubler is anonymous receives n as number returns number begin paragraph
+        give n times 2
+    end paragraph
+    say doubler with n being 21
+
+    give 0
+end paragraph

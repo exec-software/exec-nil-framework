@@ -1,0 +1,3 @@
+Code generation warnings/errors:
+  line 7: match pattern is unavailable: NIL only lowers qualified variants with zero payloads or one variable/wildcard payload (split or simplify this constructor pattern until structured payload matching is implemented)
+Code generation failed

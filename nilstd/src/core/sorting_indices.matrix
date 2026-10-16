@@ -1,0 +1,127 @@
+!!! Stable ordering of positions, leaving the caller's keys unchanged.
+!!! All output positions are signed 32-bit array indices. The bottom-up merge
+!!! uses two fresh index arrays, O(n) storage and O(n log n) comparisons.
+!!! A text key comparison additionally depends on the compared byte lengths.
+
+book nil.std.core
+
+!!! Selecting the left run on ties preserves original position order.
+!!! NaNs follow numeric values in either direction, including infinities;
+!!! two NaNs, equal keys and signed zeros keep their original relative order.
+sort-index-left-first of type T receives first-key as T, second-key as T, descending as boolean returns boolean begin paragraph
+    when first-key does not equal first-key then
+        give second-key does not equal second-key
+    end when
+    when second-key does not equal second-key then
+        give true
+    end when
+    when descending then
+        give first-key is at least second-key
+    end when
+    give first-key is at most second-key
+end paragraph
+
+merge-sort-indices of type T receives keys as array of T, descending as boolean returns array of override integer begin paragraph
+    value size as override integer is the length of keys
+    variable order as array of override integer is []
+    variable buffer as array of override integer is []
+    variable index as override integer is 0
+    repeat while index is less than size
+        append index to order
+        append index to buffer
+        set index to index plus 1
+    end repeat
+
+    variable width as override integer is 1
+    repeat while width is less than size
+        variable start as override integer is 0
+        repeat while start is less than size
+            !!! Clamp each run using remaining length before adding. Computing
+            !!! start + width or start + 2 * width first could overflow i32.
+            variable left-count as override integer is size minus start
+            when left-count is greater than width then
+                set left-count to width
+            end when
+            value middle as override integer is start plus left-count
+            variable right-count as override integer is size minus middle
+            when right-count is greater than width then
+                set right-count to width
+            end when
+            value finish as override integer is middle plus right-count
+            variable left-position as override integer is start
+            variable right-position as override integer is middle
+            variable write-position as override integer is start
+
+            repeat while left-position is less than middle and right-position is less than finish
+                value first-key as T is keys at (order at left-position)
+                value second-key as T is keys at (order at right-position)
+                when sort-index-left-first of T with first-key being first-key, second-key being second-key, descending being descending then
+                    set buffer at write-position to order at left-position
+                    set left-position to left-position plus 1
+                otherwise
+                    set buffer at write-position to order at right-position
+                    set right-position to right-position plus 1
+                end when
+                set write-position to write-position plus 1
+            end repeat
+            repeat while left-position is less than middle
+                set buffer at write-position to order at left-position
+                set left-position to left-position plus 1
+                set write-position to write-position plus 1
+            end repeat
+            repeat while right-position is less than finish
+                set buffer at write-position to order at right-position
+                set right-position to right-position plus 1
+                set write-position to write-position plus 1
+            end repeat
+            set start to finish
+        end repeat
+
+        value previous is order
+        set order to buffer
+        set buffer to previous
+        !!! Double only when the result is strictly below size. The final
+        !!! pass reaches size directly, so width cannot wrap at the i32 limit.
+        when width is at least (size minus width) then
+            set width to size
+        otherwise
+            set width to width plus width
+        end when
+    end repeat
+    give order
+end paragraph
+
+public stable-sort-indices-i32 receives keys as array of override integer, descending as boolean returns array of override integer begin paragraph
+    give merge-sort-indices of override integer with keys being keys, descending being descending
+end paragraph
+
+public stable-sort-indices-f64 receives keys as array of override double, descending as boolean returns array of override integer begin paragraph
+    give merge-sort-indices of override double with keys being keys, descending being descending
+end paragraph
+
+public stable-sort-indices-text receives keys as array of text, descending as boolean returns array of override integer begin paragraph
+    give merge-sort-indices of text with keys being keys, descending being descending
+end paragraph
+
+!!! Internal bridge for the existing value-sorting APIs. Materialize
+!!! every ordered value before writing any key, preserving shared-array aliases
+!!! and the original returned handle without recursive partitioning.
+sort-values of type T receives keys as array of T, descending as boolean returns array of T begin paragraph
+    value size as override integer is the length of keys
+    when size is at most 1 then
+        give keys
+    end when
+    value order is merge-sort-indices of T with keys being keys, descending being descending
+    variable values as array of T is []
+    variable index as override integer is 0
+    repeat while index is less than size
+        append (keys at (order at index)) to values
+        set index to index plus 1
+    end repeat
+    set index to 0
+    repeat while index is less than size
+        set keys at index to values at index
+        set index to index plus 1
+    end repeat
+    give keys
+end paragraph

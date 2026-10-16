@@ -1,0 +1,8 @@
+literal newline: \n
+literal tab: \t
+literal carriage return: \r
+literal NUL spelling: \0
+literal backslash: \\
+quoted: "ny"
+first
+second

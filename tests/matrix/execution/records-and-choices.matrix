@@ -1,0 +1,84 @@
+!!! 05-records-and-choices.matrix
+!!! Records (Ny structs), choices (Ny enums), type aliases and generics.
+!!!
+!!! Every construction initialises every declared field exactly once. There is
+!!! no field-default spelling, because Ny rejects field defaults and a
+!!! "field x as integer is 37" line would read exactly like a working one.
+
+book tour.shapes
+
+Point begin record
+    field x as number
+    field y as number
+end record
+
+!!! Nested record fields hold nominally typed object handles. Updating one
+!!! through a field or a reference is visible through its other aliases; this
+!!! is shared handle behaviour, not by-value copying.
+Segment begin record
+    field start  as Point
+    field finish as Point
+end record
+
+!!! A generic record. Only concrete instantiations with supported field
+!!! layouts are executed.
+Envelope of type T begin record
+    field item as T
+end record
+
+!!! A type alias.
+Coordinate means number
+
+!!! A choice with typed payloads.
+JobState begin choice
+    when Queued   holding number
+    when Running  holding number
+    when Complete holding number
+    when Failed   holding number
+end choice
+
+!!! A choice with a unit variant and a generic parameter. The standard library
+!!! already supplies Option and Result; redeclaring them in an application is
+!!! a mistake in Matrix for the same reason it is in Ny.
+Maybe of type T begin choice
+    when Present holding T
+    when Absent
+end choice
+
+describe receives state as JobState returns text begin paragraph
+    consider state
+        when JobState.Queued   holding ticket  then give "queued"
+        when JobState.Running  holding percent then give "running"
+        when JobState.Complete holding records then give "complete"
+        when JobState.Failed   holding code provided code is at least 500 then give "server failure"
+        when JobState.Failed   holding code then give "client failure"
+        otherwise give "unknown"
+    end consider
+end paragraph
+
+main returns number begin paragraph
+
+    value origin is build Point with x being 0, y being 0
+    value corner is build Point with x being 3, y being 4
+    say corner.x
+
+    value span is build Segment with start being origin, finish being corner
+    say span.finish.y
+
+    value boxed is build Envelope of number with item being 42
+    say boxed.item
+
+    value here as Coordinate is 7
+    say here
+
+    say describe with state being (JobState.Queued holding 41)
+    say describe with state being (JobState.Failed holding 503)
+
+    value found as Maybe of number is Maybe.Present holding 42
+    consider found
+        when Maybe.Present holding payload then say payload
+        when Maybe.Absent then say "no value"
+    end consider
+
+    give 0
+end paragraph

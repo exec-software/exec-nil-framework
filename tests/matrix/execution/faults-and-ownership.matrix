@@ -1,0 +1,107 @@
+book stage.six
+
+read-fault begin record
+    field reason as text
+end record
+
+checksum-mismatch begin record
+    field expected as number
+    field actual   as number
+end record
+
+read-value receives available as boolean returns number begin paragraph
+    when not available then
+        raise build read-fault with reason being "input is unavailable"
+    end when
+    give 42
+end paragraph
+
+guarded receives available as boolean returns number begin paragraph
+    attempt
+        give read-value with available being available
+    caught read-fault as problem provided problem.reason does not equal ""
+        say problem.reason
+        give 0
+    caught checksum-mismatch as problem
+        say problem.expected
+        give 0
+    always
+        say "cleanup"
+    end attempt
+end paragraph
+
+relay-or-reraise receives available as boolean returns number begin paragraph
+    attempt
+        give read-value with available being available
+    caught anything as token
+        say "relay observed a fault"
+        raise token again
+    end attempt
+end paragraph
+
+!!! 'always' can replace the suspended exit, deliberately suppressing a fault.
+suppressing-exit returns number begin paragraph
+    attempt
+        raise build checksum-mismatch with expected being 1, actual being 2
+    always
+        give minus 1
+    end attempt
+end paragraph
+
+!!! An isolated scalar worker: no globals, handles, text, arrays or I/O.
+encode-sample receives raw as override long returns override long begin paragraph
+    give (raw bitwise xor 255) plus 3
+end paragraph
+
+main returns number begin paragraph
+    say guarded with available being true
+    say guarded with available being false
+
+    attempt
+        say relay-or-reraise with available being false
+    caught read-fault as problem
+        say problem.reason
+    end attempt
+
+    say suppressing-exit with nothing
+
+    !!! Owned buffers: zero-initialised, lexically scoped, freed once.
+    own variable samples as array of override byte sized 8
+    set samples at 0 to 42 becomes override byte
+
+    when true then
+        borrow first from samples
+        borrow second from samples
+        say first at 0
+        say second at 0
+        say samples at 0
+    end when
+
+    when true then
+        borrow writable from samples exclusively
+        set writable at 0 to 43 becomes override byte
+    end when
+
+    move samples into sealed
+    say sealed at 0
+
+    !!! Bounded fork/join over a scalar array.
+    value pixels as array of override long is [1, 2, 3]
+    value encoded is apply encode-sample across pixels
+    say encoded at 0
+    say encoded at 1
+    say encoded at 2
+    say the length of encoded
+
+    !!! Clock operations.
+    value started as override long is now in milliseconds
+    sleep for 5 milliseconds
+    value finished as override long is now in milliseconds
+    say finished is at least started
+
+    give 0
+end paragraph
+
+checksums-are-detected begin test
+    say guarded with available being true
+end test

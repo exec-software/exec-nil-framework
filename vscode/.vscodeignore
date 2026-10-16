@@ -1,0 +1,10 @@
+.gitignore
+esbuild.mjs
+node_modules/**
+out-test/**
+package-lock.json
+src/**
+test/**
+tsconfig*.json
+*.vsix
+*.log

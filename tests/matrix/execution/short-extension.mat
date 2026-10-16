@@ -1,0 +1,18 @@
+!!! This page exists to prove the SHORT extension is wired into the compiler
+!!! driver, not just the editor. '.mat' and '.matrix' select the same front
+!!! end; an unrecognised extension silently routes to the Ny parser, which
+!!! reports "Undefined identifier 'book'" and says nothing about the real
+!!! problem -- so the selector is worth a test of its own.
+!!!
+!!! The book is not called "short.ext": "short" is a reserved word (one of the
+!!! rejected machine types), which this fixture discovered the hard way.
+book brief.extension
+
+greet receives name as text returns text begin paragraph
+    give "hello " plus name
+end paragraph
+
+main returns number begin paragraph
+    say greet with name being "matrix"
+    give 0
+end paragraph

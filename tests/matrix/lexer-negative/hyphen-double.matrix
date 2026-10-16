@@ -1,0 +1,4 @@
+area t
+frame--kind begin record
+    field x as integer
+end record

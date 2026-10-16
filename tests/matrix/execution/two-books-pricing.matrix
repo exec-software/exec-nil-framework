@@ -1,0 +1,17 @@
+!!! 11-books-pricing.matrix
+!!! The companion book read by 11-books.matrix.
+!!!
+!!! Equivalent Ny is examples/applications/modular_billing/pricing.ny.
+
+book tour.pricing
+
+public subtotal receives unit_price as number, quantity as number returns number begin paragraph
+    give unit_price times quantity
+end paragraph
+
+public volume_discount receives amount as number, quantity as number returns number begin paragraph
+    when quantity is at least 10 then
+        give amount over 10
+    end when
+    give 0
+end paragraph

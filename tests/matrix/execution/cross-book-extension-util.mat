@@ -1,0 +1,26 @@
+!!! A second book, extending types it does not declare.
+book tour.shape.util
+
+read everything from tour.shape
+
+rectangle begin extension
+    area returns number begin paragraph
+        give my width times my height
+    end paragraph
+
+    !!! A second method, to prove the fix is not about arity.
+    wider-than receives other as rectangle returns boolean begin paragraph
+        give my width is greater than other.width
+    end paragraph
+end extension
+
+!!! A class declared in another book, extended here.
+surface begin extension
+    describe returns text begin paragraph
+        give my label plus " at " plus (my scale becomes text)
+    end paragraph
+
+    scaled receives factor as number returns number begin paragraph
+        give my scale times factor
+    end paragraph
+end extension

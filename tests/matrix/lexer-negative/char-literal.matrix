@@ -1,0 +1,5 @@
+area t
+main returns number begin function
+    value initial as text is 'a'
+    say initial
+end function

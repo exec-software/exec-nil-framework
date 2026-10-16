@@ -1,0 +1,42 @@
+!!! 'then' is optional in value position.
+!!!
+!!! The statement form reads "when c then ...", so an author transfers that
+!!! shape to the value form and writes "when c then give a". That was
+!!! rejected, and the asymmetry had no meaning behind it: 'give' is what
+!!! marks the value, and it is still required. Both spellings are accepted
+!!! here, in a plain conditional and in every kind of 'consider' arm.
+book tour.value-position-then
+
+state begin choice
+    when Idle
+    when Busy holding number
+end choice
+
+main returns number begin paragraph
+    value n as number is 2
+
+    !!! Value position WITH 'then' -- the shape the statement form teaches.
+    value a as text is when n is greater than 1 then give "many" otherwise give "one" end when
+
+    !!! Value position WITHOUT 'then' -- still accepted, unchanged.
+    value b as text is when n is greater than 1 give "many" otherwise give "one" end when
+
+    value c as text is consider n
+        when 1 then give "one"
+        when 2 give "two"
+        otherwise give "other"
+    end consider
+
+    value here as state is state.Busy holding 7
+    value d as text is consider here
+        when state.Busy holding amount then give "busy"
+        when state.Idle give "idle"
+        otherwise give "unknown"
+    end consider
+
+    say a
+    say b
+    say c
+    say d
+    give 0
+end paragraph

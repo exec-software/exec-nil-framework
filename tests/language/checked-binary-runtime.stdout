@@ -1,0 +1,4 @@
+binary known reads ok
+binary exact writes and limits ok
+binary failures preserve bytes
+binary all octets ok

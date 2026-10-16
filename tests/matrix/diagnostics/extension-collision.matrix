@@ -1,0 +1,23 @@
+!!! Two books must not both add the same method to the same type. The symbol
+!!! is keyed by the type being extended, not by the extending book, so both
+!!! emit one label; left undetected the only report is NIL validation's
+!!! "Duplicate NIL label", which names neither book nor a remedy.
+!!!
+!!! This is the collision imported packages produce in practice: five
+!!! packages, each shipping its own slightly different 'do-something'.
+!!!
+!!! Both extensions live on this page so the fixture is self-contained; the
+!!! check fires on the book identity, and a page is one book.
+book pkg.first
+
+number begin extension
+    do-something returns number begin paragraph
+        give my plus 1
+    end paragraph
+end extension
+
+main returns number begin paragraph
+    value n as number is 5
+    say n.do-something with nothing
+    give 0
+end paragraph

@@ -1,0 +1,4 @@
+Code generation warnings/errors:
+  line 2: intrinsic assertions are unavailable: NIL has no lowering for assert.false (use an explicit conditional until assertion lowering is implemented)
+  line 3: hot reload expressions are unavailable: NIL has no lowering for hotreload.enable (remove this hotreload expression until runtime lowering is implemented)
+Code generation failed

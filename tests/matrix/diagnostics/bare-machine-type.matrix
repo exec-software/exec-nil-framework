@@ -1,0 +1,9 @@
+!!! A machine type is not legal in a bare type position: 'override' marks
+!!! every drop to an exact width so it stays greppable.
+book bad.types
+
+main returns number begin paragraph
+    value pixel as byte is 255
+    say pixel
+    give 0
+end paragraph

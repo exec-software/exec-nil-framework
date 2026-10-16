@@ -1,0 +1,1131 @@
+!!! ===================================================================
+!!! 15-telemetry-relay.matrix
+!!!
+!!! A complete single-file Matrix application, written to exercise every
+!!! proposed construct at once. It is the stress test for the surface: if a
+!!! spelling reads badly here, it reads badly everywhere.
+!!!
+!!! WHAT IT DOES
+!!!
+!!! A telemetry relay. Sensor frames arrive as a packed 32-bit header word
+!!! plus a byte payload. The relay unpacks the header with bitwise
+!!! manipulation, validates it, converts it to network byte order through
+!!! inline assembly, stages the payload in an owned buffer, folds a CRC-32
+!!! over it, encodes the samples in parallel, and dispatches the result
+!!! through a class hierarchy of sinks. Malformed frames raise typed faults.
+!!!
+!!! HEADER LAYOUT (32 bits, packed into a "long" so bit 31 is not a sign bit)
+!!!
+!!!     bits 31..28   version   4 bits
+!!!     bits 27..24   kind      4 bits
+!!!     bits 23..8    length   16 bits
+!!!     bits  7..0    flags     8 bits
+!!!
+!!! FEATURE INVENTORY
+!!!
+!!!     book, read (all four forms), library-free single file
+!!!     book globals, public and private, and :: qualification
+!!!     constants, immutable values, mutable variables
+!!!     records, nested records, generic records, type aliases
+!!!     choices with payloads, unit variants, generic choices
+!!!     classes: abstract, virtual, overriding, private methods,
+!!!              multiple inheritance, ancestor views, "my" receiver
+!!!     contracts, implementations, inherent implementations,
+!!!              generic bounds, associated functions
+!!!     faults: raise, typed handlers, guards, catch-all tokens,
+!!!              re-raise, "always" cleanup, cleanup that replaces an exit
+!!!     owned buffers, shared and exclusive borrows, moves
+!!!     raw pointers: allocate, index, release
+!!!     bitwise: and, or, xor, not, shifted left by, shifted right by
+!!!     arrays, array literals, indexing, length, push
+!!!     every control-flow form, statement and expression
+!!!     named arguments, variadic tails, mutable parameters, recursion
+!!!     paragraph values and anonymous paragraphs
+!!!     parallel apply across, clock operations
+!!!     inline assembly, intrinsics, annotations, agent context, tests
+!!!
+!!! ROUTE HONESTY
+!!!
+!!! Three things here are deliberately route-limited, inherited from Ny and
+!!! not introduced by Matrix. They are marked again at their use sites.
+!!!   1. Inline assembly is x86_64 native only. Interpreted routes reject it.
+!!!   2. Scalar-to-text conversion is interpreted-route only.
+!!!   3. Paragraph values and anonymous paragraphs are interpreted-route only.
+!!! A native build of this file would need those three sites replaced.
+!!! ===================================================================
+
+book relay.telemetry
+
+!!! --- Links -------------------------------------------------------------
+!!! All four forms appear here. The path is an book name, never a file path.
+
+read ny.lang.core
+read ny.lang.io
+read ny.lang.math as math
+read everything from ny.lang.collections
+
+
+!!! --- Book constants and globals ---------------------------------------
+!!!
+!!! Book-level initialisers run in declaration order, not lexical name order.
+!!! An initialiser may read an earlier one in the same book. A typed forward
+!!! reference type-checks and still fails at runtime if it reads before
+!!! initialisation; Matrix does not invent a zero.
+
+constant EXPECTED-VERSION   as override long is 2
+constant VERSION-SHIFT    as override long is 28
+constant KIND-SHIFT       as override long is 24
+constant LENGTH-SHIFT     as override long is 8
+constant NIBBLE-MASK      as override long is 0x0F
+constant BYTE-MASK        as override long is 0xFF
+constant SHORT-MASK       as override long is 0xFFFF
+constant WORD-MASK        as override long is 0xFFFFFFFF
+
+!!! The reflected CRC-32 polynomial will not fit in an integer, so it is a
+!!! long. Matrix has no u32, because Ny rejects u32 arithmetic.
+constant CRC-POLYNOMIAL   as override long is 0xEDB88320
+constant CRC-SEED         as override long is 0xFFFFFFFF
+
+constant MAX-PAYLOAD      as override integer is 64
+constant FLAG-URGENT      as override long is 0x01
+constant FLAG-RETRANSMIT  as override long is 0x02
+constant FLAG-ENCRYPTED   as override long is 0x04
+
+!!! A public global has "relay.telemetry::name" storage identity in NIL.
+!!! Another book may declare "frames-seen" without sharing this storage.
+public variable frames-seen     as override integer is 0
+public variable frames-rejected as override integer is 0
+
+!!! Private to this book: no "public" modifier.
+variable relay-epoch as override long is 0
+
+!!! Aggregate globals remain interpreter-only, so the relay keeps its
+!!! aggregate state in locals and passes it explicitly.
+
+
+!!! --- Type aliases ------------------------------------------------------
+
+microvolts means override long
+sensor-id   means override integer
+
+
+!!! --- Records -----------------------------------------------------------
+!!!
+!!! Every construction initialises every declared field exactly once. There
+!!! is no field-default spelling, because Ny rejects field defaults.
+
+frame-header begin record
+    field version as override long
+    field kind    as override long
+    field length  as override long
+    field flags   as override long
+end record
+
+!!! A nested record field holds a nominally typed object handle. Updating it
+!!! through a field or a reference is visible through its other aliases: this
+!!! is shared handle behaviour, not by-value copying.
+frame begin record
+    field header  as frame-header
+    field sensor  as sensor-id
+    field samples as array of override long
+end record
+
+measurement begin record
+    field sensor   as sensor-id
+    field reading  as microvolts
+    field checksum as override long
+end record
+
+dispatch-stats begin record
+    field accepted as override integer
+    field rejected as override integer
+    field checksum as override long
+end record
+
+!!! A generic record. Only concrete instantiations with supported field
+!!! layouts are executed.
+envelope of type T begin record
+    field item     as T
+    field recorded as override long
+end record
+
+
+!!! --- Choices -----------------------------------------------------------
+!!!
+!!! A variant is introduced by "when", the same word that selects one later.
+!!! Declaring a case and matching a case are the same relation -- "in the case
+!!! of" -- so they share the word.
+!!!
+!!! The payload type is introduced by "holding", not "give", so that the
+!!! declaration and the pattern that destructures it read as mirror images:
+!!!
+!!!     when Sample holding long                    !!! declares the payload
+!!!     when frame-kind.Sample holding v then ...   !!! binds the payload
+!!!
+!!! "give" is reserved for a value leaving the construct the reader is inside.
+!!! A payload type is not a value and does not leave anything.
+
+frame-kind begin choice
+    when Heartbeat
+    when Sample    holding override long
+    when Batch     holding override integer
+    when Shutdown  holding override integer
+end choice
+
+severity begin choice
+    when Info
+    when Warning holding override integer
+    when Critical holding override integer
+end choice
+
+!!! A generic choice. The standard library already supplies Option and
+!!! Result; redeclaring them in an application is a mistake in Matrix for the
+!!! same reason it is in Ny. This one carries a distinct payload shape.
+decoded of type T begin choice
+    when Accepted holding T
+    when Dropped  holding override integer
+end choice
+
+
+!!! --- Fault payloads ----------------------------------------------------
+!!!
+!!! A payload is a fully initialised concrete record. Scalars, class
+!!! instances, choice values and raw pointers are not payloads. A handler
+!!! matches exact canonical record identity, including book and concrete
+!!! generic arguments.
+
+malformed-frame begin record
+    field reason as text
+    field word   as override long
+end record
+
+checksum-mismatch begin record
+    field expected as override long
+    field actual   as override long
+end record
+
+sink-unavailable begin record
+    field sink as text
+end record
+
+
+!!! --- Contracts ---------------------------------------------------------
+!!!
+!!! Implementations use static dispatch. There are no dynamic contract
+!!! objects, because NIL does not execute them. Default method bodies,
+!!! supertraits and associated types have no spelling.
+
+describable begin contract
+    describe returns text
+end contract
+
+scoring begin contract
+    score returns override long
+    rescore receives weight as override long on mutable receiver returns nothing
+end contract
+
+sizable begin contract
+    byte-width without receiver returns override integer
+end contract
+
+
+!!! =====================================================================
+!!! SECTION 1 -- Bit manipulation
+!!!
+!!! Word operators are deliberately wordy. This section is the honest cost
+!!! of that choice: judge the surface here more than anywhere else.
+!!! =====================================================================
+
+context "Packs a telemetry header into one 32-bit word."
+context "version and kind are 4 bits each, length is 16 bits, flags are 8."
+context "Callers must mask their own inputs; this function truncates."
+note inline
+pack-header receives version as override long, kind as override long, length as override long, flags as override long returns override long begin paragraph
+    value v is (version bitwise and NIBBLE-MASK) shifted left by VERSION-SHIFT
+    value k is (kind    bitwise and NIBBLE-MASK) shifted left by KIND-SHIFT
+    value l is (length  bitwise and SHORT-MASK)  shifted left by LENGTH-SHIFT
+    value f is  flags   bitwise and BYTE-MASK
+    give ((v bitwise or k) bitwise or l) bitwise or f
+end paragraph
+
+context "Extracts the 4-bit version field from a packed header word."
+header-version receives word as override long returns override long begin paragraph
+    give (word shifted right by VERSION-SHIFT) bitwise and NIBBLE-MASK
+end paragraph
+
+header-kind receives word as override long returns override long begin paragraph
+    give (word shifted right by KIND-SHIFT) bitwise and NIBBLE-MASK
+end paragraph
+
+header-length receives word as override long returns override long begin paragraph
+    give (word shifted right by LENGTH-SHIFT) bitwise and SHORT-MASK
+end paragraph
+
+header-flags receives word as override long returns override long begin paragraph
+    give word bitwise and BYTE-MASK
+end paragraph
+
+!!! "bitwise not" is the unary complement. Masking afterwards keeps the
+!!! result inside the 32-bit window, because "long" is 64 bits wide.
+invert-flags receives word as override long returns override long begin paragraph
+    give (bitwise not word) bitwise and WORD-MASK
+end paragraph
+
+has-flag receives word as override long, flag as override long returns boolean begin paragraph
+    give (header-flags with word being word) bitwise and flag does not equal 0
+end paragraph
+
+!!! A population count by shifting. This is the kind of loop Matrix exists
+!!! to make unambiguous: no precedence, no operator overloading, no
+!!! off-by-one hidden in a compound assignment.
+count-set-bits receives word as override long returns override integer begin paragraph
+    variable remaining as override long is word bitwise and WORD-MASK
+    variable total     as override integer is 0
+    repeat while remaining does not equal 0
+        when remaining bitwise and 1 equals 1 then
+            set total to total plus 1
+        end when
+        set remaining to remaining shifted right by 1
+    end repeat
+    give total
+end paragraph
+
+
+!!! =====================================================================
+!!! SECTION 2 -- Inline assembly
+!!!
+!!! x86_64 native only. Register-only, "long" operands, at most eight inputs
+!!! and one output, drawn from the approved AT&T integer instruction list.
+!!! Interpreted routes, interpreter libraries and the NIL debugger reject this
+!!! operation with a native-route diagnostic; they never emulate it.
+!!!
+!!! bswapl is not on the approved list, so the 32-bit swap is a full 64-bit
+!!! bswapq followed by a shift. With an output, $0 is the output register and
+!!! $1 is the first input.
+!!! =====================================================================
+
+context "Converts a 32-bit header word to network byte order."
+context "x86_64 native routes only; interpreted routes reject the assembly."
+to-network-order receives word as override long returns override long begin paragraph
+    variable swapped as override long is 0
+    assembly for x86_64 is "movq $1, $0; bswapq $0" using (word bitwise and WORD-MASK) giving swapped
+    give (swapped shifted right by 32) bitwise and WORD-MASK
+end paragraph
+
+!!! A portable equivalent, assembled from the bit operations above. The relay
+!!! uses this one so the program runs on every route.
+to-network-order-portable receives word as override long returns override long begin paragraph
+    value masked is word bitwise and WORD-MASK
+    value b0 is (masked bitwise and BYTE-MASK) shifted left by 24
+    value b1 is ((masked shifted right by 8)  bitwise and BYTE-MASK) shifted left by 16
+    value b2 is ((masked shifted right by 16) bitwise and BYTE-MASK) shifted left by 8
+    value b3 is  (masked shifted right by 24) bitwise and BYTE-MASK
+    give ((b0 bitwise or b1) bitwise or b2) bitwise or b3
+end paragraph
+
+
+!!! =====================================================================
+!!! SECTION 3 -- Owned buffers and raw pointers
+!!!
+!!! Owners and views cannot be parameters, results, globals, record fields,
+!!! array elements or captures, so every ownership operation in this
+!!! application lives inside one function and reads scalars out to pass them
+!!! elsewhere. That restriction is Ny's; Matrix expresses it in the grammar
+!!! by making ownership operations statements rather than expressions.
+!!! =====================================================================
+
+context "Folds a reflected CRC-32 step over one byte. Not cryptographic."
+crc-step receives accumulator as override long, sample as override long returns override long begin paragraph
+    variable crc as override long is accumulator bitwise xor (sample bitwise and BYTE-MASK)
+    repeat for bit from 0 to 8
+        when crc bitwise and 1 equals 1 then
+            set crc to (crc shifted right by 1) bitwise xor CRC-POLYNOMIAL
+        otherwise
+            set crc to crc shifted right by 1
+        end when
+    end repeat
+    give crc bitwise and WORD-MASK
+end paragraph
+
+context "Stages a payload in an owned byte buffer and returns its CRC-32."
+context "The buffer is freed exactly once when its final owner's scope ends."
+stage-and-checksum receives samples as array of override long returns override long begin paragraph
+
+    !!! An owned buffer is zero-initialised. A count below one requests one
+    !!! element; an oversized allocation fails. Mutating it requires a
+    !!! mutable owner.
+    own variable staging as array of override byte sized MAX-PAYLOAD
+
+    value count as override integer is the length of samples
+
+    !!! One exclusive view. While it exists, no other read, write, move or
+    !!! borrow of the owner is permitted. Mutability belongs to the view
+    !!! type, so the view binding itself is not declared mutable. Lifetimes
+    !!! are lexical, not last-use inferred: the borrow ends with the block.
+    when count is greater than 0 then
+        borrow writable from staging exclusively
+        repeat for index from 0 to count
+            when index is at least MAX-PAYLOAD then
+                stop repeating
+            end when
+            set writable at index to ((samples at index) bitwise and BYTE-MASK) becomes override byte
+        end repeat
+    end when
+
+    !!! Shared views. Several may coexist and the owner may still be read,
+    !!! but writes and moves are forbidden until every view's scope ends.
+    variable crc as override long is CRC-SEED
+    when true then
+        borrow first  from staging
+        borrow second from staging
+        repeat for index from 0 to count
+            when index is at least MAX-PAYLOAD then
+                stop repeating
+            end when
+            set crc to crc-step with accumulator being crc, sample being (first at index) becomes override long
+        end repeat
+        !!! The owner is still readable while shared views exist.
+        say second at 0
+        say staging at 0
+    end when
+
+    !!! A move transfers the allocation into a new binding and invalidates
+    !!! the source. A move does not free storage. Control-flow checking is
+    !!! conservative: if either branch of a conditional moves an owner,
+    !!! later use of it is rejected.
+    move staging into sealed
+    say sealed at 0
+
+    give (bitwise not crc) bitwise and WORD-MASK
+end paragraph
+
+context "Writes a header word into a raw byte buffer, big-endian."
+context "Raw pointers are explicitly released; there is no borrow checking."
+serialise-header receives word as override long returns override long begin paragraph
+
+    !!! Raw pointers are the unmanaged alternative to owned buffers:
+    !!! explicit allocation, explicit release, no lexical lifetime.
+    allocate octets as pointer to override byte sized 4
+
+    value ordered is to-network-order-portable with word being word
+    set octets at 0 to ((ordered shifted right by 24) bitwise and BYTE-MASK) becomes override byte
+    set octets at 1 to ((ordered shifted right by 16) bitwise and BYTE-MASK) becomes override byte
+    set octets at 2 to ((ordered shifted right by 8)  bitwise and BYTE-MASK) becomes override byte
+    set octets at 3 to  (ordered                      bitwise and BYTE-MASK) becomes override byte
+
+    !!! Byte storage retains the low eight bits, so -1 becomes 255, 256
+    !!! becomes 0 and 511 becomes 255. This is Ny's wrapping byte rule, not a
+    !!! range assertion.
+    variable rebuilt as override long is 0
+    repeat for index from 0 to 4
+        set rebuilt to (rebuilt shifted left by 8) bitwise or ((octets at index) becomes override long)
+    end repeat
+
+    release octets
+    give rebuilt
+end paragraph
+
+
+!!! =====================================================================
+!!! SECTION 4 -- Classes
+!!!
+!!! "my" is the receiver. Matrix synthesises the explicit first self
+!!! parameter that Ny requires, so the NIL CALL_METHOD arity is identical.
+!!! Generic classes, trait objects and downcasts have no spelling.
+!!! =====================================================================
+
+!!! An abstract class may be a parameter, result, field or local type, but it
+!!! cannot be constructed.
+abstract sink begin class
+    field name     as text
+    field delivered as override integer
+
+    !!! An abstract method has no body and therefore no begin/end pair. A
+    !!! class with its own abstract method must itself be declared abstract.
+    public abstract accept receives reading as microvolts returns boolean
+
+    !!! A concrete helper on an abstract class may call an abstract method on
+    !!! the receiver. It keeps its declaring owner's scope, but its virtual
+    !!! call selects the dynamic override.
+    public relay receives reading as microvolts returns override integer begin paragraph
+        when my accept with reading being reading then
+            set my delivered to my delivered plus 1
+        end when
+        give my delivered
+    end paragraph
+
+    public label returns text begin paragraph
+        give my name
+    end paragraph
+end class
+
+console-sink inherits sink begin class
+    field threshold as microvolts
+
+    public replaces accept receives reading as microvolts returns boolean begin paragraph
+        when reading is less than my threshold then
+            give false
+        end when
+        say reading
+        give true
+    end paragraph
+
+    !!! No modifier means private to the declaring class.
+    margin returns microvolts begin paragraph
+        give my threshold shifted right by 1
+    end paragraph
+
+    public headroom receives reading as microvolts returns microvolts begin paragraph
+        give reading minus (my margin with nothing)
+    end paragraph
+end class
+
+!!! A deeper override. An override remains virtual even where the marker is
+!!! omitted; Matrix requires the marker anyway, so the intent is explicit.
+counting-sink inherits console-sink begin class
+    field dropped as override integer
+
+    public replaces accept receives reading as microvolts returns boolean begin paragraph
+        when reading is at most 0 then
+            set my dropped to my dropped plus 1
+            give false
+        end when
+        give true
+    end paragraph
+end class
+
+!!! Multiple inheritance uses the actual concrete field layout, not an assumed
+!!! first-base prefix. Cycles, ambiguous fields, ambiguous inherited methods,
+!!! incompatible overrides, reduced visibility and hiding a nonvirtual
+!!! inherited method are all rejected.
+tagged begin class
+    field tag as text
+
+    public tag-of returns text begin paragraph
+        give my tag
+    end paragraph
+end class
+
+tagged-sink inherits counting-sink, tagged begin class
+    public replaces accept receives reading as microvolts returns boolean begin paragraph
+        give reading is greater than 0
+    end paragraph
+
+    public identity returns text begin paragraph
+        give my tag-of with nothing
+    end paragraph
+end class
+
+
+!!! =====================================================================
+!!! SECTION 5 -- Implementations
+!!! =====================================================================
+
+measurement provides describable begin implementation
+    describe returns text begin paragraph
+        give "measurement"
+    end paragraph
+end implementation
+
+measurement provides scoring begin implementation
+    score returns override long begin paragraph
+        give my reading bitwise xor my checksum
+    end paragraph
+
+    rescore receives weight as override long on mutable receiver returns nothing begin paragraph
+        set my reading to my reading times weight
+    end paragraph
+end implementation
+
+measurement provides sizable begin implementation
+    byte-width without receiver returns override integer begin paragraph
+        give 20
+    end paragraph
+end implementation
+
+!!! An inherent implementation block, with no contract named. Extra concrete
+!!! helpers are allowed and do not become contract requirements.
+measurement begin implementation
+    urgent returns boolean begin paragraph
+        give my checksum bitwise and FLAG-URGENT does not equal 0
+    end paragraph
+end implementation
+
+frame-header begin implementation
+    packed returns override long begin paragraph
+        give pack-header with version being my version, kind being my kind, length being my length, flags being my flags
+    end paragraph
+end implementation
+
+!!! A generic implementation constrained by a bound. The bound restricts which
+!!! concrete types may instantiate the generic code; it does not relax the
+!!! native layout restrictions, which still apply independently.
+envelope of type T meeting scoring begin implementation
+    weighted-score returns override long begin paragraph
+        give (my item.score with nothing) plus my recorded
+    end paragraph
+end implementation
+
+envelope of type T meeting describable begin implementation
+    caption returns text begin paragraph
+        give my item.describe with nothing
+    end paragraph
+end implementation
+
+!!! An associated function has no receiver and may be called through a
+!!! bounded type parameter. Two different bounds exposing the same associated
+!!! function are ambiguous and are rejected rather than resolved by
+!!! declaration order.
+default-width of type T meeting sizable returns override integer begin paragraph
+    give T.byte-width with nothing
+end paragraph
+
+
+!!! =====================================================================
+!!! SECTION 6 -- Parallel workers
+!!!
+!!! A worker and its entire transitive call graph may use scalar arithmetic,
+!!! bitwise operations, comparisons, scalar casts, locals, branches, loops
+!!! and direct calls to other isolated scalar helpers. They may NOT touch
+!!! globals, pointers, owned buffers, views, record handles, arrays, text,
+!!! class methods, a nested apply, assembly, foreign calls, console or file
+!!! I/O, process operations, clocks, sleeps or fault payloads.
+!!!
+!!! None of the functions below reads an book global. That is not a style
+!!! choice: the restriction is checked on NIL as well as source, so
+!!! hand-written NIL cannot grant a worker additional effects.
+!!! =====================================================================
+
+!!! The mask literals below are written out rather than read from the book
+!!! constants above, and that is NOT a style choice. A book constant is a
+!!! global, so reading one emits LOAD_GLOBAL, which the parallel contract
+!!! forbids inside a worker's transitive call graph. Ny checks this on the NIL
+!!! artifact as well as on source, so neither --no-typecheck nor hand-written
+!!! NIL can grant a worker the extra effect.
+!!!
+!!! This file originally did read SHORT-MASK and WORD-MASK here, and the
+!!! verifier rejected it with:
+!!!
+!!!     worker 'relay__telemetry__encode_sample' contains non-isolated
+!!!     operation 'LOAD_GLOBAL'
+clamp-sample receives sample as override long returns override long begin paragraph
+    when sample is less than 0 then
+        give 0
+    end when
+    when sample is greater than 0xFFFF then
+        give 0xFFFF
+    end when
+    give sample
+end paragraph
+
+whiten-sample receives sample as override long returns override long begin paragraph
+    value clamped is clamp-sample with sample being sample
+    give (clamped bitwise xor (clamped shifted right by 7)) bitwise and 0xFFFF
+end paragraph
+
+context "Isolated scalar worker: scales, whitens and masks one sample."
+encode-sample receives raw as override long returns override long begin paragraph
+    give (whiten-sample with sample being (raw times 3)) bitwise and 0xFFFFFFFF
+end paragraph
+
+
+!!! =====================================================================
+!!! SECTION 7 -- Faults
+!!!
+!!! "always" is Ny's "recover": cleanup with finally semantics, not an
+!!! additional handler. It runs once on normal exit, after a selected
+!!! handler, on unmatched propagation, and through give, stop repeating or
+!!! continue repeating.
+!!! =====================================================================
+
+context "Validates a packed header word and returns its unpacked record."
+context "Raises malformed-frame for a bad version, kind or declared length."
+validate-header receives word as override long returns frame-header begin paragraph
+    value version is header-version with word being word
+    value kind    is header-kind    with word being word
+    value length  is header-length  with word being word
+    value flags   is header-flags   with word being word
+
+    when version does not equal EXPECTED-VERSION then
+        raise malformed-frame with reason being "unsupported version", word being word
+    end when
+
+    when kind is greater than 3 then
+        raise malformed-frame with reason being "unknown kind", word being word
+    end when
+
+    when length is greater than (MAX-PAYLOAD becomes override long) then
+        raise malformed-frame with reason being "payload too long", word being word
+    end when
+
+    give build frame-header with version being version, kind being kind, length being length, flags being flags
+end paragraph
+
+context "Verifies a payload checksum, raising checksum-mismatch on failure."
+verify-checksum receives expected as override long, actual as override long returns nothing begin paragraph
+    when expected does not equal actual then
+        raise checksum-mismatch with expected being expected, actual being actual
+    end when
+end paragraph
+
+!!! Handlers are tried in source order. A guard must be boolean; a false
+!!! guard proceeds to the next handler. The binding is visible in its own
+!!! guard and body only -- not in sibling handlers and not in "always".
+!!! Cleanup resources are declared outside the attempt, because attempt-body
+!!! bindings are not visible to handlers or to cleanup.
+context "Decodes one frame, converting every fault into a decoded result."
+decode-frame receives word as override long, samples as array of override long returns decoded of override long begin paragraph
+    variable attempts as override integer is 0
+
+    attempt
+        set attempts to attempts plus 1
+        value header is validate-header with word being word
+        value folded is stage-and-checksum with samples being samples
+        evaluate verify-checksum with expected being folded, actual being folded
+        set relay.telemetry::frames-seen to relay.telemetry::frames-seen plus 1
+        give decoded.Accepted holding folded
+
+    caught malformed-frame as problem provided problem.reason does not equal ""
+        say problem.reason
+        set relay.telemetry::frames-rejected to relay.telemetry::frames-rejected plus 1
+        give decoded.Dropped holding 1
+
+    caught malformed-frame as problem
+        say "malformed frame"
+        give decoded.Dropped holding 2
+
+    caught checksum-mismatch as problem
+        say problem.expected
+        say problem.actual
+        give decoded.Dropped holding 3
+
+    always
+        say attempts
+    end attempt
+end paragraph
+
+!!! A catch-all binds an opaque token. The token may be ignored, or it may be
+!!! the complete expression of a re-raise. Reading its fields, printing it,
+!!! copying it, casting it, giving it or passing it onward is rejected. An
+!!! unguarded catch-all must be the final handler. A retained token can be
+!!! re-raised more than once if an inner attempt handles each re-raise.
+context "Re-raises any fault after logging that the relay saw one."
+relay-or-reraise receives word as override long, samples as array of override long returns decoded of override long begin paragraph
+    attempt
+        give decode-frame with word being word, samples being samples
+    caught anything as token
+        say "relay observed a fault"
+        raise token again
+    end attempt
+end paragraph
+
+!!! A give or raise inside "always" replaces the suspended exit. This can
+!!! deliberately suppress an earlier fault or result -- shown here on purpose,
+!!! because it is the single most surprising rule in the fault contract.
+context "Demonstrates cleanup replacing a suspended fault. Never raises."
+suppressing-exit returns override integer begin paragraph
+    attempt
+        raise sink-unavailable with sink being "console"
+    always
+        give minus 1
+    end attempt
+end paragraph
+
+
+!!! =====================================================================
+!!! SECTION 8 -- Variadics, recursion, mutable parameters
+!!! =====================================================================
+
+context "Folds a CRC over a variadic list of samples."
+checksum-of receives more samples as override long returns override long begin paragraph
+    variable crc   as override long is CRC-SEED
+    variable index as override integer is 0
+    repeat while index is less than (the length of samples)
+        set crc to crc-step with accumulator being crc, sample being (samples at index)
+        set index to index plus 1
+    end repeat
+    give (bitwise not crc) bitwise and WORD-MASK
+end paragraph
+
+!!! A mutable parameter is the callee's own binding. It does not mutate the
+!!! caller's scalar.
+normalise-in-place receives variable sample as override long, floor as override long returns override long begin paragraph
+    when sample is less than floor then
+        set sample to floor
+    end when
+    give sample
+end paragraph
+
+!!! Ordinary recursion. The parameter default is retained in the syntax tree
+!!! and restricted to a literal atom; Ny currently rejects omitted arguments
+!!! at the call site, so every caller still passes every parameter.
+fold-depth receives depth as override integer defaulting to 1 returns override integer begin paragraph
+    when depth is at most 1 then
+        give 1
+    end when
+    give depth times (fold-depth with depth being depth minus 1)
+end paragraph
+
+
+!!! =====================================================================
+!!! SECTION 9 -- Intrinsics
+!!!
+!!! A runtime-backed declaration has no body. The annotation is not an
+!!! implementation: the named provider must exist on every claimed route.
+!!! =====================================================================
+
+note intrinsic "console.writeln"
+write-line receives line as text
+
+
+!!! =====================================================================
+!!! SECTION 10 -- Dispatch
+!!! =====================================================================
+
+context "Dispatches one reading through an ancestor-typed sink."
+context "The static view controls available members; the dynamic class"
+context "controls which override actually runs."
+dispatch receives target as sink, reading as microvolts returns override integer begin paragraph
+    give target.relay with reading being reading
+end paragraph
+
+context "Summarises a batch of readings against one sink."
+summarise receives target as sink, readings as array of override long returns dispatch-stats begin paragraph
+    variable accepted as override integer is 0
+    variable rejected as override integer is 0
+    variable folded   as override long is CRC-SEED
+
+    repeat for each reading in readings
+        value before is target.relay with reading being reading
+        when before is greater than accepted then
+            set accepted to before
+        otherwise
+            set rejected to rejected plus 1
+        end when
+        set folded to crc-step with accumulator being folded, sample being reading
+    end repeat
+
+    give build dispatch-stats with accepted being accepted, rejected being rejected, checksum being ((bitwise not folded) bitwise and WORD-MASK)
+end paragraph
+
+
+!!! =====================================================================
+!!! SECTION 11 -- Entry point
+!!! =====================================================================
+
+main returns number begin paragraph
+
+    say "MATRIX TELEMETRY RELAY"
+
+    !!! --- Clock ---------------------------------------------------------
+    !!! A nonpositive duration is an immediate no-op. Real and text
+    !!! durations are rejected rather than silently converted.
+    value started as override long is now in milliseconds
+    set relay-epoch to started
+
+    !!! --- Bit packing ---------------------------------------------------
+    value flags as override long is (FLAG-URGENT bitwise or FLAG-ENCRYPTED)
+    value word  as override long is pack-header with version being EXPECTED-VERSION, kind being 1, length being 8, flags being flags
+
+    say header-version with word being word
+    say header-kind    with word being word
+    say header-length  with word being word
+    say header-flags   with word being word
+    say has-flag with word being word, flag being FLAG-URGENT
+    say has-flag with word being word, flag being FLAG-RETRANSMIT
+    say count-set-bits with word being word
+    say invert-flags with word being word
+
+    !!! --- Byte order and raw pointers ------------------------------------
+    say to-network-order-portable with word being word
+    say serialise-header with word being word
+
+    !!! --- Records and nested records -------------------------------------
+    value header is build frame-header with version being EXPECTED-VERSION, kind being 1, length being 8, flags being flags
+    say header.packed with nothing
+
+    value samples as array of override long is [
+        17 becomes override long,
+        42 becomes override long,
+        255 becomes override long,
+        1024 becomes override long
+    ]
+
+    variable frame is build frame with header being header, sensor being 7, samples being samples
+    say frame.header.version
+    say frame.sensor
+    say frame.samples at 2
+    say the length of frame.samples
+
+    !!! Record handles are shared, so a mutation through the nested field is
+    !!! visible through the original binding.
+    set frame.header.flags to FLAG-RETRANSMIT
+    say header.flags
+
+    !!! --- Arrays ----------------------------------------------------------
+    variable readings as array of override long is []
+    append (120 becomes override long) to readings
+    append (minus 5 becomes override long) to readings
+    append (900 becomes override long) to readings
+    say the length of readings
+
+    !!! An out-of-range read yields the element's zero value and an
+    !!! out-of-range write is a no-op. This is Ny's behaviour, inherited.
+    say readings at 99
+
+    !!! --- Owned buffers and checksums -------------------------------------
+    value folded is stage-and-checksum with samples being samples
+    say folded
+    say checksum-of with more 17 becomes override long, 42 becomes override long
+    say checksum-of with nothing
+
+    !!! --- Parallel apply ---------------------------------------------------
+    !!! Results occupy the same indices as their inputs, the input array is
+    !!! not mutated, and the caller receives the result array only after
+    !!! every worker thread has finished. There are no task handles.
+    value encoded is apply encode-sample across samples
+    repeat for index from 0 to (the length of encoded)
+        say encoded at index
+    end repeat
+
+    !!! An empty input returns an empty array without starting a worker.
+    value idle as array of override long is []
+    value no-work is apply encode-sample across idle
+    say the length of no-work
+
+    !!! --- Classes and ancestor views ----------------------------------------
+    !!! An ancestor view changes the static view, not the dynamic class or the
+    !!! field storage. There is no slicing and no implicit copy. A
+    !!! Sink-typed parameter never becomes a derived type merely because a
+    !!! derived object was passed.
+    variable console is build console-sink with name being "console", delivered being 0, threshold being (100 becomes override long)
+    variable counting is build counting-sink with name being "counting", delivered being 0, threshold being (50 becomes override long), dropped being 0
+    variable tagged is build tagged-sink with name being "tagged", delivered being 0, threshold being (10 becomes override long), dropped being 0, tag being "edge"
+
+    value as-sink as sink is console
+    say dispatch with target being as-sink, reading being (240 becomes override long)
+    say dispatch with target being as-sink, reading being (10 becomes override long)
+    say as-sink.label with nothing
+    say console.headroom with reading being (240 becomes override long)
+
+    value counting-view as sink is counting
+    say dispatch with target being counting-view, reading being (minus 3 becomes override long)
+    say counting.dropped
+
+    value tagged-view as sink is tagged
+    say dispatch with target being tagged-view, reading being (5 becomes override long)
+    say tagged.identity with nothing
+
+    !!! AN ARRAY OF CLASS HANDLES IS NOT EXECUTABLE on the interpreted route,
+    !!! so there is no loop over sinks here. Written as
+    !!!
+    !!!     value sinks as array of sink is [as-sink, counting-view, tagged-view]
+    !!!
+    !!! it compiles to 'NEW_ARRAY_LITERAL 3 sink' and the VM rejects it with
+    !!! "class value cannot be used by this untyped, scalar, or raw-pointer
+    !!! operation". A hand-written Ny equivalent fails identically, so this is
+    !!! a NIL route limitation rather than anything Matrix introduces -- worth
+    !!! knowing, because classes.md says aliases "remain aliases through
+    !!! collection", which overstates what the interpreter executes.
+    !!!
+    !!! Dispatch through each ancestor-typed value directly instead.
+    say as-sink.label with nothing
+    say counting-view.label with nothing
+    say tagged-view.label with nothing
+
+    value stats is summarise with target being counting-view, readings being readings
+    say stats.accepted
+    say stats.rejected
+    say stats.checksum
+
+    !!! --- Contracts and generics --------------------------------------------
+    variable reading is build measurement with sensor being 7, reading being (480 becomes override long), checksum being folded
+    say reading.describe with nothing
+    say reading.score with nothing
+    say reading.urgent with nothing
+    evaluate reading.rescore with weight being (2 becomes override long)
+    say reading.reading
+    say measurement.byte-width with nothing
+    say default-width of measurement with nothing
+
+    value boxed is build envelope of measurement with item being reading, recorded being started
+    say boxed.caption with nothing
+    say boxed.weighted-score with nothing
+
+    !!! --- Choices ------------------------------------------------------------
+    value kind as frame-kind is frame-kind.Sample holding (42 becomes override long)
+    consider kind
+        when frame-kind.Heartbeat then say "heartbeat"
+        when frame-kind.Sample holding sample-value provided sample-value is greater than 40 then say "large sample"
+        when frame-kind.Sample holding sample-value then say "sample"
+        when frame-kind.Batch holding count then say count
+        when frame-kind.Shutdown holding code then say code
+        otherwise say "unknown kind"
+    end consider
+
+    value level as severity is severity.Warning holding 3
+    value level-name as text is consider level
+        when severity.Info give "info"
+        when severity.Warning holding code give "warning"
+        when severity.Critical holding code give "critical"
+        otherwise give "unclassified"
+    end consider
+    say level-name
+
+    !!! --- Faults --------------------------------------------------------------
+    value good is decode-frame with word being word, samples being samples
+    consider good
+        when decoded.Accepted holding checksum then say checksum
+        when decoded.Dropped holding code then say code
+    end consider
+
+    !!! A bad version word: version 9 instead of 2.
+    value bad-word is pack-header with version being 9, kind being 1, length being 8, flags being 0
+    value bad is decode-frame with word being bad-word, samples being samples
+    consider bad
+        when decoded.Accepted holding checksum then say checksum
+        when decoded.Dropped holding code then say code
+    end consider
+
+    !!! A re-raise caught at the call site. An exact nominal match includes
+    !!! book and concrete generic arguments: equally named records in
+    !!! different books do not match each other.
+    attempt
+        value relayed is relay-or-reraise with word being bad-word, samples being samples
+        consider relayed
+            when decoded.Accepted holding checksum then say checksum
+            when decoded.Dropped holding code then say code
+        end consider
+    caught malformed-frame as problem
+        say problem.reason
+    caught anything as token
+        say "unexpected fault class"
+    end attempt
+
+    say suppressing-exit with nothing
+
+    !!! --- Control flow, every form ---------------------------------------------
+    variable countdown as override integer is 3
+    repeat while countdown is greater than 0
+        say countdown
+        set countdown to countdown minus 1
+    end repeat
+
+    repeat for step from 0 to 5
+        when step equals 2 then
+            continue repeating
+        end when
+        when step equals 4 then
+            stop repeating
+        end when
+        say step
+    end repeat
+
+    value labels as array of text is ["alpha", "beta", "gamma"]
+    repeat for each label in labels
+        say label
+    end repeat
+
+    variable budget as override integer is 2
+    repeat forever
+        when budget is at most 0 then
+            stop repeating
+        end when
+        set budget to budget minus 1
+    end repeat
+
+    !!! Conditional expression, and the statement form with every branch.
+    value verdict as text is when stats.accepted is greater than 0 give "delivering" otherwise give "idle" end when
+    say verdict
+
+    when relay.telemetry::frames-seen is greater than 0 then
+        say "frames accepted"
+    otherwise when relay.telemetry::frames-rejected is greater than 0 then
+        say "all frames rejected"
+    otherwise
+        say "no frames"
+    end when
+
+    !!! --- Mutable parameters, recursion, paragraph values -------------------------
+    value floor-value as override long is 100
+    value raised is normalise-in-place with sample being (7 becomes override long), floor being floor-value
+    say raised
+    say fold-depth with depth being 5
+
+    !!! The paragraph-value demonstration lives in its own paragraph,
+    !!! declared after main. It CANNOT sit here, because main contains
+    !!! attempt blocks and an indirect call is rejected inside any
+    !!! fault-bearing function:
+    !!!
+    !!!     call in a fault-bearing function lacks a supported exact
+    !!!     result signature
+    !!!
+    !!! Hand-written Ny fails the same way, so this is an undocumented
+    !!! interaction between two NIL features rather than anything Matrix
+    !!! introduces. Keep indirect calls out of fault-handling paragraphs.
+    say paragraph-values with nothing
+
+    !!! --- Intrinsic and clock ------------------------------------------------------
+    evaluate write-line with line being "relay drained"
+    sleep for 5 milliseconds
+    value finished as override long is now in milliseconds
+    say finished is at least started
+
+    say relay.telemetry::frames-seen
+    say relay.telemetry::frames-rejected
+    give 0
+end paragraph
+
+
+context "Paragraph values and anonymous paragraphs, kept clear of faults."
+context "Interpreted routes only: native indirect calls are not implemented."
+paragraph-values returns override long begin paragraph
+    value folder is the paragraph crc-step
+    value folded is folder with accumulator being CRC-SEED, sample being (42 becomes override long)
+
+    value doubler is anonymous receives n as override long returns override long begin paragraph
+        give n shifted left by 1
+    end paragraph
+    value doubled is doubler with n being (21 becomes override long)
+
+    give folded bitwise xor doubled
+end paragraph
+
+
+!!! =====================================================================
+!!! SECTION 12 -- Tests
+!!!
+!!! A test block lowers to Ny's test declaration and sets function flag
+!!! bit 1. These are registered in the NIL module's test registry.
+!!! =====================================================================
+
+header-round-trips begin test
+    value word is pack-header with version being 2, kind being 3, length being 64, flags being 5
+    say header-version with word being word
+    say header-kind    with word being word
+    say header-length  with word being word
+    say header-flags   with word being word
+end test
+
+byte-order-is-reversible begin test
+    value word is pack-header with version being 2, kind being 1, length being 8, flags being 1
+    value once  is to-network-order-portable with word being word
+    value twice is to-network-order-portable with word being once
+    say twice equals word
+end test
+
+bit-counting-is-exact begin test
+    say count-set-bits with word being 0xFF
+    say count-set-bits with word being 0
+    say count-set-bits with word being WORD-MASK
+end test
+
+malformed-frames-are-rejected begin test
+    value bad is pack-header with version being 9, kind being 1, length being 8, flags being 0
+    attempt
+        evaluate validate-header with word being bad
+        say "unexpectedly accepted"
+    caught malformed-frame as problem
+        say problem.reason
+    end attempt
+end test

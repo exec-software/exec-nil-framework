@@ -1,0 +1,1 @@
+NIL interpreter runtime error: panic: factorial_i32: input must not be negative

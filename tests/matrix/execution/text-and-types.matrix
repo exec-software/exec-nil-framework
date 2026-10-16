@@ -1,0 +1,66 @@
+!!! 17-types-and-text.matrix
+!!!
+!!! The two-tier type scheme, and text without any escape syntax.
+!!! Full rationale in ../docs/types-and-text.md.
+!!!
+!!! Tier one is what a program says unless it has a reason not to:
+!!!     text  number  floating  boolean  nothing
+!!! Encoding, width and precision are not among its concerns.
+!!!
+!!! Tier two is the machine representation, reached only through "override":
+!!!     override integer   i32
+!!!     override long      i64
+!!!     override byte      u8   (wrapping)
+!!!     override double    f64
+!!!
+!!! A machine type is NOT legal in a bare type position. "as byte" is an
+!!! error; "as override byte" is the spelling. That is the point of the
+!!! keyword -- the default path is ergonomic, and every drop to an exact
+!!! width is marked and greppable.
+!!!
+!!! "short", "unsigned", "decimal", "single" and "letter" are reserved and
+!!! REJECTED with a specific message, because NIL cannot carry them: its only
+!!! unsigned type is byte, it has no fixed-point type, and it has no char.
+!!! Encoding and one-letter text belong to the standard library, not here.
+
+book demo.text
+
+!!! Ergonomic types are what a program says unless it has a reason not to.
+answer   returns number   begin paragraph give 42 end paragraph
+ratio    returns floating begin paragraph give 0.5 end paragraph
+ready    returns boolean  begin paragraph give true end paragraph
+greeting returns text     begin paragraph give "hello" end paragraph
+
+!!! "override" marks every drop to a machine representation, so reaching for
+!!! one is deliberate and greppable.
+pack receives version as override byte, length as override long returns override long begin paragraph
+    give ((version becomes override long) shifted left by 16) bitwise or length
+end paragraph
+
+main returns number begin paragraph
+
+    !!! A quoted literal is raw. No doubling, no backslashes.
+    value path as text is "C:\dir\file.txt"
+    value regex as text is "^[a-z]+\d*$"
+    say path; say regex
+
+    !!! A literal quote is the 'quote' constant, concatenated with 'plus' --
+    !!! which is already text concatenation. There is no escape syntax.
+    value said as text is "he said " plus quote plus "hi" plus quote
+    say said
+
+    !!! 'newline' and 'tab' likewise.
+    say "one" plus newline plus "two"
+    say "name" plus tab plus "value"
+
+    !!! A raw block for anything awkward. Nothing inside is escaped, because
+    !!! the terminator is a line-anchored keyword rather than a character.
+    value banner as text is begin text
+        He said "hi" and the path was C:\Users\me\file.txt
+          this line keeps its extra indent
+        {"json": "works too", "escaped": "nothing \n needed"}
+    end text
+    say banner
+
+    give 0
+end paragraph

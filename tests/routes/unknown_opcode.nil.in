@@ -1,0 +1,8 @@
+# NIL Textual Module
+module root
+
+function main:
+    THIS_OPCODE_DOES_NOT_EXIST
+    PUSH_CONST 0
+    RET
+end function

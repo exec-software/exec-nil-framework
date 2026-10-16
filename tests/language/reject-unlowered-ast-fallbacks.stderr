@@ -1,0 +1,7 @@
+Code generation warnings/errors:
+  line 2: break cannot be lowered outside a loop (move this break statement inside a loop)
+  line 3: continue cannot be lowered outside a loop (move this continue statement inside a loop)
+  line 4: standalone range expressions are unavailable: NIL only lowers ranges used directly by for loops (use this range directly in a for loop)
+  line 5: unary operator has no NIL lowering (use '-', 'not', pointer dereference, or ref on a local)
+  line 6: reference target is unavailable: NIL only lowers ref applied to a local identifier (bind the value to a local before taking its reference)
+Code generation failed

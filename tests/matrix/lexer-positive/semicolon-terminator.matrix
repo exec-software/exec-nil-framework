@@ -1,0 +1,15 @@
+!!! A statement normally ends at end of line. ';' ends one explicitly, so
+!!! several short statements can share a line -- the cheaper spelling when
+!!! the statements are trivial and token count matters.
+area demo.terminator
+
+main returns number begin function
+    variable a as number is 0; variable b as number is 0; variable c as number is 0
+    set a to 1; set b to 2; set c to a plus b
+    say a; say b; say c
+
+    !!! A trailing ';' on a single statement is allowed and means nothing.
+    say "done";
+
+    give 0
+end function

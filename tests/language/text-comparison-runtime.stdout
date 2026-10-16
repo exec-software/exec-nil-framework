@@ -1,0 +1,3 @@
+text byte order across literals parameters results and arrays
+text content equality and prefix order across allocations
+text array default reads compare as empty strings

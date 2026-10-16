@@ -1,0 +1,232 @@
+!!! Public APIs consumed from Matrix. The oracle checks permutations, adjacent
+!!! ordering and original-index stability independently of the sorting code.
+book validation.stable-index-ordering
+
+read everything from ny.lang.core
+read everything from ny.lang.collections
+read everything from ny.lang.math
+
+require receives ok as boolean, label as text returns nothing begin paragraph
+    evaluate assert-true with condition being ok, message being label
+end paragraph
+
+same of type T receives actual as array of T, expected as array of T, label as text returns nothing begin paragraph
+    evaluate require with ok being ((the length of actual) equals (the length of expected)), label being label
+    repeat for index from 0 to (the length of actual)
+        evaluate require with ok being ((actual at index) equals (expected at index)), label being label
+    end repeat
+end paragraph
+
+permutation receives order as array of override integer, count as override integer returns nothing begin paragraph
+    evaluate require with ok being ((the length of order) equals count), label being "permutation length"
+    variable seen as array of boolean is []
+    repeat for index from 0 to count
+        append false to seen
+    end repeat
+    repeat for position from 0 to count
+        value index is order at position
+        evaluate require with ok being (index is at least 0 and index is less than count), label being "permutation range"
+        evaluate require with ok being (not (seen at index)), label being "permutation uniqueness"
+        set seen at index to true
+    end repeat
+end paragraph
+
+check-i32 receives keys as array of override integer returns nothing begin paragraph
+    variable original as array of override integer is []
+    repeat for index from 0 to (the length of keys)
+        append (keys at index) to original
+    end repeat
+    repeat for direction from 0 to 2
+        value descending is direction equals 1
+        value order is stable-sort-indices-i32 with keys being keys, descending being descending
+        evaluate permutation with order being order, count being (the length of keys)
+        repeat for position from 1 to (the length of order)
+            value left is order at (position minus 1)
+            value right is order at position
+            when descending then
+                evaluate require with ok being ((keys at left) is at least (keys at right)), label being "i32 descending"
+            otherwise
+                evaluate require with ok being ((keys at left) is at most (keys at right)), label being "i32 ascending"
+            end when
+            when (keys at left) equals (keys at right) then
+                evaluate require with ok being (left is less than right), label being "i32 stable equal keys"
+            end when
+        end repeat
+        evaluate same of override integer with actual being keys, expected being original, label being "i32 keys unchanged"
+        append 99 to order
+        when (the length of order) is greater than 1 then set order at 0 to 99 end when
+        evaluate same of override integer with actual being keys, expected being original, label being "i32 result independent"
+    end repeat
+end paragraph
+
+check-f64 receives keys as array of floating returns nothing begin paragraph
+    variable original as array of floating is []
+    repeat for index from 0 to (the length of keys)
+        append (keys at index) to original
+    end repeat
+    repeat for direction from 0 to 2
+        value descending is direction equals 1
+        value order is stable-sort-indices-f64 with keys being keys, descending being descending
+        evaluate permutation with order being order, count being (the length of keys)
+        repeat for position from 1 to (the length of order)
+            value left is order at (position minus 1)
+            value right is order at position
+            value a is keys at left
+            value b is keys at right
+            value a-nan is a does not equal a
+            value b-nan is b does not equal b
+            when a-nan then
+                evaluate require with ok being b-nan, label being "NaNs last in both directions"
+                evaluate require with ok being (left is less than right), label being "stable NaNs"
+            otherwise when not b-nan then
+                when descending then
+                    evaluate require with ok being (a is at least b), label being "f64 descending"
+                otherwise
+                    evaluate require with ok being (a is at most b), label being "f64 ascending"
+                end when
+                when a equals b then
+                    evaluate require with ok being (left is less than right), label being "f64 stable equal keys and zeros"
+                end when
+            end when
+        end repeat
+        append 99 to order
+        evaluate require with ok being ((the length of keys) equals (the length of original)), label being "f64 key length unchanged"
+        repeat for index from 0 to (the length of keys)
+            value actual is keys at index
+            value expected is original at index
+            when expected does not equal expected then
+                evaluate require with ok being (actual does not equal actual), label being "NaN key unchanged"
+            otherwise
+                evaluate require with ok being (actual equals expected), label being "f64 key unchanged"
+                when expected equals 0.0 then
+                    value actual-angle is atan2 with y being actual, x being minus 1.0
+                    value expected-angle is atan2 with y being expected, x being minus 1.0
+                    evaluate require with ok being ((actual-angle is less than 0.0) equals (expected-angle is less than 0.0)), label being "zero sign unchanged"
+                end when
+            end when
+        end repeat
+    end repeat
+end paragraph
+
+gather-ok of type T receives items as array of T, indices as array of override integer returns array of T begin paragraph
+    value result is try-gather of T with items being items, indices being indices
+    give result.unwrap with nothing
+end paragraph
+
+gather-missing of type T receives items as array of T, indices as array of override integer returns nothing begin paragraph
+    value result is try-gather of T with items being items, indices being indices
+    evaluate require with ok being (result.is-none with nothing), label being "gather rejects invalid index"
+end paragraph
+
+check-gather of type T receives first as T, second as T, third as T, label as text returns nothing begin paragraph
+    value items as array of T is [first, second, third, first]
+    value original as array of T is [first, second, third, first]
+    value indices as array of override integer is [3, 1, 1, 0]
+    value gathered is gather-ok of T with items being items, indices being indices
+    evaluate same of T with actual being gathered, expected being [first, second, second, first], label being "duplicates and reordered gather"
+    evaluate same of T with actual being items, expected being original, label being "gather leaves input"
+    evaluate same of override integer with actual being indices, expected being [3, 1, 1, 0], label being "gather leaves indices"
+    value subset is gather-ok of T with items being items, indices being [2, 0]
+    evaluate same of T with actual being subset, expected being [third, first], label being "subset gather"
+    value identity is gather-ok of T with items being items, indices being [0, 1, 2, 3]
+    set identity at 0 to third
+    evaluate same of T with actual being items, expected being original, label being "identity gather is fresh"
+    set gathered at 0 to third
+    evaluate same of T with actual being items, expected being original, label being "gathered writes do not reach input"
+    set items at 1 to first
+    evaluate require with ok being ((gathered at 1) equals second), label being "input writes do not reach result"
+    set items at 1 to second
+    value minimum as override integer is minus 2147483647 minus 1
+    evaluate gather-missing of T with items being items, indices being [0, minus 1]
+    evaluate gather-missing of T with items being items, indices being [0, 4]
+    evaluate gather-missing of T with items being items, indices being [0, 2147483647]
+    evaluate gather-missing of T with items being items, indices being [0, minimum]
+    evaluate same of T with actual being items, expected being original, label being "rejected gather leaves input"
+    value empty as array of T is []
+    value empty-result is gather-ok of T with items being empty, indices being []
+    evaluate require with ok being ((the length of empty-result) equals 0), label being "empty gather is Some empty"
+    append first to empty-result
+    evaluate require with ok being ((the length of empty) equals 0), label being "empty gather is fresh"
+    value no-selection is gather-ok of T with items being items, indices being []
+    evaluate require with ok being ((the length of no-selection) equals 0), label being "empty subset"
+    append third to no-selection
+    evaluate same of T with actual being items, expected being original, label being "empty subset is independent"
+    evaluate gather-missing of T with items being empty, indices being [0]
+    say label
+end paragraph
+
+main returns override integer begin paragraph
+    value sizes as array of override integer is [0, 1, 2, 3, 5, 16, 17, 31, 32, 33, 257]
+    repeat for size-index from 0 to (the length of sizes)
+        value n is sizes at size-index
+        variable integers as array of override integer is []
+        variable floating-keys as array of floating is []
+        repeat for index from 0 to n
+            value key as override integer is (index times 37 plus 11) remainder 19 minus 9
+            append key to integers
+            append ((key becomes floating) over 4.0) to floating-keys
+        end repeat
+        evaluate check-i32 with keys being integers
+        evaluate check-f64 with keys being floating-keys
+    end repeat
+    value minimum as override integer is minus 2147483647 minus 1
+    evaluate check-i32 with keys being [2147483647, minimum, 0, minimum, 2147483647, minus 1, 0]
+    evaluate check-i32 with keys being [0]
+    evaluate check-i32 with keys being [minus 3, minus 2, minus 1, 0, 1, 2, 3]
+    evaluate check-i32 with keys being [3, 2, 1, 0, minus 1, minus 2, minus 3]
+    variable equal-keys as array of override integer is []
+    repeat for index from 0 to 257
+        append 7 to equal-keys
+    end repeat
+    evaluate check-i32 with keys being equal-keys
+    value integer-ascending is stable-sort-indices-i32 with keys being [3, 1, 3, 1, 2], descending being false
+    value integer-descending is stable-sort-indices-i32 with keys being [3, 1, 3, 1, 2], descending being true
+    evaluate same of override integer with actual being integer-ascending, expected being [1, 3, 4, 0, 2], label being "literal ascending permutation"
+    evaluate same of override integer with actual being integer-descending, expected being [0, 2, 4, 1, 3], label being "literal descending permutation"
+    say "stable i32 permutations"
+
+    value nan is sqrt with x being minus 1.0
+    value infinity is exp with x being 1000.0
+    evaluate check-f64 with keys being [nan]
+    evaluate check-f64 with keys being [nan, nan, nan]
+    value special-keys as array of floating is [nan, 2.0, minus 0.0, 0.0, minus infinity, nan, infinity, 2.0, minus 1.0]
+    evaluate check-f64 with keys being special-keys
+    value floating-ascending is stable-sort-indices-f64 with keys being special-keys, descending being false
+    value floating-descending is stable-sort-indices-f64 with keys being special-keys, descending being true
+    evaluate same of override integer with actual being floating-ascending, expected being [4, 8, 2, 3, 1, 7, 6, 0, 5], label being "literal floating ascending"
+    evaluate same of override integer with actual being floating-descending, expected being [6, 1, 7, 2, 3, 8, 4, 0, 5], label being "literal floating descending"
+    say "stable f64 NaN infinity zero permutations"
+
+    evaluate check-gather of override integer with first being minus 7, second being 0, third being 2147483647, label being "gather i32"
+    evaluate check-gather of override long with first being (minus 9000000000 becomes override long), second being (0 becomes override long), third being (9000000000 becomes override long), label being "gather i64"
+    evaluate check-gather of override byte with first being (0 becomes override byte), second being (128 becomes override byte), third being (255 becomes override byte), label being "gather u8"
+    evaluate check-gather of boolean with first being false, second being true, third being true, label being "gather bool"
+    evaluate check-gather of floating with first being minus 0.5, second being 0.25, third being 1.5, label being "gather f64"
+    evaluate check-gather of text with first being "", second being ("material" plus "-name"), third being "last", label being "gather text"
+    value self-indices as array of override integer is [2, 0, 1]
+    value self-result is gather-ok of override integer with items being self-indices, indices being self-indices
+    evaluate same of override integer with actual being self-result, expected being [1, 2, 0], label being "items and indices may alias"
+    set self-result at 0 to 99
+    evaluate same of override integer with actual being self-indices, expected being [2, 0, 1], label being "aliased gather result is fresh"
+    value special is gather-ok of floating with items being [nan, minus 0.0, infinity], indices being [1, 0, 2, 0]
+    value zero-angle is atan2 with y being (special at 0), x being minus 1.0
+    evaluate require with ok being (zero-angle is less than 0.0), label being "gather preserves negative zero"
+    evaluate require with ok being ((special at 1) does not equal (special at 1) and (special at 3) does not equal (special at 3)), label being "gather preserves repeated NaNs"
+    evaluate require with ok being ((special at 2) equals infinity), label being "gather preserves infinity"
+    say "gather aliases and IEEE values"
+
+    !!! One stable depth permutation keeps the parallel draw metadata aligned.
+    value depths as array of floating is [4.5, 1.0, 4.5, nan, 2.0, 4.5]
+    value draw-ids as array of override integer is [101, 102, 103, 104, 105, 106]
+    value materials as array of override integer is [7, 2, 8, 9, 3, 7]
+    value order is stable-sort-indices-f64 with keys being depths, descending being true
+    evaluate same of override integer with actual being order, expected being [0, 2, 5, 4, 1, 3], label being "stable scene order"
+    value sorted-ids is gather-ok of override integer with items being draw-ids, indices being order
+    value sorted-materials is gather-ok of override integer with items being materials, indices being order
+    evaluate same of override integer with actual being sorted-ids, expected being [101, 103, 106, 105, 102, 104], label being "scene IDs"
+    evaluate same of override integer with actual being sorted-materials, expected being [7, 8, 7, 3, 2, 9], label being "scene materials"
+    evaluate same of override integer with actual being draw-ids, expected being [101, 102, 103, 104, 105, 106], label being "scene IDs unchanged"
+    evaluate same of override integer with actual being materials, expected being [7, 2, 8, 9, 3, 7], label being "scene materials unchanged"
+    say "parallel scene arrays stay aligned"
+    give 0
+end paragraph

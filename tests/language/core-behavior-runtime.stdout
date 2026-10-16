@@ -1,0 +1,53 @@
+-2
+9
+10
+-3
+2
+243
+479001600
+6
+1
+216
+1
+1
+assertions
+7
+14
+31
+7
+seven
+1
+7
+0
+1
+broken
+0
+1
+0
+[Validation] bad input
+bad input
+AssertionFault: wrong value at sample.ny:27 (equal)
+decode
+request another chunk
+-1
+2
+5
+5
+1
+1
+1
+20
+1
+1
+4
+1
+5
+alpha
+zeta
+1
+4
+3
+4
+0
+2
+1

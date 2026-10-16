@@ -1,0 +1,34 @@
+!!! Calls extensions declared in a book other than the one that declares the
+!!! types, which is the arrangement a one-type-per-file project produces.
+book tour.shape.app
+
+read everything from tour.shape
+read everything from tour.shape.util
+
+!!! A local record whose short name collides with nothing, to confirm the
+!!! declaring book still wins for a type declared right here.
+tile begin record
+    field side as number
+end record
+
+tile begin extension
+    area returns number begin paragraph
+        give my side times my side
+    end paragraph
+end extension
+
+main returns number begin paragraph
+    value box is build rectangle with width being 8, height being 5
+    value slim is build rectangle with width being 3, height being 5
+    say box.area with nothing
+    say box.wider-than with other being slim
+    say slim.wider-than with other being box
+
+    value panel is build surface with label being "titlebar", scale being 2
+    say panel.describe with nothing
+    say panel.scaled with factor being 7
+
+    value square is build tile with side being 7
+    say square.area with nothing
+    give 0
+end paragraph

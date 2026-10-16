@@ -1,0 +1,2 @@
+Type checking failed:
+  line 3: Function 'conflicting_native_dispatch' has multiple native dispatch annotations; use exactly one of @intrinsic or @interop

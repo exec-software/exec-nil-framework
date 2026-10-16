@@ -1,0 +1,101 @@
+{
+  "schema": "ny.application-suite.v1",
+  "applications": [
+    {
+      "name": "release_qualifier",
+      "features": [
+        "AI context annotations",
+        "functions",
+        "integer arithmetic",
+        "mutable locals",
+        "while loops",
+        "nested conditionals"
+      ],
+      "text_nil_contains": [
+        "@ai_context(",
+        "function main -> i32:"
+      ],
+      "xfail": {}
+    },
+    {
+      "name": "capacity_planner",
+      "features": [
+        "recursion",
+        "function parameters",
+        "mutable globals",
+        "range loops",
+        "continue",
+        "while loops"
+      ],
+      "xfail": {}
+    },
+    {
+      "name": "telemetry_rollup",
+      "features": [
+        "array literals",
+        "array indexing",
+        "indexed assignment",
+        "range loops",
+        "aggregation"
+      ],
+      "xfail": {}
+    },
+    {
+      "name": "dispatch_board",
+      "features": [
+        "enums",
+        "associated values",
+        "match statements",
+        "pattern bindings"
+      ],
+      "xfail": {}
+    },
+    {
+      "name": "inventory_model",
+      "features": [
+        "struct literals",
+        "field access",
+        "field assignment",
+        "trait declarations",
+        "impl blocks and checked trait conformance",
+        "method calls"
+      ],
+      "xfail": {}
+    },
+    {
+      "name": "manual_buffer",
+      "features": [
+        "typed pointers",
+        "allocate",
+        "pointer indexing",
+        "indexed assignment",
+        "deallocate"
+      ],
+      "xfail": {}
+    },
+    {
+      "name": "modular_billing",
+      "extra_sources": [
+        "pricing.ny"
+      ],
+      "features": [
+        "multiple source files",
+        "modules",
+        "imports",
+        "qualified function calls",
+        "function parameters"
+      ],
+      "xfail": {}
+    },
+    {
+      "name": "generic_selector",
+      "features": [
+        "generic functions",
+        "explicit type arguments",
+        "generic specialization",
+        "generic comparisons"
+      ],
+      "xfail": {}
+    }
+  ]
+}

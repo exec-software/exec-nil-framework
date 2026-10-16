@@ -1,0 +1,260 @@
+!!! The public value sorts retain aliases. Independent occurrence counts and
+!!! literal floating snapshots verify their contract from the Matrix surface.
+book validation.numeric-value-ordering
+read everything from ny.lang.core
+read everything from ny.lang.math
+
+require receives ok as boolean, label as text returns nothing begin paragraph
+    evaluate assert-true with condition being ok, message being label
+end paragraph
+
+equivalent of type T receives a as T, b as T returns boolean begin paragraph
+    give a equals b or (a does not equal a and b does not equal b)
+end paragraph
+
+copy-items of type T receives items as array of T returns array of T begin paragraph
+    variable result as array of T is []
+    repeat for index from 0 to (the length of items)
+        append (items at index) to result
+    end repeat
+    give result
+end paragraph
+
+occurrences of type T receives items as array of T, item-value as T returns override integer begin paragraph
+    variable count as override integer is 0
+    repeat for index from 0 to (the length of items)
+        when equivalent of T with a being (items at index), b being item-value then
+            set count to count plus 1
+        end when
+    end repeat
+    give count
+end paragraph
+
+same-bag of type T receives actual as array of T, original as array of T returns nothing begin paragraph
+    evaluate require with ok being ((the length of actual) equals (the length of original)), label being "sort length"
+    variable checked as array of T is []
+    repeat for index from 0 to (the length of original)
+        value item-value is original at index
+        when (occurrences of T with items being checked, item-value being item-value) equals 0 then
+            value actual-count is occurrences of T with items being actual, item-value being item-value
+            value original-count is occurrences of T with items being original, item-value being item-value
+            evaluate require with ok being (actual-count equals original-count), label being "sort preserves multiset"
+            append item-value to checked
+        end when
+    end repeat
+end paragraph
+
+same of type T receives actual as array of T, expected as array of T returns nothing begin paragraph
+    evaluate require with ok being ((the length of actual) equals (the length of expected)), label being "snapshot length"
+    repeat for index from 0 to (the length of actual)
+        evaluate require with ok being (equivalent of T with a being (actual at index), b being (expected at index)), label being "snapshot values"
+    end repeat
+end paragraph
+
+same-f64 receives actual as array of floating, expected as array of floating returns nothing begin paragraph
+    evaluate same of floating with actual being actual, expected being expected
+    repeat for index from 0 to (the length of actual)
+        when (expected at index) equals 0.0 then
+            value actual-angle is atan2 with y being (actual at index), x being minus 1.0
+            value expected-angle is atan2 with y being (expected at index), x being minus 1.0
+            evaluate require with ok being ((actual-angle is less than 0.0) equals (expected-angle is less than 0.0)), label being "signed-zero order"
+        end when
+    end repeat
+end paragraph
+
+check-i32 receives keys as array of override integer returns nothing begin paragraph
+    repeat for direction from 0 to 2
+        value items is copy-items of override integer with items being keys
+        value alias is items
+        variable ordered as array of override integer is []
+        when direction equals 0 then
+            set ordered to sort-i32 with arr being items
+        otherwise
+            set ordered to sort-i32-desc with arr being items
+        end when
+        evaluate same-bag of override integer with actual being ordered, original being keys
+        evaluate same of override integer with actual being alias, expected being ordered
+        repeat for index from 1 to (the length of ordered)
+            when direction equals 0 then
+                evaluate require with ok being ((ordered at (index minus 1)) is at most (ordered at index)), label being "integer ascending"
+            otherwise
+                evaluate require with ok being ((ordered at (index minus 1)) is at least (ordered at index)), label being "integer descending"
+            end when
+        end repeat
+        append 41 to ordered
+        evaluate require with ok being ((the length of alias) equals ((the length of keys) plus 1)), label being "integer returned handle aliases input"
+        set alias at (the length of keys) to 42
+        evaluate require with ok being ((ordered at (the length of keys)) equals 42), label being "integer alias writes reach return"
+        append 43 to alias
+        evaluate require with ok being ((the length of ordered) equals ((the length of keys) plus 2)), label being "integer input growth reaches return"
+    end repeat
+end paragraph
+
+check-f64 receives keys as array of floating returns nothing begin paragraph
+    repeat for direction from 0 to 2
+        value items is copy-items of floating with items being keys
+        value alias is items
+        variable ordered as array of floating is []
+        when direction equals 0 then
+            set ordered to sort-f64 with arr being items
+        otherwise
+            set ordered to sort-f64-desc with arr being items
+        end when
+        evaluate same-bag of floating with actual being ordered, original being keys
+        evaluate same-f64 with actual being alias, expected being ordered
+        repeat for index from 1 to (the length of ordered)
+            value previous is ordered at (index minus 1)
+            value current is ordered at index
+            when previous does not equal previous then
+                evaluate require with ok being (current does not equal current), label being "NaNs remain last in both directions"
+            otherwise when current equals current then
+                when direction equals 0 then
+                    evaluate require with ok being (previous is at most current), label being "floating ascending"
+                otherwise
+                    evaluate require with ok being (previous is at least current), label being "floating descending"
+                end when
+            end when
+        end repeat
+        append 41.25 to ordered
+        evaluate require with ok being ((the length of alias) equals ((the length of keys) plus 1)), label being "floating returned handle aliases input"
+        set alias at (the length of keys) to 42.25
+        evaluate require with ok being ((ordered at (the length of keys)) equals 42.25), label being "floating alias writes reach return"
+        append 43.25 to alias
+        evaluate require with ok being ((the length of ordered) equals ((the length of keys) plus 2)), label being "floating input growth reaches return"
+    end repeat
+end paragraph
+
+minimum-value receives items as array of floating returns floating begin paragraph
+    value result is min-f64 with arr being items
+    give result.unwrap with nothing
+end paragraph
+
+maximum-value receives items as array of floating returns floating begin paragraph
+    value result is max-f64 with arr being items
+    give result.unwrap with nothing
+end paragraph
+
+main returns override integer begin paragraph
+    value nan is sqrt with x being minus 1.0
+    value infinity is exp with x being 1000.0
+    value classes as array of floating is [minus infinity, minus 2.0, minus 0.0, 0.0, 1.0, infinity, nan, nan]
+    value ranks as array of override integer is [0, 1, 2, 2, 3, 4, 5, 5]
+    repeat for left from 0 to (the length of classes)
+        repeat for right from 0 to (the length of classes)
+            value relation is compare-f64 with a being (classes at left), b being (classes at right)
+            evaluate require with ok being ((relation.is-less with nothing) equals ((ranks at left) is less than (ranks at right))), label being "comparison less"
+            evaluate require with ok being ((relation.is-eq with nothing) equals ((ranks at left) equals (ranks at right))), label being "comparison equal"
+            evaluate require with ok being ((relation.is-gt with nothing) equals ((ranks at left) is greater than (ranks at right))), label being "comparison greater"
+        end repeat
+    end repeat
+    evaluate require with ok being (nan does not equal nan and not (nan equals nan)), label being "raw IEEE NaN equality unchanged"
+    evaluate require with ok being (not (nan is less than 1.0) and not (nan is greater than 1.0)), label being "raw IEEE NaN order unchanged"
+    say "numeric comparator policy"
+
+    value sizes as array of override integer is [0, 1, 2, 15, 16, 17, 31, 32, 33, 257]
+    repeat for slot from 0 to (the length of sizes)
+        variable integers as array of override integer is []
+        variable fractions as array of floating is []
+        repeat for index from 0 to (sizes at slot)
+            value item-value as override integer is (index times 37 plus 11) remainder 19 minus 9
+            append item-value to integers
+            append ((item-value becomes floating) over 4.0) to fractions
+        end repeat
+        evaluate check-i32 with keys being integers
+        evaluate check-f64 with keys being fractions
+    end repeat
+    value minimum as override integer is minus 2147483647 minus 1
+    evaluate check-i32 with keys being [2147483647, minimum, 0, minimum, 2147483647]
+    evaluate check-i32 with keys being [minus 3, minus 2, minus 1, 0, 1, 2, 3]
+    evaluate check-i32 with keys being [3, 2, 1, 0, minus 1, minus 2, minus 3]
+    variable equal-i32 as array of override integer is []
+    variable equal-f64 as array of floating is []
+    repeat for index from 0 to 2048
+        append 7 to equal-i32
+        append 7.25 to equal-f64
+    end repeat
+    evaluate check-i32 with keys being equal-i32
+    evaluate check-f64 with keys being equal-f64
+    evaluate check-f64 with keys being [nan]
+    evaluate check-f64 with keys being [nan, nan, nan]
+    evaluate check-f64 with keys being [nan, 2.0, minus 0.0, 0.0, minus infinity, nan, infinity, 2.0, minus 1.0]
+    say "numeric sorts preserve values and aliases"
+
+    value zero-keys as array of floating is [nan, minus 0.0, 2.0, 0.0, minus 0.0, minus 1.0, 0.0, nan]
+    value ascending-input is copy-items of floating with items being zero-keys
+    value descending-input is copy-items of floating with items being zero-keys
+    value ascending is sort-f64 with arr being ascending-input
+    value descending is sort-f64-desc with arr being descending-input
+    evaluate same-f64 with actual being ascending, expected being [minus 1.0, minus 0.0, 0.0, minus 0.0, 0.0, 2.0, nan, nan]
+    evaluate same-f64 with actual being descending, expected being [2.0, minus 0.0, 0.0, minus 0.0, 0.0, minus 1.0, nan, nan]
+    variable long-zeros as array of floating is []
+    repeat for repetition from 0 to 3
+        repeat for index from 0 to (the length of zero-keys)
+            append (zero-keys at index) to long-zeros
+        end repeat
+    end repeat
+    value long-ascending-input is copy-items of floating with items being long-zeros
+    value long-descending-input is copy-items of floating with items being long-zeros
+    value long-ascending is sort-f64 with arr being long-ascending-input
+    value long-descending is sort-f64-desc with arr being long-descending-input
+    evaluate same-f64 with actual being long-ascending, expected being [minus 1.0, minus 1.0, minus 1.0, minus 0.0, 0.0, minus 0.0, 0.0, minus 0.0, 0.0, minus 0.0, 0.0, minus 0.0, 0.0, minus 0.0, 0.0, 2.0, 2.0, 2.0, nan, nan, nan, nan, nan, nan]
+    evaluate same-f64 with actual being long-descending, expected being [2.0, 2.0, 2.0, minus 0.0, 0.0, minus 0.0, 0.0, minus 0.0, 0.0, minus 0.0, 0.0, minus 0.0, 0.0, minus 0.0, 0.0, minus 1.0, minus 1.0, minus 1.0, nan, nan, nan, nan, nan, nan]
+    value insertion-input is copy-items of floating with items being zero-keys
+    value inserted is insertion-sort-f64 with arr being insertion-input
+    evaluate same-f64 with actual being inserted, expected being ascending
+    append 9.0 to inserted
+    evaluate require with ok being ((the length of insertion-input) equals ((the length of zero-keys) plus 1)), label being "insertion sort preserves handle"
+    say "signed zeros stable and insertion policy aligned"
+
+    value sorted-snapshot is copy-items of floating with items being classes
+    evaluate require with ok being (is-sorted-f64 with arr being classes), label being "ascending classes sorted"
+    evaluate require with ok being ((is-sorted-f64 with arr being []) and (is-sorted-f64 with arr being [nan])), label being "empty and singleton sorted"
+    evaluate require with ok being (is-sorted-f64 with arr being [nan, nan]), label being "NaNs sorted together"
+    evaluate require with ok being (not (is-sorted-f64 with arr being [2.0, nan, 1.0])), label being "NaN barrier does not conceal inversion"
+    evaluate require with ok being (not (is-sorted-f64 with arr being [nan, 1.0])), label being "leading NaN unsorted"
+    evaluate require with ok being (not (is-sorted-f64 with arr being [2.0, 1.0, nan])), label being "finite inversion before NaN"
+    repeat for target-index from 0 to (the length of classes)
+        value target is classes at target-index
+        value found is binary-search-f64 with arr being classes, target being target
+        evaluate require with ok being (found is at least 0 and found is less than (the length of classes)), label being "search finds each equivalence class"
+        evaluate require with ok being (equivalent of floating with a being (classes at found), b being target), label being "search found equivalent value"
+    end repeat
+    evaluate require with ok being ((binary-search-f64 with arr being classes, target being 0.5) equals minus 1), label being "missing finite target"
+    evaluate require with ok being ((binary-search-f64 with arr being [], target being nan) equals minus 1), label being "empty NaN search"
+    evaluate require with ok being ((binary-search-f64 with arr being [1.0, 2.0], target being nan) equals minus 1), label being "missing NaN target"
+    evaluate require with ok being ((binary-search-f64 with arr being [nan, nan], target being 1.0) equals minus 1), label being "finite target absent from NaNs"
+    evaluate require with ok being ((binary-search-f64 with arr being [nan, nan], target being nan) is at least 0), label being "NaN-only search"
+    evaluate same-f64 with actual being classes, expected being sorted-snapshot
+    say "sorted checks and search agree without mutation"
+
+    value empty-minimum is min-f64 with arr being []
+    value empty-maximum is max-f64 with arr being []
+    evaluate require with ok being ((empty-minimum.is-none with nothing) and (empty-maximum.is-none with nothing)), label being "empty extrema"
+    value extrema as array of floating is [nan, 2.0, minus 1.0, nan]
+    value extrema-snapshot is copy-items of floating with items being extrema
+    evaluate require with ok being ((minimum-value with items being extrema) equals minus 1.0), label being "minimum skips NaN when numeric present"
+    value maximum is maximum-value with items being extrema
+    evaluate require with ok being (maximum does not equal maximum), label being "maximum includes NaN"
+    value middle-nan-maximum is maximum-value with items being [1.0, nan, 2.0]
+    evaluate require with ok being (middle-nan-maximum does not equal middle-nan-maximum), label being "maximum finds a later NaN"
+    value nan-minimum is minimum-value with items being [nan, nan]
+    value nan-maximum is maximum-value with items being [nan, nan]
+    evaluate require with ok being (nan-minimum does not equal nan-minimum and nan-maximum does not equal nan-maximum), label being "all-NaN extrema"
+    evaluate require with ok being ((minimum-value with items being [minus infinity, infinity]) equals minus infinity), label being "negative infinity minimum"
+    evaluate require with ok being ((maximum-value with items being [minus infinity, infinity]) equals infinity), label being "positive infinity maximum"
+    value negative-minimum is minimum-value with items being [minus 0.0, 0.0]
+    value negative-maximum is maximum-value with items being [minus 0.0, 0.0]
+    value positive-minimum is minimum-value with items being [0.0, minus 0.0]
+    value positive-maximum is maximum-value with items being [0.0, minus 0.0]
+    evaluate require with ok being ((atan2 with y being negative-minimum, x being minus 1.0) is less than 0.0), label being "minimum retains first zero"
+    evaluate require with ok being ((atan2 with y being negative-maximum, x being minus 1.0) is less than 0.0), label being "maximum retains first zero"
+    evaluate require with ok being ((atan2 with y being positive-minimum, x being minus 1.0) is greater than 0.0), label being "minimum retains positive first zero"
+    evaluate require with ok being ((atan2 with y being positive-maximum, x being minus 1.0) is greater than 0.0), label being "maximum retains positive first zero"
+    evaluate same-f64 with actual being extrema, expected being extrema-snapshot
+    value total is sum-f64 with arr being extrema
+    value maybe-average is average-f64 with arr being extrema
+    value average is maybe-average.unwrap with nothing
+    evaluate require with ok being (total does not equal total and average does not equal average), label being "sum and average keep IEEE NaN propagation"
+    say "extrema share ordering and preserve IEEE reductions"
+    give 0
+end paragraph

@@ -1,0 +1,31 @@
+!!! Compile this page together with the generated analysis_snapshot Ny module.
+!!! It reads immutable declaration values and prints one diagnostic JSON object
+!!! per public function whose name starts with the temporary prefix "temp_".
+!!! This is an ordinary explicit program, not an automatically loaded plugin.
+
+book examples.analyzer
+
+read everything from nil.std.reflection
+read everything from analysis_snapshot
+
+main returns override integer begin paragraph
+    variable index as override integer is 0
+    repeat while index is less than (analysis_snapshot::count with nothing)
+        value info is analysis_snapshot::declaration with index being index
+        when is-function with info being info then
+            when is-public-api with info being info then
+                when (the length of info.name) is at least 5 then
+                    when (info.name.substr with start being 0, length being 5) equals "temp_" then
+                        say diagnostic-json with code being "EXAMPLE001",
+                            severity being "warning",
+                            message being "Public functions should use a lasting name.",
+                            source-path being info.source-path,
+                            line being info.line
+                    end when
+                end when
+            end when
+        end when
+        set index to index plus 1
+    end repeat
+    give 0
+end paragraph

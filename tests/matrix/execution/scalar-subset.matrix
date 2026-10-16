@@ -1,0 +1,99 @@
+book stage.three
+
+add-two receives left as number, right as number returns number begin paragraph
+    give left plus right
+end paragraph
+
+classify receives count as number returns text begin paragraph
+    when count is greater than 0 then
+        give "positive"
+    otherwise when count is less than 0 then
+        give "negative"
+    otherwise
+        give "zero"
+    end when
+end paragraph
+
+factorial receives count as number returns number begin paragraph
+    when count is at most 1 then
+        give 1
+    end when
+    give count times (factorial with count being count minus 1)
+end paragraph
+
+bit-work receives word as override long returns override long begin paragraph
+    value masked as override long is word bitwise and 0xFF
+    value shifted-up as override long is masked shifted left by 4
+    give shifted-up bitwise xor 0x0F
+end paragraph
+
+main returns number begin paragraph
+    !!! Named arguments, reordered against the declaration.
+    say add-two with left being 1, right being 2
+    say add-two with right being 2, left being 40
+
+    !!! Word operators and precedence.
+    value total as number is 2 plus 3 times 4
+    say total
+    say (2 plus 3) times 4
+    say 17 remainder 5
+    say 17 over 5
+    say minus 7
+
+    !!! Comparisons.
+    say 3 is less than 4
+    say 3 equals 3
+    say 3 does not equal 4
+    say 3 is at least 3
+    say 3 is at most 2
+
+    !!! Logic.
+    say true and false
+    say true or false
+    say not true
+
+    !!! Conditionals, statement and value position.
+    say classify with count being 7
+    say classify with count being 0
+    value sign as number is when 5 is greater than 0 give 1 otherwise give minus 1 end when
+    say sign
+
+    !!! Loops: while, counted, forever with an exit.
+    variable index as number is 0
+    repeat while index is less than 3
+        say index
+        set index to index plus 1
+    end repeat
+
+    repeat for step from 0 to 4
+        when step equals 2 then
+            continue repeating
+        end when
+        say step
+    end repeat
+
+    variable budget as number is 2
+    repeat forever
+        when budget is at most 0 then
+            stop repeating
+        end when
+        set budget to budget minus 1
+    end repeat
+    say budget
+
+    !!! Recursion, casts, bit work.
+    say factorial with count being 5
+    say bit-work with word being 0x1234
+    value widened as override long is 7 becomes override long
+    say widened
+
+    !!! Text without escapes.
+    say "C:\dir\file.txt"
+    say "he said " plus quote plus "hi" plus quote
+    say "one" plus newline plus "two"
+
+    !!! Terminators: several sentences on one line.
+    variable a as number is 1; variable b as number is 2; say a plus b.
+
+    give 0
+end paragraph

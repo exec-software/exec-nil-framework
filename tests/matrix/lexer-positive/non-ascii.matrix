@@ -1,0 +1,8 @@
+area t
+
+main returns integer begin function
+    value café as integer is 1
+    value CAFÉ as integer is 2
+    say café
+    give 0
+end function

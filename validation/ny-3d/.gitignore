@@ -1,0 +1,13 @@
+# No SDK is shipped here; the harness consumes the repository SDK (or $NIL_SDK).
+/sdk/
+# Generated execution artifacts and local scratch work.
+/work/
+/reports/
+__pycache__/
+*.pyc
+
+# Native binaries compiled from the .ny sources beside them. Reproducible
+# from source, and 1.7 MB each.
+/render_procedural
+/scene_player
+/test_procedural_mesh

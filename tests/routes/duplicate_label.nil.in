@@ -1,0 +1,9 @@
+# NIL Textual Module
+module root
+
+function main:
+    LABEL duplicate
+    LABEL duplicate
+    PUSH_CONST 0
+    RET
+end function

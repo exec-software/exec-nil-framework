@@ -1,0 +1,5 @@
+scalar comparisons ignore live array handle bits
+scalar literal matches ignore live array handle bits
+scalar loops cross live array handle bits
+converted numeric comparisons stay numeric
+arrays retain contents and scalar elements

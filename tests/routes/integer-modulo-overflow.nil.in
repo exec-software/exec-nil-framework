@@ -1,0 +1,8 @@
+module root
+
+function main() -> i32:
+    PUSH_CONST -9223372036854775808
+    PUSH_CONST -1
+    MOD
+    RET
+end function

@@ -1,0 +1,104 @@
+book stage.five
+
+abstract reader begin class
+    field level as number
+
+    public abstract read-level returns number
+
+    public relay returns number begin paragraph
+        give (my read-level with nothing) plus 1
+    end paragraph
+
+    public label returns text begin paragraph
+        give "reader"
+    end paragraph
+end class
+
+constant-reader inherits reader begin class
+    public replaces read-level returns number begin paragraph
+        give my level
+    end paragraph
+
+    scaled returns number begin paragraph
+        give my level times 2
+    end paragraph
+
+    public doubled returns number begin paragraph
+        give my scaled with nothing
+    end paragraph
+end class
+
+offset-reader inherits constant-reader begin class
+    field offset as number
+
+    public replaces read-level returns number begin paragraph
+        give my level plus my offset
+    end paragraph
+end class
+
+consume receives source as reader returns number begin paragraph
+    give source.relay with nothing
+end paragraph
+
+!!! A contract: signatures only.
+reading begin contract
+    current returns number
+    replace receives amount as number on mutable receiver returns nothing
+end contract
+
+meter begin record
+    field value-held as number
+end record
+
+meter provides reading begin implementation
+    current returns number begin paragraph
+        give my value-held
+    end paragraph
+
+    replace receives amount as number on mutable receiver returns nothing begin paragraph
+        set my value-held to amount
+    end paragraph
+
+    !!! An extra helper is allowed and does not become a contract requirement.
+    doubled returns number begin paragraph
+        give my value-held times 2
+    end paragraph
+end implementation
+
+!!! An inherent implementation block, with no contract named.
+counter begin record
+    field tally as number
+end record
+
+counter begin implementation
+    increment returns number begin paragraph
+        give my tally plus 1
+    end paragraph
+end implementation
+
+main returns number begin paragraph
+    value concrete is build constant-reader with level being 41
+    say concrete.read-level with nothing
+    say concrete.relay with nothing
+    say concrete.doubled with nothing
+
+    !!! An ancestor view changes the static view, not the dynamic class.
+    value viewed as reader is concrete
+    say consume with source being viewed
+    say viewed.label with nothing
+
+    value offset is build offset-reader with level being 40, offset being 2
+    value as-reader as reader is offset
+    say as-reader.read-level with nothing
+
+    variable gauge is build meter with value-held being 20
+    say gauge.current with nothing
+    evaluate gauge.replace with amount being 42
+    say gauge.current with nothing
+    say gauge.doubled with nothing
+
+    value tally is build counter with tally being 41
+    say tally.increment with nothing
+
+    give 0
+end paragraph

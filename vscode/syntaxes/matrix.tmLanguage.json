@@ -1,0 +1,459 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Matrix",
+  "scopeName": "source.matrix",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#text-blocks"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#primitive-extension"
+    },
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#type-context"
+    },
+    {
+      "include": "#parameters-and-arguments"
+    },
+    {
+      "include": "#escaped-identifiers"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#members-and-calls"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#punctuation"
+    },
+    {
+      "include": "#identifiers"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.exclamation.matrix",
+          "match": "!!!.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.matrix",
+          "begin": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.matrix"
+            }
+          },
+          "end": "\"|$",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.matrix"
+            }
+          }
+        }
+      ]
+    },
+    "text-blocks": {
+      "patterns": [
+        {
+          "name": "string.quoted.raw.matrix",
+          "begin": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[bB][eE][gG][iI][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][eE][xX][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t\\r]*$",
+          "beginCaptures": {
+            "0": {
+              "name": "keyword.control.text-block.matrix"
+            }
+          },
+          "end": "^[ \\t]*(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][nN][dD])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][eE][xX][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t\\r]*$",
+          "endCaptures": {
+            "0": {
+              "name": "keyword.control.text-block.matrix"
+            }
+          }
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "((?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[rR][eE][cC][eE][iI][vV][eE][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+((?:(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][oO][rR][eE]|[vV][aA][rR][iI][aA][bB][lL][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+)*)((?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))(?=[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))",
+          "captures": {
+            "1": {
+              "name": "keyword.other.modifier.matrix"
+            },
+            "3": {
+              "name": "variable.parameter.matrix"
+            },
+            "2": {
+              "patterns": [
+                {
+                  "include": "#keywords"
+                },
+                {
+                  "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[vV][aA][rR][iI][aA][bB][lL][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+                  "name": "storage.modifier.matrix"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "match": "((?:^|(?<=[;.]))[ \\t]*(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[pP][uU][bB][lL][iI][cC]|[aA][bB][sS][tT][rR][aA][cC][tT]|[vV][iI][rR][tT][uU][aA][lL]|[rR][eE][pP][lL][aA][cC][eE][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+)*)((?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))(?=[ \\t]+(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[rR][eE][cC][eE][iI][vV][eE][sS]|[rR][eE][tT][uU][rR][nN][sS]|[oO][nN]|[wW][iI][tT][hH][oO][uU][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[bB][eE][gG][iI][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[pP][aA][rR][aA][gG][rR][aA][pP][hH])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][fF])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][yY][pP][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]).*(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[rR][eE][tT][uU][rR][nN][sS]|[rR][eE][cC][eE][iI][vV][eE][sS]|[pP][aA][rR][aA][gG][rR][aA][pP][hH])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])))",
+          "captures": {
+            "1": {
+              "patterns": [
+                {
+                  "include": "#keywords"
+                }
+              ]
+            },
+            "2": {
+              "name": "entity.name.function.matrix"
+            }
+          }
+        },
+        {
+          "match": "((?:^|(?<=[;.]))[ \\t]*(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[pP][uU][bB][lL][iI][cC]|[aA][bB][sS][tT][rR][aA][cC][tT]|[vV][iI][rR][tT][uU][aA][lL]|[rR][eE][pP][lL][aA][cC][eE][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+)*)((?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))(?=[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][eE][aA][nN][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))",
+          "captures": {
+            "1": {
+              "patterns": [
+                {
+                  "include": "#keywords"
+                }
+              ]
+            },
+            "2": {
+              "name": "entity.name.type.matrix"
+            }
+          }
+        },
+        {
+          "match": "((?:^|(?<=[;.]))[ \\t]*(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[pP][uU][bB][lL][iI][cC]|[aA][bB][sS][tT][rR][aA][cC][tT]|[vV][iI][rR][tT][uU][aA][lL]|[rR][eE][pP][lL][aA][cC][eE][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+)*)((?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))(?=[ \\t]+(?:[^!\";]*[ \\t]+)?(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[bB][eE][gG][iI][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[rR][eE][cC][oO][rR][dD]|[cC][hH][oO][iI][cC][eE]|[cC][lL][aA][sS][sS]|[cC][oO][nN][tT][rR][aA][cC][tT]|[iI][mM][pP][lL][eE][mM][eE][nN][tT][aA][tT][iI][oO][nN]|[eE][xX][tT][eE][nN][sS][iI][oO][nN]|[tT][eE][sS][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))",
+          "captures": {
+            "1": {
+              "patterns": [
+                {
+                  "include": "#keywords"
+                }
+              ]
+            },
+            "2": {
+              "name": "entity.name.type.matrix"
+            }
+          }
+        },
+        {
+          "match": "((?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[bB][oO][oO][kK]|[lL][iI][bB][rR][aA][rR][yY])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+((?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)(?:\\.(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))*(?:::(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))?)",
+          "captures": {
+            "1": {
+              "name": "storage.type.namespace.matrix"
+            },
+            "2": {
+              "name": "entity.name.namespace.matrix"
+            }
+          }
+        },
+        {
+          "begin": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[rR][eE][aA][dD]|[cC][iI][tT][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "beginCaptures": {
+            "0": {
+              "name": "keyword.control.import.matrix"
+            }
+          },
+          "end": "(?=!!!)|[;]|(?=\\.[ \\t]*$)|$",
+          "patterns": [
+            {
+              "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][vV][eE][rR][yY][tT][hH][iI][nN][gG]|[fF][rR][oO][mM]|[aA][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+              "name": "keyword.control.import.matrix"
+            },
+            {
+              "match": "(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)(?:\\.(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))*(?:::(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))?",
+              "name": "entity.name.namespace.matrix"
+            },
+            {
+              "include": "#punctuation"
+            }
+          ]
+        },
+        {
+          "match": "((?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[vV][aA][rR][iI][aA][bB][lL][eE]|[vV][aA][lL][uU][eE]|[cC][oO][nN][sS][tT][aA][nN][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+((?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))",
+          "captures": {
+            "1": {
+              "name": "storage.type.variable.matrix"
+            },
+            "2": {
+              "name": "variable.other.readwrite.matrix"
+            }
+          }
+        },
+        {
+          "match": "((?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[fF][iI][eE][lL][dD])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+((?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))",
+          "captures": {
+            "1": {
+              "name": "storage.type.variable.matrix"
+            },
+            "2": {
+              "name": "variable.other.member.matrix"
+            }
+          }
+        },
+        {
+          "match": "((?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][yY][pP][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+((?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))",
+          "captures": {
+            "1": {
+              "name": "storage.modifier.matrix"
+            },
+            "2": {
+              "name": "entity.name.type.parameter.matrix"
+            }
+          }
+        }
+      ],
+      "comment": "Matrix declarations put the name before receives/returns/begin. End markers are not declarations."
+    },
+    "primitive-extension": {
+      "patterns": [
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[nN][uU][mM][bB][eE][rR]|[fF][lL][oO][aA][tT][iI][nN][gG]|[bB][oO][oO][lL][eE][aA][nN]|[tT][eE][xX][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?=[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[bB][eE][gG][iI][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][xX][tT][eE][nN][sS][iI][oO][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))",
+          "name": "storage.type.builtin.matrix"
+        }
+      ]
+    },
+    "type-context": {
+      "patterns": [
+        {
+          "match": "((?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][sS]|[rR][eE][tT][uU][rR][nN][sS]|[mM][eE][aA][nN][sS]|[bB][eE][cC][oO][mM][eE][sS]|[iI][nN][hH][eE][rR][iI][tT][sS]|[pP][rR][oO][vV][iI][dD][eE][sS]|[mM][eE][eE][tT][iI][nN][gG]|[bB][uU][iI][lL][dD])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+((?:(?:(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][wW][nN][eE][dD])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+)?(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][rR][rR][aA][yY])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][fF])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[sS][hH][aA][rR][eE][dD]|[eE][xX][cC][lL][uU][sS][iI][vV][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[vV][iI][eE][wW])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][fF])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[pP][oO][iI][nN][tT][eE][rR]|[rR][eE][fF][eE][rR][eE][nN][cC][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][oO])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+)*(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][vV][eE][rR][rR][iI][dD][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[iI][nN][tT][eE][gG][eE][rR]|[lL][oO][nN][gG]|[bB][yY][tT][eE]|[dD][oO][uU][bB][lL][eE]|[sS][hH][oO][rR][tT]|[uU][nN][sS][iI][gG][nN][eE][dD]|[dD][eE][cC][iI][mM][aA][lL]|[sS][iI][nN][gG][lL][eE]|[lL][eE][tT][tT][eE][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[nN][uU][mM][bB][eE][rR]|[fF][lL][oO][aA][tT][iI][nN][gG]|[bB][oO][oO][lL][eE][aA][nN]|[tT][eE][xX][tT]|[nN][oO][tT][hH][iI][nN][gG])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?!(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[iI][sS]|[bB][eE][gG][iI][nN]|[eE][nN][dD]|[wW][iI][tT][hH]|[tT][hH][eE][nN]|[gG][iI][vV][eE]|[aA][sS]|[rR][eE][tT][uU][rR][nN][sS]|[dD][eE][fF][aA][uU][lL][tT][iI][nN][gG]|[oO][nN]|[wW][iI][tT][hH][oO][uU][tT]|[rR][eE][cC][eE][iI][vV][eE][sS]|[oO][fF]|[aA][nN][dD]|[tT][oO]|[bB][eE][iI][nN][gG])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])))(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)(?:\\.(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))*(?:::(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))?)(?:[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][fF])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?:(?:(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][wW][nN][eE][dD])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+)?(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][rR][rR][aA][yY])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][fF])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[sS][hH][aA][rR][eE][dD]|[eE][xX][cC][lL][uU][sS][iI][vV][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[vV][iI][eE][wW])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][fF])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[pP][oO][iI][nN][tT][eE][rR]|[rR][eE][fF][eE][rR][eE][nN][cC][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][oO])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+)*(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][vV][eE][rR][rR][iI][dD][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[iI][nN][tT][eE][gG][eE][rR]|[lL][oO][nN][gG]|[bB][yY][tT][eE]|[dD][oO][uU][bB][lL][eE]|[sS][hH][oO][rR][tT]|[uU][nN][sS][iI][gG][nN][eE][dD]|[dD][eE][cC][iI][mM][aA][lL]|[sS][iI][nN][gG][lL][eE]|[lL][eE][tT][tT][eE][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[nN][uU][mM][bB][eE][rR]|[fF][lL][oO][aA][tT][iI][nN][gG]|[bB][oO][oO][lL][eE][aA][nN]|[tT][eE][xX][tT]|[nN][oO][tT][hH][iI][nN][gG])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?!(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[iI][sS]|[bB][eE][gG][iI][nN]|[eE][nN][dD]|[wW][iI][tT][hH]|[tT][hH][eE][nN]|[gG][iI][vV][eE]|[aA][sS]|[rR][eE][tT][uU][rR][nN][sS]|[dD][eE][fF][aA][uU][lL][tT][iI][nN][gG]|[oO][nN]|[wW][iI][tT][hH][oO][uU][tT]|[rR][eE][cC][eE][iI][vV][eE][sS]|[oO][fF]|[aA][nN][dD]|[tT][oO]|[bB][eE][iI][nN][gG])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])))(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)(?:\\.(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))*(?:::(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))?))*)",
+          "captures": {
+            "1": {
+              "name": "keyword.other.modifier.matrix"
+            },
+            "2": {
+              "patterns": [
+                {
+                  "include": "#types"
+                },
+                {
+                  "include": "#keywords"
+                },
+                {
+                  "name": "entity.name.type.matrix",
+                  "match": "(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)(?:\\.(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))*(?:::(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))?"
+                },
+                {
+                  "include": "#punctuation"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "comment": "Capture type clauses lexically without carrying incomplete declarations into following statements. The compiler/LSP handles semantic resolution."
+    },
+    "parameters-and-arguments": {
+      "patterns": [
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)(?=[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))",
+          "name": "variable.parameter.matrix"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)(?=[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[bB][eE][iI][nN][gG])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))",
+          "name": "variable.parameter.argument.matrix"
+        }
+      ]
+    },
+    "escaped-identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.readwrite.matrix",
+          "begin": "`",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.variable.begin.matrix"
+            }
+          },
+          "end": "`|$",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.variable.end.matrix"
+            }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][yY])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "variable.language.self.matrix"
+        },
+        {
+          "name": "keyword.operator.word.matrix",
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[iI][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?:(?:[lL][eE][sS][sS]|[gG][rR][eE][aA][tT][eE][rR])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][hH][aA][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[lL][eE][aA][sS][tT]|[mM][oO][sS][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))"
+        },
+        {
+          "name": "keyword.operator.word.matrix",
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[dD][oO][eE][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[nN][oO][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][qQ][uU][aA][lL])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])"
+        },
+        {
+          "name": "keyword.operator.word.matrix",
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[sS][hH][iI][fF][tT][eE][dD])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[lL][eE][fF][tT]|[rR][iI][gG][hH][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[bB][yY])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])"
+        },
+        {
+          "name": "keyword.other.modifier.matrix",
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][uU][tT][aA][bB][lL][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+)?(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[rR][eE][cC][eE][iI][vV][eE][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[wW][iI][tT][hH][oO][uU][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[rR][eE][cC][eE][iI][vV][eE][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])"
+        },
+        {
+          "name": "support.function.builtin.matrix",
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][hH][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[lL][eE][nN][gG][tT][hH])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][fF])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])"
+        },
+        {
+          "name": "keyword.control.verb.matrix",
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[rR][eE][pP][eE][aA][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[fF][oO][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][aA][cC][hH])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][tT][hH][eE][rR][wW][iI][sS][eE]|[aA][lL][lL][oO][cC][aA][tT][eE]|[cC][oO][nN][sS][iI][dD][eE][rR]|[cC][oO][nN][tT][iI][nN][uU][eE]|[eE][vV][aA][lL][uU][aA][tT][eE]|[aA][sS][sS][eE][mM][bB][lL][yY]|[aA][tT][tT][eE][mM][pP][tT]|[rR][eE][lL][eE][aA][sS][eE]|[cC][oO][nN][tT][eE][xX][tT]|[fF][oO][rR][eE][vV][eE][rR]|[aA][pP][pP][eE][nN][dD]|[bB][oO][rR][rR][oO][wW]|[rR][eE][pP][eE][aA][tT]|[aA][cC][rR][oO][sS][sS]|[aA][lL][wW][aA][yY][sS]|[cC][aA][uU][gG][hH][tT]|[aA][pP][pP][lL][yY]|[bB][eE][gG][iI][nN]|[bB][uU][iI][lL][dD]|[rR][aA][iI][sS][eE]|[sS][lL][eE][eE][pP]|[wW][hH][iI][lL][eE]|[aA][gG][aA][iI][nN]|[cC][iI][tT][eE]|[gG][iI][vV][eE]|[mM][oO][vV][eE]|[nN][oO][tT][eE]|[rR][eE][aA][dD]|[sS][tT][oO][pP]|[wW][hH][eE][nN]|[tT][hH][eE][nN]|[eE][nN][dD]|[oO][wW][nN]|[sS][aA][yY]|[sS][eE][tT]|[fF][oO][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "keyword.control.verb.matrix"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[rR][eE][mM][aA][iI][nN][dD][eE][rR]|[bB][eE][cC][oO][mM][eE][sS]|[bB][iI][tT][wW][iI][sS][eE]|[sS][hH][iI][fF][tT][eE][dD]|[eE][qQ][uU][aA][lL][sS]|[mM][iI][nN][uU][sS]|[tT][iI][mM][eE][sS]|[pP][lL][uU][sS]|[oO][vV][eE][rR]|[aA][nN][dD]|[nN][oO][tT]|[xX][oO][rR]|[oO][rR]|[aA][tT]|[iI][sS]|[dD][oO][eE][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "keyword.operator.word.matrix"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][xX][cC][lL][uU][sS][iI][vV][eE][lL][yY]|[dD][eE][fF][aA][uU][lL][tT][iI][nN][gG]|[eE][vV][eE][rR][yY][tT][hH][iI][nN][gG]|[aA][nN][oO][nN][yY][mM][oO][uU][sS]|[rR][eE][pP][eE][aA][tT][iI][nN][gG]|[pP][rR][oO][vV][iI][dD][eE][dD]|[rR][eE][cC][eE][iI][vV][eE][sS]|[rR][eE][qQ][uU][iI][rR][eE][sS]|[aA][nN][yY][tT][hH][iI][nN][gG]|[hH][oO][lL][dD][iI][nN][gG]|[mM][eE][eE][tT][iI][nN][gG]|[rR][eE][tT][uU][rR][nN][sS]|[wW][iI][tT][hH][oO][uU][tT]|[cC][hH][aA][pP][tT][eE][rR]|[gG][iI][vV][iI][nN][gG]|[bB][eE][iI][nN][gG]|[mM][eE][aA][nN][sS]|[sS][iI][zZ][eE][dD]|[uU][sS][iI][nN][gG]|[fF][iI][eE][lL][dD]|[fF][rR][oO][mM]|[iI][nN][tT][oO]|[mM][oO][rR][eE]|[wW][iI][tT][hH]|[tT][yY][pP][eE]|[tT][hH][eE]|[aA][sS]|[iI][nN]|[oO][fF]|[oO][nN]|[tT][oO]|[pP][rR][oO][vV][iI][dD][eE][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "keyword.other.modifier.matrix"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[iI][mM][pP][lL][eE][mM][eE][nN][tT][aA][tT][iI][oO][nN]|[pP][aA][rR][aA][gG][rR][aA][pP][hH]|[eE][xX][tT][eE][nN][sS][iI][oO][nN]|[cC][oO][nN][tT][rR][aA][cC][tT]|[rR][eE][cC][oO][rR][dD]|[cC][hH][oO][iI][cC][eE]|[cC][lL][aA][sS][sS]|[tT][eE][sS][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "storage.type.declaration.matrix"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[pP][uU][bB][lL][iI][cC]|[aA][bB][sS][tT][rR][aA][cC][tT]|[vV][iI][rR][tT][uU][aA][lL]|[rR][eE][pP][lL][aA][cC][eE][sS]|[mM][uU][tT][aA][bB][lL][eE]|[iI][nN][hH][eE][rR][iI][tT][sS]|[oO][vV][eE][rR][rR][iI][dD][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "storage.modifier.matrix"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[nN][oO][wW])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "support.function.builtin.matrix"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[vV][aA][lL][uU][eE]|[vV][aA][rR][iI][aA][bB][lL][eE]|[cC][oO][nN][sS][tT][aA][nN][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "storage.type.variable.matrix"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[bB][oO][oO][kK]|[lL][iI][bB][rR][aA][rR][yY])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "storage.type.namespace.matrix"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[nN][uU][mM][bB][eE][rR]|[fF][lL][oO][aA][tT][iI][nN][gG]|[bB][oO][oO][lL][eE][aA][nN]|[tT][eE][xX][tT]|[nN][oO][tT][hH][iI][nN][gG]|[iI][nN][tT][eE][gG][eE][rR]|[lL][oO][nN][gG]|[bB][yY][tT][eE]|[dD][oO][uU][bB][lL][eE]|[pP][oO][iI][nN][tT][eE][rR]|[aA][rR][rR][aA][yY]|[oO][wW][nN][eE][dD]|[sS][hH][aA][rR][eE][dD]|[eE][xX][cC][lL][uU][sS][iI][vV][eE]|[vV][iI][eE][wW]|[rR][eE][fF][eE][rR][eE][nN][cC][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "storage.type.builtin.matrix"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[sS][hH][oO][rR][tT]|[uU][nN][sS][iI][gG][nN][eE][dD]|[dD][eE][cC][iI][mM][aA][lL]|[sS][iI][nN][gG][lL][eE]|[lL][eE][tT][tT][eE][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "invalid.illegal.unsupported-type.matrix"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][rR][uU][eE]|[fF][aA][lL][sS][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "constant.language.boolean.matrix"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[qQ][uU][oO][tT][eE]|[nN][eE][wW][lL][iI][nN][eE]|[tT][aA][bB])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "constant.language.character.matrix"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[nN][oO][tT][hH][iI][nN][gG])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "constant.language.nothing.matrix"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.matrix",
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])0[xX][0-9A-Fa-f]+(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])"
+        },
+        {
+          "name": "constant.numeric.decimal.matrix",
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[0-9]+(?:\\.[0-9]+)?(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])"
+        }
+      ]
+    },
+    "members-and-calls": {
+      "patterns": [
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)(?=[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[wW][iI][tT][hH])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))",
+          "name": "entity.name.function.call.matrix"
+        },
+        {
+          "match": "(?<=\\.)(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)",
+          "name": "variable.other.member.matrix"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "punctuation.accessor.matrix",
+          "match": "::"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.delimiter.matrix",
+          "match": "[,;.]"
+        },
+        {
+          "name": "punctuation.section.group.begin.matrix",
+          "match": "\\(|\\["
+        },
+        {
+          "name": "punctuation.section.group.end.matrix",
+          "match": "\\)|\\]"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "match": "(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)",
+          "name": "variable.other.readwrite.matrix"
+        }
+      ]
+    }
+  },
+  "comment": "Follows matrix_lexer.cpp: ASCII-only keyword folding, separator-aware names, raw single-line quotes, and standalone end text terminators. Explicit letter pairs deliberately avoid Unicode case folding."
+}

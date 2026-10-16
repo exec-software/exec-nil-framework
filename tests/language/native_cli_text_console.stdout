@@ -1,0 +1,4 @@
+stdout-exact
+content-equal
+content-different
+concat:native-text:ok

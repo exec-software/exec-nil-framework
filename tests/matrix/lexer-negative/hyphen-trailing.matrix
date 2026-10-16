@@ -1,0 +1,4 @@
+area t
+main returns integer begin function
+    value kind- as integer is 5
+end function

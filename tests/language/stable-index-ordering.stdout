@@ -1,0 +1,10 @@
+stable i32 permutations
+stable f64 NaN infinity zero permutations
+gather i32
+gather i64
+gather u8
+gather bool
+gather f64
+gather text
+gather aliases and IEEE values
+parallel scene arrays stay aligned

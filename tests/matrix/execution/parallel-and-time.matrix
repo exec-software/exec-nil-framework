@@ -1,0 +1,70 @@
+!!! 10-concurrency-and-time.matrix
+!!! Bounded structured parallelism and clock operations.
+!!!
+!!! "apply W across I" is Ny's parallel_map, with the whole contract intact:
+!!! a statically resolved, nongeneric worker with exactly one scalar parameter
+!!! and one scalar result; an input array of the parameter type; deterministic
+!!! result order; at most 1,048,576 inputs.
+!!!
+!!! A worker and its entire transitive call graph may use scalar arithmetic,
+!!! bitwise operations, comparisons, scalar casts, locals, branches, loops and
+!!! direct calls to other isolated scalar helpers. They may NOT touch
+!!! globals, pointers, owned buffers, views, record handles, arrays, text,
+!!! class methods, a nested apply, assembly, foreign calls, console or file
+!!! I/O, process operations, clocks, sleeps or fault payloads. These are
+!!! checked on NIL as well, so hand-written NIL cannot grant extra effects.
+!!!
+!!! This is a scalar data-parallel facility. It is not an async runtime, a
+!!! thread API, or a channels system. There are no task handles to forget to
+!!! join: the caller receives the result array only after every worker thread
+!!! has finished.
+
+book tour.parallel
+
+!!! An isolated scalar worker.
+encode receives pixel as number returns number begin paragraph
+    give (pixel bitwise xor 255) plus 3
+end paragraph
+
+!!! An isolated scalar helper the worker may call.
+clamp receives sample as number returns number begin paragraph
+    when sample is less than 0 then
+        give 0
+    end when
+    give sample
+end paragraph
+
+normalise receives sample as number returns number begin paragraph
+    give clamp with sample being (sample minus 1)
+end paragraph
+
+main returns number begin paragraph
+
+    value pixels as array of number is [1 becomes number, 2 becomes number, 3 becomes number]
+
+    !!! Results occupy the same indices as their inputs. The input array is
+    !!! not mutated. A worker failure is a runtime error reported at the
+    !!! lowest failing input index after every thread is joined; it is not a
+    !!! catchable fault and no partial result array is returned.
+    value encoded is apply encode across pixels
+    say encoded at 0
+    say encoded at 1
+    say encoded at 2
+
+    value normalised is apply normalise across pixels
+    say normalised at 0
+
+    !!! An empty input returns an empty array without starting a worker.
+    value nothing_to_do as array of number is []
+    value empty is apply normalise across nothing_to_do
+    say the length of empty
+
+    !!! Clock operations. A nonpositive duration is an immediate no-op.
+    !!! Real and text durations are rejected rather than converted.
+    value started as number is now in milliseconds
+    sleep for 10 milliseconds
+    value finished as number is now in milliseconds
+    say finished is at least started
+
+    give 0
+end paragraph

@@ -1,0 +1,20 @@
+!!! Inline assembly, REACHED. Sample 13 declares assembly but never calls it,
+!!! so it cannot prove the rejection story. This page calls the assembly
+!!! paragraph, which makes the route split observable:
+!!!
+!!!   - the four interpreted routes refuse to run it, with a diagnostic that
+!!!     names the route, because erasing or emulating machine assembly in an
+!!!     interpreter would make one program mean two different things;
+!!!   - the LLVM routes execute the same NIL and print bswapq(1).
+book tour.asm-called
+
+swap-bytes receives word as number returns number begin paragraph
+    variable result as number is 0
+    assembly for x86_64 is "movq $1, $0; bswapq $0" using word giving result
+    give result
+end paragraph
+
+main returns number begin paragraph
+    say swap-bytes with word being 1
+    give 0
+end paragraph

@@ -1,0 +1,9 @@
+C:\dir\file.txt
+^[a-z]+\d*$
+he said "hi"
+one
+two
+name	value
+He said "hi" and the path was C:\Users\me\file.txt
+  this line keeps its extra indent
+{"json": "works too", "escaped": "nothing \n needed"}

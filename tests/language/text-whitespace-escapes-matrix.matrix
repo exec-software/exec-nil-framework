@@ -1,0 +1,35 @@
+!!! Raw U+000C/U+000B bytes below are independent control-byte inputs.
+!!! Matrix strings remain raw; the imported Ny library decodes its own escapes.
+book validation.text-whitespace
+read everything from ny.lang.core
+read everything from ny.lang.text.string_utils
+
+check receives ok as boolean, label as text returns nothing begin paragraph
+    evaluate assert-true with condition being ok, message being label
+end paragraph
+
+main returns number begin paragraph
+    value form-feed as text is ""
+    value vertical-tab as text is ""
+    evaluate check with ok being ((the length of form-feed) equals 1 and (the length of vertical-tab) equals 1), label being "single control bytes"
+    evaluate check with ok being ((the length of "\f") equals 2 and (the length of "\v") equals 2), label being "Matrix strings remain raw"
+    evaluate check with ok being ("\f" does not equal form-feed and "\v" does not equal vertical-tab), label being "raw strings survive NIL"
+    evaluate check with ok being (not (ny.lang.text::is_whitespace with s being "f") and not (ny.lang.text::is_whitespace with s being "v")), label being "letters are not whitespace"
+    evaluate check with ok being (ny.lang.text::is_whitespace with s being form-feed), label being "form-feed whitespace"
+    evaluate check with ok being (ny.lang.text::is_whitespace with s being vertical-tab), label being "vertical-tab whitespace"
+    evaluate check with ok being (ny.lang.text::is_whitespace with s being (" " plus tab plus newline plus form-feed plus vertical-tab)), label being "mixed control whitespace"
+    evaluate check with ok being (not (ny.lang.text::is_whitespace with s being "") and (ny.lang.text::is_blank with s being "")), label being "empty predicates unchanged"
+    evaluate check with ok being ((ny.lang.text::is_blank with s being (form-feed plus vertical-tab)) and not (ny.lang.text::is_blank with s being "fv")), label being "blank uses control bytes"
+    evaluate check with ok being ((ny.lang.text::trim with s being "five velvet") equals "five velvet"), label being "trim preserves letters"
+    evaluate check with ok being ((ny.lang.text::trim with s being (form-feed plus "five velvet" plus vertical-tab)) equals "five velvet"), label being "trim control edges"
+    evaluate check with ok being ((ny.lang.text::trim_start with s being (form-feed plus "five" plus vertical-tab)) equals ("five" plus vertical-tab)), label being "trim start only"
+    evaluate check with ok being ((ny.lang.text::trim_end with s being (form-feed plus "five" plus vertical-tab)) equals (form-feed plus "five")), label being "trim end only"
+    value ordinary is ny.lang.text::split_whitespace with s being "five velvet"
+    evaluate check with ok being ((ny.lang.text::join with parts being ordinary, separator being "|") equals "five|velvet"), label being "split preserves f and v"
+    value controls is ny.lang.text::split_whitespace with s being (form-feed plus "five" plus form-feed plus "velvet" plus vertical-tab plus "f" plus vertical-tab)
+    evaluate check with ok being ((ny.lang.text::join with parts being controls, separator being "|") equals "five|velvet|f"), label being "split actual controls"
+    value only-controls is ny.lang.text::split_whitespace with s being (form-feed plus vertical-tab)
+    evaluate check with ok being ((only-controls.length with nothing) equals 0), label being "control-only split"
+    say "Matrix text whitespace passed"
+    give 0
+end paragraph

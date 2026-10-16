@@ -1,0 +1,116 @@
+{
+  "schema": "ny.sdk.capability-catalog.v1",
+  "release_declaration": false,
+  "coverage": "Observed fixture behavior only; not exhaustive API, combination, performance, or release-readiness proof.",
+  "routes": ["text-interpreter", "binary-interpreter", "bundle-text", "bundle-binary", "llvm-jit", "llvm-aot"],
+  "groups": [
+    {
+      "id": "scalar-arithmetic",
+      "observed": "Scalar arithmetic and comparisons at live-array handle addresses agree across the six execution routes for the contract and collision fixtures.",
+      "tests": ["ny.routes.scalar-arithmetic-contract", "ny.routes.scalar-array-handle-collision"],
+      "limitations": ["This fixture does not establish support for every scalar width, conversion, overflow case, or foreign ABI."]
+    },
+    {
+      "id": "scalar-arrays",
+      "observed": "Integer, f64, and text arrays, including imported public primitive operations, agree for the tested construction, access, mutation, and lifetime cases.",
+      "tests": ["ny.routes.scalar-array-parity", "ny.routes.stl-array-primitives"],
+      "limitations": ["Nested arrays and arbitrary aggregate element layouts are outside this proof.", "Typed default reads and no-op out-of-range writes are tested; this is not a general memory-safety or reclamation proof."]
+    },
+    {
+      "id": "aggregate-references",
+      "observed": "The nested-reference, scalar-field and reference-handle fixtures agree for their concrete nonrecursive layouts, shared aliases versus local rebinding, returned handles, generic fields, virtual reference methods, f64 preservation, wrapping u8 storage and explicit raw-pointer controls.",
+      "tests": ["ny.routes.native-nested-reference", "ny.routes.native-scalar-fields", "ny.routes.reference-handles"],
+      "limitations": ["Scalar references, explicit ref dereference and arbitrary reference provenance are unavailable; these are shared aggregate handles, not binding cells. Explicit owned scalar buffers have a separate lexical borrowing contract.", "Recursive layouts and arbitrary aggregate layouts or a foreign struct ABI are outside the tested field and generic combinations."]
+    },
+    {
+      "id": "globals",
+      "observed": "The global and module-global contract fixtures agree for their typed initializers, reads, writes, module-qualified names, local shadowing, and generic function and method access.",
+      "tests": ["ny.routes.native-global-contract", "ny.routes.module-global-contract"],
+      "limitations": ["These fixtures do not qualify every import topology, namespace, aggregate global, or dynamic initializer."]
+    },
+    {
+      "id": "managed-lifetime",
+      "observed": "Managed nested objects, text arrays, aliases, returned values and global text survive the fixture's allocation-heavy loops and calls across the six routes.",
+      "tests": ["ny.routes.native-managed-lifetime"],
+      "limitations": ["This is tracing lifetime evidence, not borrow checking, deterministic destruction, a heap-size bound or a pause-time guarantee.", "Raw pointer deallocation and uninstrumented native embedding have separate lifetime contracts."]
+    },
+    {
+      "id": "concrete-classes",
+      "observed": "Concrete class construction, inherited fields and checked method calls agree across the six execution routes for the class fixture.",
+      "tests": ["ny.routes.class-execution"],
+      "limitations": ["Generic classes and first-class method values are not established by this concrete class fixture."]
+    },
+    {
+      "id": "polymorphic-classes",
+      "observed": "Ancestor views preserve shared identity, static access and dynamic virtual targets through calls, returns, nested fields, multiple inheritance, managed collection and synchronous faults in the pipeline fixture.",
+      "tests": ["ny.routes.class-polymorphism"],
+      "limitations": ["This is closed-module nongeneric class dispatch, not dynamic loading, a foreign class ABI, or trait objects.", "Downcasts, reference/container covariance, ownership-driven destruction and common-ancestor inferred joins are outside this proof."]
+    },
+    {
+      "id": "synchronous-faults",
+      "observed": "Typed struct faults, nominal matching, retained rethrows, nested cleanup, return and loop exits, replacement faults, and managed payload retention agree for three fixtures across the six execution routes.",
+      "tests": ["ny.routes.fault-control-flow", "ny.routes.fault-nominal-identity", "ny.routes.fault-managed-lifetime"],
+      "limitations": ["This is synchronous language fault handling, not recovery from runtime safety traps or allocation failures.", "Cross-thread propagation, cancellation, foreign exceptions, postfix propagation and ownership-driven destructors are outside this proof."]
+    },
+    {
+      "id": "owned-buffers",
+      "observed": "Local affine scalar buffers, explicit moves, lexical shared/exclusive borrows, typed scalar access and cleanup across normal, loop, return and synchronous fault exits agree for the owned-buffer fixture across six routes.",
+      "tests": ["ny.routes.owned-buffers"],
+      "limitations": ["Only local i32/i64/u8 buffers are covered; borrowed parameters, returning owners, owning aggregate fields, closure captures and user destructors are unavailable.", "This is not a proof of arbitrary raw-pointer safety or process-fatal cleanup."]
+    },
+    {
+      "id": "structured-parallel-map",
+      "observed": "Statically resolved isolated scalar workers preserve input values, deterministic output order and i32/i64/u8/bool/f64 results in the parallel-map fixture across six routes.",
+      "tests": ["ny.routes.parallel-map"],
+      "limitations": ["Worker threads receive copied scalar values and are always joined; shared-memory tasks, captures, nested parallelism, I/O/FFI, cancellation and general asynchronous execution are unavailable.", "This fixture proves results, not speedup; actual overlapping host threads and deterministic joined error handling have separate runtime tests."]
+    },
+    {
+      "id": "checked-byte-encoding",
+      "observed": "Ny-written strict hexadecimal decoding and bounded little/big-endian byte-array reads/writes agree on valid bytes, malformed-input results, signed limits and failed-write nonmutation across six routes.",
+      "tests": ["ny.routes.checked-hex-runtime", "ny.routes.checked-binary-runtime"],
+      "limitations": ["Unsigned 16/32-bit wire values use i32/i64 carriers; no unsigned 64-bit scalar or streaming cursor API is established by this fixed-width/hex proof.", "Native text is NUL-free and byte-indexed; embedded-NUL rejection is separately tested only on interpreter routes. This is not a general Unicode, concurrent-mutation or allocation-failure guarantee."]
+    },
+    {
+      "id": "canonical-varints-and-crc32",
+      "observed": "Ny-written shortest-form unsigned 32-bit and ZigZag signed 64-bit varints and bounded incremental IEEE CRC-32 agree across six routes for exact vectors, width boundaries, malformed encodings, chunked updates and failure nonmutation.",
+      "tests": ["ny.routes.checked-varint-runtime", "ny.routes.checked-crc-runtime"],
+      "limitations": ["Varints use i64 carriers; this is not unsigned 64-bit scalar support, signed LEB128, a general protobuf parser or a streaming cursor abstraction.", "CRC-32 detects accidental corruption, not malicious modification or authenticity. This bitwise baseline makes no throughput, hardware-acceleration or concurrent-mutation guarantee."]
+    },
+    {
+      "id": "sleep",
+      "observed": "The time contract fixture agrees for its clock and bounded sleep calls.",
+      "tests": ["ny.routes.native-time-contract"],
+      "limitations": ["No real-time scheduling, latency, or throughput guarantee is implied."]
+    }
+  ],
+  "proofs": [
+    {"test": "ny.routes.scalar-arithmetic-contract", "fixture": "scalar-arithmetic-contract", "stdlib": false},
+    {"test": "ny.routes.scalar-array-handle-collision", "fixture": "scalar-array-handle-collision", "stdlib": false},
+    {"test": "ny.routes.scalar-array-parity", "fixture": "scalar-array-parity", "stdlib": false},
+    {"test": "ny.routes.stl-array-primitives", "fixture": "stl-array-primitives", "stdlib": true},
+    {"test": "ny.routes.native-nested-reference", "fixture": "native-nested-reference", "stdlib": false},
+    {"test": "ny.routes.native-scalar-fields", "fixture": "native-scalar-fields", "stdlib": false},
+    {"test": "ny.routes.native-global-contract", "fixture": "native-global-contract", "stdlib": false},
+    {"test": "ny.routes.module-global-contract", "fixture": "module-global-contract", "stdlib": false},
+    {"test": "ny.routes.native-time-contract", "fixture": "native-time-contract", "stdlib": false},
+    {"test": "ny.routes.native-managed-lifetime", "fixture": "native-managed-lifetime", "stdlib": true},
+    {"test": "ny.routes.class-execution", "fixture": "class-execution", "stdlib": false},
+    {"test": "ny.routes.fault-control-flow", "fixture": "fault-control-flow", "stdlib": false},
+    {"test": "ny.routes.fault-nominal-identity", "fixture": "fault-nominal-identity", "stdlib": false},
+    {"test": "ny.routes.fault-managed-lifetime", "fixture": "fault-managed-lifetime", "stdlib": true},
+    {"test": "ny.routes.class-polymorphism", "fixture": "class-polymorphism", "stdlib": true},
+    {"test": "ny.routes.reference-handles", "fixture": "reference-handles", "stdlib": false},
+    {"test": "ny.routes.owned-buffers", "fixture": "owned-buffers", "stdlib": false},
+    {"test": "ny.routes.parallel-map", "fixture": "parallel-map", "stdlib": false},
+    {"test": "ny.routes.checked-hex-runtime", "fixture": "checked-hex-runtime", "stdlib": true},
+    {"test": "ny.routes.checked-binary-runtime", "fixture": "checked-binary-runtime", "stdlib": true},
+    {"test": "ny.routes.checked-varint-runtime", "fixture": "checked-varint-runtime", "stdlib": true},
+    {"test": "ny.routes.checked-crc-runtime", "fixture": "checked-crc-runtime", "stdlib": true}
+  ],
+  "limitations": [
+    "Only the supported Linux x86_64 Release LLVM host can receive technical rc-checks qualification.",
+    "Passing this catalog is not a v1 language release declaration and does not qualify the entire standard library.",
+    "Separate native-library ABI, inline-assembly breadth, sustained allocation behavior, production workloads, and debugger/editor/AI-tool completeness require their own evidence.",
+    "Hashes bind local build observations to packaged artifacts; they are not signatures or independent attestations."
+  ]
+}

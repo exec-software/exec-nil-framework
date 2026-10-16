@@ -1,0 +1,89 @@
+book stage.four
+
+point begin record
+    field x as override long
+    field y as override long
+end record
+
+segment begin record
+    field start  as point
+    field finish as point
+end record
+
+envelope of type T begin record
+    field item as T
+end record
+
+coordinate means override long
+
+job-state begin choice
+    when Queued   holding number
+    when Running  holding number
+    when Complete holding number
+    when Failed   holding number
+end choice
+
+maybe of type T begin choice
+    when Present holding T
+    when Absent
+end choice
+
+describe receives state as job-state returns text begin paragraph
+    consider state
+        when job-state.Queued   holding ticket  then give "queued"
+        when job-state.Running  holding percent then give "running"
+        when job-state.Complete holding records then give "complete"
+        when job-state.Failed   holding code provided code is at least 500 then give "server failure"
+        when job-state.Failed   holding code then give "client failure"
+        otherwise give "unknown"
+    end consider
+end paragraph
+
+main returns number begin paragraph
+    value origin is build point with x being 0, y being 0
+    value corner is build point with x being 3, y being 4
+    say corner.x
+    say corner.y
+
+    value span is build segment with start being origin, finish being corner
+    say span.finish.y
+
+    value boxed is build envelope of number with item being 42
+    say boxed.item
+
+    value here as coordinate is 7
+    say here
+
+    say describe with state being (job-state.Queued holding 41)
+    say describe with state being (job-state.Failed holding 503)
+    say describe with state being (job-state.Failed holding 404)
+
+    value found as maybe of number is maybe.Present holding 42
+    consider found
+        when maybe.Present holding payload then say payload
+        when maybe.Absent then say "no value"
+    end consider
+
+    value label as text is consider found
+        when maybe.Present holding payload give "present"
+        when maybe.Absent give "absent"
+        otherwise give "unknown"
+    end consider
+    say label
+
+    variable values as array of number is [1, 2, 3]
+    set values at 1 to 7
+    say values at 0
+    say values at 1
+    say the length of values
+    append 9 to values
+    say the length of values
+
+    allocate buffer as pointer to number sized 2
+    set buffer at 0 to 40
+    set buffer at 1 to 2
+    say (buffer at 0) plus (buffer at 1)
+    release buffer
+
+    give 0
+end paragraph

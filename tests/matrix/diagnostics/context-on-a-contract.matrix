@@ -1,0 +1,18 @@
+!!! A 'context' annotation the artifact has nowhere to put.
+!!!
+!!! A paragraph, record, class and choice each have a declaration in the
+!!! emitted NIL and carry their own annotations. A contract emits nothing at
+!!! all, so there is no place to put one -- which is a property of the
+!!! artifact, not a feature waiting to be written. Refusing is right:
+!!! documented intent that silently is not in the artifact is worse than no
+!!! intent at all, because nothing reveals the difference.
+book diagnostic.context-on-a-contract
+
+context "Anything the compositor can draw."
+Drawable begin contract
+    draw returns nothing
+end contract
+
+main returns number begin paragraph
+    give 0
+end paragraph

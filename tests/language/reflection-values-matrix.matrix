@@ -1,0 +1,33 @@
+book tests.reflection-values
+
+read everything from nil.std.reflection
+read everything from ny.lang.core
+
+main returns override integer begin paragraph
+    value info is build declaration-info with kind being "function",
+        name being "temp_render", qualified-name being "scene::temp_render",
+        type-name being "i32", source-path being "scene.matrix", line being 7,
+        parent-id being minus 1, is-public being true, semantic-checked being true
+    value annotation is build annotation-info with owner-id being 0,
+        name being "ai_context", arguments being "draw a frame", line being 6
+    say is-function with info being info
+    say is-record with info being info
+    say is-public-api with info being info
+    say has-checked-semantics with info being info
+    say annotation.name
+    say json-text with value-text being ""
+    value quote-mark is quote
+    value slash as text is "\"
+    value tab-character is tab
+    value newline-character is newline
+    value form-character as text is ""
+    value vertical-character as text is ""
+    value return-character as text is ""
+    value sample is "quote" plus quote-mark plus " slash" plus slash plus " tab" plus tab-character plus " newline" plus newline-character plus " form" plus form-character plus " vertical" plus vertical-character plus " return" plus return-character plus " café"
+    say json-text with value-text being sample
+    say diagnostic-json with code being "EXAMPLE001", severity being "warning",
+        message being "Rename temporary API", source-path being info.source-path,
+        line being info.line
+    say "ny.lang.reflection is still literal text"
+    give 0
+end paragraph

@@ -1,0 +1,76 @@
+!!! 09-memory.matrix
+!!! Owned buffers, lexical borrowing, moves, raw pointers and references.
+!!!
+!!! Ownership operations are statements, not initialiser expressions, because
+!!! Ny requires every ownership operation to be a direct local declaration
+!!! initialiser. Expressing that in the grammar means the restriction is a
+!!! parse rule rather than a later semantic error.
+!!!
+!!! Owners and views cannot be parameters, results, globals, record fields,
+!!! array elements or captures. Read a scalar out to pass it elsewhere.
+
+book tour.memory
+
+Reading begin record
+    field level as number
+end record
+
+!!! A reference parameter shares object identity with the caller. Field
+!!! mutation is visible through aliases; rebinding the parameter is not.
+!!! Scalar reference creation is rejected.
+bump receives sample as reference to Reading returns nothing begin paragraph
+    set sample.level to sample.level plus 1
+end paragraph
+
+main returns number begin paragraph
+
+    !!! An owned buffer is zero-initialised. A count below one requests one
+    !!! element; an oversized allocation fails. Mutating it requires a
+    !!! mutable owner.
+    own variable samples as array of number sized 64
+    set samples at 0 to 42
+
+    !!! Shared views. Several may coexist and the owner may still be read, but
+    !!! writes and moves are forbidden until every view's lexical scope ends.
+    !!! Lifetimes are lexical, not last-use inferred.
+    when true then
+        borrow first from samples
+        borrow second from samples
+        say first at 0
+        say second at 0
+        say samples at 0
+    end when
+
+    !!! One exclusive view. While it exists, no other read, write, move or
+    !!! borrow of the owner is permitted. Mutability belongs to the view type,
+    !!! so the view binding itself is not declared mutable.
+    when true then
+        borrow writable from samples exclusively
+        set writable at 0 to 43
+    end when
+
+    !!! A move transfers the allocation into a new binding and invalidates the
+    !!! source. A move does not free storage; the buffer is freed exactly once
+    !!! when its current owner's scope exits, including through give,
+    !!! stop repeating, continue repeating and fault unwinding.
+    move samples into final_samples
+    say final_samples at 0
+
+    !!! Raw pointers are the unmanaged alternative: explicit allocation,
+    !!! explicit release, no borrow checking.
+    allocate raw as pointer to override byte sized 4
+    set raw at 0 to 255 becomes override byte
+    set raw at 1 to 256 becomes override byte     !!! wraps to 0
+    say raw at 0
+    say raw at 1
+    release raw
+
+    !!! Shared record handles. A reference aliases the object, not the
+    !!! variable's storage: rebinding the original does not redirect it.
+    variable sample is build Reading with level being 41
+    value alias is reference to sample
+    evaluate bump with sample being alias
+    say sample.level                           !!! 42
+
+    give 0
+end paragraph

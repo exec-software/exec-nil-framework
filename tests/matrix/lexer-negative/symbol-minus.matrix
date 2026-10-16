@@ -1,0 +1,4 @@
+area t
+main returns integer begin function
+    value gap as integer is 7 - 2
+end function

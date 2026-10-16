@@ -1,0 +1,4 @@
+area t
+main returns integer begin function
+    value `` as integer is 1
+end function

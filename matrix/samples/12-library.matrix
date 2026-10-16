@@ -1,0 +1,7 @@
+!!! 12-library.matrix
+!!! A library (Ny package) groups related books.
+
+library tour.application
+
+cite everything from tour.billing
+cite everything from tour.pricing

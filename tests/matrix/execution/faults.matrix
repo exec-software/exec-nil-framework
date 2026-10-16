@@ -1,0 +1,87 @@
+!!! 08-faults.matrix
+!!! Synchronous typed faults: attempt, caught, always and raise.
+!!!
+!!! "always" is Ny's "recover". It is cleanup with finally semantics, not an
+!!! additional handler, and Matrix names it for what it does.
+!!!
+!!! Fatal runtime traps -- division by zero, invalid NIL, allocation failure,
+!!! panic, explicit exit -- are not catchable here, in either language.
+
+book tour.faults
+
+!!! A payload is a fully initialised concrete record. Scalars, class
+!!! instances, choice values and raw pointers are not payloads.
+ReadFault begin record
+    field message as text
+end record
+
+WriteFault begin record
+    field code as number
+end record
+
+read_value receives available as boolean returns number begin paragraph
+    when not available then
+        raise ReadFault with message being "input is unavailable"
+    end when
+    give 42
+end paragraph
+
+!!! Handlers are tried in source order. A guard must be boolean; a false guard
+!!! proceeds to the next handler. The binding is visible in its own guard and
+!!! body only -- not in sibling handlers and not in "always".
+guarded receives available as boolean returns number begin paragraph
+    attempt
+        give read_value with available being available
+    caught ReadFault as problem provided problem.message does not equal ""
+        say problem.message
+        give 0
+    caught WriteFault as problem
+        say problem.code
+        give 0
+    always
+        say "cleanup"
+    end attempt
+end paragraph
+
+!!! A catch-all binds an opaque token. The token may be ignored, or it may be
+!!! the complete expression of a re-raise. Reading its fields, printing it,
+!!! copying it, casting it, giving it or passing it onward is rejected.
+!!! An unguarded catch-all must be the final handler.
+relay receives available as boolean returns number begin paragraph
+    attempt
+        give read_value with available being available
+    caught anything as token
+        raise token again
+    end attempt
+end paragraph
+
+!!! Cleanup resources are declared outside the attempt, because attempt-body
+!!! bindings are not visible to handlers or to cleanup.
+!!! A give or raise inside "always" replaces the suspended exit, which can
+!!! deliberately suppress an earlier fault or result.
+replacing_exit returns number begin paragraph
+    variable attempts as number is 0
+    attempt
+        set attempts to attempts plus 1
+        raise WriteFault with code being 7
+    always
+        give attempts
+    end attempt
+end paragraph
+
+main returns number begin paragraph
+    say guarded with available being true      !!! 42, then cleanup
+    say guarded with available being false     !!! message, cleanup, then 0
+
+    !!! An exact nominal match includes module and concrete generic arguments.
+    !!! Equally named records in different books do not match each other, and
+    !!! the library's Fault record is not a universal catch.
+    attempt
+        say relay with available being false
+    caught ReadFault as problem
+        say problem.message
+    end attempt
+
+    say replacing_exit with nothing            !!! 1
+    give 0
+end paragraph

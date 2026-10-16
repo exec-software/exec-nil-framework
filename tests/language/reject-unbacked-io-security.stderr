@@ -1,0 +1,5 @@
+Type checking failed:
+  line 8: Undefined identifier 'gzip_compress'
+  line 9: Undefined identifier 'sha256'
+  line 10: Undefined identifier 'random_bytes'
+  line 11: Undefined identifier 'aes_encrypt'

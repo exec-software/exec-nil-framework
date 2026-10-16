@@ -1,0 +1,61 @@
+!!! 11-books.matrix
+!!! Books (Ny modules), libraries, linking, visibility and book globals.
+!!!
+!!! Book-level initialisers run in declaration order, not lexical name order.
+!!! A typed forward reference type-checks and still fails at runtime if it
+!!! reads before initialisation; Matrix does not invent a zero. Arbitrary
+!!! top-level statements are not an initialisation mechanism.
+!!!
+!!! This file pairs with 11-books-pricing.matrix.
+
+book tour.billing
+
+!!! Every read form. The path is the book name, not a file path.
+read ny.lang.io.file
+read ny.lang.core
+read subtotal, volume_discount from tour.pricing
+read ny.lang.collections as collections
+read everything from ny.lang.math
+
+!!! Book globals belong to their declared book and have "book::name" storage
+!!! identity in NIL. Two books may declare the same name without sharing
+!!! storage. Aggregate globals remain interpreter-only.
+public variable audit_level as number is 1
+value internal_seed as number is 40
+
+!!! An initialiser may read an earlier one in the same book.
+value derived_seed as number is internal_seed plus 2
+
+!!! A re-export. Consumers of tour.billing see these names.
+cite subtotal, volume_discount from tour.pricing
+
+!!! Private to this book: no "public" modifier.
+!!! Scalar-to-text conversion is an interpreted-route capability. Native
+!!! ordinary casts reject it explicitly rather than supplying an alternative
+!!! conversion, so this function is interpreted-only.
+format_cents receives cents as number returns text begin paragraph
+    give cents becomes text
+end paragraph
+
+public net_total receives unit_price as number, quantity as number returns number begin paragraph
+    !!! Names linked selectively are called unqualified.
+    value gross    is subtotal with unit_price being unit_price, quantity being quantity
+    value discount is volume_discount with amount being gross, quantity being quantity
+    give gross minus discount
+end paragraph
+
+main returns number begin paragraph
+
+    !!! A qualified reference uses "::", which is kept rather than
+    !!! naturalised: a NIL storage identity is exactly "book::name", and
+    !!! cross-language identity is the point of the exercise.
+    set tour.billing::audit_level to 3
+    say tour.billing::audit_level
+    say derived_seed
+
+    say "MODULAR BILLING"
+    say net_total with unit_price being 17, quantity being 12
+    say format_cents with cents being 1799
+
+    give 0
+end paragraph

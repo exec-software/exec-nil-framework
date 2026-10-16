@@ -1,0 +1,31 @@
+!!! A record's stated purpose reaches the artifact.
+!!!
+!!! Under NIL-0093 an agent image states what its declarations are for, and
+!!! that statement is derived from the artifact rather than taken on trust. So
+!!! a 'context' written above a record has to survive compilation, emission and
+!!! reloading -- not merely be accepted by the parser.
+!!!
+!!! This fixture runs the program; 'matrix.execution' also compares the emitted
+!!! NIL against a hand-written Ny twin where one exists, which is what would
+!!! catch the annotation reaching the schema under a different spelling.
+book tour.record-context
+
+context "A rectangle on screen, in device pixels."
+public rectangle begin record
+    field width  as number
+    field height as number
+end record
+
+!!! A record with no annotation must still emit cleanly.
+public point begin record
+    field x as number
+    field y as number
+end record
+
+main returns number begin paragraph
+    value box is build rectangle with width being 8, height being 5
+    value origin is build point with x being 0, y being 0
+    say box.width times box.height
+    say origin.x
+    give 0
+end paragraph

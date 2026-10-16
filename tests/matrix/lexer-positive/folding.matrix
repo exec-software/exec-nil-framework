@@ -1,0 +1,16 @@
+!!! Keywords and names fold; every reference below is the same declaration.
+area naming.folding
+
+read-sensor receives sensor-id as integer returns integer begin function
+    give sensor-id
+end function
+
+main returns integer begin function
+    VALUE a AS INTEGER IS read-sensor WITH sensor-id BEING 1
+    value b as integer is READ-SENSOR with SENSOR-ID being 2
+    value c as integer is Read_Sensor with sensor_id being 3
+    value d as integer is readsensor  with sensorid  being 4
+    value `text` as text is "escaped"
+    say a
+    give 0
+end function

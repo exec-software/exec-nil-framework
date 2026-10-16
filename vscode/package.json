@@ -1,0 +1,466 @@
+{
+  "name": "ny-language-support",
+  "displayName": "NIL Framework (Ny + Matrix)",
+  "description": "Ny and Matrix language support, completion, and native/VM toolchain integration for the NIL Framework.",
+  "version": "1.0.0-rc.1",
+  "publisher": "exec-software",
+  "license": "MIT",
+  "author": "Execute Software",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/exec-software/exec-nil-framework.git",
+    "directory": "vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/exec-software/exec-nil-framework/issues"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "nil",
+    "nil framework",
+    "ny",
+    "matrix",
+    "systems programming",
+    "language server",
+    "lsp"
+  ],
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onLanguage:ny",
+    "onLanguage:matrix",
+    "onTaskType:ny",
+    "onDebug:ny",
+    "onCommand:ny.restartLanguageServer",
+    "onCommand:ny.showLanguageServerOutput",
+    "onCommand:ny.selectSdk",
+    "onCommand:ny.compileCurrentFile",
+    "onCommand:ny.runCurrentFile",
+    "onCommand:ny.compileNativeCurrentFile",
+    "onCommand:ny.buildSdk",
+    "onCommand:ny.runCtest",
+    "workspaceContains:**/*.ny",
+    "workspaceContains:**/*.matrix",
+    "workspaceContains:**/*.mat",
+    "onCommand:ny.analyzeCurrentFile",
+    "onCommand:ny.showAnalysisOutput"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Syntax highlighting, indentation, and snippets remain available. NIL Framework executables and tasks are disabled until the workspace is trusted."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "The NIL Framework toolchain currently requires files on a local filesystem."
+    }
+  },
+  "scripts": {
+    "check": "tsc --noEmit -p tsconfig.json",
+    "build": "node esbuild.mjs --production",
+    "watch": "node esbuild.mjs --watch",
+    "test": "npm run check && npm run test:unit",
+    "test:unit": "tsc -p tsconfig.test.json && node --test out-test/test/*.test.js",
+    "package": "npm run test && npm run build && vsce package",
+    "vscode:prepublish": "npm run build",
+    "test:host": "npm run build && node test/run-host.cjs"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^10.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "@types/vscode": "1.95.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
+  },
+  "contributes": {
+    "breakpoints": [
+      {
+        "language": "ny"
+      },
+      {
+        "language": "matrix"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "ny",
+        "label": "NIL Framework source debugger",
+        "languages": [
+          "ny",
+          "matrix"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Ny (.ny), Matrix (.matrix, .mat), or NIL compiled with --debug-info."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Program working directory."
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "default": true
+              },
+              "memoryMode": {
+                "type": "string",
+                "enum": [
+                  "safe",
+                  "unsafe"
+                ],
+                "default": "safe"
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "ny",
+            "request": "launch",
+            "name": "Debug Ny / Matrix file",
+            "program": "${file}",
+            "stopOnEntry": true
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "NIL Framework: Debug Ny / Matrix source file",
+            "body": {
+              "type": "ny",
+              "request": "launch",
+              "name": "Debug Ny / Matrix file",
+              "program": "${file}",
+              "stopOnEntry": true
+            }
+          }
+        ]
+      }
+    ],
+    "languages": [
+      {
+        "id": "ny",
+        "aliases": [
+          "Ny",
+          "ny"
+        ],
+        "extensions": [
+          ".ny"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "matrix",
+        "aliases": [
+          "Matrix",
+          "matrix"
+        ],
+        "extensions": [
+          ".matrix",
+          ".mat"
+        ],
+        "configuration": "./language-configuration.matrix.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ny",
+        "scopeName": "source.ny",
+        "path": "./syntaxes/ny.tmLanguage.json"
+      },
+      {
+        "language": "matrix",
+        "scopeName": "source.matrix",
+        "path": "./syntaxes/matrix.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "ny",
+        "path": "./snippets/ny.code-snippets"
+      },
+      {
+        "language": "matrix",
+        "path": "./snippets/matrix.code-snippets"
+      }
+    ],
+    "commands": [
+      {
+        "command": "ny.restartLanguageServer",
+        "title": "NIL Framework: Restart Language Server"
+      },
+      {
+        "command": "ny.showLanguageServerOutput",
+        "title": "NIL Framework: Show Language Server Output"
+      },
+      {
+        "command": "ny.selectSdk",
+        "title": "NIL Framework: Select SDK Folder"
+      },
+      {
+        "command": "ny.compileCurrentFile",
+        "title": "NIL Framework: Compile Current File to NIL"
+      },
+      {
+        "command": "ny.runCurrentFile",
+        "title": "NIL Framework: Compile and Run Current File"
+      },
+      {
+        "command": "ny.compileNativeCurrentFile",
+        "title": "NIL Framework: Compile Current File Natively"
+      },
+      {
+        "command": "ny.buildSdk",
+        "title": "NIL Framework: Build and Install Workspace SDK"
+      },
+      {
+        "command": "ny.runCtest",
+        "title": "NIL Framework: Run Workspace CTest Suite"
+      },
+      {
+        "command": "ny.analyzeCurrentFile",
+        "title": "NIL Framework: Check Current Document"
+      },
+      {
+        "command": "ny.showAnalysisOutput",
+        "title": "NIL Framework: Show Analysis Output"
+      }
+    ],
+    "configuration": {
+      "title": "NIL Framework (Ny + Matrix)",
+      "properties": {
+        "ny.languageServer.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "description": "Start nillsp for Ny and Matrix source files. The server provides completion, navigation, hover, and experimental diagnostics."
+        },
+        "ny.languageServer.diagnostics.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "description": "Show nillsp diagnostics for Ny and Matrix. Disabled by default because the lightweight server parser does not yet understand all canonical source syntax."
+        },
+        "ny.sdkPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Path to a canonical NIL Framework SDK root or framework repository root. SDK commands live directly at the SDK root. Supports ${workspaceFolder}, ${env:NAME}, and ~."
+        },
+        "ny.server.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Absolute path or command name for nillsp. Overrides SDK and PATH discovery."
+        },
+        "ny.compiler.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Absolute path or command name for nilcompiler. Overrides SDK and PATH discovery."
+        },
+        "ny.interpreter.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Absolute path or command name for nilinterpreter. Overrides SDK and PATH discovery."
+        },
+        "ny.debugger.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Absolute path or command name for nildebugger. Overrides SDK and PATH discovery."
+        },
+        "ny.compiler.noStdlib": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "description": "Pass --no-stdlib to compiler tasks and editor analysis."
+        },
+        "ny.compiler.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "description": "Additional arguments placed before extension-managed nilcompiler arguments."
+        },
+        "ny.native.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "description": "Additional arguments used only for LLVM native compiler tasks."
+        },
+        "ny.outputDirectory": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Output directory for generated artifacts. Empty writes beside the current source file."
+        },
+        "ny.buildDirectory": {
+          "type": "string",
+          "default": "build/cmake",
+          "scope": "resource",
+          "description": "Workspace-relative CMake build directory used by the CTest task."
+        },
+        "ny.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "scope": "window",
+          "description": "Trace messages exchanged with nillsp in the language server output channel."
+        },
+        "ny.analysis.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Check current Ny and Matrix editor contents with nilcompiler, including unsaved changes. Requires a trusted workspace and a compiler supporting nil.analysis.v1."
+        },
+        "ny.analysis.includePaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "description": "Additional source import roots for compiler analysis. Relative paths resolve against the workspace folder. Supports ${workspaceFolder}, ${env:NAME}, and ~."
+        }
+      }
+    },
+    "taskDefinitions": [
+      {
+        "type": "ny",
+        "required": [
+          "task"
+        ],
+        "properties": {
+          "task": {
+            "type": "string",
+            "enum": [
+              "compile",
+              "run",
+              "native",
+              "build-sdk",
+              "ctest"
+            ],
+            "description": "NIL Framework task to execute."
+          },
+          "source": {
+            "type": "string",
+            "description": "Ny (.ny) or Matrix (.matrix, .mat) source path. Defaults to the active saved source file."
+          },
+          "output": {
+            "type": "string",
+            "description": "NIL or native output path."
+          },
+          "sdkPath": {
+            "type": "string",
+            "description": "SDK/source search root passed to nilcompiler."
+          },
+          "noStdlib": {
+            "type": "boolean",
+            "description": "Compile without standard-library lookup."
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Additional compiler, interpreter, or CTest options. Interpreter options are placed before the NIL path."
+          },
+          "programArgs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Arguments passed to the program by a run task after an explicit -- separator."
+          },
+          "buildDirectory": {
+            "type": "string",
+            "description": "CMake build directory for ctest."
+          }
+        }
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "nilcompiler",
+        "label": "NIL compiler Ny parse errors",
+        "owner": "ny",
+        "source": "nilcompiler",
+        "fileLocation": "absolute",
+        "pattern": {
+          "regexp": "^\\s*(.+\\.(?:[nN][yY]|[mM][aA][tT](?:[rR][iI][xX])?)):(\\d+):\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "message": 3
+        }
+      },
+      {
+        "name": "matrixcompiler",
+        "label": "Matrix compiler errors",
+        "owner": "matrix",
+        "source": "nilcompiler",
+        "fileLocation": "absolute",
+        "pattern": [
+          {
+            "regexp": "^(error|warning|note)(?:\\[([^\\]]*)\\])?:\\s+(.*)$",
+            "severity": 1,
+            "code": 2,
+            "message": 3
+          },
+          {
+            "regexp": "^\\s*-->\\s+(.+\\.(?:[nN][yY]|[mM][aA][tT](?:[rR][iI][xX])?)):(\\d+)(?::(\\d+))?\\s*$",
+            "file": 1,
+            "line": 2,
+            "column": 3
+          }
+        ]
+      },
+      {
+        "name": "nycompiler",
+        "label": "NIL compiler Ny parse errors (legacy matcher name)",
+        "owner": "ny",
+        "source": "nilcompiler",
+        "fileLocation": "absolute",
+        "pattern": {
+          "regexp": "^\\s*(.+\\.(?:[nN][yY]|[mM][aA][tT](?:[rR][iI][xX])?)):(\\d+):\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "message": 3
+        }
+      }
+    ]
+  }
+}

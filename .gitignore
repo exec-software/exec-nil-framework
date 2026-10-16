@@ -1,0 +1,67 @@
+# In-tree build and SDK staging directories
+/build/
+/builds/
+/out/
+/sdk
+/.sdk.store/
+
+# CMake output (including accidental component-local builds)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+compile_commands.json
+install_manifest.txt
+Testing/
+/*/build/
+/*/build-*/
+
+# Compiled objects, libraries, and executables
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.exp
+
+# Ny-generated artifacts
+*.nil
+*.nyobj
+*.nyexe
+*.nycrash
+
+# Logs and temporary files
+*.log
+*.tmp
+__pycache__/
+*.py[cod]
+/tmp/
+/temp/
+
+# Agent/runtime state
+.agent/
+
+# Local credentials and machine-specific environment overrides
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Editors and operating systems
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Visual Studio Code extension build/package output
+vscode/node_modules/
+vscode/dist/
+vscode/out-test/
+vscode/*.vsix

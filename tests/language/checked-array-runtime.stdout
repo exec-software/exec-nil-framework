@@ -1,0 +1,6 @@
+checked i32
+checked i64
+checked u8
+checked bool
+checked f64
+checked text

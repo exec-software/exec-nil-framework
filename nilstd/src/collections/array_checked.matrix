@@ -1,0 +1,94 @@
+!!! Checked operations on arrays. In-place operations never grow storage;
+!!! try-gather creates a separate result array in the requested index order.
+!!! Invalid arguments return None or false before changing any element.
+!!! Positions and counts use the array runtime's exact signed 32-bit width.
+
+book nil.std.collections
+
+read everything from nil.std.core
+
+public try-get of type T receives items as array of T, index as override integer returns Option of T begin paragraph
+    when index is less than 0 or index is at least (the length of items) then
+        give Option.None
+    end when
+    give Option.Some holding (items at index)
+end paragraph
+
+!!! Gather accepts repeated indices and subsets, not only full permutations.
+!!! Check every index first so a bad mesh index cannot become a zero value.
+!!! The result has its own array storage; element copies are shallow.
+public try-gather of type T receives items as array of T,
+    indices as array of override integer returns Option of array of T begin paragraph
+    value size as override integer is the length of items
+    value count as override integer is the length of indices
+    variable position as override integer is 0
+    repeat while position is less than count
+        value index as override integer is indices at position
+        when index is less than 0 or index is at least size then
+            give Option.None
+        end when
+        set position to position plus 1
+    end repeat
+
+    variable gathered as array of T is []
+    set position to 0
+    repeat while position is less than count
+        append (items at (indices at position)) to gathered
+        set position to position plus 1
+    end repeat
+    give Option.Some holding gathered
+end paragraph
+
+public try-set of type T receives items as array of T, index as override integer, item-value as T returns boolean begin paragraph
+    when index is less than 0 or index is at least (the length of items) then
+        give false
+    end when
+    set items at index to item-value
+    give true
+end paragraph
+
+!!! Validate offset before subtracting. Adding offset and count first would
+!!! permit signed overflow to disguise an invalid caller-supplied window.
+public try-fill-range of type T receives items as array of T, offset as override integer, count as override integer, item-value as T returns boolean begin paragraph
+    value size as override integer is the length of items
+    when offset is less than 0 or offset is greater than size or count is less than 0 then
+        give false
+    end when
+    when count is greater than (size minus offset) then
+        give false
+    end when
+    variable index as override integer is 0
+    repeat while index is less than count
+        set items at (offset plus index) to item-value
+        set index to index plus 1
+    end repeat
+    give true
+end paragraph
+
+!!! Both windows are validated before any write. Copy backwards whenever the
+!!! destination offset is greater, which also handles shared-array aliases.
+!!! Choosing that direction is harmless when the two arrays are independent.
+public try-copy-range of type T receives source as array of T, source-offset as override integer, destination as array of T, destination-offset as override integer, count as override integer returns boolean begin paragraph
+    value source-size as override integer is the length of source
+    value destination-size as override integer is the length of destination
+    when source-offset is less than 0 or source-offset is greater than source-size or destination-offset is less than 0 or destination-offset is greater than destination-size or count is less than 0 then
+        give false
+    end when
+    when count is greater than (source-size minus source-offset) or count is greater than (destination-size minus destination-offset) then
+        give false
+    end when
+    when destination-offset is greater than source-offset then
+        variable remaining as override integer is count
+        repeat while remaining is greater than 0
+            set remaining to remaining minus 1
+            set destination at (destination-offset plus remaining) to source at (source-offset plus remaining)
+        end repeat
+    otherwise
+        variable index as override integer is 0
+        repeat while index is less than count
+            set destination at (destination-offset plus index) to source at (source-offset plus index)
+            set index to index plus 1
+        end repeat
+    end when
+    give true
+end paragraph

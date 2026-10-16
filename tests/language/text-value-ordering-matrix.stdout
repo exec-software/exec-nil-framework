@@ -1,0 +1,5 @@
+text lexical snapshots and comparisons
+text sorts preserve multisets aliases and stable indices
+text insertion reverse and consecutive uniqueness
+text sorted checks and search leave input unchanged
+dynamic equal strings and sorted returns survive collection

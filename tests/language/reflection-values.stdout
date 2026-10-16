@@ -1,0 +1,9 @@
+1
+0
+1
+1
+ai_context
+""
+"quote\" slash\\ tab\u0009 newline\u000a form\u000c vertical\u000b return\u000d café"
+{"code":"EXAMPLE001","severity":"warning","message":"Rename temporary API","path":"scene.matrix","line":7}
+ny.lang.reflection is still literal text

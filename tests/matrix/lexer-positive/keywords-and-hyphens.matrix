@@ -1,0 +1,45 @@
+!!! A keyword never contains a separator, so a spelling that contains one is
+!!! unconditionally a name. The reserved set therefore costs its single word,
+!!! not the whole family of names built from it: "read" is the import keyword,
+!!! and "read-file" is an ordinary paragraph name.
+!!!
+!!! The check is on the SPELLING, not the folded key. The key has its
+!!! separators removed, so folding first would turn "re-ad" into the keyword
+!!! "read". Both hyphen and underscore exempt, because they already fold
+!!! together for identity -- otherwise "a_s" would collapse onto "as".
+book naming.keywords
+
+!!! Bare 'read' below is the import keyword.
+read ny.lang.core
+
+!!! Every one of these is a name, despite folding onto a keyword.
+read-file  receives read-path as text returns text   begin paragraph give read-path end paragraph
+read-level returns number                            begin paragraph give 1 end paragraph
+re-ad      returns number                            begin paragraph give 2 end paragraph
+val-ue     returns number                            begin paragraph give 3 end paragraph
+in-to      returns number                            begin paragraph give 4 end paragraph
+boo-k      returns number                            begin paragraph give 5 end paragraph
+para-graph returns number                            begin paragraph give 6 end paragraph
+
+main returns number begin paragraph
+    say read-file with read-path being "ok"
+    say re-ad with nothing; say val-ue with nothing; say in-to with nothing
+    say boo-k with nothing; say para-graph with nothing
+    give 0
+end paragraph
+
+!!! 'forever' is polysemous by position: an unbounded loop after 'repeat', and
+!!! unbounded lifetime (what other languages call 'static') as a declaration
+!!! modifier. One relation -- without end -- applied to iteration or storage.
+!!! It is always a keyword and never a name, so the lexer needs no feedback
+!!! from the parser; only the parser assigns the meaning.
+forever variable boot-count as number is 0
+
+tick returns number begin paragraph
+    variable spins as number is 0
+    repeat forever
+        set spins to spins plus 1
+        when spins is at least 3 then stop repeating end when
+    end repeat
+    give spins
+end paragraph

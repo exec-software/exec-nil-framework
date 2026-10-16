@@ -1,0 +1,18 @@
+!!! Case folding makes 'Tagged' and 'tagged' one name, so a value cannot be
+!!! named after its own type in different case. Without a diagnostic here the
+!!! reference silently resolves to the type and the failure surfaces much
+!!! later as a method call with no receiver.
+book bad.collision
+
+Tagged begin class
+    field tag as text
+    public tag-of returns text begin paragraph
+        give my tag
+    end paragraph
+end class
+
+main returns number begin paragraph
+    value tagged is build Tagged with tag being "x"
+    say tagged.tag-of with nothing
+    give 0
+end paragraph

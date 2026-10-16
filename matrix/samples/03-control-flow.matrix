@@ -1,0 +1,78 @@
+!!! 03-control-flow.matrix
+!!! Conditionals, every loop form, and pattern consideration.
+!!!
+!!! Every loop opens with "repeat" and closes with "end repeat", so a loop
+!!! terminator can never be matched to the wrong loop kind.
+
+book tour.flow
+
+classify receives count as number returns text begin paragraph
+    when count is greater than 0 then
+        give "positive"
+    otherwise when count is less than 0 then
+        give "negative"
+    otherwise
+        give "zero"
+    end when
+end paragraph
+
+main returns number begin paragraph
+
+    say classify with count being 7
+
+    !!! Condition-first loop.
+    variable index as number is 0
+    repeat while index is less than 5
+        say index
+        set index to index plus 1
+    end repeat
+
+    !!! Counted loop. "from 0 to 5" visits 0 through 4, matching Ny's
+    !!! exclusive range.
+    repeat for step from 0 to 5
+        when step equals 3 then
+            continue repeating
+        end when
+        say step
+    end repeat
+
+    !!! Iteration over an array.
+    value names as array of text is ["alpha", "beta", "gamma"]
+    repeat for each name in names
+        say name
+    end repeat
+
+    !!! Unbounded loop with an explicit exit.
+    variable budget as number is 3
+    repeat forever
+        when budget is at most 0 then
+            stop repeating
+        end when
+        set budget to budget minus 1
+    end repeat
+
+    !!! Statement-form consideration. "otherwise" is the wildcard arm.
+    value code as number is 2
+    consider code
+        when 1 then say "one"
+        when 2 then say "two"
+        otherwise say "other"
+    end consider
+
+    !!! Both conditional forms also produce values. In value position the
+    !!! branches say "give", because "give" always marks the value leaving
+    !!! the construct the reader is inside -- a function, an arm, a branch.
+    !!! It also makes Ny's rule a parse rule: an expression arm is exactly one
+    !!! expression, so a statement block cannot accidentally appear where a
+    !!! value is required.
+    value sign as number is when code is greater than 0 give 1 otherwise give minus 1 end when
+    value word as text is consider code
+        when 1 give "one"
+        when 2 give "two"
+        otherwise give "other"
+    end consider
+
+    say sign
+    say word
+    give 0
+end paragraph

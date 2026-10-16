@@ -1,0 +1,164 @@
+!!! Exercise the same Matrix-authored collection functions from Matrix.
+!!! Expected snapshots are independent of the implementation's loops.
+book validation.checked_arrays
+
+read everything from ny.lang.collections
+read everything from ny.lang.core
+
+require receives passed as boolean, label as text returns nothing begin paragraph
+    evaluate assert-true with condition being passed, message being label
+end paragraph
+
+same-items of type T receives actual as array of T, expected as array of T, label as text returns nothing begin paragraph
+    evaluate require with passed being ((the length of actual) equals (the length of expected)), label being label
+    variable index as override integer is 0
+    repeat while index is less than (the length of actual)
+        evaluate require with passed being ((actual at index) equals (expected at index)), label being label
+        set index to index plus 1
+    end repeat
+end paragraph
+
+check-kind of type T receives first as T, second as T, third as T, label as text returns nothing begin paragraph
+    value data as array of T is [first, second, third, first]
+    value alias is data
+    value original as array of T is [first, second, third, first]
+    value minimum as override integer is minus 2147483647 minus 1
+    value first-result is try-get of T with items being data, index being 0
+    value second-result is try-get of T with items being data, index being 1
+    value last-result is try-get of T with items being data, index being 3
+    evaluate require with passed being ((first-result.unwrap with nothing) equals first), label being "get first"
+    evaluate require with passed being (second-result.is-some with nothing), label being "zero and false are present"
+    evaluate require with passed being ((second-result.unwrap with nothing) equals second), label being "get second"
+    evaluate require with passed being ((last-result.unwrap with nothing) equals first), label being "get last"
+    value missing-a is try-get of T with items being data, index being minus 1
+    evaluate require with passed being (missing-a.is-none with nothing), label being "get rejects bounds"
+    value missing-b is try-get of T with items being data, index being 4
+    evaluate require with passed being (missing-b.is-none with nothing), label being "get rejects bounds"
+    value missing-c is try-get of T with items being data, index being 2147483647
+    evaluate require with passed being (missing-c.is-none with nothing), label being "get rejects bounds"
+    value missing-d is try-get of T with items being data, index being minimum
+    evaluate require with passed being (missing-d.is-none with nothing), label being "get rejects bounds"
+    evaluate require with passed being ((try-set of T with items being data, index being minus 1, item-value being third) equals false), label being "set rejects bounds"
+    evaluate same-items of T with actual being alias, expected being original, label being "rejected set preserves alias"
+    evaluate require with passed being ((try-set of T with items being data, index being 4, item-value being third) equals false), label being "set rejects bounds"
+    evaluate same-items of T with actual being alias, expected being original, label being "rejected set preserves alias"
+    evaluate require with passed being ((try-set of T with items being data, index being 2147483647, item-value being third) equals false), label being "set rejects bounds"
+    evaluate same-items of T with actual being alias, expected being original, label being "rejected set preserves alias"
+    evaluate require with passed being ((try-set of T with items being data, index being minimum, item-value being third) equals false), label being "set rejects bounds"
+    evaluate same-items of T with actual being alias, expected being original, label being "rejected set preserves alias"
+    evaluate require with passed being (try-set of T with items being data, index being 1, item-value being third), label being "set valid"
+    evaluate same-items of T with actual being alias, expected being [first, third, third, first], label being "set aliases and guards"
+    evaluate require with passed being (try-fill-range of T with items being data, offset being 1, count being 2, item-value being second), label being "fill valid"
+    evaluate same-items of T with actual being alias, expected being [first, second, second, first], label being "fill guards"
+    evaluate require with passed being (try-copy-range of T with source being original, source-offset being 0, destination being data, destination-offset being 0, count being 4), label being "reset copy"
+    evaluate require with passed being ((try-fill-range of T with items being data, offset being minus 1, count being 0, item-value being third) equals false), label being "fill rejects window"
+    evaluate same-items of T with actual being alias, expected being original, label being "rejected fill preserves alias"
+    evaluate require with passed being ((try-fill-range of T with items being data, offset being 0, count being minus 1, item-value being third) equals false), label being "fill rejects window"
+    evaluate same-items of T with actual being alias, expected being original, label being "rejected fill preserves alias"
+    evaluate require with passed being ((try-fill-range of T with items being data, offset being 5, count being 0, item-value being third) equals false), label being "fill rejects window"
+    evaluate same-items of T with actual being alias, expected being original, label being "rejected fill preserves alias"
+    evaluate require with passed being ((try-fill-range of T with items being data, offset being 3, count being 2, item-value being third) equals false), label being "fill rejects window"
+    evaluate same-items of T with actual being alias, expected being original, label being "rejected fill preserves alias"
+    evaluate require with passed being ((try-fill-range of T with items being data, offset being 2147483647, count being 2, item-value being third) equals false), label being "fill rejects window"
+    evaluate same-items of T with actual being alias, expected being original, label being "rejected fill preserves alias"
+    evaluate require with passed being ((try-fill-range of T with items being data, offset being 1, count being 2147483647, item-value being third) equals false), label being "fill rejects window"
+    evaluate same-items of T with actual being alias, expected being original, label being "rejected fill preserves alias"
+    evaluate require with passed being ((try-fill-range of T with items being data, offset being minimum, count being 1, item-value being third) equals false), label being "fill rejects window"
+    evaluate same-items of T with actual being alias, expected being original, label being "rejected fill preserves alias"
+    evaluate require with passed being ((try-fill-range of T with items being data, offset being 0, count being minimum, item-value being third) equals false), label being "fill rejects window"
+    evaluate same-items of T with actual being alias, expected being original, label being "rejected fill preserves alias"
+    evaluate require with passed being (try-fill-range of T with items being data, offset being 4, count being 0, item-value being third), label being "fill endpoint"
+    evaluate require with passed being (try-fill-range of T with items being data, offset being 0, count being 0, item-value being third), label being "fill empty window"
+    evaluate same-items of T with actual being alias, expected being original, label being "zero fill preserves array"
+    evaluate require with passed being ((try-copy-range of T with source being original, source-offset being minus 1, destination being data, destination-offset being 0, count being 1) equals false), label being "copy rejects window"
+    evaluate same-items of T with actual being alias, expected being [first, second, third, first], label being "rejected copy preserves destination"
+    evaluate same-items of T with actual being original, expected being [first, second, third, first], label being "rejected copy preserves source"
+    evaluate require with passed being ((try-copy-range of T with source being original, source-offset being 0, destination being data, destination-offset being minus 1, count being 1) equals false), label being "copy rejects window"
+    evaluate same-items of T with actual being alias, expected being [first, second, third, first], label being "rejected copy preserves destination"
+    evaluate same-items of T with actual being original, expected being [first, second, third, first], label being "rejected copy preserves source"
+    evaluate require with passed being ((try-copy-range of T with source being original, source-offset being 0, destination being data, destination-offset being 0, count being minus 1) equals false), label being "copy rejects window"
+    evaluate same-items of T with actual being alias, expected being [first, second, third, first], label being "rejected copy preserves destination"
+    evaluate same-items of T with actual being original, expected being [first, second, third, first], label being "rejected copy preserves source"
+    evaluate require with passed being ((try-copy-range of T with source being original, source-offset being 5, destination being data, destination-offset being 0, count being 0) equals false), label being "copy rejects window"
+    evaluate same-items of T with actual being alias, expected being [first, second, third, first], label being "rejected copy preserves destination"
+    evaluate same-items of T with actual being original, expected being [first, second, third, first], label being "rejected copy preserves source"
+    evaluate require with passed being ((try-copy-range of T with source being original, source-offset being 0, destination being data, destination-offset being 5, count being 0) equals false), label being "copy rejects window"
+    evaluate same-items of T with actual being alias, expected being [first, second, third, first], label being "rejected copy preserves destination"
+    evaluate same-items of T with actual being original, expected being [first, second, third, first], label being "rejected copy preserves source"
+    evaluate require with passed being ((try-copy-range of T with source being original, source-offset being 3, destination being data, destination-offset being 0, count being 2) equals false), label being "copy rejects window"
+    evaluate same-items of T with actual being alias, expected being [first, second, third, first], label being "rejected copy preserves destination"
+    evaluate same-items of T with actual being original, expected being [first, second, third, first], label being "rejected copy preserves source"
+    evaluate require with passed being ((try-copy-range of T with source being original, source-offset being 0, destination being data, destination-offset being 3, count being 2) equals false), label being "copy rejects window"
+    evaluate same-items of T with actual being alias, expected being [first, second, third, first], label being "rejected copy preserves destination"
+    evaluate same-items of T with actual being original, expected being [first, second, third, first], label being "rejected copy preserves source"
+    evaluate require with passed being ((try-copy-range of T with source being original, source-offset being 2147483647, destination being data, destination-offset being 0, count being 2) equals false), label being "copy rejects window"
+    evaluate same-items of T with actual being alias, expected being [first, second, third, first], label being "rejected copy preserves destination"
+    evaluate same-items of T with actual being original, expected being [first, second, third, first], label being "rejected copy preserves source"
+    evaluate require with passed being ((try-copy-range of T with source being original, source-offset being 0, destination being data, destination-offset being 2147483647, count being 2) equals false), label being "copy rejects window"
+    evaluate same-items of T with actual being alias, expected being [first, second, third, first], label being "rejected copy preserves destination"
+    evaluate same-items of T with actual being original, expected being [first, second, third, first], label being "rejected copy preserves source"
+    evaluate require with passed being ((try-copy-range of T with source being original, source-offset being 1, destination being data, destination-offset being 0, count being 2147483647) equals false), label being "copy rejects window"
+    evaluate same-items of T with actual being alias, expected being [first, second, third, first], label being "rejected copy preserves destination"
+    evaluate same-items of T with actual being original, expected being [first, second, third, first], label being "rejected copy preserves source"
+    evaluate require with passed being ((try-copy-range of T with source being original, source-offset being 0, destination being data, destination-offset being 1, count being 2147483647) equals false), label being "copy rejects window"
+    evaluate same-items of T with actual being alias, expected being [first, second, third, first], label being "rejected copy preserves destination"
+    evaluate same-items of T with actual being original, expected being [first, second, third, first], label being "rejected copy preserves source"
+    evaluate require with passed being ((try-copy-range of T with source being original, source-offset being minimum, destination being data, destination-offset being 0, count being 1) equals false), label being "copy rejects window"
+    evaluate same-items of T with actual being alias, expected being [first, second, third, first], label being "rejected copy preserves destination"
+    evaluate same-items of T with actual being original, expected being [first, second, third, first], label being "rejected copy preserves source"
+    evaluate require with passed being ((try-copy-range of T with source being original, source-offset being 0, destination being data, destination-offset being minimum, count being 1) equals false), label being "copy rejects window"
+    evaluate same-items of T with actual being alias, expected being [first, second, third, first], label being "rejected copy preserves destination"
+    evaluate same-items of T with actual being original, expected being [first, second, third, first], label being "rejected copy preserves source"
+    evaluate require with passed being ((try-copy-range of T with source being original, source-offset being 0, destination being data, destination-offset being 0, count being minimum) equals false), label being "copy rejects window"
+    evaluate same-items of T with actual being alias, expected being [first, second, third, first], label being "rejected copy preserves destination"
+    evaluate same-items of T with actual being original, expected being [first, second, third, first], label being "rejected copy preserves source"
+    evaluate require with passed being (try-copy-range of T with source being original, source-offset being 4, destination being data, destination-offset being 4, count being 0), label being "copy endpoint"
+    evaluate same-items of T with actual being alias, expected being original, label being "zero copy preserves array"
+    evaluate require with passed being (try-copy-range of T with source being data, source-offset being 0, destination being alias, destination-offset being 1, count being 3), label being "overlap right"
+    evaluate same-items of T with actual being alias, expected being [first, first, second, third], label being "right overlap snapshot"
+    evaluate require with passed being (try-copy-range of T with source being alias, source-offset being 1, destination being data, destination-offset being 0, count being 3), label being "overlap left"
+    evaluate same-items of T with actual being data, expected being [first, second, third, third], label being "left overlap snapshot"
+    evaluate require with passed being (try-copy-range of T with source being alias, source-offset being 0, destination being data, destination-offset being 0, count being 4), label being "identical window"
+    evaluate same-items of T with actual being data, expected being [first, second, third, third], label being "identical copy snapshot"
+    value target as array of T is [third, third, third, third]
+    evaluate require with passed being (try-copy-range of T with source being original, source-offset being 1, destination being target, destination-offset being 0, count being 3), label being "independent copy forward"
+    evaluate same-items of T with actual being target, expected being [second, third, first, third], label being "independent forward snapshot"
+    evaluate require with passed being (try-copy-range of T with source being original, source-offset being 0, destination being target, destination-offset being 1, count being 3), label being "independent copy backward"
+    evaluate same-items of T with actual being target, expected being [second, first, second, third], label being "independent backward snapshot"
+    evaluate same-items of T with actual being original, expected being [first, second, third, first], label being "copy leaves source"
+    value short-items as array of T is [third, third]
+    evaluate require with passed being ((try-copy-range of T with source being original, source-offset being 0, destination being short-items, destination-offset being 0, count being 3) equals false), label being "short destination rejects count"
+    evaluate same-items of T with actual being short-items, expected being [third, third], label being "short destination keeps writable prefix"
+    evaluate require with passed being (try-copy-range of T with source being original, source-offset being 0, destination being short-items, destination-offset being 0, count being 2), label being "short destination valid copy"
+    evaluate same-items of T with actual being short-items, expected being [first, second], label being "short destination snapshot"
+    evaluate require with passed being ((try-copy-range of T with source being short-items, source-offset being 0, destination being target, destination-offset being 0, count being 3) equals false), label being "short source rejects count"
+    evaluate same-items of T with actual being target, expected being [second, first, second, third], label being "short source leaves destination"
+    evaluate same-items of T with actual being short-items, expected being [first, second], label being "short source unchanged"
+    evaluate require with passed being (try-copy-range of T with source being short-items, source-offset being 0, destination being target, destination-offset being 1, count being 2), label being "short source valid copy"
+    evaluate same-items of T with actual being target, expected being [second, first, second, third], label being "short source valid snapshot"
+    evaluate require with passed being (try-fill-range of T with items being target, offset being 0, count being 4, item-value being second), label being "fill whole array"
+    evaluate same-items of T with actual being target, expected being [second, second, second, second], label being "whole fill snapshot"
+    value empty as array of T is []
+    value empty-result is try-get of T with items being empty, index being 0
+    evaluate require with passed being (empty-result.is-none with nothing), label being "empty get"
+    evaluate require with passed being ((try-set of T with items being empty, index being 0, item-value being first) equals false), label being "empty set"
+    evaluate require with passed being (try-fill-range of T with items being empty, offset being 0, count being 0, item-value being first), label being "empty fill"
+    evaluate require with passed being ((try-fill-range of T with items being empty, offset being 0, count being 1, item-value being first) equals false), label being "empty fill rejects item"
+    evaluate require with passed being (try-copy-range of T with source being empty, source-offset being 0, destination being empty, destination-offset being 0, count being 0), label being "empty copy"
+    evaluate require with passed being (try-copy-range of T with source being empty, source-offset being 0, destination being data, destination-offset being 4, count being 0), label being "empty to endpoint"
+    evaluate require with passed being (try-copy-range of T with source being data, source-offset being 4, destination being empty, destination-offset being 0, count being 0), label being "endpoint to empty"
+    evaluate require with passed being ((try-copy-range of T with source being empty, source-offset being 0, destination being data, destination-offset being 0, count being 1) equals false), label being "empty source rejects item"
+    evaluate require with passed being ((try-copy-range of T with source being data, source-offset being 0, destination being empty, destination-offset being 0, count being 1) equals false), label being "empty destination rejects item"
+    evaluate require with passed being ((the length of empty) equals 0), label being "checked operations never grow"
+    say label
+end paragraph
+
+main returns override integer begin paragraph
+    evaluate check-kind of override integer with first being minus 7, second being 0, third being 2147483647, label being "checked i32"
+    evaluate check-kind of override long with first being (minus 9000000000 becomes override long), second being (0 becomes override long), third being (9000000000 becomes override long), label being "checked i64"
+    evaluate check-kind of override byte with first being (0 becomes override byte), second being (128 becomes override byte), third being (255 becomes override byte), label being "checked u8"
+    evaluate check-kind of boolean with first being true, second being false, third being true, label being "checked bool"
+    evaluate check-kind of floating with first being minus 0.5, second being 0.25, third being 1.5, label being "checked f64"
+    evaluate check-kind of text with first being "", second being ("middle" plus "-value"), third being "last", label being "checked text"
+    give 0
+end paragraph

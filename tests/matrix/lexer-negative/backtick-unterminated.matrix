@@ -1,0 +1,4 @@
+area t
+main returns integer begin function
+    value `text as text is "x"
+end function

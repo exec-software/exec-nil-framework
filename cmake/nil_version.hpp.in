@@ -1,0 +1,5 @@
+#pragma once
+
+// Generated from VERSION. Do not use this product identity as a wire/ABI version.
+#define NIL_VERSION "@NIL_VERSION@"
+#define NIL_VERSION_NUMERIC "@NIL_VERSION_NUMERIC@"

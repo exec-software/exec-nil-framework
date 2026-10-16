@@ -1,0 +1,459 @@
+(* Matrix grammar sketch
+ *
+ * Status: proposal. Not frozen. Implemented for the constructs the samples
+ * cover (stages 2-6 of front-end-plan.md); everything else is diagnosed as
+ * not implemented in that stage rather than silently skipped.
+ *
+ * Conventions: '...' is a literal token, { } is zero or more, [ ] is
+ * optional, | is alternation.
+ *
+ * CASE: the language folds case.  Keywords are written lowercase here and
+ * lowercase is canonical, but 'BEGIN CHOICE' and 'Begin Choice' are the same
+ * token pair.  Folding is ASCII-only (see the lexical section).
+ *
+ * Design constraint: the grammar is LL(1) except at the two places marked
+ * LL(2), both of which are consequences of accepting the draft's 'and'
+ * between parameter declarations. See README.md.
+ *)
+
+(* ------------------------------------------------------------------ *)
+(* Compilation unit                                                   *)
+(* ------------------------------------------------------------------ *)
+
+(* THE BOOK METAPHOR.  A library holds books; a book is one namespace; a page
+ * is a source file; a paragraph is a function; a sentence is a statement.
+ * 'read' imports, because reading is what an import does, and 'cite'
+ * re-exports.  The vocabulary is in-distribution for a model trained largely
+ * on prose, and its internal scale is consistent: a paragraph holds sentences,
+ * never the reverse.
+ *
+ * 'page' and 'sentence' are terminology only -- neither needs a keyword,
+ * because a file needs no declaration and a statement is delimited by its
+ * leading keyword and its terminator. *)
+unit            = ( book_decl | library_decl ) { read_decl | cite_decl }
+                  { declaration } ;
+
+(* 'requires' names the authorities this area may exercise.  RESERVED, not yet
+ * implemented: see docs/authority-and-sandboxing.md.  It is reserved now so
+ * that adding it is additive rather than a breaking change.  The authority
+ * vocabulary is closed and kernel-defined; an area that declares nothing may
+ * reach nothing. *)
+book_decl       = 'book' dotted_name [ 'requires' authority { ',' authority } ] ;
+library_decl    = 'library' dotted_name [ 'requires' authority { ',' authority } ] ;
+authority       = identifier ;
+
+(* RESERVED and unimplemented.  NIL has exactly two namespace levels --
+ * package and module -- and inventing a third would out-promise it, so a
+ * 'chapter' is diagnosed rather than parsed as an identifier.  The open
+ * option is to make it a documentation-only grouping that lowers to no
+ * executable record but appears in @ai_context / executable-context
+ * metadata, which NIL already carries. *)
+reserved_chapter_decl = 'chapter' dotted_name ;
+
+read_decl       = 'read' dotted_name [ 'as' identifier ]
+                | 'read' name_list 'from' dotted_name
+                | 'read' 'everything' 'from' dotted_name ;
+
+cite_decl       = 'cite' name_list 'from' dotted_name
+                | 'cite' 'everything' 'from' dotted_name ;
+
+dotted_name     = identifier { '.' identifier } ;
+name_list       = identifier { ',' identifier } ;
+
+(* ------------------------------------------------------------------ *)
+(* Declarations: <modifiers> <name> <clauses> begin <kind> ... end <kind> *)
+(* ------------------------------------------------------------------ *)
+
+declaration     = { annotation }
+                  ( paragraph_decl | record_decl | choice_decl
+                  | class_decl | contract_decl | impl_decl | extension_decl
+                  | test_decl | alias_decl | global_decl ) ;
+
+annotation      = 'context' string_literal
+                | 'note' identifier { annotation_arg } ;
+annotation_arg  = string_literal | number_literal | identifier ;
+
+(* 'replaces' is the class-method override marker.  It is not spelled
+ * 'override' because 'override' is the machine-type escape hatch, and two
+ * near-identical words for unrelated things is the exact ambiguity this
+ * surface exists to avoid.  'replaces' also says what it does to the
+ * inherited implementation. *)
+(* 'forever' as a modifier is unbounded LIFETIME -- what other languages call
+ * 'static'.  It is the same word as the loop's 'repeat forever' on purpose:
+ * one relation, "without end", applied to iteration in one position and to
+ * storage in the other.  Position decides, which is how natural language
+ * works and which is affordable here precisely because the keyword set is a
+ * small closed subset.
+ *
+ * This is keyword POLYSEMY, not a contextual keyword: 'forever' is always a
+ * keyword and never an identifier, so the lexer needs no parser feedback.
+ * Only the parser assigns meaning, from position.
+ *
+ * RESERVED and unimplemented.  The two things 'static' usually means are
+ * already spelled: an associated function is 'without receiver', and
+ * program-lifetime storage is a book-level 'variable'.  A class-level shared
+ * field is the remaining case, and NIL has no representation for one --
+ * aggregate globals are interpreter-only.  So the word is fixed now and the
+ * feature waits for the runtime. *)
+modifier        = 'public' | 'abstract' | 'virtual' | 'replaces' | 'forever' ;
+
+(* Functions.  'returns' terminates the parameter list; omitting it means
+ * 'returns nothing'.  A declaration with no body is an abstract method or an
+ * intrinsic-backed declaration. *)
+paragraph_decl   = { modifier } identifier [ generic_clause ]
+                  [ 'receives' param_list ]
+                  [ receiver_clause ]
+                  [ 'returns' type ]
+                  [ 'begin' 'paragraph' { statement } 'end' 'paragraph' ] ;
+
+receiver_clause = 'on' [ 'mutable' ] 'receiver'
+                | 'on' 'reference'
+                | 'without' 'receiver' ;   (* associated function: no 'my' *)
+
+(* LL(2): after a complete 'name as type', an 'and' is a further parameter
+ * only when followed by 'identifier as'.  Parameter defaults are therefore
+ * restricted to literal atoms, so no parameter can end in a boolean
+ * expression. *)
+param_list      = param { ( ',' | 'and' ) param }
+                | 'more' identifier 'as' type ;
+param           = [ 'variable' ] identifier 'as' type
+                  [ 'defaulting' 'to' literal ] ;
+
+generic_clause  = 'of' generic_param { ',' generic_param } ;
+(* Several bounds are joined with 'and'.  A bound is a type name, so 'and
+ * <TypeName>' never collides with the ', type <ident>' that starts a further
+ * generic parameter. *)
+generic_param   = 'type' identifier [ 'meeting' type_name { 'and' type_name } ] ;
+
+record_decl     = { modifier } identifier [ generic_clause ]
+                  'begin' 'record' { field_decl } 'end' 'record' ;
+field_decl      = 'field' identifier 'as' type ;
+
+(* A variant is introduced by 'when', the same word that selects one later:
+ * declaring a case and matching a case are the same relation.  The payload
+ * type uses 'holding', mirroring the pattern that destructures it. *)
+choice_decl     = { modifier } identifier [ generic_clause ]
+                  'begin' 'choice' { variant_decl } 'end' 'choice' ;
+variant_decl    = 'when' identifier [ 'holding' type ] ;
+
+class_decl      = { modifier } identifier [ 'inherits' nominal_type { ',' nominal_type } ]
+                  'begin' 'class' { field_decl | paragraph_decl } 'end' 'class' ;
+
+contract_decl   = { modifier } identifier [ generic_clause ]
+                  'begin' 'contract' { paragraph_decl } 'end' 'contract' ;
+
+impl_decl       = type_name [ generic_clause ] [ 'provides' nominal_type ]
+                  'begin' 'implementation' { paragraph_decl }
+                  'end' 'implementation' ;
+
+(* An EXTENSION adds paragraphs to a type this book does not declare --
+ * including a language primitive.  It is what lets the standard library grow
+ * the surface of 'text' without the language owning encoding, and it is what
+ * makes 'greeting.to-ascii with nothing' read as natural language instead of
+ * 'to-ascii with source being greeting'.
+ *
+ * It needs NO NIL change.  Resolution is static, so the call lowers to an
+ * ordinary CALL of a module-qualified paragraph with the receiver as its
+ * first argument -- exactly how an 'implementation' method already lowers.
+ *
+ * Deliberately excluded, because each WOULD out-promise NIL: an extension may
+ * not add a field (that is a storage-layout change), may not declare a
+ * 'virtual' or 'abstract' member (that is a vtable change), and may not be
+ * resolved dynamically.  It is marked with its own keyword rather than reusing
+ * 'implementation' because extending a type the book does not own is worth
+ * seeing at a glance, especially once authority is declared per book.
+ *
+ * Resolution rules, all fail-closed:
+ *   - an inherent method beats an extension method of the same name;
+ *   - two extensions in scope offering the same name on the same type are
+ *     ambiguous and REJECT, rather than being resolved by read order;
+ *   - an extension applies only where it has been 'read' into scope, so an
+ *     operation cannot be obtained without reading the book that grants it. *)
+extension_decl  = nominal_type [ generic_clause ]
+                  'begin' 'extension' { paragraph_decl }
+                  'end' 'extension' ;
+
+test_decl       = identifier 'begin' 'test' { statement } 'end' 'test' ;
+
+alias_decl      = identifier 'means' type ;
+
+global_decl     = { modifier } binding_decl ;
+
+(* ------------------------------------------------------------------ *)
+(* Types                                                             *)
+(* ------------------------------------------------------------------ *)
+
+type            = ergonomic_type
+                | 'override' machine_type
+                | 'array' 'of' type
+                | 'owned' 'array' 'of' type
+                | 'shared' 'view' 'of' type
+                | 'exclusive' 'view' 'of' type
+                | 'pointer' 'to' type
+                | 'reference' 'to' type
+                | nominal_type ;
+
+(* TIER ONE: what a program says unless it has a reason not to.  Width,
+ * precision and encoding are not among its concerns. *)
+ergonomic_type  = 'text' | 'number' | 'floating' | 'boolean' | 'nothing' ;
+
+(* TIER TWO: the machine representation, legal ONLY after 'override', so that
+ * every drop to an exact width is marked and greppable.  'as byte' is an
+ * error; 'as override byte' is the spelling.
+ *
+ * number -> i64, floating -> f64, boolean -> bool, text -> text,
+ * nothing -> void.  override integer -> i32, override long -> i64,
+ * override byte -> u8 (wrapping), override double -> f64.
+ *
+ * 'short', 'unsigned', 'decimal', 'single' and 'letter' are RESERVED and
+ * REJECTED with a specific diagnostic: NIL has no cross-route implementation
+ * for i16/u16/u32/u64/f32, no fixed-point type, and no char.  Encoding and
+ * one-letter text belong to the standard library.  Reserving them keeps a
+ * later addition additive and makes misuse diagnosable now. *)
+machine_type    = 'integer' | 'long' | 'byte' | 'double'
+                | rejected_machine_type ;
+rejected_machine_type = 'short' | 'unsigned' | 'decimal' | 'single' | 'letter' ;
+
+(* A record, choice, class or contract name, optionally applied to type
+ * arguments: 'Point', 'Option of integer', 'tour.mixed::Measurement'. *)
+nominal_type    = type_name [ 'of' type { ',' type } ] ;
+
+(* An area path, optionally selecting a name within that area.  '::' is the
+ * NIL storage-identity separator and is deliberately not naturalised. *)
+type_name       = qualified_name ;
+qualified_name  = dotted_name [ '::' identifier ] ;
+
+(* ------------------------------------------------------------------ *)
+(* Statements                                                         *)
+(* ------------------------------------------------------------------ *)
+
+(* A statement ends at end of line.  ';' or '.' ends one explicitly, so
+ * several statements can share a line.  '.' is a terminator only when not
+ * followed by a name character; 'frame.header' is still member access.  Both
+ * are accepted because English ends a sentence with a period and joins
+ * independent clauses with a semicolon, and both are what a writer of prose
+ * reaches for. *)
+statement_terminator = ';' | '.' | end_of_line ;
+
+statement       = binding_decl
+                | assignment
+                | 'say' expression
+                | 'give' ( expression | 'nothing' )
+                | 'evaluate' expression
+                | 'raise' ( raise_payload | identifier 'again' )
+                | 'append' expression 'to' place
+                | when_stmt
+                | repeat_stmt
+                | consider_stmt
+                | attempt_stmt
+                | memory_stmt
+                | 'sleep' 'for' expression 'milliseconds'
+                | assembly_stmt
+                | 'stop' 'repeating'
+                | 'continue' 'repeating' ;
+
+binding_decl    = ( 'value' | 'variable' | 'constant' ) identifier
+                  [ 'as' type ] 'is' expression ;
+
+assignment      = 'set' place 'to' expression ;
+place           = ( qualified_name | 'my' identifier ) { '.' identifier }
+                  [ 'at' expression ] ;
+
+when_stmt       = 'when' expression 'then' { statement }
+                  { 'otherwise' 'when' expression 'then' { statement } }
+                  [ 'otherwise' { statement } ]
+                  'end' 'when' ;
+
+repeat_stmt     = 'repeat' repeat_head { statement } 'end' 'repeat' ;
+repeat_head     = 'while' expression
+                | 'for' 'each' identifier 'in' expression
+                | 'for' identifier 'from' expression 'to' expression
+                | 'forever' ;
+
+(* Statement form: an arm body is 'then' plus statements.  A 'give' inside
+ * such a body returns from the enclosing FUNCTION, as it does anywhere else
+ * in a statement position. *)
+consider_stmt   = 'consider' expression { consider_arm }
+                  [ 'otherwise' { statement } ] 'end' 'consider' ;
+consider_arm    = 'when' pattern [ 'provided' expression ] 'then' { statement } ;
+pattern         = literal
+                | type_name '.' identifier [ 'holding' identifier ]
+                | identifier ;          (* a bare identifier binds the value *)
+
+attempt_stmt    = 'attempt' { statement } { handler } [ cleanup ]
+                  'end' 'attempt' ;
+handler         = 'caught' nominal_type 'as' identifier [ 'provided' expression ]
+                      { statement }
+                | 'caught' 'anything' 'as' identifier { statement } ;
+cleanup         = 'always' { statement } ;
+
+raise_payload   = nominal_type [ 'with' field_init { ',' field_init } ] ;
+field_init      = identifier 'being' expression ;
+
+memory_stmt     = 'own' [ 'variable' ] identifier 'as' type 'sized' expression
+                | 'borrow' identifier 'from' identifier [ 'exclusively' ]
+                | 'move' identifier 'into' identifier
+                | 'allocate' identifier 'as' type 'sized' expression
+                | 'release' identifier ;
+
+assembly_stmt   = 'assembly' 'for' identifier 'is' string_literal
+                  [ 'using' expression { ',' expression } ]
+                  [ 'giving' identifier ] ;
+
+(* ------------------------------------------------------------------ *)
+(* Expressions, lowest precedence first                               *)
+(* ------------------------------------------------------------------ *)
+
+expression      = or_expr ;
+or_expr         = and_expr { 'or' and_expr } ;
+and_expr        = not_expr { 'and' not_expr } ;
+not_expr        = [ 'not' ] comparison ;
+
+comparison      = bit_expr [ compare_op bit_expr ] ;
+compare_op      = 'equals' | 'does' 'not' 'equal'
+                | 'is' 'less' 'than' | 'is' 'greater' 'than'
+                | 'is' 'at' 'most'   | 'is' 'at' 'least' ;
+
+bit_expr        = shift_expr { ( 'bitwise' 'and' | 'bitwise' 'or'
+                              | 'bitwise' 'xor' ) shift_expr } ;   (* 'xor' is a keyword *)
+shift_expr      = additive { ( 'shifted' 'left' 'by'
+                             | 'shifted' 'right' 'by' ) additive } ;
+additive        = multiplicative { ( 'plus' | 'minus' ) multiplicative } ;
+multiplicative  = unary { ( 'times' | 'over' | 'remainder' ) unary } ;
+unary           = [ 'minus' | 'bitwise' 'not' ] postfix ;
+
+postfix         = primary { '.' identifier
+                          | 'at' primary
+                          | 'with' argument_tail
+                          | 'becomes' type
+                          | 'holding' primary } ;
+
+(* Inside a 'with' clause only ',' separates arguments, so an argument value
+ * may contain 'and' and 'or' freely.
+ *
+ * Named arguments are matched against the single declaration and reordered by
+ * the parser into positional NIL arguments.  A variadic tail is introduced by
+ * 'more', mirroring 'receives more values as type' in the declaration, so a
+ * trailing list of values is never confusable with further named arguments. *)
+argument_tail   = 'nothing'
+                | field_init { ',' field_init } [ ',' variadic_tail ]
+                | variadic_tail ;
+variadic_tail   = 'more' expression { ',' expression } ;
+
+primary         = literal
+                | identifier
+                | 'my' identifier
+                | nominal_type          (* also carries explicit type arguments:
+                                         * 'default_width of Measurement' *)
+                | 'the' 'length' 'of' primary
+                | 'the' 'paragraph' identifier
+                | '[' [ expression { ',' expression } ] ']'
+                | '(' expression ')'
+                | 'build' nominal_type [ 'with' field_init { ',' field_init } ]
+                | 'reference' 'to' identifier
+                | 'apply' identifier 'across' expression
+                | 'now' 'in' 'milliseconds'
+                | when_expr
+                | consider_expr
+                | anonymous_paragraph ;
+
+(* Value form: a branch says 'give'.  'then' is NOT accepted here, and 'give'
+ * is NOT accepted as a bare statement here, so the two forms cannot be
+ * silently confused -- one of them is always a parse error.  This also makes
+ * Ny's "exactly one value-producing expression per arm" a parse rule: a
+ * statement block cannot appear where a value is required. *)
+when_expr       = 'when' expression 'give' expression
+                  { 'otherwise' 'when' expression 'give' expression }
+                  'otherwise' 'give' expression 'end' 'when' ;
+
+consider_expr   = 'consider' expression
+                  { 'when' pattern [ 'provided' expression ] 'give' expression }
+                  'otherwise' 'give' expression 'end' 'consider' ;
+
+anonymous_function = 'anonymous' [ 'receives' param_list ] [ 'returns' type ]
+                     'begin' 'paragraph' { statement } 'end' 'paragraph' ;
+
+(* ------------------------------------------------------------------ *)
+(* Lexical                                                            *)
+(* ------------------------------------------------------------------ *)
+
+literal         = number_literal | text_literal | named_character
+                | 'true' | 'false' ;
+number_literal  = digit { digit } [ '.' digit { digit } ]
+                | '0x' hex_digit { hex_digit } ;
+
+(* Text has NO escape sequences.  A quoted literal is raw and single-line, so
+ * "C:\dir\file" means what it says.  A literal quote, newline or tab is a
+ * predefined text constant concatenated with 'plus', which is already text
+ * concatenation -- so no escaping syntax exists to get wrong.  Character
+ * literals do not exist: there is no 'letter' scalar, and removing the form
+ * removes an escaping surface. *)
+text_literal    = '"' { character_except_quote_or_newline } '"'
+                | text_block ;
+named_character = 'quote' | 'newline' | 'tab' ;
+
+(* A raw block, following the universal 'begin <kind>' / 'end <kind>' shape.
+ * It is terminated by a line whose only content is 'end text' -- a
+ * line-anchored keyword rather than a character, so no content can
+ * accidentally end the literal.  The common leading indentation is removed
+ * and deeper indentation kept; leading and trailing blank lines are dropped.
+ * The terminator match ignores indentation and spacing between the words.
+ * The one limitation: a block cannot contain a line that is exactly
+ * 'end text'; concatenate with 'plus' in that case. *)
+text_block      = 'begin' 'text' newline { any_line } 'end' 'text' ;
+
+(* A hyphen joins the words of ONE name; a space separates terms in an
+ * expression.  '-' is never an operator, because subtraction and negation are
+ * both spelled 'minus', which is what frees the character.
+ *
+ * A hyphen must be preceded and followed by a letter, so '-kind', 'kind-',
+ * 'frame--kind' and 'total-1' are all lex errors.  Rejecting 'total-1' at the
+ * hyphen is the point: the C habit of writing 'total - 1' then fails with a
+ * message naming the rule, instead of reporting an undefined name. *)
+identifier      = word { '-' word_after_hyphen }
+                | '`' { character } '`' ;   (* backtick escapes a keyword collision *)
+word            = ( letter | '_' ) { letter | digit | '_' } ;
+word_after_hyphen = letter { letter | digit | '_' } ;
+
+(* KEYWORDS NEVER CONTAIN A SEPARATOR, so a spelling that contains one is
+ * unconditionally an identifier.  'read' is the import keyword; 'read-file'
+ * is an ordinary name.  The reserved set therefore costs its single word, not
+ * the whole family of names built from it, which is what makes a large
+ * reserved vocabulary affordable.
+ *
+ * The test is on the SPELLING, not on the folded key, and the distinction is
+ * load-bearing: the key has its separators removed, so folding first would
+ * turn 're-ad' into the keyword 'read'.  Hyphen and underscore both exempt,
+ * because they already fold together for identity -- exempting only the
+ * hyphen would leave 'a_s' collapsing onto 'as'.
+ *
+ * Consequence, and it is the desirable one: a name whose folded key equals a
+ * keyword ('re-ad' keys to 'read') can only be referenced through a spelling
+ * that keeps a separator.  The separator-free spelling is the keyword. *)
+
+(* IDENTITY.  An identifier's lookup key is its ASCII-lowercased spelling with
+ * every '-' and '_' removed, so 'frame-kind', 'FRAME-KIND', 'frame_kind' and
+ * 'framekind' are one name.  Declarations must have distinct keys in a scope.
+ * Underscores fold with hyphens so that Ny's snake_case library names can be
+ * written in kebab-case: 'read-regular-bytes' resolves to 'read_regular_bytes'.
+ *
+ * A declaration's emitted NIL symbol is its EXACT spelling at the declaration
+ * site, with '-' rewritten to '_'.  Ny identifiers admit no hyphen, so a
+ * Matrix name containing one would otherwise be unnameable from Ny.  NIL
+ * identity stays case-significant (Ny's faults.md and classes.md require it),
+ * which is why the declaration site, not the reference, fixes the spelling.
+ *
+ * FOLDING IS ASCII-ONLY.  A non-ASCII letter compares byte-exact and is never
+ * folded.  Full Unicode folding is locale-dependent -- Turkish dotless i,
+ * German sharp s -- and names that fold together while looking different are a
+ * confusable-identifier hazard, not a convenience. *)
+
+(* Comments: '!!!' runs to end of line.  There is no block form.  A bare
+ * '!!!' is an empty comment line.
+ *
+ * The draft offered a second, block form opened and closed by a line that is
+ * exactly '!!!'.  It cannot coexist with the line form: a bare '!!!' written
+ * as a blank line inside a run of comments is indistinguishable from a block
+ * delimiter.  Writing samples/15-telemetry-relay.matrix produced 25 such lines
+ * before the collision was noticed, which is the argument for dropping the
+ * block form rather than for asking authors to avoid blank comment lines. *)

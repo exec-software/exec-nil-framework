@@ -1,0 +1,71 @@
+!!! 14-cross-language.matrix  --  page 1 of 3
+!!!
+!!! Matrix and Ny in one program. This page declares the shared types; the
+!!! other two consume them.
+!!!
+!!! WHY THREE PAGES
+!!!
+!!! The obvious two-page arrangement -- a Matrix book and an Ny module that
+!!! each use the other -- is a module dependency cycle, which Ny cannot order
+!!! and reports as "Module dependency cycle detected among input files". So
+!!! the dependency runs one way through a chain, and both directions of
+!!! cross-language use are still demonstrated:
+!!!
+!!!     14-cross-language.matrix          book tour.mixed      (this page)
+!!!         declares Measurement and Sampler
+!!!              |
+!!!              v
+!!!     14-cross-language-helper.ny       module tour.ny_helper
+!!!         Ny DERIVES from a Matrix class and CONSTRUCTS a Matrix record
+!!!              |
+!!!              v
+!!!     14-cross-language-app.matrix      book tour.app
+!!!         Matrix CALLS an Ny paragraph and USES an Ny class
+!!!
+!!! WHAT MAKES THIS WORK
+!!!
+!!! Not a translation layer. Both front ends emit the same NIL, carrying the
+!!! same book::name storage identities, the same record and choice schemas,
+!!! and the same class ancestry records. A Matrix book IS a NIL module, so an
+!!! Ny import of it is an ordinary module import.
+!!!
+!!! The identity rules that make it hold are exact, and each was a real bug
+!!! before it was a rule:
+!!!   - a book path normalises '.' to '::', because Ny's module declaration
+!!!     does; 'tour.mixed' and 'tour::mixed' are one module, and a Matrix book
+!!!     that emitted dots produced schema names no Ny program could ever name;
+!!!   - a declaration's spelling, with '-' rewritten to '_', is the emitted
+!!!     NIL symbol, because Ny identifiers admit no hyphen and NIL identity is
+!!!     case-significant;
+!!!   - so an Ny client spells a Matrix name exactly as the Matrix page
+!!!     declared it. Matrix-internal references fold case; cross-language ones
+!!!     do not, and cannot, because Ny is case-sensitive.
+
+book tour.mixed
+
+
+!!! A record declared in Matrix. Its NIL schema is byte-identical to the
+!!! equivalent Ny struct, so Ny code can construct it, pass it, store it in a
+!!! field and raise it as a fault payload. 'matrix.execution' proves the
+!!! schema equality against a hand-written Ny twin rather than asserting it.
+public Measurement begin record
+    field sensor  as text
+    field reading as number
+end record
+
+
+!!! A class declared in Matrix. Ny code may derive from it, take an ancestor
+!!! view of it, and dispatch virtually through it, because NIL's class section
+!!! records ancestry and method declarations independently of which surface
+!!! produced them.
+!!!
+!!! 'my' is the receiver here; Matrix synthesises the explicit first 'self'
+!!! parameter Ny requires, so the CALL_METHOD arity matches a hand-written Ny
+!!! method exactly.
+public Sampler begin class
+    field offset as number
+
+    public virtual sample receives raw as number returns number begin paragraph
+        give raw plus my offset
+    end paragraph
+end class

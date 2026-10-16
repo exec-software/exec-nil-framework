@@ -1,0 +1,4 @@
+Code generation warnings/errors:
+  line 3: fault lowering requires checked fault payload identity (raise a checked concrete struct or a scoped opaque catch-all token)
+  line 4: fault lowering requires checked fault control flow (correct all semantic errors before compiling attempt/fault/recover)
+Code generation failed

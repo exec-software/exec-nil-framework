@@ -1,0 +1,9 @@
+# NIL Textual Module
+module argument_count
+
+function main:
+    INTEROP_CALL std_sys arg_count 0 i64
+    CALL println 1
+    PUSH_CONST 0
+    RET
+end function

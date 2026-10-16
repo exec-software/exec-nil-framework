@@ -1,0 +1,2 @@
+Type checking failed:
+  line 6: Default arguments are not lowered yet for function 'defaulted'; provide all 1 arguments

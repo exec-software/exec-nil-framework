@@ -1,0 +1,17 @@
+!!! A 'context' annotation inside a paragraph body.
+!!!
+!!! A binding is code, not a declaration: nothing in the artifact corresponds
+!!! to it, so there is nowhere to put an annotation for it. The book-level
+!!! refusals name the word the author wrote and say where one can go. In
+!!! statement position the parser used to reach its generic "expected a
+!!! statement" message instead, whose help lists statement keywords and never
+!!! mentions 'context' at all -- the wrong lesson for someone whose actual
+!!! mistake was annotating a local value.
+book diagnostic.context-on-a-statement
+
+main returns number begin paragraph
+    context "How wide the screen is."
+    value screen-width is 1920
+    say screen-width
+    give 0
+end paragraph

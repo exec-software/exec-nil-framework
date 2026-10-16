@@ -1,0 +1,5 @@
+numeric comparator policy
+numeric sorts preserve values and aliases
+signed zeros stable and insertion policy aligned
+sorted checks and search agree without mutation
+extrema share ordering and preserve IEEE reductions

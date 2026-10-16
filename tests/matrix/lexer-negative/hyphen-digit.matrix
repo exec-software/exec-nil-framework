@@ -1,0 +1,5 @@
+area t
+main returns integer begin function
+    value total as integer is 5
+    say total-1
+end function

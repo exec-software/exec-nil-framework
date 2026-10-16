@@ -1,0 +1,175 @@
+!!! 18-extensions.matrix
+!!!
+!!! Extensions: adding paragraphs to a type this book does not declare,
+!!! including a language primitive.
+!!!
+!!! This is what lets the standard library grow the surface of "text" while
+!!! the language itself keeps knowing nothing about encoding. It is also what
+!!! makes the library read as natural language:
+!!!
+!!!     greeting.to-ascii with nothing          !!! receiver first, reads well
+!!!     to-ascii with source being greeting     !!! the free-paragraph version
+!!!
+!!! The first form is shorter, and an agent that knows the receiver can
+!!! predict what is available on it. That is the discoverability argument, and
+!!! it is the reason the two-tier type scheme works at all: tier one stays
+!!! five names because everything else is an extension in a book you read.
+!!!
+!!! COSTS NOTHING AT THE RUNTIME BOUNDARY
+!!!
+!!! Resolution is static, so "greeting.to-ascii with nothing" lowers to an
+!!! ordinary call of a book-qualified paragraph with the receiver as its first
+!!! argument -- exactly how an "implementation" method already lowers. No NIL
+!!! change, no new section, no vtable.
+!!!
+!!! DELIBERATELY EXCLUDED, because each would out-promise NIL
+!!!
+!!!   - an extension may not add a field: that is a storage-layout change;
+!!!   - it may not declare a "virtual" or "abstract" member: that is a vtable
+!!!     change;
+!!!   - it is never resolved dynamically.
+!!!
+!!! RESOLUTION, all fail-closed
+!!!
+!!!   - an inherent method beats an extension method of the same name;
+!!!   - two extensions in scope offering the same name on the same type are
+!!!     ambiguous and REJECT, rather than resolving by read order;
+!!!   - an extension applies only where it has been read into scope.
+!!!
+!!! That last rule is the one that matters for the kernel boundary: an
+!!! operation cannot be obtained without reading the book that grants it, so
+!!! the set of operations a page can reach is visible in its read list. Once
+!!! a book declares its authorities, an extension carries the authority of the
+!!! book that defines it -- which makes extensions the delegation mechanism
+!!! for capabilities rather than a hole in them.
+
+book demo.extensions
+
+read everything from ny.lang.text
+read everything from ny.lang.core
+
+
+!!! Declared here so this page runs on its own. The point of an extension is
+!!! that the target need only be IN SCOPE, not declared by the extending book
+!!! -- which is what 14-cross-language demonstrates across pages.
+measurement begin record
+    field sensor  as text
+    field reading as number
+end record
+
+envelope of type T begin record
+    field item as T
+end record
+
+
+!!! --- Extending a language primitive ------------------------------------
+!!!
+!!! This is the case the two-tier type scheme depends on: the language keeps
+!!! 'text' knowing nothing about encoding, and a book like this one grows its
+!!! surface. It reads as possession -- the text's shouted form -- rather than
+!!! as a free paragraph taking the text as an argument.
+!!!
+!!! It did not work until the codegen bug behind it was fixed. A method's NIL
+!!! symbol is built from the impl's target type, while the call site builds it
+!!! from the receiver's INFERRED type. For a user-declared type both are the
+!!! module-qualified name and they agree; for a builtin the inferred type is
+!!! the bare canonical name, so module-qualifying the declaration made the two
+!!! disagree:
+!!!
+!!!     function demo__extensions__text__shouted   <- declared
+!!!     CALL     String__shouted                   <- called
+!!!
+!!! Builtins are now never module-qualified, which has one consequence worth
+!!! knowing: an extension on a builtin lives in a GLOBAL namespace, so two
+!!! books that both add 'shouted' to text collide. That is inherent to the
+!!! call site mangling from a bare type name, not a choice made here.
+
+text begin extension
+    shouted returns text begin paragraph
+        give my plus "!"
+    end paragraph
+
+    repeated receives count as number returns text begin paragraph
+        variable result as text is ""
+        repeat for step from 0 to count
+            set result to result plus my
+        end repeat
+        give result
+    end paragraph
+end extension
+
+
+!!! --- Extending a tier-one numeric type ---------------------------------
+
+number begin extension
+    doubled returns number begin paragraph
+        give my times 2
+    end paragraph
+
+    clamped receives low as number, high as number returns number begin paragraph
+        when my is less than low then
+            give low
+        end when
+        when my is greater than high then
+            give high
+        end when
+        give my
+    end paragraph
+end extension
+
+
+!!! --- Extending a record declared in another book -----------------------
+!!!
+!!! The target only has to be in scope. It does not have to be declared here,
+!!! which is the whole difference between an extension and an implementation.
+
+measurement begin extension
+    is-plausible returns boolean begin paragraph
+        give my reading is at least 0 and my reading is at most 100000
+    end paragraph
+
+    summary returns text begin paragraph
+        give my sensor plus ": " plus (my reading becomes text)
+    end paragraph
+end extension
+
+
+!!! --- Extending a concrete generic instantiation -------------------------
+
+envelope of number begin extension
+    is-empty returns boolean begin paragraph
+        give my item equals 0
+    end paragraph
+end extension
+
+
+main returns number begin paragraph
+
+    !!! Extension calls read as possession: the measurement's own
+    !!! plausibility, rather than 'is-plausible with subject being m'.
+    !!! That is the discoverability argument -- an agent that knows the
+    !!! receiver can predict what is available on it.
+    value reading is build measurement with sensor being "primary", reading being 480
+    say reading.is-plausible with nothing
+    say reading.summary with nothing
+
+    value spurious is build measurement with sensor being "faulty", reading being minus 1
+    say spurious.is-plausible with nothing
+
+    !!! Extensions on tier-one primitives.
+    value greeting as text is "hello"
+    say greeting.shouted with nothing
+    say greeting.repeated with count being 3
+
+    value count as number is 21
+    say count.doubled with nothing
+    say count.clamped with low being 0, high being 10
+
+    !!! An extension on a concrete generic instantiation.
+    value empty is build envelope of number with item being 0
+    value filled is build envelope of number with item being 7
+    say empty.is-empty with nothing
+    say filled.is-empty with nothing
+
+    give 0
+end paragraph

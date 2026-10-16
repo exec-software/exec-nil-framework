@@ -1,0 +1,106 @@
+!!! 06-classes.matrix
+!!! Nongeneric classes, inheritance, virtual dispatch and ancestor views.
+!!!
+!!! "my" is the receiver. Matrix synthesises the explicit first self parameter
+!!! that Ny requires, so the NIL CALL_METHOD arity is identical.
+!!!
+!!! Equivalent Ny for the first two declarations:
+!!!     abstract class Reader
+!!!         pub abstract fn read(self) -> i32
+!!!         end fn
+!!!         pub fn relay(self) -> i32
+!!!             return self.read() + 1
+!!!         end fn
+!!!     end class
+
+book tour.readers
+
+abstract Reader begin class
+
+    !!! An abstract method has no body and therefore no begin/end pair.
+    public abstract read-level returns number
+
+    !!! A concrete helper on an abstract class may call an abstract method on
+    !!! the receiver. It keeps its declaring owner's scope, but its virtual
+    !!! call selects the dynamic override.
+    public relay returns number begin paragraph
+        give (my read-level with nothing) plus 1
+    end paragraph
+end class
+
+ConstantReader inherits Reader begin class
+    field level as number
+
+    public replaces read-level returns number begin paragraph
+        give my level
+    end paragraph
+
+    !!! No modifier means private to the declaring class.
+    scaled returns number begin paragraph
+        give my level times 2
+    end paragraph
+end class
+
+OffsetReader inherits ConstantReader begin class
+    field offset as number
+
+    public replaces read-level returns number begin paragraph
+        give my level plus my offset
+    end paragraph
+end class
+
+!!! Multiple inheritance uses the actual concrete field layout, not an assumed
+!!! first-base prefix. Ambiguous members are rejected.
+!!! This member is deliberately NOT called 'label': Reader already declares
+!!! one, and a class inheriting both would have an ambiguous inherited method,
+!!! which Ny rejects rather than resolving by base order.
+Tagged begin class
+    field tag as text
+
+    public tag-of returns text begin paragraph
+        give my tag
+    end paragraph
+end class
+
+TaggedReader inherits ConstantReader, Tagged begin class
+    public replaces read-level returns number begin paragraph
+        give my level
+    end paragraph
+
+    public identity returns text begin paragraph
+        give my tag-of with nothing
+    end paragraph
+end class
+
+!!! A Reader-typed parameter never becomes a derived type merely because a
+!!! derived object was passed.
+consume receives source as Reader returns number begin paragraph
+    give source.relay with nothing
+end paragraph
+
+main returns number begin paragraph
+
+    !!! Every construction initialises every inherited and local field exactly
+    !!! once.
+    value concrete is build ConstantReader with level being 41
+
+    !!! An ancestor view changes the static view, not the dynamic class or the
+    !!! field storage. There is no slicing and no implicit copy.
+    value viewed as Reader is concrete
+
+    say consume with source being viewed      !!! 42
+
+    !!! Class values are shared handles, so the view observes the mutation.
+    set concrete.level to 99
+    say viewed.read-level with nothing              !!! 99
+
+    value offset is build OffsetReader with level being 40, offset being 2
+    value as_reader as Reader is offset
+    say as_reader.read-level with nothing           !!! 42
+
+    value sensor is build TaggedReader with level being 7, tag being "sensor"
+    say sensor.read-level with nothing
+    say sensor.identity with nothing
+
+    give 0
+end paragraph

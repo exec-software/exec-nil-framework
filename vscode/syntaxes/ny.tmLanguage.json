@@ -1,0 +1,330 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Ny",
+  "scopeName": "source.ny",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#annotations"
+    },
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#members-and-calls"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.ny",
+          "begin": "###",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.begin.ny"
+            }
+          },
+          "end": "###",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.end.ny"
+            }
+          }
+        },
+        {
+          "name": "comment.block.ny",
+          "begin": "/\\*",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.begin.ny"
+            }
+          },
+          "end": "\\*/",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.end.ny"
+            }
+          }
+        },
+        {
+          "name": "comment.line.double-slash.ny",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.line.number-sign.ny",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.ny",
+          "begin": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.ny"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.ny"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.ny",
+              "match": "\\\\(?:[\\\"\\\\ntr0]|.)"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.ny",
+          "begin": "'",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.ny"
+            }
+          },
+          "end": "'",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.ny"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.ny",
+              "match": "\\\\(?:['\\\\ntr0]|.)"
+            }
+          ]
+        }
+      ]
+    },
+    "annotations": {
+      "patterns": [
+        {
+          "name": "meta.preprocessor.ny",
+          "match": "@(pragma|include|define|undef|ifdef|ifndef|if|elif|else|endif|error|warning|message|schema)\\b",
+          "captures": {
+            "0": {
+              "name": "keyword.control.directive.ny"
+            }
+          }
+        },
+        {
+          "name": "storage.type.annotation.ny",
+          "match": "@[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*"
+        },
+        {
+          "name": "variable.parameter.annotation.ny",
+          "match": "\\b(intent|assumptions|constraints|trade_offs|related_topics|typical_usage|summary|description|params|returns|throws|examples|complexity|author|since|see_also)\\b(?=\\s*=)"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn|function|fun)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.function.ny"
+            },
+            "2": {
+              "name": "entity.name.function.ny"
+            }
+          }
+        },
+        {
+          "match": "\\b(struct|enum|trait|class|type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.declaration.ny"
+            },
+            "2": {
+              "name": "entity.name.type.ny"
+            }
+          }
+        },
+        {
+          "match": "\\b(impl)\\s+([A-Za-z_][A-Za-z0-9_:<>]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.declaration.ny"
+            },
+            "2": {
+              "name": "entity.name.type.ny"
+            }
+          }
+        },
+        {
+          "match": "\\b(module|package|namespace)\\s+([A-Za-z_][A-Za-z0-9_]*(?:(?:::|\\.)[A-Za-z_][A-Za-z0-9_]*)*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.namespace.ny"
+            },
+            "2": {
+              "name": "entity.name.namespace.ny"
+            }
+          }
+        },
+        {
+          "match": "\\b(import|using|use)\\s+([A-Za-z_][A-Za-z0-9_]*(?:(?:::|\\.)[A-Za-z_][A-Za-z0-9_]*)*)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.import.ny"
+            },
+            "2": {
+              "name": "entity.name.namespace.ny"
+            }
+          }
+        },
+        {
+          "match": "\\b(let)(?:\\s+(mut))?\\s+(\\*?)([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.variable.ny"
+            },
+            "2": {
+              "name": "storage.modifier.mutable.ny"
+            },
+            "3": {
+              "name": "keyword.operator.pointer.ny"
+            },
+            "4": {
+              "name": "variable.other.readwrite.ny"
+            }
+          }
+        },
+        {
+          "match": "\\b(const)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.modifier.constant.ny"
+            },
+            "2": {
+              "name": "variable.other.constant.ny"
+            }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.ny",
+          "match": "\\b(if|then|elseif|else|end|while|where|for|in|break|continue|loop|do|match|when|attempt|fault|recover|raise|return|asm)\\b"
+        },
+        {
+          "name": "keyword.control.test.ny",
+          "match": "\\b(test|example|property|generate)\\b"
+        },
+        {
+          "name": "storage.modifier.ny",
+          "match": "\\b(pub|mut|abstract|virtual|override|inherits)\\b"
+        },
+        {
+          "name": "keyword.operator.word.ny",
+          "match": "\\b(not|mod|as|ref)\\b"
+        },
+        {
+          "name": "variable.language.self.ny",
+          "match": "\\b(self|Self)\\b"
+        },
+        {
+          "name": "support.function.builtin.ny",
+          "match": "\\b(println|assert|hotreload|allocate|deallocate)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.builtin.ny",
+          "match": "\\b(any|array|bool|char|f32|f64|i8|i16|i32|i64|isize|map|option|Option|result|Result|text|tuple|u8|u16|u32|u64|usize|vec|void)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.ny",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.ny",
+          "match": "\\b0[xX][0-9A-Fa-f]+\\b"
+        },
+        {
+          "name": "constant.numeric.decimal.ny",
+          "match": "(?<![A-Za-z0-9_])(?:[0-9]+(?:\\.[0-9]+)?)(?![A-Za-z0-9_])"
+        }
+      ]
+    },
+    "members-and-calls": {
+      "patterns": [
+        {
+          "name": "variable.other.member.ny",
+          "match": "(?<=\\.)[A-Za-z_][A-Za-z0-9_]*"
+        },
+        {
+          "name": "support.function.any-method.ny",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.ny",
+          "match": "\\.\\.|::|->|==|!=|<=|>=|<<|>>|&&|\\|\\||[+\\-*/%=<>&|^~?:.]"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.delimiter.ny",
+          "match": "[,;]"
+        },
+        {
+          "name": "punctuation.section.group.begin.ny",
+          "match": "\\(|\\{|\\["
+        },
+        {
+          "name": "punctuation.section.group.end.ny",
+          "match": "\\)|\\}|\\]"
+        }
+      ]
+    }
+  }
+}

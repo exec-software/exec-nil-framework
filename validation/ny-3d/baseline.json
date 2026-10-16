@@ -1,0 +1,1953 @@
+{
+  "schema": "ny.3d.baseline.v3",
+  "phase": 3,
+  "recorded_at_utc": "2026-10-03T18:23:28.219525+00:00",
+  "sdk_manifest_sha256": "9ffb30980bdb86038c017d4f7a9c6477920ee198a838660205756acabe247c97",
+  "qualification": "development",
+  "matrix_status": "FAIL",
+  "case_count": 103,
+  "ny_probe_count": 100,
+  "renderer_count": 3,
+  "route_slots": 824,
+  "routes": [
+    "nil-text",
+    "nil-binary",
+    "bundle-text",
+    "bundle-binary",
+    "jit",
+    "aot",
+    "assemble-text",
+    "assemble-binary"
+  ],
+  "counts": {
+    "PASS": 643,
+    "SKIP": 89,
+    "FAIL": 92
+  },
+  "failed_cases": {
+    "documented-module-alias": [
+      "nil-text",
+      "nil-binary",
+      "bundle-text",
+      "bundle-binary",
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "i64-minimum-literal": [
+      "nil-text",
+      "nil-binary",
+      "bundle-text",
+      "bundle-binary",
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "diag-wrong-generic-arity": [
+      "nil-text",
+      "nil-binary",
+      "bundle-text",
+      "bundle-binary",
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "diag-wrong-explicit-generic-type": [
+      "nil-text",
+      "nil-binary",
+      "bundle-text",
+      "bundle-binary",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "diag-unknown-extra-generic-type": [
+      "nil-text",
+      "nil-binary",
+      "bundle-text",
+      "bundle-binary",
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "diag-wrong-function-argument-type": [
+      "nil-text",
+      "nil-binary",
+      "bundle-text",
+      "bundle-binary",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "stl-array-struct-handles": [
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "stl-array-nested": [
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "stl-map-materials": [
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "stl-dictionary-materials": [
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "stl-sort-text": [
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "stl-vec-map-filter": [
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "stl-list-copy-overflow": [
+      "nil-text",
+      "nil-binary",
+      "bundle-text",
+      "bundle-binary",
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "stl-queue-copy-overflow": [
+      "nil-text",
+      "nil-binary",
+      "bundle-text",
+      "bundle-binary",
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "stl-stack-copy-overflow": [
+      "nil-text",
+      "nil-binary",
+      "bundle-text",
+      "bundle-binary",
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ]
+  },
+  "confirmed_issue_failed_slots": {
+    "NYVAL-002": 8,
+    "NYVAL-001": 8,
+    "NYDIAG-001": 16,
+    "NYDIAG-002": 12,
+    "STL-001": 24
+  },
+  "native_capability_gap_failed_slots": {
+    "stl-array-struct-handles": [
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "stl-array-nested": [
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "stl-map-materials": [
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "stl-dictionary-materials": [
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "stl-sort-text": [
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ],
+    "stl-vec-map-filter": [
+      "jit",
+      "aot",
+      "assemble-text",
+      "assemble-binary"
+    ]
+  },
+  "classification_note": "FAIL is a case expectation, not an issue count. JIT/AOT reject NYDIAG-002 late; source-NIL/assembly routes expose missed frontend checking. Native capability gaps remain active failures, distinct from supported-contract defects.",
+  "default_renderers": {
+    "renderer": {
+      "reference_route": "nil-text",
+      "oracle": {
+        "schema": "ny.3d.reference.v1",
+        "image": "/Incubator/Execute/Validation/ny-3d-validation/work/runs/20261003T181534Z-pagnizop/renderer/nil-text/frame-001.ppm",
+        "reference": "Independent Python float64 geometry, shading, integer packing and row hashes",
+        "width": 128,
+        "height": 96,
+        "pixels": 12288,
+        "actual_rgb_sha256": "7e7b11856f90ec86fe075dc48011401a68006d70e8ef1a65eb4c9cb8683b31fe",
+        "expected_rgb_sha256": "7e7b11856f90ec86fe075dc48011401a68006d70e8ef1a65eb4c9cb8683b31fe",
+        "differing_pixels": 0,
+        "max_channel_error": 0,
+        "row_hashes_match": true,
+        "mismatch_examples": [],
+        "status": "PASS"
+      }
+    },
+    "mesh-renderer": {
+      "reference_route": "nil-text",
+      "oracle": {
+        "schema": "ny.3d.mesh-reference.v1",
+        "image": "/Incubator/Execute/Validation/ny-3d-validation/work/runs/20261003T181534Z-pagnizop/mesh-renderer/nil-text/frame-001.ppm",
+        "reference": "Independent Python integer geometry, triangle coverage, depth, shading, packing and row hashes",
+        "width": 128,
+        "height": 96,
+        "pixels": 12288,
+        "vertices": 313,
+        "triangles": 548,
+        "mesh_counts_match": true,
+        "actual_fragments": 3298,
+        "expected_fragments": 3298,
+        "actual_rgb_sha256": "3db5b60af6e067d4d5fcba52ca67405b426514ae68cbaed821d23eb787105107",
+        "expected_rgb_sha256": "3db5b60af6e067d4d5fcba52ca67405b426514ae68cbaed821d23eb787105107",
+        "differing_pixels": 0,
+        "max_channel_error": 0,
+        "row_hashes_match": true,
+        "mismatch_examples": [],
+        "status": "PASS"
+      }
+    },
+    "scene-player": {
+      "reference_route": "nil-text",
+      "oracle": {
+        "schema": "ny.3d.scene-player-reference.v1",
+        "image": "/Incubator/Execute/Validation/ny-3d-validation/work/runs/20261003T181534Z-pagnizop/scene-player/nil-text/frame-001.ppm",
+        "reference": "Independent Python animated geometry, integer raster, row/frame hashes and struct/zlib binary checkpoint",
+        "status": "PASS",
+        "errors": [],
+        "width": 128,
+        "height": 96,
+        "frames": 12,
+        "pixels": 12288,
+        "frame_pixels_calculated": 147456,
+        "final_frame_pixels_compared": 12288,
+        "vertices": 313,
+        "triangles": 548,
+        "mesh_counts_match": true,
+        "actual_rgb_sha256": "751d2418902ebf7bab4a826bc4f834fbc78adbfec9a1c5e47d25929cad144f9d",
+        "expected_rgb_sha256": "751d2418902ebf7bab4a826bc4f834fbc78adbfec9a1c5e47d25929cad144f9d",
+        "differing_pixels": 0,
+        "max_channel_error": 0,
+        "row_hashes_match": true,
+        "telemetry_matches": true,
+        "actual_telemetry": [
+          {
+            "frame": 0,
+            "digest": 3677209409,
+            "fragments": 3278
+          },
+          {
+            "frame": 1,
+            "digest": 285981247,
+            "fragments": 3331
+          },
+          {
+            "frame": 2,
+            "digest": 717900306,
+            "fragments": 3267
+          },
+          {
+            "frame": 3,
+            "digest": 1069177470,
+            "fragments": 3326
+          },
+          {
+            "frame": 4,
+            "digest": 3680214262,
+            "fragments": 3279
+          },
+          {
+            "frame": 5,
+            "digest": 4191276587,
+            "fragments": 3269
+          },
+          {
+            "frame": 6,
+            "digest": 373291384,
+            "fragments": 3280
+          },
+          {
+            "frame": 7,
+            "digest": 943608059,
+            "fragments": 3265
+          },
+          {
+            "frame": 8,
+            "digest": 1427218161,
+            "fragments": 3290
+          },
+          {
+            "frame": 9,
+            "digest": 1890782928,
+            "fragments": 3243
+          },
+          {
+            "frame": 10,
+            "digest": 1707938699,
+            "fragments": 3279
+          },
+          {
+            "frame": 11,
+            "digest": 2797256769,
+            "fragments": 3250
+          }
+        ],
+        "expected_telemetry": [
+          {
+            "frame": 0,
+            "digest": 3677209409,
+            "fragments": 3278
+          },
+          {
+            "frame": 1,
+            "digest": 285981247,
+            "fragments": 3331
+          },
+          {
+            "frame": 2,
+            "digest": 717900306,
+            "fragments": 3267
+          },
+          {
+            "frame": 3,
+            "digest": 1069177470,
+            "fragments": 3326
+          },
+          {
+            "frame": 4,
+            "digest": 3680214262,
+            "fragments": 3279
+          },
+          {
+            "frame": 5,
+            "digest": 4191276587,
+            "fragments": 3269
+          },
+          {
+            "frame": 6,
+            "digest": 373291384,
+            "fragments": 3280
+          },
+          {
+            "frame": 7,
+            "digest": 943608059,
+            "fragments": 3265
+          },
+          {
+            "frame": 8,
+            "digest": 1427218161,
+            "fragments": 3290
+          },
+          {
+            "frame": 9,
+            "digest": 1890782928,
+            "fragments": 3243
+          },
+          {
+            "frame": 10,
+            "digest": 1707938699,
+            "fragments": 3279
+          },
+          {
+            "frame": 11,
+            "digest": 2797256769,
+            "fragments": 3250
+          }
+        ],
+        "actual_fragments": 3250,
+        "expected_fragments": 3250,
+        "checkpoint_metadata_matches": true,
+        "checkpoint": {
+          "path": "/Incubator/Execute/Validation/ny-3d-validation/work/runs/20261003T181534Z-pagnizop/scene-player/nil-text/scene-state.bin",
+          "expected_bytes": 3944,
+          "expected_sha256": "db6dcfb200c29da357f5d6c210cf9f066bf062203baa0c2f110022588fad7cb4",
+          "expected_crc32": 3020396047,
+          "actual_bytes": 3944,
+          "actual_sha256": "db6dcfb200c29da357f5d6c210cf9f066bf062203baa0c2f110022588fad7cb4",
+          "actual_crc32": 3020396047,
+          "calculated_crc32": 3020396047,
+          "crc_valid": true,
+          "matches": true,
+          "header": {
+            "magic": 1129535822,
+            "version": 1,
+            "width": 128,
+            "height": 96,
+            "frames": 12,
+            "final_frame": 11,
+            "vertices": 313,
+            "triangles": 548,
+            "final_digest": 2797256769,
+            "final_fragments": 3250
+          },
+          "first_differing_offset": null,
+          "status": "PASS"
+        },
+        "artifacts": {
+          "scene-state.bin": {
+            "expected_sha256": "db6dcfb200c29da357f5d6c210cf9f066bf062203baa0c2f110022588fad7cb4",
+            "actual_sha256": "db6dcfb200c29da357f5d6c210cf9f066bf062203baa0c2f110022588fad7cb4",
+            "status": "PASS"
+          }
+        },
+        "mismatch_examples": []
+      }
+    }
+  },
+  "persistent_scene_stress": {
+    "status": "PASS",
+    "dimensions": [
+      256,
+      192
+    ],
+    "frames_per_process": 120,
+    "repeats_per_route": 1,
+    "routes": [
+      "nil-text",
+      "aot"
+    ],
+    "oracle": {
+      "schema": "ny.3d.scene-player-reference.v1",
+      "image": "/Incubator/Execute/Validation/ny-3d-validation/work/runs/20261003T181534Z-fpra0dic/scene-player/nil-text/frame-001.ppm",
+      "reference": "Independent Python animated geometry, integer raster, row/frame hashes and struct/zlib binary checkpoint",
+      "status": "PASS",
+      "errors": [],
+      "width": 256,
+      "height": 192,
+      "frames": 120,
+      "pixels": 49152,
+      "frame_pixels_calculated": 5898240,
+      "final_frame_pixels_compared": 49152,
+      "vertices": 313,
+      "triangles": 548,
+      "mesh_counts_match": true,
+      "actual_rgb_sha256": "c6f13ca945bc2e4ae13d241e28103ecdc847c306531a5edb547b896ffb775269",
+      "expected_rgb_sha256": "c6f13ca945bc2e4ae13d241e28103ecdc847c306531a5edb547b896ffb775269",
+      "differing_pixels": 0,
+      "max_channel_error": 0,
+      "row_hashes_match": true,
+      "telemetry_matches": true,
+      "actual_telemetry": [
+        {
+          "frame": 0,
+          "digest": 3416449323,
+          "fragments": 13182
+        },
+        {
+          "frame": 1,
+          "digest": 2338613863,
+          "fragments": 13328
+        },
+        {
+          "frame": 2,
+          "digest": 362752515,
+          "fragments": 13144
+        },
+        {
+          "frame": 3,
+          "digest": 4026493835,
+          "fragments": 13180
+        },
+        {
+          "frame": 4,
+          "digest": 1078126789,
+          "fragments": 13015
+        },
+        {
+          "frame": 5,
+          "digest": 2359398003,
+          "fragments": 13091
+        },
+        {
+          "frame": 6,
+          "digest": 1252573485,
+          "fragments": 13133
+        },
+        {
+          "frame": 7,
+          "digest": 43401523,
+          "fragments": 13122
+        },
+        {
+          "frame": 8,
+          "digest": 1742280389,
+          "fragments": 13199
+        },
+        {
+          "frame": 9,
+          "digest": 1201026098,
+          "fragments": 12944
+        },
+        {
+          "frame": 10,
+          "digest": 4294283193,
+          "fragments": 13084
+        },
+        {
+          "frame": 11,
+          "digest": 805433121,
+          "fragments": 13039
+        },
+        {
+          "frame": 12,
+          "digest": 407877033,
+          "fragments": 13028
+        },
+        {
+          "frame": 13,
+          "digest": 1291474844,
+          "fragments": 13104
+        },
+        {
+          "frame": 14,
+          "digest": 3855183637,
+          "fragments": 13138
+        },
+        {
+          "frame": 15,
+          "digest": 3136992379,
+          "fragments": 13179
+        },
+        {
+          "frame": 16,
+          "digest": 3951595028,
+          "fragments": 13024
+        },
+        {
+          "frame": 17,
+          "digest": 3889158299,
+          "fragments": 13180
+        },
+        {
+          "frame": 18,
+          "digest": 2132730148,
+          "fragments": 13123
+        },
+        {
+          "frame": 19,
+          "digest": 690104838,
+          "fragments": 13189
+        },
+        {
+          "frame": 20,
+          "digest": 2898921506,
+          "fragments": 13096
+        },
+        {
+          "frame": 21,
+          "digest": 3770062012,
+          "fragments": 13253
+        },
+        {
+          "frame": 22,
+          "digest": 1506141401,
+          "fragments": 13180
+        },
+        {
+          "frame": 23,
+          "digest": 3562379777,
+          "fragments": 13095
+        },
+        {
+          "frame": 24,
+          "digest": 2136261687,
+          "fragments": 13165
+        },
+        {
+          "frame": 25,
+          "digest": 4198071548,
+          "fragments": 13130
+        },
+        {
+          "frame": 26,
+          "digest": 2927605442,
+          "fragments": 13154
+        },
+        {
+          "frame": 27,
+          "digest": 915047617,
+          "fragments": 13050
+        },
+        {
+          "frame": 28,
+          "digest": 1507157006,
+          "fragments": 13177
+        },
+        {
+          "frame": 29,
+          "digest": 377559136,
+          "fragments": 13061
+        },
+        {
+          "frame": 30,
+          "digest": 1733512013,
+          "fragments": 13118
+        },
+        {
+          "frame": 31,
+          "digest": 2199796298,
+          "fragments": 13075
+        },
+        {
+          "frame": 32,
+          "digest": 3843986387,
+          "fragments": 13018
+        },
+        {
+          "frame": 33,
+          "digest": 2961036634,
+          "fragments": 13192
+        },
+        {
+          "frame": 34,
+          "digest": 2796389046,
+          "fragments": 13150
+        },
+        {
+          "frame": 35,
+          "digest": 3014262994,
+          "fragments": 13261
+        },
+        {
+          "frame": 36,
+          "digest": 3952206132,
+          "fragments": 13006
+        },
+        {
+          "frame": 37,
+          "digest": 1796498302,
+          "fragments": 13057
+        },
+        {
+          "frame": 38,
+          "digest": 1274832497,
+          "fragments": 13080
+        },
+        {
+          "frame": 39,
+          "digest": 2039608863,
+          "fragments": 13079
+        },
+        {
+          "frame": 40,
+          "digest": 3919589900,
+          "fragments": 13170
+        },
+        {
+          "frame": 41,
+          "digest": 2003911479,
+          "fragments": 13074
+        },
+        {
+          "frame": 42,
+          "digest": 2060528183,
+          "fragments": 13217
+        },
+        {
+          "frame": 43,
+          "digest": 667433063,
+          "fragments": 13170
+        },
+        {
+          "frame": 44,
+          "digest": 3535080399,
+          "fragments": 13077
+        },
+        {
+          "frame": 45,
+          "digest": 1240467413,
+          "fragments": 13051
+        },
+        {
+          "frame": 46,
+          "digest": 1573044094,
+          "fragments": 13033
+        },
+        {
+          "frame": 47,
+          "digest": 2262351720,
+          "fragments": 13120
+        },
+        {
+          "frame": 48,
+          "digest": 1835719044,
+          "fragments": 12993
+        },
+        {
+          "frame": 49,
+          "digest": 1282057094,
+          "fragments": 13059
+        },
+        {
+          "frame": 50,
+          "digest": 1680049214,
+          "fragments": 13095
+        },
+        {
+          "frame": 51,
+          "digest": 1449256382,
+          "fragments": 13147
+        },
+        {
+          "frame": 52,
+          "digest": 3885553009,
+          "fragments": 13171
+        },
+        {
+          "frame": 53,
+          "digest": 3951071592,
+          "fragments": 13294
+        },
+        {
+          "frame": 54,
+          "digest": 1429158643,
+          "fragments": 13254
+        },
+        {
+          "frame": 55,
+          "digest": 2329182583,
+          "fragments": 13248
+        },
+        {
+          "frame": 56,
+          "digest": 1664777904,
+          "fragments": 13194
+        },
+        {
+          "frame": 57,
+          "digest": 1829350402,
+          "fragments": 13148
+        },
+        {
+          "frame": 58,
+          "digest": 515109451,
+          "fragments": 13132
+        },
+        {
+          "frame": 59,
+          "digest": 226762468,
+          "fragments": 12988
+        },
+        {
+          "frame": 60,
+          "digest": 1406570826,
+          "fragments": 13119
+        },
+        {
+          "frame": 61,
+          "digest": 2562740241,
+          "fragments": 13003
+        },
+        {
+          "frame": 62,
+          "digest": 1092705902,
+          "fragments": 13117
+        },
+        {
+          "frame": 63,
+          "digest": 1105074116,
+          "fragments": 13133
+        },
+        {
+          "frame": 64,
+          "digest": 1166145495,
+          "fragments": 13017
+        },
+        {
+          "frame": 65,
+          "digest": 1315960770,
+          "fragments": 13181
+        },
+        {
+          "frame": 66,
+          "digest": 2205557087,
+          "fragments": 13067
+        },
+        {
+          "frame": 67,
+          "digest": 1232049647,
+          "fragments": 13252
+        },
+        {
+          "frame": 68,
+          "digest": 943184763,
+          "fragments": 13016
+        },
+        {
+          "frame": 69,
+          "digest": 3282762671,
+          "fragments": 13081
+        },
+        {
+          "frame": 70,
+          "digest": 1584752328,
+          "fragments": 13097
+        },
+        {
+          "frame": 71,
+          "digest": 4292461345,
+          "fragments": 13086
+        },
+        {
+          "frame": 72,
+          "digest": 2383904020,
+          "fragments": 13161
+        },
+        {
+          "frame": 73,
+          "digest": 1869658724,
+          "fragments": 13065
+        },
+        {
+          "frame": 74,
+          "digest": 1100154462,
+          "fragments": 13225
+        },
+        {
+          "frame": 75,
+          "digest": 1163566717,
+          "fragments": 13195
+        },
+        {
+          "frame": 76,
+          "digest": 2722233464,
+          "fragments": 13212
+        },
+        {
+          "frame": 77,
+          "digest": 2730498947,
+          "fragments": 13110
+        },
+        {
+          "frame": 78,
+          "digest": 3769836534,
+          "fragments": 13066
+        },
+        {
+          "frame": 79,
+          "digest": 3475760951,
+          "fragments": 13189
+        },
+        {
+          "frame": 80,
+          "digest": 1565977260,
+          "fragments": 12906
+        },
+        {
+          "frame": 81,
+          "digest": 2950823759,
+          "fragments": 13047
+        },
+        {
+          "frame": 82,
+          "digest": 2273365710,
+          "fragments": 13029
+        },
+        {
+          "frame": 83,
+          "digest": 1109173778,
+          "fragments": 13175
+        },
+        {
+          "frame": 84,
+          "digest": 3458300906,
+          "fragments": 13172
+        },
+        {
+          "frame": 85,
+          "digest": 1141151464,
+          "fragments": 13246
+        },
+        {
+          "frame": 86,
+          "digest": 3260826719,
+          "fragments": 13141
+        },
+        {
+          "frame": 87,
+          "digest": 157703483,
+          "fragments": 13142
+        },
+        {
+          "frame": 88,
+          "digest": 1585313487,
+          "fragments": 13201
+        },
+        {
+          "frame": 89,
+          "digest": 909593783,
+          "fragments": 13167
+        },
+        {
+          "frame": 90,
+          "digest": 78956487,
+          "fragments": 13164
+        },
+        {
+          "frame": 91,
+          "digest": 4269668260,
+          "fragments": 13068
+        },
+        {
+          "frame": 92,
+          "digest": 2604000932,
+          "fragments": 13070
+        },
+        {
+          "frame": 93,
+          "digest": 1980505765,
+          "fragments": 12985
+        },
+        {
+          "frame": 94,
+          "digest": 930913099,
+          "fragments": 13132
+        },
+        {
+          "frame": 95,
+          "digest": 2336153112,
+          "fragments": 13118
+        },
+        {
+          "frame": 96,
+          "digest": 3008042692,
+          "fragments": 13093
+        },
+        {
+          "frame": 97,
+          "digest": 3393851996,
+          "fragments": 13277
+        },
+        {
+          "frame": 98,
+          "digest": 889748820,
+          "fragments": 13110
+        },
+        {
+          "frame": 99,
+          "digest": 3849400407,
+          "fragments": 13118
+        },
+        {
+          "frame": 100,
+          "digest": 1595008905,
+          "fragments": 13034
+        },
+        {
+          "frame": 101,
+          "digest": 3232041132,
+          "fragments": 13147
+        },
+        {
+          "frame": 102,
+          "digest": 636423520,
+          "fragments": 13186
+        },
+        {
+          "frame": 103,
+          "digest": 2993493093,
+          "fragments": 13057
+        },
+        {
+          "frame": 104,
+          "digest": 3895642963,
+          "fragments": 13181
+        },
+        {
+          "frame": 105,
+          "digest": 2936054158,
+          "fragments": 13001
+        },
+        {
+          "frame": 106,
+          "digest": 1906462797,
+          "fragments": 13136
+        },
+        {
+          "frame": 107,
+          "digest": 1487784506,
+          "fragments": 13070
+        },
+        {
+          "frame": 108,
+          "digest": 1376525341,
+          "fragments": 13067
+        },
+        {
+          "frame": 109,
+          "digest": 879972255,
+          "fragments": 13080
+        },
+        {
+          "frame": 110,
+          "digest": 1948369726,
+          "fragments": 13157
+        },
+        {
+          "frame": 111,
+          "digest": 1490235843,
+          "fragments": 13215
+        },
+        {
+          "frame": 112,
+          "digest": 2838518963,
+          "fragments": 13048
+        },
+        {
+          "frame": 113,
+          "digest": 1045365343,
+          "fragments": 13105
+        },
+        {
+          "frame": 114,
+          "digest": 3403776168,
+          "fragments": 13030
+        },
+        {
+          "frame": 115,
+          "digest": 1249805477,
+          "fragments": 13001
+        },
+        {
+          "frame": 116,
+          "digest": 4143728735,
+          "fragments": 12964
+        },
+        {
+          "frame": 117,
+          "digest": 3469462593,
+          "fragments": 13286
+        },
+        {
+          "frame": 118,
+          "digest": 2040126417,
+          "fragments": 13221
+        },
+        {
+          "frame": 119,
+          "digest": 2501747411,
+          "fragments": 13170
+        }
+      ],
+      "expected_telemetry": [
+        {
+          "frame": 0,
+          "digest": 3416449323,
+          "fragments": 13182
+        },
+        {
+          "frame": 1,
+          "digest": 2338613863,
+          "fragments": 13328
+        },
+        {
+          "frame": 2,
+          "digest": 362752515,
+          "fragments": 13144
+        },
+        {
+          "frame": 3,
+          "digest": 4026493835,
+          "fragments": 13180
+        },
+        {
+          "frame": 4,
+          "digest": 1078126789,
+          "fragments": 13015
+        },
+        {
+          "frame": 5,
+          "digest": 2359398003,
+          "fragments": 13091
+        },
+        {
+          "frame": 6,
+          "digest": 1252573485,
+          "fragments": 13133
+        },
+        {
+          "frame": 7,
+          "digest": 43401523,
+          "fragments": 13122
+        },
+        {
+          "frame": 8,
+          "digest": 1742280389,
+          "fragments": 13199
+        },
+        {
+          "frame": 9,
+          "digest": 1201026098,
+          "fragments": 12944
+        },
+        {
+          "frame": 10,
+          "digest": 4294283193,
+          "fragments": 13084
+        },
+        {
+          "frame": 11,
+          "digest": 805433121,
+          "fragments": 13039
+        },
+        {
+          "frame": 12,
+          "digest": 407877033,
+          "fragments": 13028
+        },
+        {
+          "frame": 13,
+          "digest": 1291474844,
+          "fragments": 13104
+        },
+        {
+          "frame": 14,
+          "digest": 3855183637,
+          "fragments": 13138
+        },
+        {
+          "frame": 15,
+          "digest": 3136992379,
+          "fragments": 13179
+        },
+        {
+          "frame": 16,
+          "digest": 3951595028,
+          "fragments": 13024
+        },
+        {
+          "frame": 17,
+          "digest": 3889158299,
+          "fragments": 13180
+        },
+        {
+          "frame": 18,
+          "digest": 2132730148,
+          "fragments": 13123
+        },
+        {
+          "frame": 19,
+          "digest": 690104838,
+          "fragments": 13189
+        },
+        {
+          "frame": 20,
+          "digest": 2898921506,
+          "fragments": 13096
+        },
+        {
+          "frame": 21,
+          "digest": 3770062012,
+          "fragments": 13253
+        },
+        {
+          "frame": 22,
+          "digest": 1506141401,
+          "fragments": 13180
+        },
+        {
+          "frame": 23,
+          "digest": 3562379777,
+          "fragments": 13095
+        },
+        {
+          "frame": 24,
+          "digest": 2136261687,
+          "fragments": 13165
+        },
+        {
+          "frame": 25,
+          "digest": 4198071548,
+          "fragments": 13130
+        },
+        {
+          "frame": 26,
+          "digest": 2927605442,
+          "fragments": 13154
+        },
+        {
+          "frame": 27,
+          "digest": 915047617,
+          "fragments": 13050
+        },
+        {
+          "frame": 28,
+          "digest": 1507157006,
+          "fragments": 13177
+        },
+        {
+          "frame": 29,
+          "digest": 377559136,
+          "fragments": 13061
+        },
+        {
+          "frame": 30,
+          "digest": 1733512013,
+          "fragments": 13118
+        },
+        {
+          "frame": 31,
+          "digest": 2199796298,
+          "fragments": 13075
+        },
+        {
+          "frame": 32,
+          "digest": 3843986387,
+          "fragments": 13018
+        },
+        {
+          "frame": 33,
+          "digest": 2961036634,
+          "fragments": 13192
+        },
+        {
+          "frame": 34,
+          "digest": 2796389046,
+          "fragments": 13150
+        },
+        {
+          "frame": 35,
+          "digest": 3014262994,
+          "fragments": 13261
+        },
+        {
+          "frame": 36,
+          "digest": 3952206132,
+          "fragments": 13006
+        },
+        {
+          "frame": 37,
+          "digest": 1796498302,
+          "fragments": 13057
+        },
+        {
+          "frame": 38,
+          "digest": 1274832497,
+          "fragments": 13080
+        },
+        {
+          "frame": 39,
+          "digest": 2039608863,
+          "fragments": 13079
+        },
+        {
+          "frame": 40,
+          "digest": 3919589900,
+          "fragments": 13170
+        },
+        {
+          "frame": 41,
+          "digest": 2003911479,
+          "fragments": 13074
+        },
+        {
+          "frame": 42,
+          "digest": 2060528183,
+          "fragments": 13217
+        },
+        {
+          "frame": 43,
+          "digest": 667433063,
+          "fragments": 13170
+        },
+        {
+          "frame": 44,
+          "digest": 3535080399,
+          "fragments": 13077
+        },
+        {
+          "frame": 45,
+          "digest": 1240467413,
+          "fragments": 13051
+        },
+        {
+          "frame": 46,
+          "digest": 1573044094,
+          "fragments": 13033
+        },
+        {
+          "frame": 47,
+          "digest": 2262351720,
+          "fragments": 13120
+        },
+        {
+          "frame": 48,
+          "digest": 1835719044,
+          "fragments": 12993
+        },
+        {
+          "frame": 49,
+          "digest": 1282057094,
+          "fragments": 13059
+        },
+        {
+          "frame": 50,
+          "digest": 1680049214,
+          "fragments": 13095
+        },
+        {
+          "frame": 51,
+          "digest": 1449256382,
+          "fragments": 13147
+        },
+        {
+          "frame": 52,
+          "digest": 3885553009,
+          "fragments": 13171
+        },
+        {
+          "frame": 53,
+          "digest": 3951071592,
+          "fragments": 13294
+        },
+        {
+          "frame": 54,
+          "digest": 1429158643,
+          "fragments": 13254
+        },
+        {
+          "frame": 55,
+          "digest": 2329182583,
+          "fragments": 13248
+        },
+        {
+          "frame": 56,
+          "digest": 1664777904,
+          "fragments": 13194
+        },
+        {
+          "frame": 57,
+          "digest": 1829350402,
+          "fragments": 13148
+        },
+        {
+          "frame": 58,
+          "digest": 515109451,
+          "fragments": 13132
+        },
+        {
+          "frame": 59,
+          "digest": 226762468,
+          "fragments": 12988
+        },
+        {
+          "frame": 60,
+          "digest": 1406570826,
+          "fragments": 13119
+        },
+        {
+          "frame": 61,
+          "digest": 2562740241,
+          "fragments": 13003
+        },
+        {
+          "frame": 62,
+          "digest": 1092705902,
+          "fragments": 13117
+        },
+        {
+          "frame": 63,
+          "digest": 1105074116,
+          "fragments": 13133
+        },
+        {
+          "frame": 64,
+          "digest": 1166145495,
+          "fragments": 13017
+        },
+        {
+          "frame": 65,
+          "digest": 1315960770,
+          "fragments": 13181
+        },
+        {
+          "frame": 66,
+          "digest": 2205557087,
+          "fragments": 13067
+        },
+        {
+          "frame": 67,
+          "digest": 1232049647,
+          "fragments": 13252
+        },
+        {
+          "frame": 68,
+          "digest": 943184763,
+          "fragments": 13016
+        },
+        {
+          "frame": 69,
+          "digest": 3282762671,
+          "fragments": 13081
+        },
+        {
+          "frame": 70,
+          "digest": 1584752328,
+          "fragments": 13097
+        },
+        {
+          "frame": 71,
+          "digest": 4292461345,
+          "fragments": 13086
+        },
+        {
+          "frame": 72,
+          "digest": 2383904020,
+          "fragments": 13161
+        },
+        {
+          "frame": 73,
+          "digest": 1869658724,
+          "fragments": 13065
+        },
+        {
+          "frame": 74,
+          "digest": 1100154462,
+          "fragments": 13225
+        },
+        {
+          "frame": 75,
+          "digest": 1163566717,
+          "fragments": 13195
+        },
+        {
+          "frame": 76,
+          "digest": 2722233464,
+          "fragments": 13212
+        },
+        {
+          "frame": 77,
+          "digest": 2730498947,
+          "fragments": 13110
+        },
+        {
+          "frame": 78,
+          "digest": 3769836534,
+          "fragments": 13066
+        },
+        {
+          "frame": 79,
+          "digest": 3475760951,
+          "fragments": 13189
+        },
+        {
+          "frame": 80,
+          "digest": 1565977260,
+          "fragments": 12906
+        },
+        {
+          "frame": 81,
+          "digest": 2950823759,
+          "fragments": 13047
+        },
+        {
+          "frame": 82,
+          "digest": 2273365710,
+          "fragments": 13029
+        },
+        {
+          "frame": 83,
+          "digest": 1109173778,
+          "fragments": 13175
+        },
+        {
+          "frame": 84,
+          "digest": 3458300906,
+          "fragments": 13172
+        },
+        {
+          "frame": 85,
+          "digest": 1141151464,
+          "fragments": 13246
+        },
+        {
+          "frame": 86,
+          "digest": 3260826719,
+          "fragments": 13141
+        },
+        {
+          "frame": 87,
+          "digest": 157703483,
+          "fragments": 13142
+        },
+        {
+          "frame": 88,
+          "digest": 1585313487,
+          "fragments": 13201
+        },
+        {
+          "frame": 89,
+          "digest": 909593783,
+          "fragments": 13167
+        },
+        {
+          "frame": 90,
+          "digest": 78956487,
+          "fragments": 13164
+        },
+        {
+          "frame": 91,
+          "digest": 4269668260,
+          "fragments": 13068
+        },
+        {
+          "frame": 92,
+          "digest": 2604000932,
+          "fragments": 13070
+        },
+        {
+          "frame": 93,
+          "digest": 1980505765,
+          "fragments": 12985
+        },
+        {
+          "frame": 94,
+          "digest": 930913099,
+          "fragments": 13132
+        },
+        {
+          "frame": 95,
+          "digest": 2336153112,
+          "fragments": 13118
+        },
+        {
+          "frame": 96,
+          "digest": 3008042692,
+          "fragments": 13093
+        },
+        {
+          "frame": 97,
+          "digest": 3393851996,
+          "fragments": 13277
+        },
+        {
+          "frame": 98,
+          "digest": 889748820,
+          "fragments": 13110
+        },
+        {
+          "frame": 99,
+          "digest": 3849400407,
+          "fragments": 13118
+        },
+        {
+          "frame": 100,
+          "digest": 1595008905,
+          "fragments": 13034
+        },
+        {
+          "frame": 101,
+          "digest": 3232041132,
+          "fragments": 13147
+        },
+        {
+          "frame": 102,
+          "digest": 636423520,
+          "fragments": 13186
+        },
+        {
+          "frame": 103,
+          "digest": 2993493093,
+          "fragments": 13057
+        },
+        {
+          "frame": 104,
+          "digest": 3895642963,
+          "fragments": 13181
+        },
+        {
+          "frame": 105,
+          "digest": 2936054158,
+          "fragments": 13001
+        },
+        {
+          "frame": 106,
+          "digest": 1906462797,
+          "fragments": 13136
+        },
+        {
+          "frame": 107,
+          "digest": 1487784506,
+          "fragments": 13070
+        },
+        {
+          "frame": 108,
+          "digest": 1376525341,
+          "fragments": 13067
+        },
+        {
+          "frame": 109,
+          "digest": 879972255,
+          "fragments": 13080
+        },
+        {
+          "frame": 110,
+          "digest": 1948369726,
+          "fragments": 13157
+        },
+        {
+          "frame": 111,
+          "digest": 1490235843,
+          "fragments": 13215
+        },
+        {
+          "frame": 112,
+          "digest": 2838518963,
+          "fragments": 13048
+        },
+        {
+          "frame": 113,
+          "digest": 1045365343,
+          "fragments": 13105
+        },
+        {
+          "frame": 114,
+          "digest": 3403776168,
+          "fragments": 13030
+        },
+        {
+          "frame": 115,
+          "digest": 1249805477,
+          "fragments": 13001
+        },
+        {
+          "frame": 116,
+          "digest": 4143728735,
+          "fragments": 12964
+        },
+        {
+          "frame": 117,
+          "digest": 3469462593,
+          "fragments": 13286
+        },
+        {
+          "frame": 118,
+          "digest": 2040126417,
+          "fragments": 13221
+        },
+        {
+          "frame": 119,
+          "digest": 2501747411,
+          "fragments": 13170
+        }
+      ],
+      "actual_fragments": 13170,
+      "expected_fragments": 13170,
+      "checkpoint_metadata_matches": true,
+      "checkpoint": {
+        "path": "/Incubator/Execute/Validation/ny-3d-validation/work/runs/20261003T181534Z-fpra0dic/scene-player/nil-text/scene-state.bin",
+        "expected_bytes": 5240,
+        "expected_sha256": "2d0f65f249021fc5c2e9a2c11e19f97d910cee5936d8a5f14c66a5c8fcadebcd",
+        "expected_crc32": 1567309668,
+        "actual_bytes": 5240,
+        "actual_sha256": "2d0f65f249021fc5c2e9a2c11e19f97d910cee5936d8a5f14c66a5c8fcadebcd",
+        "actual_crc32": 1567309668,
+        "calculated_crc32": 1567309668,
+        "crc_valid": true,
+        "matches": true,
+        "header": {
+          "magic": 1129535822,
+          "version": 1,
+          "width": 256,
+          "height": 192,
+          "frames": 120,
+          "final_frame": 119,
+          "vertices": 313,
+          "triangles": 548,
+          "final_digest": 2501747411,
+          "final_fragments": 13170
+        },
+        "first_differing_offset": null,
+        "status": "PASS"
+      },
+      "artifacts": {
+        "scene-state.bin": {
+          "expected_sha256": "2d0f65f249021fc5c2e9a2c11e19f97d910cee5936d8a5f14c66a5c8fcadebcd",
+          "actual_sha256": "2d0f65f249021fc5c2e9a2c11e19f97d910cee5936d8a5f14c66a5c8fcadebcd",
+          "status": "PASS"
+        }
+      },
+      "mismatch_examples": []
+    },
+    "artifacts": [
+      {
+        "route": "nil-text",
+        "files": [
+          {
+            "name": "scene-state.bin",
+            "iteration": 1,
+            "path": "/Incubator/Execute/Validation/ny-3d-validation/work/runs/20261003T181534Z-fpra0dic/scene-player/nil-text/frame-001-scene-state.bin",
+            "bytes": 5240,
+            "sha256": "2d0f65f249021fc5c2e9a2c11e19f97d910cee5936d8a5f14c66a5c8fcadebcd",
+            "pre_run_sentinel_sha256": "1599a5917be06394366e16a325ae4400868afeeb83ab86ba881eb45a330a15c0",
+            "status": "PASS",
+            "expected_sha256": "2d0f65f249021fc5c2e9a2c11e19f97d910cee5936d8a5f14c66a5c8fcadebcd"
+          }
+        ]
+      },
+      {
+        "route": "aot",
+        "files": [
+          {
+            "name": "scene-state.bin",
+            "iteration": 1,
+            "path": "/Incubator/Execute/Validation/ny-3d-validation/work/runs/20261003T181534Z-fpra0dic/scene-player/aot/frame-001-scene-state.bin",
+            "bytes": 5240,
+            "sha256": "2d0f65f249021fc5c2e9a2c11e19f97d910cee5936d8a5f14c66a5c8fcadebcd",
+            "pre_run_sentinel_sha256": "1ca4dadfc44222b09f59a36ae1d46c84190dc8b6e355af66cf010c042e1b356a",
+            "status": "PASS",
+            "expected_sha256": "2d0f65f249021fc5c2e9a2c11e19f97d910cee5936d8a5f14c66a5c8fcadebcd"
+          }
+        ]
+      }
+    ]
+  },
+  "scene_process_repetition": {
+    "status": "PASS",
+    "dimensions": [
+      32,
+      24
+    ],
+    "frames_per_process": 5,
+    "repeats_per_route": 2,
+    "routes": [
+      "nil-text",
+      "aot"
+    ],
+    "checkpoint_snapshots_checked": 4
+  },
+  "debugger": {
+    "status": "PASS",
+    "counts": {
+      "PASS": 122,
+      "FAIL": 0
+    },
+    "formats": [
+      "debug-text-NIL",
+      "debug-binary-NIL"
+    ],
+    "protocols": [
+      "JSONL",
+      "DAP"
+    ],
+    "source_sha256": "d5d0e97bad0cae35cd3469c9ae47e1b7cb5cd1ec5ca4403eaadd63de4d0f12b6",
+    "native_execution_checked": true,
+    "native_debugging_supported": false,
+    "inspection_proposals": [
+      "NYDBG-001",
+      "NYDBG-002"
+    ],
+    "report": "reports/debugger.json"
+  },
+  "diagnostics": {
+    "counts": {
+      "PASS": 70,
+      "FAIL": 8
+    },
+    "controls": {
+      "PASS": 39
+    },
+    "quality": {
+      "observed_diagnostics": 27,
+      "source_filename_present": 3,
+      "line_present": 18,
+      "column_present": 0,
+      "source_excerpt_present": 0,
+      "construct_identified": 27,
+      "rule_explained": 27,
+      "expected_and_actual_types_present": 6,
+      "suggestion_present": 0
+    },
+    "phase": 2,
+    "report": "reports/phase-02/diagnostics.json"
+  },
+  "sdk_integrity_before": "PASS",
+  "sdk_integrity_after": "PASS",
+  "file_access_isolation": {
+    "status": "PASS",
+    "phase": 1,
+    "scope": "Original raytracer NIL/native compile/run commands; audit not repeated or broadened in phase 2."
+  },
+  "library_resolution": "copied-sdk/nystd source standard library",
+  "untested_areas": [
+    "compiled-NIL standard-library resolution",
+    "Windows/macOS hosts",
+    "editor/LSP integration (debugger has a separate protocol audit)",
+    "native executable debugging",
+    "FFI and external libraries",
+    "network/database integrations",
+    "exhaustive language conformance",
+    "checkpoint resume in a new process",
+    "malformed external scene assets",
+    "measured heap retention/leak behavior",
+    "exact intermediate-frame pixel output (only digest/fragment checks)"
+  ],
+  "evidence": {
+    "reports/validation.json": "4776920ee2fffd670f9970a0766402e5b78b708afad1fe99044804ad9b330b6e",
+    "reports/scene-stress.json": "75b0e6b62d975a83cc512087fd2039020c45d3f82073d973e22e47c15a063726",
+    "reports/scene-repeat.json": "bd96c7a3bf30074b6da65abf70a490b6c4c450e81bdd1e8c6c8396f08a97cb1a",
+    "reports/debugger.json": "d587f792482aabb471054c661fb743961d212d922125cf90dfbc6e10a6f6544d",
+    "reports/debugger-harness-checks.json": "26d7b2976f78d2d43ab54331211bea613d5257b92b6cf5349a4119af8aeef5a2",
+    "reports/scene-oracle-controls.json": "56001eda9437bb899d7362bce0c9e1d86e21a70fb569a313184b75d3f96bb483",
+    "reports/harness-controls.json": "bc39434c508598631994a139698ede571a7a7f4a9b0c3217436b2743a7a6d4eb",
+    "reports/scene-cli.json": "39109dfbef662e3e9a3d2f4524bcfb9a953d01d2e2be843a5147953486af39c7",
+    "reports/phase-02/diagnostics.json": "662a859d9537c22cfd2cee83e862c52e11593c5df58d01d2af286b7a011079ec",
+    "reports/phase-02/mesh-stress.json": "06a682637c14f8a836f6608dd0946ad709ff371523b7817b4b4f4d3bb5390bf3",
+    "reports/phase-02/source.tar.gz": "2454f8b36d5395a853d9301cb6097b7383fde1b97540e057d83d78a23767e15c",
+    "reports/phase-01/stress.json": "bce3c76296d613f62335eff54468a00ca5da7e629bdfe58c6445489929eda7f2",
+    "reports/phase-01/isolation.json": "35e0959593110c28aeccd06e5c38cb31210b22807fc3883f2ff917b12ae24e1a"
+  },
+  "project_source_hashes": {
+    "probes/atomic-file-byte-roundtrip.ny": "59edc07f23f8bb32c2a729f557e667c7b06dc7fe5d84d1d58f8cf02c9c22de1d",
+    "probes/binary-failed-write-atomic.ny": "481011d93d6e4251d7d244d9ac6d05b3f0797c495e0912bfa78a618c30f6c262",
+    "probes/binary-fixed-record.ny": "cd2a366bcdec32f1afdeb910d14bffbe3fd27c5f2618f195dcf849822c31a994",
+    "probes/bitwise-i32.ny": "b0f1355cedad58f44f924626580ca1792bab9286f21428dc5266ecbbdeed1e8d",
+    "probes/bitwise-i64.ny": "a84e32d0f0d1e1b9cefab6cbdb584d2e0947e3be02b3c999372366b962dcd6e7",
+    "probes/bitwise-u8.ny": "fce1336d4b8837d670cbb5137918eac9d6e46c7481fa48b8f305513ea8a52cd9",
+    "probes/class-dispatch.ny": "04aa9ee5db6c31e7943d9dc5d2c85291d8f14d2ba0c2f6c94feee7eef83f196d",
+    "probes/crc32-scene-bytes.ny": "3b1b26c34eaa8e834138b3afa9ea1427a1261f5301693d6ddcd836cb9bf07f32",
+    "probes/debugger/pause.ny": "4dc89f8890a42c7fd01d5e75cea1d73d319d05e0baa6a44a961007a27512f060",
+    "probes/debugger/session.ny": "442dad3f1d68ff170711bd0fd89eb75bc6102f364d1ea1c4e73c6e5b1862bc08",
+    "probes/diagnostics/array-index-past-end-control.ny": "65da3c3640931d45b1b736561e9b6a4b481ce5a0850c7b0fbcc26f4ae90c30d9",
+    "probes/diagnostics/array-index-past-end.ny": "293f41bb9f373a0d7b0a1930691c153320ec4975994ecd73ea56e6fcda7bbe9a",
+    "probes/diagnostics/bad-pointer-type-control.ny": "a2b658fc4dc49038512e3be1081222c4b6abe385f28b067e983af7df05ec1d1a",
+    "probes/diagnostics/bad-pointer-type.ny": "b29993a0c02fda29807e5819c187454e92d2df154dbf1a26ef2f7d31f0b76ec1",
+    "probes/diagnostics/cases.json": "377c96d4009630ac72600bc7c5ed6f83646d9fb861ccf9e83844d90d330dfab3",
+    "probes/diagnostics/manifest.json": "20e75e91f95b0ca54bae676b41d3669089ffcd8e506c4aa2c82b5117b34b4946",
+    "probes/diagnostics/missing-import-control.ny": "ddb1ccc3d82731f79d03ab06fcb0f4c1f1964429768d38ccde3b719ef6c9ca85",
+    "probes/diagnostics/missing-import.ny": "341094203021ae18bca780cdccfc1054a32ce8ccb84a44d54e1dd9d5661bfe30",
+    "probes/diagnostics/missing-struct-field-control.ny": "de1cb70f9bad9e96714f3c308b1367a9a337de67999d4e38662f965fb074e30e",
+    "probes/diagnostics/missing-struct-field.ny": "4868d4eb486437420cdb4dbbfe5107df88b0e0e19db337a93da7f797c55efcd6",
+    "probes/diagnostics/native-struct-array-control.ny": "0fcf08611e97f3f39a31ee0fef1e34587a90c4b722a57dba64ccb72f01505668",
+    "probes/diagnostics/native-struct-array.ny": "37e8024a23e63b1072c758b26a91a2627690c95482d341ca64b15f39a36c5eb7",
+    "probes/diagnostics/shift-count-width-control.ny": "4e2acb6f6dc6bad984ca14647d51873c56fca4a54138217aa94527107cbaeb0c",
+    "probes/diagnostics/shift-count-width.ny": "e3fd5a8cdea2b56f31be42266f9e72e2bc86393ded56a098e4cf1cc0c6b5af1f",
+    "probes/diagnostics/unclosed-array-literal-control.ny": "74b32b37fefa556bb829863b6ce92fb06702b8728c38c68222429293adf17f02",
+    "probes/diagnostics/unclosed-array-literal.ny": "8cc6e51330b6085fb4e4770f499993be7d3f5180afcc5bbc578341fe7e7e0deb",
+    "probes/diagnostics/unknown-extra-generic-type-control.ny": "54f60c8a33f7f30cc7eb5433f0bf21494e5bb380b2d5b247f1a337f15b466304",
+    "probes/diagnostics/unknown-extra-generic-type.ny": "aeee01c6a1b36746d7270d32babd48b8303b520bb4b57d60bafda0c1043ff37a",
+    "probes/diagnostics/unknown-symbol-control.ny": "8cb42df9f43039cb523ee21247a0f9304aa8b8f57d6ec9bc8c743585608c7c08",
+    "probes/diagnostics/unknown-symbol.ny": "a586f13f3389e7d3dd9c80a1433c39a5b61c85ec9ed520fcf5a463741dd096bc",
+    "probes/diagnostics/wrong-array-element-control.ny": "ff36eda67796e873c2210ca99d017d3eaaa76f6c508ce2fdf5ff320c37bfa4d4",
+    "probes/diagnostics/wrong-array-element.ny": "1ddf430a2cbd168cf10f99ee38f47a1e63e35104ea86c26ff08a17b47f3ef759",
+    "probes/diagnostics/wrong-explicit-generic-type-control.ny": "959a14fc9bf0e873e41c57b28110632589ae01453aad50fd3ecc96427f88f5d9",
+    "probes/diagnostics/wrong-explicit-generic-type.ny": "66d8e9d7e96c3daef058a4d4e98ad6172a39df07b44b2780e097e19de53dc042",
+    "probes/diagnostics/wrong-function-argument-type-control.ny": "faeeb2e4ccc771192dc4257ff4d9d3febc0b729ea409b32381c0e554af3d63a2",
+    "probes/diagnostics/wrong-function-argument-type.ny": "f2ed3471948b0ef4f4f9a3184cb8b38729e76d2e7e04c8f521cae1929da4e9f6",
+    "probes/diagnostics/wrong-generic-arity-control.ny": "54f60c8a33f7f30cc7eb5433f0bf21494e5bb380b2d5b247f1a337f15b466304",
+    "probes/diagnostics/wrong-generic-arity.ny": "cd1544910003508095f428f84551ba22bae79b632e066e9451ca9aa6a311f2c9",
+    "probes/documented-module-alias.ny": "292bb80e770dea89620c441cf705496dd35619b121a9df701da91045ae915457",
+    "probes/fault-cleanup.ny": "71781f87725d195fab578d1162ea5c8a45bb58d013f9ea575d879dd977bb33c5",
+    "probes/file-write-bytes-interpreted.ny": "b9265e638b333be612833a495906eb204820b066a9496b8c2e02d4bd49659bdb",
+    "probes/i64-minimum-literal.ny": "b4f5ef79efe26bf4a14b7af9cdb7e95dd0a388e7b6f25cab1d93716f3c25f12f",
+    "probes/local-module-qualified.ny": "529a19f3d252e2326b0a0bb8c3e576f271cb37d2d633216b51e8174ba01f209a",
+    "probes/manifest.json": "6c97756dac5ed6e4c9d0174484c70ccfe32bfc882c13363c27ba4c8527983035",
+    "probes/native-unsupported-f64-pointer.ny": "1dd825775c0ecf38d3633c59e4d4f7e7606ceeefc9beef36325f61ef70cbbb53",
+    "probes/native-unsupported-file-write-bytes.ny": "b9265e638b333be612833a495906eb204820b066a9496b8c2e02d4bd49659bdb",
+    "probes/owned-lexical-borrows.ny": "02fdca0a13c8863bfe59382d4ff4d7fa0171c5c36a30fa56a94ede19cddf7abe",
+    "probes/packed-scene-fields.ny": "bdb0981a4fedbc923a94f0b10dc0d8dd8f330bc222a9d0867f123b5bcf1e75da",
+    "probes/parallel-pixel-transform.ny": "b4a0821f558f194b5df3c08b640887cb523901684b266bd9b81db680249a0007",
+    "probes/pointer-bitwise-soak.ny": "d802db82bb34a4bf60351eac3619ea67076dff9dab88bcc6b98f9408ae6980fa",
+    "probes/pointer-byte-wrapping.ny": "9fbf16ec2f12dae974f18fcb301e1617a5c5cb93f8137bc0c8a9156397ff0975",
+    "probes/pointer-cross-call.ny": "c92552bf503c1bf80c74b2916dccf7cabf4c5010ef9cdba38cfff2c19e5cb893",
+    "probes/pointer-double-free.ny": "77fa8a9633ef79c62df23db381cea51c9f91669fe3990554ed6cbd7264086c6a",
+    "probes/pointer-i32-layout.ny": "cfb3bc88efd3995c95fd9d105fe68e2596a758e3f3715103ecf15dfb3f881089",
+    "probes/pointer-i64-layout.ny": "4b0af383ed69782cac64accb46150bcfa06c650a9d95fb800ef97beaa65b4df2",
+    "probes/pointer-interior-free.ny": "08fd88a2c50da683478db5106bbfeed2afa8557f2469386b3f93e42e7b22f825",
+    "probes/pointer-minimum-count.ny": "9dc171912f7e6affd3a050a7412259d0c3ad54cc9b884a35051e4ff1d0a3725f",
+    "probes/pointer-negative-index.ny": "8fbe67b1a4bf9c6eb466fc9390074424224fde1938e8446368f3918b585f65e8",
+    "probes/pointer-read-past-end.ny": "54eaf6f1da2530e9507df80a6295eda0cefdec984f0a3836edb2d50ed2359c98",
+    "probes/pointer-u8-layout.ny": "bc49692b857e5a8229db8a636fb610c2f6f7da19ee26c30d6be6dc93de9b433e",
+    "probes/pointer-use-after-free.ny": "83db8b7cd966748852e380979131a8de896bda086ed60468270f727d1ecee459",
+    "probes/pointer-write-past-end.ny": "84283353e6316d48b66307faccadc8d295769c87e9628a6bf09fdea2064f4b17",
+    "probes/reference_values.py": "19791b1261301feefce46e47f246e02b75b1e6006995dea1522ff0abc111f7e4",
+    "probes/reject-bitwise-float.ny": "8e4e08ceb88f37ca00902806d68f81c3a44d120dcd0ab3b4136affee29bf0318",
+    "probes/reject-owned-copy.ny": "998d9ae01704687115020987f5a66683af75f42a9ad62cb312fca38cc9cd8270",
+    "probes/reject-owned-read-exclusive.ny": "159d54b0c206a1946fb68e3a4b1ff452a5dc815c61d7a12dd295c836ea330f38",
+    "probes/reject-owned-use-after-move.ny": "9e4c8571ed732c930fbb4b077edd308a3254a5dafa948aa29413c69e41334053",
+    "probes/reject-owned-write-shared.ny": "93e86a75c1e0b54e9c43d5df751e98de3957701b71138d67212ace04465c2a7a",
+    "probes/reject-parallel-effects.ny": "af690a03d6393c5e200889dd6e6e0acb4c0965e850fa1bcbdc370963e217bbac",
+    "probes/reject-pointer-difference.ny": "d195ab52e3a1869515883cbe587dcb324fe5ce95fb7d2101b0d71ccadb9d408f",
+    "probes/reject-pointer-reinterpret.ny": "ff288996f66450c720f2c05c245c96cf34e3ba44478525609f60e5bba41fef92",
+    "probes/reject-scalar-reference.ny": "fdfbc2e3cbf688a37bde48c46c954eb88ebfc9cd2b099777f3654b4088874ba7",
+    "probes/shift-i32-negative.ny": "9941c8b8f2ade0f80b99264caf069197003c15a2575785b60066553260627d0a",
+    "probes/shift-i32-width.ny": "36a9e6992a5b6da1869725d772970481c2cc1ac7bcf4859d43f04a13cd214386",
+    "probes/shift-i64-negative.ny": "06b0f30f12f8bc5a35c0c6f47e263a8e7f30d0bfa112c6f119483e55923ce2a9",
+    "probes/shift-i64-width.ny": "a091e868ff85b0368b9584e1faa335ff2bcd4e29acfb01e20117724a7abff264",
+    "probes/shift-u8-negative.ny": "1b0044fd6c0939b6e853f04211a07aaf416647128d3f715fc56a17a87849bea0",
+    "probes/shift-u8-width.ny": "e8f24f132435fcf060ca91d7acc07c6b98cccf1cacd07be7eb6533c8de1a7ad8",
+    "probes/stl/findings.json": "5bb94217f5be962391c6ca74d9aa221d009bfed8872e33caf6df6f1ad7c07dfc",
+    "probes/stl/manifest.json": "6738ffcbdc754be2dea66847343bf9f2753fb62067b94de8c06df7e05a3a322d",
+    "probes/stl/stl-array-dynamic-alias.ny": "44c8ac68c7f269315167f95f3ecd50c55d1787c4f6c9bf03ee581489da3db2aa",
+    "probes/stl/stl-array-nested.ny": "bd280daad9efc3cff315ff7858894cc517d03d1d2c858916978645c5e0492dde",
+    "probes/stl/stl-array-sized-six-types.ny": "b803f10c67ea6a440afde325bb9debb38cd16a6591e4fbe3974f92eaa2aff7c4",
+    "probes/stl/stl-array-struct-handles.ny": "f1341a090bcef99e6d70c6da9a37ff131064063ba7821ee41603f7b6d86aeedc",
+    "probes/stl/stl-array-typed-bounds.ny": "c6b7bbcc56a05e77bb48b15d17987e3e7d463a6c84a2451e3945444ffcafeeba",
+    "probes/stl/stl-dictionary-materials.ny": "c1db199c3470a622915aae2fad544af709bc30f6ca3a1976882fb86d1f156b88",
+    "probes/stl/stl-list-copy-bounds.ny": "e464584a28e63acdeb3466945b90c7150b0b79ddd6ca7c53df512d73c1d50c01",
+    "probes/stl/stl-list-copy-overflow.ny": "95c0e4d8ae391f9c5c74e7fc940a5585e19465114359af96922a90a1d959532e",
+    "probes/stl/stl-list-copy-remove.ny": "51c54c88bce9bd2d393ffa69ac8f723e785ae8e389473712c913fd625aa49acf",
+    "probes/stl/stl-map-materials.ny": "6fee610c0ece0f8424edaed18664ae315e2f844a14880bb1b61fd47541c52cdf",
+    "probes/stl/stl-queue-copy-bounds.ny": "2f428e3835a429bab08d0f777da1e2b7698eafcf4090c86797d237a675a10e60",
+    "probes/stl/stl-queue-copy-overflow.ny": "f72c03147e15c87507f0111cfc0c635bda3a8a84bf8c19744a9a22b609cb4850",
+    "probes/stl/stl-queue-draw-commands.ny": "a8f1a8083ed0c834a7c1a4be93d9a8f54e8e69abfa646bdbe044368e38a3df63",
+    "probes/stl/stl-sort-depths.ny": "e98153bf23462d7e5b12d66f6162e7e956683912b3af347f5b44ee8ae3c8a2e0",
+    "probes/stl/stl-sort-empty-merge.ny": "a1317c1d0e0aa93e5bc4a5e069b14852f1f5f9c4cd447a21a4e0e2bd8eaa91b1",
+    "probes/stl/stl-sort-search-indices.ny": "a55e7c428284d47aab9547ad0bcdf0a5a14197c68b3d53ecf9036c380c838d80",
+    "probes/stl/stl-sort-text.ny": "d78745849d181ff631de50262391cd47d13fa9e5529f3325a75ed0e81cce44d4",
+    "probes/stl/stl-stack-copy-bounds.ny": "1cd6e4b5c8a3856ad74f55d3ce0b7f4915fc8984c7887a8f4bef017f682756e5",
+    "probes/stl/stl-stack-copy-overflow.ny": "5e275b1595257e9ec77f3d8fb2125383ab4a03065530d9bb87c34d6b4b2c5084",
+    "probes/stl/stl-stack-traversal.ny": "69aa7275f491eb3a187d2bd484abdebe7d8b06b16a462e9512cfcc281ac3b09e",
+    "probes/stl/stl-vec-capacity-reuse.ny": "6cf8ca2d9ee445fd323c4f426079fb055eefedf71e86ccd7adcfbf565b5781ca",
+    "probes/stl/stl-vec-copy-iteration.ny": "514219b93069858eeda1fdb588746f383975d25d3d7a03dc019d7fbb43c735aa",
+    "probes/stl/stl-vec-growth-removal.ny": "b2f80fc6fd82e6f0982f6549212c3997caec1594473a42ad5d31616a405339f2",
+    "probes/stl/stl-vec-map-filter.ny": "da3b0eab90a4679179d6d477f91f8f898e5a138b34994d3ff7d716c735e774fa",
+    "probes/struct-generics-alias.ny": "2960e25346e3d5b36e0fa7ec7d719ae597d23d90328e4c3d5647133b20e90100",
+    "probes/validation/scene_math.ny": "c108e96245e1127489b8c9eb541dd6837bfe4086bde6c96f766a5ba762cf4ac0",
+    "probes/varint-invalid-input.ny": "0f8f20334d7149fbd3a9b68f74946bef0a451b9b6a480147a9e072164719992f",
+    "probes/varint-scene-record.ny": "27a61f33930de32529d02bbd1c4603c23b985aae77d6e471ede2a4f3014326fd",
+    "scripts/audit_diagnostics.py": "a220f57b28f8012371e9e1b3cfaf5cafc466f64a45f33b34e2ef7acbeecb3d58",
+    "scripts/check_isolation.py": "a699329141d22c15b8e24570f5ca12b29e68fadce374c53940a5093a441bd344",
+    "scripts/check_mesh_render.py": "58c639b2893b387ddf45c83602340893775fc6db4c445970d7bfd24300883bc9",
+    "scripts/check_render.py": "1a19c0fd26fe748d6d449b6e09a78c40c781a7ada3e773b28fe0118fd9609fc2",
+    "scripts/check_scene_player.py": "1eae92b05699d77591284cf58d8a079cf171b223e45f3a768b0832d258f83a1b",
+    "scripts/sdk_integrity.py": "3b3e838eb8df28622d58c0b1c012ae1c4a9e3202b6bd36f322fd39dcfb649afa",
+    "scripts/validate.py": "3827ed5e009425cb3822e6fce7a06ab5f973163d0f37e2cecc3ff1c54adcf905",
+    "scripts/validate_debugger.py": "d5d0e97bad0cae35cd3469c9ae47e1b7cb5cd1ec5ca4403eaadd63de4d0f12b6",
+    "sdk-origin.json": "d44908dd7923a95087e49c958db4cc1ce48c2121d4db40fb96815f10252eb9c2",
+    "src/mesh_renderer.ny": "fce524487911fd38d3e400e78825bb23325ee3bbea720c81f48350d9a08c47bb",
+    "src/renderer.ny": "7dac4c74e1325588d538dbd7dd59d582356ef6284db03d7f2b70ffc3376846e2",
+    "src/scene/mesh.ny": "e62a6359d2063677a3d27ee4f396aa192b89860cef9fb225fd7f1ca4c9c57276",
+    "src/scene_player.ny": "10228772101800c38fb6a76ac72075e99487a70d2cf22170ddc6d2331b950456"
+  },
+  "previous_baseline": "baselines/phase-02.json"
+}

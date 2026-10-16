@@ -1,0 +1,6 @@
+object root
+  field greeting
+    hello
+  end greeting
+end root
+

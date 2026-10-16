@@ -1,0 +1,117 @@
+!!! 16-names-and-case.matrix
+!!!
+!!! Identifier spelling: case folding and hyphenated words.
+!!!
+!!! Matrix is case-insensitive at the language level, and a hyphen joins the
+!!! words of a single name. Both exist for one reason: an agent should not be
+!!! able to misname something it has already seen.
+!!!
+!!! The hyphen is available because arithmetic is spelled with words. "minus"
+!!! is subtraction and negation, so "-" is never an operator and is free to
+!!! be a letter. The verbosity of word operators is what buys it -- the two
+!!! decisions pay for each other.
+
+book naming.demonstration
+
+!!! --- Case folding ------------------------------------------------------
+!!!
+!!! Keywords fold: BEGIN CHOICE, Begin Choice and begin choice are one token
+!!! pair. Lowercase is the canonical spelling and a formatter normalises to
+!!! it; the other spellings are accepted, not recommended.
+!!!
+!!! Folding is ASCII-only. A non-ASCII letter in an identifier compares
+!!! byte-exact and is never folded. This is deliberate: full Unicode case
+!!! folding is locale-dependent -- Turkish dotless i, German sharp s -- and
+!!! two identifiers that fold together while looking different is a
+!!! confusable-name hazard, not a convenience.
+
+!!! --- Hyphens -----------------------------------------------------------
+!!!
+!!! A hyphen joins words INSIDE one name. A space separates terms in an
+!!! expression. The two are never interchangeable.
+!!!
+!!! Legal:    frame-kind      read-regular-bytes      crc-seed
+!!!           frame-kind2     x2                      kind
+!!! Illegal:  -kind           kind-            frame--kind
+!!!           total-1         (a hyphen must be followed by a letter)
+!!!
+!!! "total-1" is a lex error, not an undefined identifier, so the habit of
+!!! writing "total - 1" fails at the hyphen with a message that names the
+!!! actual rule rather than reporting a missing name.
+
+!!! --- One name, many spellings -------------------------------------------
+!!!
+!!! An identifier's LOOKUP KEY is its ASCII-lowercased spelling with every
+!!! hyphen and underscore removed. These four are therefore one name:
+!!!
+!!!     frame-kind      FRAME-KIND      frame_kind      framekind
+!!!
+!!! Underscores are accepted on input and fold with hyphens, which is what
+!!! lets Matrix call Ny's snake_case library functions in kebab-case:
+!!! "read-regular-bytes" resolves to ny.lang.io's "read_regular_bytes".
+!!!
+!!! A declaration's EMITTED NIL SYMBOL is its exact spelling at the
+!!! declaration site, with hyphens rewritten to underscores -- because Ny
+!!! identifiers admit no hyphen, so a Matrix name containing one would be
+!!! unnameable from Ny. Declaring "frame-kind" emits "frame_kind", which Ny
+!!! spells "frame_kind". Cross-language references are case-sensitive, since
+!!! Ny is; Matrix-internal references are not.
+
+frame-kind begin choice
+    when Heartbeat
+    when Sample holding number
+end choice
+
+!!! Capitals carry no meaning once folding applies, so SCREAMING-CASE cannot
+!!! mark a constant. The "constant" keyword does that, and the capitals are a
+!!! human signal with no semantic weight: MAX-PAYLOAD and max-payload are the
+!!! same name.
+constant MAX-PAYLOAD as number is 64
+
+public variable frames-seen as number is 0
+
+sensor-reading begin record
+    field sensor-id as number
+    field raw-value as number
+end record
+
+read-sensor receives sensor-id as number returns sensor-reading begin paragraph
+    give build sensor-reading with sensor-id being sensor-id, raw-value being (sensor-id becomes number)
+end paragraph
+
+main returns number begin paragraph
+
+    !!! Every one of these spellings resolves to the one declaration above.
+    !!! A formatter rewrites them all to the declaration's spelling, so
+    !!! case-insensitivity cannot quietly degrade into an inconsistent file.
+    value first  is read-sensor with sensor-id being 1
+    value second is READ-SENSOR with SENSOR-ID being 2
+    value third  is Read_Sensor with sensor_id being 3
+    value fourth is readsensor  with sensorid  being 4
+
+    say first.raw-value
+    say second.raw-value
+    say third.raw-value
+    say fourth.raw-value
+
+    !!! Keywords fold too. This is legal and deliberately ugly: the formatter
+    !!! exists so that nobody has to read it twice.
+    VALUE total AS NUMBER IS first.raw-value PLUS second.raw-value
+    SAY total
+
+    !!! A hyphen inside a name, a space between terms. Nothing here is
+    !!! subtraction -- subtraction is "minus".
+    value gap as number is third.raw-value minus first.raw-value
+    say gap
+
+    set frames-seen to frames-seen plus 4
+    say frames-seen
+
+    !!! Reserved words still collide, and folding makes it worse: a collision
+    !!! cannot be escaped by capitalising, because `Value` IS `value`. The
+    !!! backtick escape is the last resort; renaming is the better answer.
+    value `text` as text is "an identifier that had to be escaped"
+    say `text`
+
+    give 0
+end paragraph

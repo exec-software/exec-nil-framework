@@ -1,0 +1,4 @@
+area t
+main returns integer begin function {
+    give 0
+}

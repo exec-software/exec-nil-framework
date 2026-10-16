@@ -1,0 +1,23 @@
+# Ny 3D Limitations Found
+
+## Current State (Post-Scene Graph Integration)
+
+### What's Working
+- Recursive scene graph implemented using parallel scalar arrays (parent, first-child, next-sibling, transform, vertex range)
+- Full pipeline validation across all 8 routes (interpreter, native AOT, JIT, etc.)
+- Byte-identical results between interpreter and native execution
+- Exact checkpoint protocol matching with Python oracle
+- Translation animation working correctly
+- Fixed 3-level hierarchy (root → tower groups → towers)
+
+### Key Findings
+1. The recursive scene graph works perfectly across every route because it uses parallel arrays + recursive functions
+2. However, recursive struct layouts are fail-closed in native (constraint that a future Ny release could lift)
+3. The graph currently animates translation only — no scale/rotation
+4. It's a fixed 3-level tree
+5. Integer division matches oracle on negatives, making rotation-oracle-able
+
+### Next Steps
+- Scale/rotation transforms (to stress transform math)
+- Deeper/procedural hierarchy
+- Procedural mesh generation

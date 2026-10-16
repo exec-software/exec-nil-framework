@@ -1,0 +1,4 @@
+area t
+main receives count as integer -> integer begin function
+    give count
+end function

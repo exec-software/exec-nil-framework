@@ -1,0 +1,24 @@
+-2147483648
+9223372036854775807
+125
+1
+-42
+12.35
+-2a
+BEEF
+-002a
+-42
+-101010
+-42
+777
+511
+35
+955
+λ
+000f10ff
+4
+0
+255
+convert.try_to_i32: value is outside the i32 range
+convert.try_to_f64: expected a finite decimal number
+convert.try_to_bool: expected true/false, yes/no, on/off, or 1/0

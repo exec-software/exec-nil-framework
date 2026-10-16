@@ -1,0 +1,7 @@
+module root
+
+function main(value: i32):
+    STORE_LOCAL value
+    PUSH_CONST 0
+    RET
+end function

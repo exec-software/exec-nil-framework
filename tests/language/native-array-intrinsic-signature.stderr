@@ -1,0 +1,3 @@
+Code generation warnings/errors:
+  line 8: invalid array intrinsic declaration: array intrinsic arity/result metadata mismatch (Use an exact supported array element, i32 size/index, and matching result type.)
+Code generation failed

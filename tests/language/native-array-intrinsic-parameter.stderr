@@ -1,0 +1,3 @@
+Code generation warnings/errors:
+  line 7: invalid array intrinsic declaration: array intrinsic declaration has an invalid parameter type (Use an exact supported array element, i32 size/index, and matching result type.)
+Code generation failed

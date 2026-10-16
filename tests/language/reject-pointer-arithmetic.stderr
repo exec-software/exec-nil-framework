@@ -1,0 +1,4 @@
+Type checking failed:
+  line 5: Pointer arithmetic requires lhs ptr<T> and rhs i32 or i64, got 'ptr<i32>' and 'f64'
+  line 6: Pointer arithmetic requires lhs ptr<T> and rhs i32 or i64, got 'i32' and 'ptr<i32>'
+  line 7: Pointer arithmetic requires lhs ptr<T> and rhs i32 or i64, got 'ptr<i32>' and 'ptr<i32>'
