@@ -7,7 +7,7 @@ original team and the community.
 
 - Nathan Young
 - George Gilbert
-- Ryan Neirman
+- Ryan Nierman
 - Elizabeth Young
 - Eli Young
 - Miguel Petersen
