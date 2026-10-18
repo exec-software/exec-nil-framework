@@ -2876,24 +2876,32 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       } else if (ann.find("@intrinsic(\"convert.try_to_i32\")") !=
                      std::string::npos ||
                  ann.find("@intrinsic(convert.try_to_i32)") !=
+                     std::string::npos ||
+                 ann.find("@intrinsic(\"convert.try_to_i64\")") !=
+                     std::string::npos ||
+                 ann.find("@intrinsic(convert.try_to_i64)") !=
                      std::string::npos) {
+        const bool i32_conversion = ann.find("try_to_i32") != std::string::npos;
+        const std::string payload_type = i32_conversion ? "i32" : "i64";
         const auto result_arguments =
             native_generic_arguments(fn.return_type, "result");
         if (fn.params.size() != 1 ||
             native_handle_kind_for_nil_type(nil_parameter_type(fn.params[0])) !=
                 native_handle_kind::text ||
             !result_arguments || result_arguments->size() != 2 ||
-            (*result_arguments)[0] != "i32" ||
+            (*result_arguments)[0] != payload_type ||
             native_handle_kind_for_nil_type((*result_arguments)[1]) !=
                 native_handle_kind::text ||
             impl_->current_function->arg_size() != 1 ||
             !impl_->current_function->getReturnType()->isIntegerTy(64)) {
-          std::cerr << "[NativeCodegen] convert.try_to_i32 requires the exact "
-                       "(text) -> Result<i32,text> ABI\n";
+          std::cerr << "[NativeCodegen] convert.try_to_" << payload_type
+                    << " requires the exact (text) -> Result<" << payload_type
+                    << ",text> ABI\n";
           return false;
         }
-        auto *value_out =
-            impl_->builder->CreateAlloca(llvm::Type::getInt32Ty(ctx));
+        auto *parsed_type = i32_conversion ? llvm::Type::getInt32Ty(ctx)
+                                          : llvm::Type::getInt64Ty(ctx);
+        auto *value_out = impl_->builder->CreateAlloca(parsed_type);
         auto *error_out =
             impl_->builder->CreateAlloca(llvm::PointerType::getUnqual(ctx));
         auto runtime_type =
@@ -2902,8 +2910,8 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                                      llvm::PointerType::getUnqual(ctx),
                                      llvm::PointerType::getUnqual(ctx)},
                                     false);
-        auto runtime =
-            impl_->module->getOrInsertFunction("nyrt_try_i32", runtime_type);
+        auto runtime = impl_->module->getOrInsertFunction(
+            i32_conversion ? "nyrt_try_i32" : "nyrt_try_i64", runtime_type);
         auto *status = impl_->builder->CreateCall(
             runtime_type, runtime.getCallee(),
             {impl_->current_function->getArg(0), value_out, error_out});
@@ -2916,10 +2924,9 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                 status, llvm::ConstantInt::get(ctx, llvm::APInt(32, 0))),
             success, failure);
         impl_->builder->SetInsertPoint(success);
-        auto *parsed =
-            impl_->builder->CreateLoad(llvm::Type::getInt32Ty(ctx), value_out);
+        auto *parsed = impl_->builder->CreateLoad(parsed_type, value_out);
         auto *ok_variant = emit_single_payload_variant("Result::Ok", parsed,
-                                                       fn.return_type, "i32");
+                                                       fn.return_type, payload_type);
         if (!ok_variant)
           return false;
         impl_->builder->CreateRet(ok_variant);
@@ -8337,6 +8344,7 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_read_regular_bytes", &nyrt_read_regular_bytes);
   expose_runtime_symbol("nyrt_write_bytes_atomic", &nyrt_write_bytes_atomic);
   expose_runtime_symbol("nyrt_try_i32", &nyrt_try_i32);
+  expose_runtime_symbol("nyrt_try_i64", &nyrt_try_i64);
   expose_runtime_symbol("nyrt_i32_to_text", &nyrt_i32_to_text);
   expose_runtime_symbol("nyrt_i64_to_text", &nyrt_i64_to_text);
   if (auto define_error = impl_->jit->getMainJITDylib().define(

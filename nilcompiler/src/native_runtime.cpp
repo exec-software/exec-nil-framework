@@ -1,5 +1,6 @@
 #include "native_runtime.hpp"
 #include "database_runtime.hpp"
+#include "integer_conversion.hpp"
 
 #include "secure_file_io.hpp"
 #include "time_support.hpp"
@@ -418,6 +419,31 @@ void set_error(const char **error_out, std::string_view message) noexcept {
     if (*error_out == nullptr)
       *error_out = "NIL native runtime: allocation failed";
   }
+}
+
+template <typename Integer>
+std::int32_t try_decimal_integer(const char *text, Integer *value_out,
+                                const char **error_out,
+                                const char *operation) noexcept {
+  if (value_out != nullptr) *value_out = 0;
+  if (error_out != nullptr) *error_out = nullptr;
+  const auto fail = [&](const char *reason) {
+    // The operation and reason are fixed internal strings, never user input.
+    // Format without host allocation before copying into managed error storage.
+    char message[160] = {};
+    std::snprintf(message, sizeof(message), "%s: %s", operation, reason);
+    set_error(error_out, message);
+    return std::int32_t{0};
+  };
+  if (text == nullptr || value_out == nullptr)
+    return fail("invalid arguments");
+  const auto parsed = ny::detail::parse_signed_integer(text, 10, false);
+  if (!parsed.ok) return fail(parsed.error);
+  if (parsed.value < std::numeric_limits<Integer>::min() ||
+      parsed.value > std::numeric_limits<Integer>::max())
+    return fail("value is outside the i32 range");
+  *value_out = static_cast<Integer>(parsed.value);
+  return 1;
 }
 
 std::uint64_t load_value(const nyrt_array &array,
@@ -1229,61 +1255,12 @@ std::int32_t nyrt_write_bytes_atomic(const char *path, const void *value,
 
 std::int32_t nyrt_try_i32(const char *text, std::int32_t *value_out,
                           const char **error_out) noexcept {
-  if (value_out != nullptr)
-    *value_out = 0;
-  if (error_out != nullptr)
-    *error_out = nullptr;
-  if (text == nullptr || value_out == nullptr) {
-    set_error(error_out, "convert.try_to_i32: invalid arguments");
-    return 0;
-  }
-  if (*text == '\0') {
-    set_error(error_out, "convert.try_to_i32: value is empty");
-    return 0;
-  }
+  return try_decimal_integer(text, value_out, error_out, "convert.try_to_i32");
+}
 
-  const char *cursor = text;
-  bool negative = false;
-  if (*cursor == '+' || *cursor == '-') {
-    negative = *cursor == '-';
-    ++cursor;
-  }
-  if (*cursor == '\0') {
-    set_error(error_out, "convert.try_to_i32: value has no digits");
-    return 0;
-  }
-
-  const std::uint64_t positive_limit =
-      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
-  const std::uint64_t limit = negative ? positive_limit + 1U : positive_limit;
-  std::uint64_t magnitude = 0;
-  for (; *cursor != '\0'; ++cursor) {
-    if (*cursor < '0' || *cursor > '9') {
-      set_error(error_out, "convert.try_to_i32: value contains a digit outside "
-                           "the requested base");
-      return 0;
-    }
-    const auto digit = static_cast<std::uint64_t>(*cursor - '0');
-    if (magnitude > (limit - digit) / 10) {
-      set_error(error_out,
-                "convert.try_to_i32: value is outside the i64 range");
-      return 0;
-    }
-    magnitude = magnitude * 10 + digit;
-  }
-
-  const std::int64_t signed_value =
-      !negative ? static_cast<std::int64_t>(magnitude)
-                : (magnitude == positive_limit + 1U
-                       ? std::numeric_limits<std::int64_t>::min()
-                       : -static_cast<std::int64_t>(magnitude));
-  if (signed_value < std::numeric_limits<std::int32_t>::min() ||
-      signed_value > std::numeric_limits<std::int32_t>::max()) {
-    set_error(error_out, "convert.try_to_i32: value is outside the i32 range");
-    return 0;
-  }
-  *value_out = static_cast<std::int32_t>(signed_value);
-  return 1;
+std::int32_t nyrt_try_i64(const char *text, std::int64_t *value_out,
+                          const char **error_out) noexcept {
+  return try_decimal_integer(text, value_out, error_out, "convert.try_to_i64");
 }
 
 const char *nyrt_i32_to_text(std::int32_t value) noexcept {

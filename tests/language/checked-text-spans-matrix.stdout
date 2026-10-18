@@ -1,0 +1,5 @@
+checked text distinguishes empty spans from missing spans
+checked text rejects signed-width extremes without mutation
+checked text spans preserve UTF-8 bytes including partial scalars
+checked text composes through methods and standard imports
+legacy text clamping remains compatible at full-width bounds

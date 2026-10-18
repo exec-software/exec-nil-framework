@@ -1,0 +1,108 @@
+!!! Literal snapshots and byte reconstruction are independent of the span implementation.
+book validation.checked-text-spans
+
+read everything from ny.lang.core
+read everything from ny.lang.text
+read everything from nil.std.text
+
+require receives ok as boolean, label as text returns nothing begin paragraph
+    evaluate assert-true with condition being ok, message being label
+end paragraph
+
+present receives expected as text, label as text, actual as Option of text returns nothing begin paragraph
+    evaluate require with ok being (actual.is-some with nothing), label being label
+    evaluate require with ok being ((actual.unwrap with nothing) equals expected), label being label
+end paragraph
+
+absent receives label as text, actual as Option of text returns nothing begin paragraph
+    evaluate require with ok being (actual.is-none with nothing), label being label
+end paragraph
+
+main returns override integer begin paragraph
+    variable source as text is "abcdef"
+    value alias is source
+    evaluate present with actual being (try-substring with s being "", start being 0, length being 0), expected being "", label being "empty source has a valid empty span"
+    evaluate present with actual being (try-substring with s being source, start being 0, length being 0), expected being "", label being "empty prefix"
+    evaluate present with actual being (try-substring with s being source, start being 3, length being 0), expected being "", label being "empty interior"
+    evaluate present with actual being (try-substring with s being source, start being 6, length being 0), expected being "", label being "empty endpoint"
+    evaluate present with actual being (try-substring with s being source, start being 0, length being 6), expected being "abcdef", label being "whole source"
+    evaluate present with actual being (try-substring with s being source, start being 1, length being 3), expected being "bcd", label being "interior span"
+    evaluate present with actual being (try-substring with s being source, start being 5, length being 1), expected being "f", label being "last byte"
+    evaluate absent with actual being (try-substring with s being "", start being 0, length being 1), label being "nonempty span in empty source"
+    evaluate absent with actual being (try-substring with s being "", start being 1, length being 0), label being "empty span beyond empty source"
+    evaluate absent with actual being (try-substring with s being source, start being 6, length being 1), label being "nonempty endpoint"
+    evaluate absent with actual being (try-substring with s being source, start being 5, length being 2), label being "span crosses endpoint"
+    evaluate absent with actual being (try-substring with s being source, start being 1, length being 6), label being "length must fit remaining bytes"
+    evaluate require with ok being (not ((try-substring with s being source, start being 6, length being 0).is-none with nothing)), label being "Some empty is not None"
+    say "checked text distinguishes empty spans from missing spans"
+
+    value invalid-starts as array of number is [minus 1, minus 2147483648, minus 9223372036854775808, 7, 2147483647, 2147483648, 9223372036854775807]
+    repeat for each start in invalid-starts
+        evaluate absent with actual being (try-substring with s being source, start being start, length being 0), label being "invalid start with empty span"
+        evaluate absent with actual being (try-substring with s being source, start being start, length being 1), label being "invalid start with one byte"
+        evaluate absent with actual being (try-char-at with s being source, index being start), label being "invalid character index"
+    end repeat
+    value invalid-lengths as array of number is [minus 1, minus 2147483648, minus 9223372036854775808, 7, 2147483647, 2147483648, 9223372036854775807]
+    repeat for each count in invalid-lengths
+        evaluate absent with actual being (try-substring with s being source, start being 0, length being count), label being "invalid span length"
+        evaluate absent with actual being (try-substring with s being source, start being 1, length being count), label being "overflowing or invalid endpoint"
+    end repeat
+    evaluate absent with actual being (try-substring with s being source, start being 9223372036854775807, length being 9223372036854775807), label being "both bounds maximal"
+    evaluate absent with actual being (try-substring with s being source, start being minus 9223372036854775808, length being minus 9223372036854775808), label being "both bounds minimal"
+    evaluate absent with actual being (try-char-at with s being "", index being 0), label being "empty source has no character"
+    evaluate absent with actual being (try-char-at with s being source, index being 6), label being "character endpoint is exclusive"
+    evaluate present with actual being (try-char-at with s being source, index being 0), expected being "a", label being "first character"
+    evaluate present with actual being (try-char-at with s being source, index being 5), expected being "f", label being "last character"
+    evaluate require with ok being (source equals "abcdef" and alias equals "abcdef"), label being "rejected calls preserve source and alias"
+    say "checked text rejects signed-width extremes without mutation"
+
+    !!! A(1), é(2), 🙂(4), Z(1): byte spans may split Unicode scalars.
+    value utf8 is "Aé🙂Z"
+    evaluate require with ok being ((the length of utf8) equals 8), label being "byte length is distinct from scalar count"
+    evaluate present with actual being (try-substring with s being utf8, start being 1, length being 2), expected being "é", label being "two-byte scalar span"
+    evaluate present with actual being (try-substring with s being utf8, start being 3, length being 4), expected being "🙂", label being "four-byte scalar span"
+    evaluate present with actual being (try-substring with s being utf8, start being 7, length being 1), expected being "Z", label being "byte after Unicode scalars"
+    evaluate present with actual being (try-substring with s being utf8, start being 8, length being 0), expected being "", label being "UTF-8 empty endpoint"
+    value first-half is (try-char-at with s being utf8, index being 1).unwrap with nothing
+    value second-half is (try-char-at with s being utf8, index being 2).unwrap with nothing
+    evaluate require with ok being ((the length of first-half) equals 1 and (the length of second-half) equals 1), label being "character access returns one byte"
+    evaluate require with ok being (first-half plus second-half equals "é"), label being "split scalar bytes reconstruct exactly"
+    value crossing is (try-substring with s being utf8, start being 2, length being 3).unwrap with nothing
+    evaluate require with ok being ((the length of crossing) equals 3), label being "span may start and end inside UTF-8 scalars"
+    value prefix is (try-substring with s being utf8, start being 0, length being 2).unwrap with nothing
+    value suffix is (try-substring with s being utf8, start being 5, length being 3).unwrap with nothing
+    evaluate require with ok being (prefix plus crossing plus suffix equals utf8), label being "partial scalar spans preserve exact byte order"
+    variable rebuilt as text is ""
+    variable index as number is 0
+    repeat while index is less than 8
+        value part is (try-char-at with s being utf8, index being index).unwrap with nothing
+        evaluate require with ok being ((the length of part) equals 1), label being "every valid byte index is present"
+        set rebuilt to rebuilt plus part
+        set index to index plus 1
+    end repeat
+    evaluate require with ok being (rebuilt equals "Aé🙂Z"), label being "all byte accesses reconstruct the literal"
+    evaluate absent with actual being (try-char-at with s being utf8, index being 8), label being "UTF-8 character endpoint"
+    say "checked text spans preserve UTF-8 bytes including partial scalars"
+
+    evaluate present with actual being (try-substring with s being ((try-substring with s being source, start being 1, length being 4).unwrap with nothing), start being 1, length being 2), expected being "cd", label being "nested checked spans"
+    evaluate require with ok being ((the length of ((try-substring with s being source, start being 1, length being 3).unwrap with nothing)) equals 3), label being "nested Option and text methods"
+    evaluate present with actual being (nil.std.text::try-substring with s being source, start being 2, length being 2), expected being "cd", label being "canonical qualified import"
+    evaluate present with actual being (nil.std.text::try-char-at with s being source, index being 3), expected being "d", label being "canonical qualified character import"
+    value retained is (try-substring with s being source, start being 1, length being 3).unwrap with nothing
+    set source to "changed"
+    evaluate require with ok being (alias equals "abcdef" and retained equals "bcd"), label being "results and aliases survive source reassignment"
+    say "checked text composes through methods and standard imports"
+
+    evaluate require with ok being ((substring with s being alias, start being 1, length being 9223372036854775807) equals "bcdef"), label being "legacy length clamps before overflow"
+    evaluate require with ok being ((substring with s being alias, start being 2, length being 9223372036854775807) equals "cdef"), label being "legacy maximal length from interior"
+    evaluate require with ok being ((substring with s being alias, start being 1, length being 2147483647) equals "bcdef"), label being "legacy i32 maximum length"
+    evaluate require with ok being ((substring with s being alias, start being 1, length being 2147483648) equals "bcdef"), label being "legacy length above i32 maximum"
+    evaluate require with ok being ((substring with s being alias, start being minus 1, length being 2) equals ""), label being "legacy negative start remains empty"
+    evaluate require with ok being ((substring with s being alias, start being 0, length being minus 9223372036854775808) equals ""), label being "legacy negative length remains empty"
+    evaluate require with ok being ((substring with s being alias, start being 9223372036854775807, length being 1) equals ""), label being "legacy outside start remains empty"
+    evaluate require with ok being ((substring with s being alias, start being 6, length being 0) equals ""), label being "legacy endpoint remains empty"
+    evaluate require with ok being ((char-at with s being alias, index being 6) equals "" and (char-at with s being alias, index being 9223372036854775807) equals ""), label being "legacy missing character remains empty"
+    evaluate absent with actual being (try-substring with s being alias, start being 1, length being 9223372036854775807), label being "checked span rejects legacy clamped request"
+    say "legacy text clamping remains compatible at full-width bounds"
+    give 0
+end paragraph

@@ -1,0 +1,84 @@
+book validation.checked-i64-conversion
+read everything from ny.lang.core
+read everything from ny.lang.collections
+
+read-decimal receives source-text as text returns Result of override long, text begin paragraph
+    give Convert.try-to-i64 with source-text
+end paragraph
+
+require-error receives source-text as text, expected-message as text returns nothing begin paragraph
+    consider read-decimal with source-text
+        when Result.Ok holding ignored then
+            evaluate panic with "invalid decimal input was accepted"
+        when Result.Error holding message then
+            evaluate assert-true with condition being (message equals expected-message), message being "exact i64 parse error"
+    end consider
+end paragraph
+
+churn returns override long begin paragraph
+    variable total as override long is 0
+    !!! 5 MiB of array payload crosses the native safe-mode 4 MiB GC threshold.
+    repeat for index from 0 to 640
+        value items is new-with-value of override long with size being 1024, `value` being (index becomes override long)
+        set total to total plus (items at 0)
+    end repeat
+    give total
+end paragraph
+
+main returns override integer begin paragraph
+    value zero is read-decimal with "0"
+    value plus-zero is read-decimal with "+0"
+    value minus-zero is read-decimal with "-0"
+    value padded is read-decimal with "+0007"
+    value long-padding is read-decimal with "00000000000000000000000000000000000000000000000001"
+    value above-i32 is read-decimal with "2147483648"
+    value below-i32 is read-decimal with "-2147483649"
+    value wide is read-decimal with "4294967296"
+    value maximum is read-decimal with "9223372036854775807"
+    value plus-maximum is read-decimal with "+9223372036854775807"
+    value minimum is read-decimal with "-9223372036854775808"
+    say zero.unwrap with nothing
+    say plus-zero.unwrap with nothing
+    say minus-zero.unwrap with nothing
+    say padded.unwrap with nothing
+    say long-padding.unwrap with nothing
+    say above-i32.unwrap with nothing
+    say below-i32.unwrap with nothing
+    say wide.unwrap with nothing
+    say maximum.unwrap with nothing
+    say plus-maximum.unwrap with nothing
+    say minimum.unwrap with nothing
+
+    evaluate require-error with source-text being "", expected-message being "convert.try_to_i64: value is empty"
+    value signs is ["+", "-"]
+    repeat for index from 0 to (the length of signs)
+        evaluate require-error with source-text being (signs at index), expected-message being "convert.try_to_i64: value has no digits"
+    end repeat
+    value malformed is [" 1", "1 ", "1" plus tab, "1" plus newline, "1.0", "1e3", "0x10", "1_000", "++1", "+-1", "--1", "+ 1", "１２", "١", "12x"]
+    repeat for index from 0 to (the length of malformed)
+        evaluate require-error with source-text being (malformed at index), expected-message being "convert.try_to_i64: value contains a digit outside the requested base"
+    end repeat
+    value overflow is ["9223372036854775808", "+9223372036854775808", "-9223372036854775809", "18446744073709551615", "999999999999999999999999999999999999999999999999999999999999999999", "9223372036854775808x"]
+    repeat for index from 0 to (the length of overflow)
+        evaluate require-error with source-text being (overflow at index), expected-message being "convert.try_to_i64: value is outside the i64 range"
+    end repeat
+    say "checked-i64-errors-ok"
+
+    value retained-success is read-decimal with ("9223372036" plus "854775807")
+    value retained-failure is read-decimal with ("bad" plus "-decimal")
+    say churn with nothing
+    say retained-success.unwrap with nothing
+    consider retained-failure
+        when Result.Ok holding ignored then
+            evaluate panic with "retained failure changed variant"
+        when Result.Error holding message then say message
+    end consider
+    value narrow-maximum is Convert.try-to-i32 with "2147483647"
+    say narrow-maximum.unwrap with nothing
+    consider Convert.try-to-i32 with "2147483648"
+        when Result.Ok holding ignored then
+            evaluate panic with "i32 destination range was lost"
+        when Result.Error holding message then say message
+    end consider
+    give 0
+end paragraph
