@@ -40,6 +40,19 @@ value mask   as override long    is 0xFFFFFFFF  !!! exact width for bit work
 value ratio  as floating         is 0.5         !!! f64
 ```
 
+### Floating literals
+
+`1e3`, `1.5E-3`, and `5e-324` are `floating` (`f64`) literals. The exponent
+uses `e` or `E`, an optional sign, and one or more digits. A decimal point is
+optional when an exponent is present. Write `minus 1e3` for a negative value;
+the sign inside `1e-3` belongs to the exponent.
+
+Ny and Matrix share locale-independent conversion, including subnormal values.
+Overflow and nonzero literals that round to zero are rejected in compilation
+and editor analysis. Exact zero may have any exponent magnitude. `0x1E3`
+remains a hexadecimal integer. See the shared
+[floating literal contract](../../docs/language-reference/expressions.md#float-literals).
+
 ### Reserved and rejected
 
 `short`, `unsigned`, `decimal`, `single` and `letter` are reserved words that
@@ -58,12 +71,16 @@ gets a message naming the real constraint instead of "unknown identifier".
 
 ### Two consequences worth knowing
 
-**`number` is 64-bit, which is a deliberate choice against Ny.** Ny infers
-`i32` for integer literals. Matrix's default is the wider type, because a
-program that says it does not care about width should not overflow at 2^31.
-The cost lands at the cross-language boundary: most Ny APIs take `i32`, so
-calling one from Matrix may need `becomes override integer`. That is
-explicit work at an explicit boundary, which is the right place for it.
+**A declared `number` is 64-bit; current literal inference is still 32-bit.**
+Matrix's intended ordinary integer type is the wider `number`, but unannotated
+integer literals and their arithmetic currently share Ny's `i32` inference.
+For example, `2147483647 plus 1` wraps before conversion even if assigned to
+a `number` or passed to a `number` parameter. Bind an operand as `number`, or
+cast it with `becomes override long`, before performing arithmetic that needs
+64 bits. An `array of number` also needs correctly typed elements; its annotation
+does not widen an inferred integer-literal array. This discrepancy is tracked
+in [F30](next-version-findings.md#f30--large-integer-expressions-can-narrow-before-an-i64-argument-conversion).
+Ny APIs accepting `i32` may instead require `becomes override integer`.
 
 **`main` is a special case.** The NIL entry contract is `main() -> i32`.
 Matrix writes `main returns number` and the lowering emits `i32` for that one

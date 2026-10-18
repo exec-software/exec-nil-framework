@@ -380,7 +380,8 @@ anonymous_function = 'anonymous' [ 'receives' param_list ] [ 'returns' type ]
 literal         = number_literal | text_literal | named_character
                 | 'true' | 'false' ;
 number_literal  = digit { digit } [ '.' digit { digit } ]
-                | '0x' hex_digit { hex_digit } ;
+                  [ ('e' | 'E') [ '+' | '-' ] digit { digit } ]
+                | ('0x' | '0X') hex_digit { hex_digit } ;
 
 (* Text has NO escape sequences.  A quoted literal is raw and single-line, so
  * "C:\dir\file" means what it says.  A literal quote, newline or tab is a

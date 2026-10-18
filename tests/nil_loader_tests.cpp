@@ -606,6 +606,39 @@ void test_instruction_shapes_are_rejected_before_execution() {
   }
 }
 
+void test_numeric_literal_range_validation() {
+  for (const auto *literal : {"1e", "1e+", "1.5e-", "1e309", "1e-324", "nan", "inf"}) {
+    ny::nil_module module;
+    module.functions = {make_function("main", "f64",
+        {{"PUSH_CONST", {literal}, 1}, {"RET", {}, 2}})};
+    for (const bool binary : {false, true}) {
+      std::unordered_map<std::string, ny::Value> constants;
+      bool rejected = false;
+      try {
+        (void)parse_module(module, binary, constants);
+      } catch (const std::runtime_error &error) {
+        rejected = std::string(error.what()).find("numeric operand") != std::string::npos;
+      }
+      check(rejected, std::string(binary ? "binary" : "text") +
+          " loader rejects malformed/out-of-range literal " + literal);
+    }
+  }
+  for (const auto *literal : {"5e-324", "2.2250738585072014e-308", "1.7976931348623157e308", "0e999999999999999999"}) {
+    ny::nil_module module;
+    module.functions = {make_function("main", "f64",
+        {{"PUSH_CONST", {literal}, 1}, {"RET", {}, 2}})};
+    for (const bool binary : {false, true}) {
+      std::unordered_map<std::string, ny::Value> constants;
+      bool accepted = false;
+      try {
+        accepted = !parse_module(module, binary, constants).empty();
+      } catch (const std::runtime_error &) {}
+      check(accepted, std::string(binary ? "binary" : "text") +
+          " loader accepts representable literal " + literal);
+    }
+  }
+}
+
 void test_generated_nonvoid_fallthrough_is_explicit_and_fail_closed() {
   ny::nil_module module;
   module.module_name = "fallthrough_test";
@@ -1874,6 +1907,7 @@ int main() {
   test_binary_encoding_is_little_endian_and_streamable();
   test_malformed_binary_structure_is_rejected();
   test_instruction_shapes_are_rejected_before_execution();
+  test_numeric_literal_range_validation();
   test_generated_nonvoid_fallthrough_is_explicit_and_fail_closed();
   test_shared_opcode_mapping();
   test_unknown_opcodes_are_rejected();

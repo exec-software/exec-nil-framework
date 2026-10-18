@@ -459,6 +459,14 @@ token lexer::number() {
       advance();
   }
 
+  // Keep an incomplete exponent in the number token so the parser can report
+  // its actual cause instead of interpreting the e/E as an identifier.
+  if (peek() == 'e' || peek() == 'E') {
+    advance();
+    if (peek() == '+' || peek() == '-') advance();
+    while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
+  }
+
   std::string text = src.substr(start, current - start);
   return token{token_kind::number_literal, text, line};
 }

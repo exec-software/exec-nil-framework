@@ -16,7 +16,21 @@ not supply placeholder values.
 ```ny
 3.14        # f64
 3.14 as f64
+1e3         # f64, even without a decimal point
+1.5E-3      # 0.0015
+5e-324      # smallest positive f64, rounded from decimal
 ```
+
+Decimal literals containing a fractional part or an `e`/`E` exponent infer
+`f64`. An exponent may have a `+` or `-` sign and must contain at least one
+digit. Leading signs are unary operators. Hexadecimal integers such as
+`0xDEAD` retain their integer meaning.
+
+Conversion is independent of the host locale and accepts finite normal and
+subnormal results. Overflow and nonzero literals that round to zero are compile
+errors, including during editor analysis. Exact zero remains valid with any
+exponent magnitude; unary minus preserves its negative sign. These rules apply
+to Ny and Matrix and to textual/binary NIL loading.
 
 ### String Literals
 ```ny

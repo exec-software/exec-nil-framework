@@ -332,7 +332,7 @@ end fn
                 instructions,
                 "main",
                 "NEW_VARIANT",
-                ("result::ok", "1", result_bool, "bool"),
+                ("Result::Ok", "1", result_bool, "bool"),
                 4,
             )
             require_instruction(

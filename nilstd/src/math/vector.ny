@@ -2,6 +2,7 @@
 
 module nil.std.math
 import nil.std.core
+import nil.std.math.norms
 
 @intrinsic("math.sqrt")
 fn vector_sqrt(x: f64) -> f64
@@ -52,24 +53,39 @@ impl vec2
         return self.x * other.x + self.y * other.y
     end fn
 
-    # Length squared
+    # Ordinary dot product; squaring can overflow or underflow.
     pub fn length_sq(self) -> f64
         return self.dot(self)
     end fn
 
     # Length
     pub fn length(self) -> f64
-        return vector_sqrt(self.length_sq())
+        return hypot2(self.x, self.y)
     end fn
 
-    # Normalize
+    pub fn is_finite(self) -> bool
+        return is_finite(self.x) and is_finite(self.y)
+    end fn
+
+    # Some(unit vector) for finite nonzero inputs, even when length overflows.
+    # Divide each component by the scale; its reciprocal may overflow.
+    pub fn try_normalize(self) -> Option<vec2>
+        if not self.is_finite() then return Option.None end if
+        let scale = norm_scale2(self.x, self.y)
+        if scale == 0.0 then return Option.None end if
+        let x = self.x / scale
+        let y = self.y / scale
+        let len = vector_sqrt(x * x + y * y)
+        return Option.Some(vec2.new(x / len, y / len))
+    end fn
+
+    # Invalid directions (zero or non-finite) retain the original value.
+    # Use try_normalize to distinguish them from successful normalization.
     pub fn normalize(self) -> vec2
-        let len = self.length()
-        if len > 0.0 then
-            return self.scale(1.0 / len)
-        else
-            return self
-        end if
+        match self.try_normalize()
+            Option.Some(unit) -> return unit
+            Option.None -> return self
+        end match
     end fn
 
     # Distance to other vector
@@ -134,24 +150,37 @@ impl vec3
         }
     end fn
 
-    # Length squared
+    # Ordinary dot product; squaring can overflow or underflow.
     pub fn length_sq(self) -> f64
         return self.dot(self)
     end fn
 
     # Length
     pub fn length(self) -> f64
-        return vector_sqrt(self.length_sq())
+        return hypot3(self.x, self.y, self.z)
     end fn
 
-    # Normalize
+    pub fn is_finite(self) -> bool
+        return is_finite(self.x) and is_finite(self.y) and is_finite(self.z)
+    end fn
+
+    pub fn try_normalize(self) -> Option<vec3>
+        if not self.is_finite() then return Option.None end if
+        let scale = norm_scale3(self.x, self.y, self.z)
+        if scale == 0.0 then return Option.None end if
+        let x = self.x / scale
+        let y = self.y / scale
+        let z = self.z / scale
+        let len = vector_sqrt(x * x + y * y + z * z)
+        return Option.Some(vec3.new(x / len, y / len, z / len))
+    end fn
+
+    # Invalid directions retain the original value; try_normalize reports None.
     pub fn normalize(self) -> vec3
-        let len = self.length()
-        if len > 0.0 then
-            return self.scale(1.0 / len)
-        else
-            return self
-        end if
+        match self.try_normalize()
+            Option.Some(unit) -> return unit
+            Option.None -> return self
+        end match
     end fn
 
     # Distance to other vector

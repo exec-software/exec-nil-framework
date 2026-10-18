@@ -90,6 +90,15 @@ test("Matrix scopes imports, named calls, and precise type overrides", async () 
   assertScope(grammar, "when total IS AT LEAST 1 then", "IS AT LEAST", "keyword.operator.word");
 });
 
+test("Matrix scopes signed exponents within complete numeric literals", async () => {
+  const grammar = await loadMatrixGrammar();
+  for (const literal of ["1e3", "1.5E-3", "2E+2", "5e-324", "0e99999999999999999999"]) {
+    assertScope(grammar, `say ${literal}.`, literal, "constant.numeric.decimal");
+  }
+  assertScope(grammar, "say 0x1E3", "0x1E3", "constant.numeric.hex");
+  assertScope(grammar, "say value-e3", "value-e3", "variable.other.readwrite");
+});
+
 test("Matrix raw quotes and backticks never leak across lines or invent escapes", async () => {
   const grammar = await loadMatrixGrammar();
   const line = 'value path is "C:\\dir\\file" plus quote';
@@ -169,6 +178,7 @@ test("Matrix editor word selection and block indentation match its lexical spell
   };
   const words = new RegExp(config.wordPattern, "g");
   assert.deepEqual("read-regular-bytes FRAME_KIND café-value 0xFF 3.14".match(words), ["read-regular-bytes", "FRAME_KIND", "café-value", "0xFF", "3.14"]);
+  assert.deepEqual("1e3 1.5E-3 2E+2 0x1E3".match(words), ["1e3", "1.5E-3", "2E+2", "0x1E3"]);
   const increase = new RegExp(config.indentationRules.increaseIndentPattern);
   const decrease = new RegExp(config.indentationRules.decreaseIndentPattern);
   for (const line of ["MAIN RETURNS NUMBER BEGIN PARAGRAPH", "when ready then !!! check", "value banner is begin text", "attempt", "repeat for step from 0 to 3", "otherwise", "caught anything as problem"]) assert.ok(increase.test(line), line);

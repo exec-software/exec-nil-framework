@@ -1,4 +1,5 @@
 #include "matrix_lexer.hpp"
+#include "numeric_literal.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -327,6 +328,17 @@ token lexer::scan_number() {
     spelling.push_back(advance());
     while (ascii_digit(static_cast<unsigned char>(peek())))
       spelling.push_back(advance());
+  }
+  if (peek() == 'e' || peek() == 'E') {
+    spelling.push_back(advance());
+    if (peek() == '+' || peek() == '-') spelling.push_back(advance());
+    while (ascii_digit(static_cast<unsigned char>(peek())))
+      spelling.push_back(advance());
+  }
+  if (ny::is_floating_literal_spelling(spelling)) {
+    double value = 0.0;
+    if (const auto *message = ny::parse_floating_literal(spelling, value))
+      error(line, col, message);
   }
   token t = make(token_kind::number_literal, spelling, line, col);
   t.key = spelling;

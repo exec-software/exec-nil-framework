@@ -329,7 +329,8 @@ bool is_numeric_literal(const std::string &value) {
   try {
     std::size_t consumed = 0;
     if (is_floating_literal_spelling(value)) {
-      (void)std::stod(value, &consumed);
+      double parsed = 0.0;
+      return !parse_floating_literal(value, parsed);
     } else {
       const bool hexadecimal = has_hexadecimal_integer_prefix(value);
       (void)std::stoll(value, &consumed, hexadecimal ? 0 : 10);

@@ -1,0 +1,147 @@
+!!! Independent MINSTD sequence oracles also exercise the legacy math import.
+book tests.random-generators-matrix
+read everything from ny.lang.math
+read everything from nil.std.core
+
+require receives ok as boolean, label as text returns nothing begin paragraph
+    evaluate assert-true with condition being ok, message being label
+end paragraph
+
+check-seed receives input as override long, first as override integer, second as override integer returns nothing begin paragraph
+    value stream is random-generator.new with seed-value being input
+    evaluate require with ok being ((stream.next-i32 with nothing) equals first and (stream.next-i32 with nothing) equals second), label being "constructor seed normalization"
+    evaluate stream.reseed with seed-value being input
+    evaluate require with ok being ((stream.next-i32 with nothing) equals first and (stream.next-i32 with nothing) equals second), label being "reseed normalization"
+    evaluate seed with input
+    evaluate require with ok being ((random-i32 with nothing) equals first and (random-i32 with nothing) equals second), label being "global seed normalization"
+end paragraph
+
+check-float-range receives lower as floating, upper as floating, input as override long returns nothing begin paragraph
+    value stream is random-generator.new with seed-value being input
+    value reference-stream is stream.clone with nothing
+    value first is reference-stream.next-i32 with nothing
+    value second is reference-stream.next-i32 with nothing
+    value actual is stream.range-f64 with min being lower, max being upper
+    evaluate require with ok being ((is-finite with value-number being actual) and actual is at least lower and actual is less than upper), label being "instance finite half-open interval"
+    evaluate require with ok being ((stream.next-i32 with nothing) equals second), label being "instance float range consumes one draw"
+    evaluate seed with input
+    value shared-result is random-range-f64 with min being lower, max being upper
+    evaluate require with ok being ((is-finite with value-number being shared-result) and shared-result is at least lower and shared-result is less than upper), label being "global finite half-open interval"
+    evaluate require with ok being (shared-result equals actual and (random-i32 with nothing) equals second), label being "global float range matches instance and advances once"
+end paragraph
+
+main returns override integer begin paragraph
+    evaluate require with ok being ((random-i32 with nothing) equals 595905495 and (random-i32 with nothing) equals 1558181227), label being "default global seed remains 12345"
+    value stream is random-generator.new with seed-value being 1
+    value expected as array of override integer is [48271, 182605794, 1291394886, 1914720637, 2078669041, 407355683, 1105902161, 854716505]
+    evaluate seed with `value` being 1
+    repeat for index from 0 to (the length of expected)
+        value actual is stream.next-i32 with nothing
+        evaluate require with ok being (actual equals (expected at index) and (random-i32 with nothing) equals (expected at index)), label being "independent MINSTD sequence oracle"
+        say actual
+    end repeat
+
+    value maximum as override long is 9223372036854775807
+    value minimum as override long is minus maximum minus 1
+    evaluate check-seed with input being 0, first being 48271, second being 182605794
+    evaluate check-seed with input being minus 1, first being 2147435376, second being 1964877853
+    evaluate check-seed with input being 2147483647, first being 48271, second being 182605794
+    evaluate check-seed with input being minus 2147483647, first being 48271, second being 182605794
+    evaluate check-seed with input being minimum, first being 2147387105, second being 1782272059
+    evaluate check-seed with input being maximum, first being 48271, second being 182605794
+    evaluate check-seed with input being 12345, first being 595905495, second being 1558181227
+    evaluate stream.reseed with seed-value being 1
+    evaluate require with ok being (not (stream.next-bool with nothing) and (stream.next-bool with nothing)), label being "instance boolean parity sequence"
+    evaluate require with ok being ((stream.next-i32 with nothing) equals 1291394886), label being "instance boolean consumes one draw"
+    evaluate seed with 1
+    evaluate require with ok being (not (random-bool with nothing) and (random-bool with nothing) and (random-i32 with nothing) equals 1291394886), label being "global boolean parity sequence"
+    evaluate stream.reseed with seed-value being 1
+    evaluate require with ok being ((stream.next-f64 with nothing) equals (48271.0 over 2147483647.0)), label being "instance floating sequence oracle"
+    evaluate require with ok being ((stream.next-i32 with nothing) equals 182605794), label being "instance floating consumes one draw"
+    evaluate seed with 1
+    evaluate require with ok being ((random-f64 with nothing) equals (48271.0 over 2147483647.0) and (random-i32 with nothing) equals 182605794), label being "global floating sequence oracle"
+    evaluate stream.reseed with seed-value being 247665088
+    value largest is stream.next-f64 with nothing
+    evaluate require with ok being (largest equals (2147483646.0 over 2147483647.0) and largest is less than 1.0), label being "unit interval excludes one"
+    evaluate stream.reseed with seed-value being 1899818559
+    evaluate require with ok being ((stream.next-f64 with nothing) equals (1.0 over 2147483647.0)), label being "unit interval excludes zero"
+    set stream.state to 0
+    evaluate require with ok being ((stream.next-i32 with nothing) equals 48271), label being "externally written zero normalizes on draw"
+    set stream.state to minimum
+    value raw-copy is stream.clone with nothing
+    evaluate require with ok being (raw-copy.state equals minimum), label being "clone copies unnormalized state exactly"
+    evaluate require with ok being ((stream.next-i32 with nothing) equals 2147387105 and (raw-copy.next-i32 with nothing) equals 2147387105), label being "externally written minimum normalizes on draw"
+    set stream.state to maximum
+    evaluate require with ok being ((stream.next-i32 with nothing) equals 48271 and raw-copy.state equals 2147387105), label being "externally written maximum and independent clone"
+    say "seed normalization and scalar draws"
+
+    value first is random-generator.new with seed-value being 1
+    value other is random-generator.new with seed-value being 12345
+    evaluate seed with minus 1
+    evaluate require with ok being ((first.next-i32 with nothing) equals 48271 and (other.next-i32 with nothing) equals 595905495 and (random-i32 with nothing) equals 2147435376), label being "independent interleaved streams"
+    value alias is first
+    evaluate require with ok being ((alias.next-i32 with nothing) equals 182605794 and (first.next-i32 with nothing) equals 1291394886), label being "ordinary assignment aliases state"
+    value copy is first.clone with nothing
+    evaluate require with ok being ((first.next-i32 with nothing) equals 1914720637 and (copy.next-i32 with nothing) equals 1914720637), label being "clone resumes at copied state"
+    evaluate require with ok being ((first.next-i32 with nothing) equals 2078669041 and copy.state equals 1914720637), label being "clone advances independently"
+    evaluate copy.reseed with seed-value being 0
+    evaluate require with ok being ((copy.next-i32 with nothing) equals 48271 and (alias.next-i32 with nothing) equals 407355683), label being "clone reseed preserves original and alias"
+    evaluate require with ok being ((other.next-i32 with nothing) equals 1558181227 and (random-i32 with nothing) equals 1964877853), label being "instance draws leave other and global states unchanged"
+    say "independent instances, aliases and clones"
+
+    evaluate stream.reseed with seed-value being 1
+    evaluate require with ok being ((stream.range-i32 with min being minus 5, max being minus 5) equals minus 5 and (stream.next-i32 with nothing) equals 48271), label being "equal integer bounds consume no state"
+    evaluate seed with 1
+    evaluate require with ok being ((random-range with min being minus 5, max being minus 5) equals minus 5 and (random-i32 with nothing) equals 48271), label being "global equal integer bounds consume no state"
+    evaluate stream.reseed with seed-value being 1
+    evaluate require with ok being ((stream.range-i32 with min being minus 2147483648, max being 2147483647) equals minus 1964974395), label being "full-width bounded sequence oracle"
+    evaluate require with ok being ((stream.next-i32 with nothing) equals 1291394886), label being "ordinary integer range consumes two draws"
+    evaluate seed with 1
+    evaluate require with ok being ((random-range with min being minus 2147483648, max being 2147483647) equals minus 1964974395 and (random-i32 with nothing) equals 1291394886), label being "global full-width sequence oracle"
+    evaluate stream.reseed with seed-value being 1
+    evaluate require with ok being ((stream.range-i32 with min being minus 10, max being 10) equals 10), label being "inclusive upper integer endpoint"
+    evaluate stream.reseed with seed-value being 12345
+    evaluate require with ok being ((stream.range-i32 with min being minus 10, max being 10) equals minus 10), label being "inclusive lower integer endpoint"
+    evaluate stream.reseed with seed-value being 247665088
+    evaluate require with ok being ((stream.range-i32 with min being 0, max being 999999999) equals 413697152), label being "rejected first pair selects next pair"
+    evaluate require with ok being ((stream.next-i32 with nothing) equals 232763010), label being "rejection consumes four draws"
+    evaluate seed with 247665088
+    evaluate require with ok being ((random-range with min being 0, max being 999999999) equals 413697152 and (random-i32 with nothing) equals 232763010), label being "global rejection sequence oracle"
+    say "integer bounds and rejection"
+
+    evaluate stream.reseed with seed-value being 1
+    evaluate require with ok being ((stream.range-f64 with min being minus 7.0, max being minus 7.0) equals minus 7.0 and (stream.next-i32 with nothing) equals 48271), label being "equal floating bounds consume no state"
+    evaluate seed with 1
+    evaluate require with ok being ((random-range-f64 with min being minus 7.0, max being minus 7.0) equals minus 7.0 and (random-i32 with nothing) equals 48271), label being "global equal floating bounds consume no state"
+    evaluate stream.reseed with seed-value being 1
+    value signed-zero is stream.range-f64 with min being minus 0.0, max being 0.0
+    evaluate require with ok being ((atan2 with y being signed-zero, x being minus 1.0) is less than 0.0), label being "equal floating bounds retain lower signed zero"
+    evaluate require with ok being ((stream.next-i32 with nothing) equals 48271), label being "signed zero interval consumes no state"
+    evaluate seed with 1
+    value shared-zero is random-range-f64 with min being minus 0.0, max being 0.0
+    evaluate require with ok being ((atan2 with y being shared-zero, x being minus 1.0) is less than 0.0 and (random-i32 with nothing) equals 48271), label being "global signed zero interval"
+    value huge is (pow with x being 2.0, y being 1023.0) times 1.75
+    value tiny is pow with x being 2.0, y being minus 1074.0
+    evaluate stream.reseed with seed-value being 1
+    evaluate require with ok being ((stream.range-f64 with min being minus 2.0, max being 3.0) equals (minus 2.0 plus (48271.0 over 2147483647.0) times 5.0)), label being "ordinary floating formula compatibility"
+    evaluate stream.reseed with seed-value being 1
+    value scaled is (stream.range-f64 with min being minus huge, max being huge) over huge
+    evaluate require with ok being ((abs with x being (scaled minus (2.0 times (48271.0 over 2147483647.0) minus 1.0))) is at most 0.000000000000001), label being "overflowing span retains sampled direction"
+    value inputs as array of override integer is [1, 12345, minus 1, 247665088]
+    repeat for index from 0 to (the length of inputs)
+        value input is inputs at index
+        evaluate check-float-range with lower being minus 2.0, upper being 3.0, input being input
+        evaluate check-float-range with lower being minus huge, upper being huge, input being input
+        evaluate check-float-range with lower being (huge over 2.0), upper being huge, input being input
+        evaluate check-float-range with lower being minus huge, upper being (minus huge over 2.0), input being input
+        evaluate check-float-range with lower being 1.0, upper being 1.0000000000000002, input being input
+        evaluate check-float-range with lower being minus 1.0000000000000002, upper being minus 1.0, input being input
+        evaluate check-float-range with lower being 0.0, upper being tiny, input being input
+        evaluate check-float-range with lower being minus tiny, upper being 0.0, input being input
+        evaluate check-float-range with lower being minus tiny, upper being tiny, input being input
+    end repeat
+    evaluate stream.reseed with seed-value being 247665088
+    evaluate require with ok being ((stream.range-f64 with min being 1.0, max being 1.0000000000000002) equals 1.0), label being "rounded upper endpoint returns lower"
+    say "floating bounds and state consumption"
+    give 0
+end paragraph

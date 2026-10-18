@@ -1,16 +1,21 @@
 # Standard-library status
 
-Ny and Matrix share `nilstd`, one standard library compiled to NIL. Its 71 active
-sources (68 Ny and three Matrix) form 16 logical SDK modules, including `prelude`.
-Support remains evidence-scoped. The isolated varint/CRC SDK
-checkpoint passed 370 CTests and 336 installed consumer executions through
-`nilstd` and `nillib`, including canonical varints and incremental CRC-32 across
-six execution routes and both standalone assembler/linker pipelines. This
-checkpoint does not replace the published RC or active SDK.
-Runtime support is claimed only for the surfaces with focused route fixtures,
-and native support requires separate evidence.
+Ny and Matrix share `nilstd`, one standard library compiled to NIL. Its 73 active
+sources (68 Ny and five Matrix) form 16 logical SDK modules, including `prelude`.
+Support remains evidence-scoped. Focused fixtures exercise `nilstd` and `nillib`
+through textual/binary NIL, bundles, LLVM JIT and AOT, and standalone
+assembler/linker pipelines. Local SDK qualification records the exact source
+snapshot and does not replace the published RC or active SDK. Runtime support
+is claimed only for the surfaces with focused route fixtures, and native
+support requires separate evidence.
 
 ## Canonical layout
+
+The [vector norm reference](math-vectors.md) describes stable two- and
+three-component lengths, finite-value checks, and checked normalization shared
+by Ny and Matrix.
+The [random-generator reference](random.md) defines independent mutable
+streams, reproducible seeds, cloning, and bounded integer/floating sampling.
 
 ```text
 nilstd/
@@ -58,6 +63,7 @@ The active tree includes these deliberately scoped families:
 - core values and algorithms, collections, text, math, date/time, and NyData
 - Matrix-authored checked array access, bounded fill, overlap-safe copy, and gather
 - stable numeric and text index ordering for parallel attribute arrays
+- independent deterministic random generators with cloning and finite floating ranges
 - console/file/path/stream I/O and diagnostics
 - checked hexadecimal decoding and bounded fixed-width binary reads/writes
 - canonical base-128 integers and bounded, incremental CRC-32

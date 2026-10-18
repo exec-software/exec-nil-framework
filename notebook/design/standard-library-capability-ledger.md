@@ -186,22 +186,27 @@ raw-buffer stride, while general arrays retain their generic VM representation.
 and file round trips on all six routes. This does not upgrade the still-partial
 scalar-width and mixed-arithmetic ABI.
 
-`ny.lang.math` is **interpreted** for the exercised scalar, trigonometric,
-hyperbolic, deterministic-random, range, and vector subset. Bounds checks now
+`nil.std.math` (also `ny.lang.math`) has VM and LLVM native route fixtures for
+the exercised scalar, trigonometric, hyperbolic, deterministic-random, range,
+and vector subset. Bounds checks
 reject inverted clamp/range arguments, approximation includes the epsilon
-boundary and rejects negative epsilon, and integer range sampling uses two
-MINSTD draws plus rejection sampling so the entire i32 domain is reachable
-without modulo bias. `ny.routes.math-runtime` checks exact results through text
-and binary NIL, and `ny.routes.math-invalid-range-runtime` locks the
-inverted-bound panic contract. The generator is deterministic and explicitly
-not suitable for security.
+boundary and rejects negative epsilon. Integer range sampling retains two
+consecutive MINSTD draws and a rejection rule, without a uniformity or full-domain
+coverage guarantee: two dependent draws still have only 2147483646 possible
+initial states. `ny.routes.math-runtime` checks exact results through all six
+routes, and `ny.routes.math-invalid-range-runtime` locks the interpreted
+inverted-bound panic contract. Matrix-authored `random_generator` adds separately
+owned state, explicit cloning and finite floating-range handling. The paired
+random-generator fixtures and negative contract runner cover both frontends,
+VM and native execution; see the [API contract](../../docs/standard-library/random.md).
+These deterministic generators are not suitable for security.
 
 A narrower imported scalar-math slice is also **native** on the verified LLVM
 host. `ny.routes.native-math-intrinsic-module` executes `sqrt(81)`,
 `pow(2,10)`, and `cbrt(27)` through all six routes with exact integer-observed
 results. This proves the LLVM intrinsic/libm provider boundary for those three
-operations; it does not upgrade the package-wide math, random, vector, or
-platform-portability classifications.
+operations. Together with the scoped random/vector fixtures, this still does
+not establish package-wide math correctness or platform portability.
 
 `ny.lang.security` now exposes only evidence-backed encoding. Portable strict
 Base64 encode/decode and byte-to-hex conversion are **interpreted** via

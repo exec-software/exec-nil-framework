@@ -1,0 +1,146 @@
+!!! Matrix callers exercise the shared norms and checked vector methods.
+!!! Coordinate oracles are independent of the implementation's scaling.
+book tests.vector-norms-matrix
+
+!!! The Ny companion uses the canonical import; exercise the legacy alias here.
+read everything from ny.lang.math
+read everything from nil.std.core
+
+require receives ok as boolean, label as text returns nothing begin paragraph
+    evaluate assert-true with condition being ok, message being label
+end paragraph
+
+near receives actual as floating, expected as floating, label as text returns nothing begin paragraph
+    evaluate require with ok being (approx-eq with a being actual, b being expected, epsilon being 0.000000000000002), label being label
+end paragraph
+
+check2 receives input as vec2, expected-x as floating, expected-y as floating returns nothing begin paragraph
+    value alias is input
+    value original-x is input.x
+    value original-y is input.y
+    value checked is input.try-normalize with nothing
+    evaluate require with ok being (checked.is-some with nothing), label being "vec2 finite direction accepted"
+    value result is checked.unwrap with nothing
+    evaluate near with actual being result.x, expected being expected-x, label being "vec2 checked x"
+    evaluate near with actual being result.y, expected being expected-y, label being "vec2 checked y"
+    value ordinary is input.normalize with nothing
+    evaluate near with actual being ordinary.x, expected being expected-x, label being "vec2 ordinary x"
+    evaluate near with actual being ordinary.y, expected being expected-y, label being "vec2 ordinary y"
+    set result.x to 99.0
+    set ordinary.y to 99.0
+    evaluate require with ok being (alias.x equals original-x and alias.y equals original-y), label being "vec2 normalization preserves input and aliases"
+end paragraph
+
+check3 receives input as vec3, expected-x as floating, expected-y as floating, expected-z as floating returns nothing begin paragraph
+    value alias is input
+    value original-x is input.x
+    value original-y is input.y
+    value original-z is input.z
+    value checked is input.try-normalize with nothing
+    evaluate require with ok being (checked.is-some with nothing), label being "vec3 finite direction accepted"
+    value result is checked.unwrap with nothing
+    evaluate near with actual being result.x, expected being expected-x, label being "vec3 checked x"
+    evaluate near with actual being result.y, expected being expected-y, label being "vec3 checked y"
+    evaluate near with actual being result.z, expected being expected-z, label being "vec3 checked z"
+    value ordinary is input.normalize with nothing
+    evaluate near with actual being ordinary.x, expected being expected-x, label being "vec3 ordinary x"
+    evaluate near with actual being ordinary.y, expected being expected-y, label being "vec3 ordinary y"
+    evaluate near with actual being ordinary.z, expected being expected-z, label being "vec3 ordinary z"
+    set result.x to 99.0
+    set ordinary.z to 99.0
+    evaluate require with ok being (alias.x equals original-x and alias.y equals original-y and alias.z equals original-z), label being "vec3 normalization preserves input and aliases"
+end paragraph
+
+main returns override integer begin paragraph
+    evaluate near with actual being (hypot2 with x being minus 3.0, y being 4.0), expected being 5.0, label being "Pythagorean scalar norm2"
+    evaluate near with actual being (hypot3 with x being 2.0, y being minus 3.0, z being 6.0), expected being 7.0, label being "Pythagorean scalar norm3"
+    value ordinary2 is vec2.new with x being minus 3.0, y being 4.0
+    value ordinary3 is vec3.new with x being 2.0, y being minus 3.0, z being 6.0
+    evaluate near with actual being (ordinary2.length with nothing), expected being 5.0, label being "vec2 length"
+    evaluate near with actual being (ordinary3.length with nothing), expected being 7.0, label being "vec3 length"
+    evaluate near with actual being (ordinary2.distance with other being (vec2.zero with nothing)), expected being 5.0, label being "vec2 distance"
+    evaluate near with actual being (ordinary3.distance with other being (vec3.zero with nothing)), expected being 7.0, label being "vec3 distance"
+    evaluate check2 with input being ordinary2, expected-x being minus 0.6, expected-y being 0.8
+    evaluate check3 with input being ordinary3, expected-x being (2.0 over 7.0), expected-y being (minus 3.0 over 7.0), expected-z being (6.0 over 7.0)
+    say "Matrix ordinary vector norms"
+
+    value large is pow with x being 10.0, y being 200.0
+    value tiny is pow with x being 10.0, y being minus 200.0
+    value scales as array of floating is [large, tiny]
+    repeat for index from 0 to (the length of scales)
+        value scale is scales at index
+        value pair is vec2.new with x being (minus 3.0 times scale), y being (4.0 times scale)
+        value triple is vec3.new with x being (2.0 times scale), y being (minus 3.0 times scale), z being (6.0 times scale)
+        evaluate near with actual being ((pair.length with nothing) over scale), expected being 5.0, label being "vec2 extreme representable norm"
+        evaluate near with actual being ((triple.length with nothing) over scale), expected being 7.0, label being "vec3 extreme representable norm"
+        evaluate check2 with input being pair, expected-x being minus 0.6, expected-y being 0.8
+        evaluate check3 with input being triple, expected-x being (2.0 over 7.0), expected-y being (minus 3.0 over 7.0), expected-z being (6.0 over 7.0)
+    end repeat
+
+    !!! Produce the smallest positive f64 at runtime; no decimal parser oracle.
+    value subnormal is pow with x being 2.0, y being minus 1074.0
+    evaluate require with ok being (subnormal is greater than 0.0 and (is-finite with value-number being subnormal)), label being "subnormal fixture"
+    evaluate require with ok being ((hypot2 with x being subnormal, y being 0.0) equals subnormal), label being "subnormal norm survives"
+    evaluate require with ok being ((hypot3 with x being 0.0, y being minus subnormal, z being 0.0) equals subnormal), label being "negative subnormal norm survives"
+    evaluate check2 with input being (vec2.new with x being minus subnormal, y being 0.0), expected-x being minus 1.0, expected-y being 0.0
+    evaluate check3 with input being (vec3.new with x being 0.0, y being subnormal, z being 0.0), expected-x being 0.0, expected-y being 1.0, expected-z being 0.0
+
+    value huge is (pow with x being 2.0, y being 1023.0) times 1.75
+    value overflow2 is vec2.new with x being huge, y being minus huge
+    value overflow3 is vec3.new with x being huge, y being huge, z being minus huge
+    evaluate require with ok being ((overflow2.is-finite with nothing) and (overflow3.is-finite with nothing)), label being "overflow norm has finite components"
+    evaluate require with ok being (not (is-finite with value-number being (overflow2.length with nothing)) and not (is-finite with value-number being (overflow3.length with nothing))), label being "unrepresentable norm overflows"
+    evaluate check2 with input being overflow2, expected-x being 0.70710678118654752440, expected-y being minus 0.70710678118654752440
+    evaluate check3 with input being overflow3, expected-x being 0.57735026918962576451, expected-y being 0.57735026918962576451, expected-z being minus 0.57735026918962576451
+    say "Matrix extreme and subnormal vector norms"
+
+    value zero2 is vec2.new with x being minus 0.0, y being 0.0
+    value zero3 is vec3.new with x being 0.0, y being minus 0.0, z being 0.0
+    value empty2 is zero2.try-normalize with nothing
+    value empty3 is zero3.try-normalize with nothing
+    evaluate require with ok being ((zero2.is-finite with nothing) and (zero3.is-finite with nothing)), label being "signed zeros finite"
+    evaluate require with ok being ((empty2.is-none with nothing) and (empty3.is-none with nothing)), label being "zero directions rejected"
+    value fallback2 is zero2.normalize with nothing
+    value fallback3 is zero3.normalize with nothing
+    evaluate require with ok being ((atan2 with y being fallback2.x, x being minus 1.0) is less than 0.0), label being "vec2 fallback preserves negative zero"
+    evaluate require with ok being ((atan2 with y being fallback3.y, x being minus 1.0) is less than 0.0), label being "vec3 fallback preserves negative zero"
+    evaluate require with ok being ((zero2.length with nothing) equals 0.0 and (zero3.length with nothing) equals 0.0), label being "zero norms"
+    evaluate require with ok being ((atan2 with y being (zero2.length with nothing), x being minus 1.0) is greater than 0.0), label being "zero norm positive sign"
+    say "Matrix zero directions"
+
+    value nan is sqrt with x being minus 1.0
+    value infinity is exp with x being 1000.0
+    value invalid as array of floating is [nan, infinity, minus infinity]
+    repeat for index from 0 to (the length of invalid)
+        value component is invalid at index
+        evaluate require with ok being (not (is-finite with value-number being component)), label being "scalar nonfinite rejected"
+        repeat for position from 0 to 3
+            value vector is vec3.new with x being 1.0, y being 2.0, z being 3.0
+            when position equals 0 then set vector.x to component end when
+            when position equals 1 then set vector.y to component end when
+            when position equals 2 then set vector.z to component end when
+            value result is vector.try-normalize with nothing
+            evaluate require with ok being (not (vector.is-finite with nothing) and (result.is-none with nothing)), label being "vec3 nonfinite component rejected in every position"
+        end repeat
+        repeat for position from 0 to 2
+            value vector is vec2.new with x being 1.0, y being 2.0
+            when position equals 0 then set vector.x to component end when
+            when position equals 1 then set vector.y to component end when
+            value result is vector.try-normalize with nothing
+            evaluate require with ok being (not (vector.is-finite with nothing) and (result.is-none with nothing)), label being "vec2 nonfinite component rejected in every position"
+        end repeat
+    end repeat
+    evaluate require with ok being ((hypot2 with x being minus infinity, y being 3.0) equals infinity), label being "norm of negative infinity positive"
+    evaluate require with ok being ((hypot3 with x being 0.0, y being minus infinity, z being 3.0) equals infinity), label being "norm3 of negative infinity positive"
+    value nan2 is hypot2 with x being infinity, y being nan
+    value nan3 is hypot3 with x being 0.0, y being nan, z being infinity
+    evaluate require with ok being (nan2 does not equal nan2 and nan3 does not equal nan3), label being "norm NaN propagates even with infinity"
+    value bad2 is vec2.new with x being infinity, y being 7.0
+    value bad3 is vec3.new with x being 8.0, y being nan, z being minus infinity
+    value preserved2 is bad2.normalize with nothing
+    value preserved3 is bad3.normalize with nothing
+    evaluate require with ok being (preserved2.x equals infinity and preserved2.y equals 7.0), label being "vec2 invalid fallback preserves fields"
+    evaluate require with ok being (preserved3.x equals 8.0 and preserved3.y does not equal preserved3.y and preserved3.z equals minus infinity), label being "vec3 invalid fallback preserves fields"
+    say "Matrix nonfinite vector policy"
+    give 0
+end paragraph

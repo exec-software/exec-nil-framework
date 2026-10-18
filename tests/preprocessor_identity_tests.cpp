@@ -19,10 +19,31 @@ void verify_expansion(ny::preprocessor &processor, const std::string &expected) 
   require(result.success && result.diagnostics.empty(), "macro expansion failed");
   require(result.output == expected + "\n", "product macro did not expand exactly");
 }
+
+void verify_numeric_token_identity() {
+  ny::preprocessor processor;
+  const auto result = processor.preprocess_text(
+      "@define e3 7\n@define E 8\n@define xDEAD 9\n"
+      "@define LIMIT 3\n"
+      "@define formula(e3, E) 1e3 + 1E+2 + e3 + E\n"
+      "@define range(LIMIT) 0..LIMIT 1.0..LIMIT\n"
+      "1e3 1E+2 1.5E-3 0xDEAD 0xFE+E\n"
+      "formula(4, 5)\n0..LIMIT 1.0..LIMIT\nrange(4)\n", "numeric-tokens.ny");
+  require(result.success && result.diagnostics.empty(), "numeric macro fixture failed");
+  require(result.output.find("1e3 1E+2 1.5E-3 0xDEAD 0xFE+8") != std::string::npos,
+          "macros must not replace identifiers inside numeric spellings");
+  require(result.output.find("1e3 + 1E+2 + 4 + 5") != std::string::npos,
+          "function macro parameters must not replace exponent spellings");
+  require(result.output.find("0..3 1.0..3") != std::string::npos,
+          "macros after numeric range boundaries must still expand");
+  require(result.output.find("0..4 1.0..4") != std::string::npos,
+          "function macro parameters after numeric range boundaries must still expand");
+}
 } // namespace
 
 int main() {
   try {
+    verify_numeric_token_identity();
     ny::preprocessor direct;
     require(direct.options().builtin_macros.at("__NIL_VERSION__") == NIL_VERSION,
             "constructor product version differs from generated identity");

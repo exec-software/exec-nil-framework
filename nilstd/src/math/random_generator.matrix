@@ -1,0 +1,113 @@
+!!! Deterministic MINSTD streams, shared by Ny and Matrix. Not cryptographic.
+book nil.std.math
+
+read everything from nil.std.core
+read everything from nil.std.math.norms
+
+rng-normalize receives seed-value as override long returns override long begin paragraph
+    variable normalized as override long is seed-value remainder 2147483647
+    when normalized is less than 0 then
+        set normalized to normalized plus 2147483647
+    end when
+    when normalized equals 0 then give 1 end when
+    give normalized
+end paragraph
+
+rng-step receives seed-value as override long returns override long begin paragraph
+    !!! Normalize before multiplication, including externally written state.
+    value normalized is rng-normalize with seed-value being seed-value
+    give (48271 times normalized) remainder 2147483647
+end paragraph
+
+rng-validate-f64-range receives min as override double, max as override double returns nothing begin paragraph
+    when not (is-finite with value-number being min) or not (is-finite with value-number being max) then
+        evaluate panic with "random_range_f64 bounds must be finite"
+    end when
+    when min is greater than max then
+        evaluate panic with "random_range_f64 minimum exceeds maximum"
+    end when
+end paragraph
+
+!!! Called after validation, with unequal finite bounds and fraction in (0, 1).
+rng-scale-f64 receives min as override double, max as override double, fraction as override double returns override double begin paragraph
+    value span is max minus min
+    variable result as override double is 0.0
+    when is-finite with value-number being span then
+        !!! Preserve the ordinary finite-span formula and sequence.
+        set result to min plus fraction times span
+    otherwise
+        !!! Only opposite finite extremes overflow their span.
+        set result to (1.0 minus fraction) times min plus fraction times max
+    end when
+    !!! Rounding can reach max, especially for adjacent representable bounds.
+    when result is at least max then give min end when
+    when result is less than min then give min end when
+    give result
+end paragraph
+
+!!! Assignment aliases the stream. Clone creates independent state at the
+!!! same position; creating or reseeding a stream never affects the global RNG.
+public random-generator begin record
+    field state as override long
+end record
+
+random-generator begin implementation
+    public new receives seed-value as override long without receiver returns random-generator begin paragraph
+        give build random-generator with state being (rng-normalize with seed-value being seed-value)
+    end paragraph
+
+    public reseed receives seed-value as override long returns nothing begin paragraph
+        set my state to rng-normalize with seed-value being seed-value
+    end paragraph
+
+    public clone returns random-generator begin paragraph
+        give build random-generator with state being my state
+    end paragraph
+
+    !!! One draw in [1, 2147483646].
+    public next-i32 returns override integer begin paragraph
+        set my state to rng-step with seed-value being my state
+        give my state becomes override integer
+    end paragraph
+
+    !!! One draw strictly between 0.0 and 1.0.
+    public next-f64 returns override double begin paragraph
+        value raw is my next-i32 with nothing
+        give (raw becomes override double) over 2147483647.0
+    end paragraph
+
+    public next-bool returns boolean begin paragraph
+        give (my next-i32 with nothing) remainder 2 equals 0
+    end paragraph
+
+    !!! Inclusive bounds. Retains the historical two-draw mapping and rejection
+    !!! rule, without promising uniformity or coverage of the entire i32 domain.
+    public range-i32 receives min as override integer, max as override integer returns override integer begin paragraph
+        when min is greater than max then
+            evaluate panic with "random_range minimum exceeds maximum"
+        end when
+        when min equals max then give min end when
+        value width as override long is (max becomes override long) minus (min becomes override long) plus 1
+        value generator-width as override long is 2147483646
+        value generator-domain as override long is 4611686009837453316
+        value limit as override long is generator-domain minus (generator-domain remainder width)
+        repeat while true
+            value high as override long is ((my next-i32 with nothing) becomes override long) minus 1
+            value low as override long is ((my next-i32 with nothing) becomes override long) minus 1
+            value candidate as override long is high times generator-width plus low
+            when candidate is less than limit then
+                value offset as override long is candidate remainder width
+                give ((min becomes override long) plus offset) becomes override integer
+            end when
+        end repeat
+        give min
+    end paragraph
+
+    !!! Finite bounds in [min, max); equal bounds return min without drawing.
+    public range-f64 receives min as override double, max as override double returns override double begin paragraph
+        evaluate rng-validate-f64-range with min being min, max being max
+        when min equals max then give min end when
+        value fraction is my next-f64 with nothing
+        give rng-scale-f64 with min being min, max being max, fraction being fraction
+    end paragraph
+end implementation

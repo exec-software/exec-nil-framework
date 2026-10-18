@@ -242,6 +242,12 @@ produces MX0101 and cascading MX0101/MX0104 diagnostics. The consumer uses the
 documented backtick escape; this is API naming friction rather than a failure
 of the shared generic implementation.
 
+The RNG consumer adds `seed(value)`: Matrix can call the Ny function with
+`` seed with `value` being 1 `` or positionally. Bare `value being 1` collides
+with the keyword. Local names `reference` and `shared` also collided while
+writing these tests. The paired RNG fixture keeps the escaped named argument
+as an executable cross-language example.
+
 **Next step / acceptance:** Keep the structural keyword rule explicit in
 documentation and completion. Improve collision diagnostics/suggestions where
 needed, and test useful alternatives such as `item-value` and escaped names.
@@ -651,7 +657,7 @@ on the native routes. The ordering below favors the 3D validation consumer.
 | 2 | Predictable buffers | [`vec.with_capacity`](../../nilstd/src/collections/vector.ny) ignores its argument; `capacity()` reports backing-array length. Implement actual reservation and resizing, fresh clone/subrange and append-range operations, then checked slices/views. A type-checker recognition of `resize` is not an implemented library contract. |
 | 3 | Collections that scale | [`HashMap`](../../nilstd/src/collections/hash_map.ny) stores hashes but still scans entries. [`map`](../../nilstd/src/collections/map.ny) explicitly uses linear storage. [`queue.dequeue`](../../nilstd/src/collections/queue.ny) removes index zero and shifts the tail. Add bucketed hashing and a ring queue/deque with measured growth and collision coverage. |
 | 4 | Strict serialization | [`NyData`](../../nilstd/src/nydata/parser.ny) can return partially parsed objects/lists at EOF, skip child errors, and return a first value without validating the remaining input. Add checked parsing, source locations, input/depth limits, and malformed-input fixtures. JSON is experimental; its current Unicode escape handling must be repaired before promotion. |
-| 5 | Numerically robust math | [`vec2`/`vec3`](../../nilstd/src/math/vector.ny) calculate length by squaring components directly, exposing finite inputs to overflow/underflow during normalization. Add scaled norms, checked normalization, finite-value helpers, interpolation, and relative-plus-absolute comparison; existing `approx_eq` uses absolute tolerance. |
+| 5 | Numerically robust math | F27 adds scaled norms, checked normalization, and finite-value helpers to [`vec2`/`vec3`](../../nilstd/src/math/vector.ny). Interpolation and relative-plus-absolute comparison remain gaps; existing `approx_eq` uses absolute tolerance. Dot/cross products and squared lengths still use ordinary arithmetic. |
 | 6 | Reusable sequence algorithms | `vec.map`, `vec.filter`, and container-specific iterators exist. A common iterator contract, sequence zip/fold/chunks/windows, and comparator/key-based sorting remain gaps. Existing stable numeric/text sorts and checked copy/fill/gather should be reused. |
 | 7 | Asset binary and text utilities | Extend checked integer binary helpers with floating-point encoding and cursor readers. Add an efficient text builder, formatting, and explicitly defined UTF-8 operations; current text utilities are predominantly byte/ASCII based. The experimental builder currently concatenates on append, so promotion alone would not provide amortized growth. |
 | 8 | IO and independent state | Complete buffered/exact stream helpers, directory/metadata/temp-file operations and native IO parity. Add independent seeded RNG instances alongside the current global generator. Existing secure whole-file byte APIs already have narrow native evidence. |
@@ -760,16 +766,31 @@ six routes. Do not infer native support for every `Convert` intrinsic from this.
 
 ### F25 — Fully qualified enum patterns silently miss matching values
 
-**Status:** Open bug, reproduced on VM and native AOT.
+**Status:** Fixed for checked statement and expression patterns in Ny and Matrix.
 
-With `import nil.std.core`, construct `Option.Some(9)` as `Option<i32>`.
-A match arm written `nil::std::core::Option::Some(value)` does not run;
-`Option.Some(value)` does. A following print executes and the program exits zero.
-The legacy-qualified `ny::lang::core::Option::Some` spelling has the same problem.
-This is shared enum-pattern lowering, not a difference between namespace aliases.
+**Original evidence:** With `import nil.std.core`, construct `Option.Some(9)` as
+`Option<i32>`. A match arm written `nil::std::core::Option::Some(value)` did not
+run; `Option.Some(value)` did. A following print executed and the program exited
+zero. The legacy-qualified `ny::lang::core::Option::Some` spelling had the same
+problem in shared enum-pattern lowering.
 The minimal reproducer is retained in `build/std-namespace-work/qualified-match.ny`.
-Next: retain and compare the same checked enum/variant identity on construction
-and pattern paths; add rejection or execution checks for qualified patterns.
+
+**Resolution:** The shared checker resolves pattern owners and retains their
+declaration identity. Construction and matching now use the same canonical
+runtime tag, while preserving the standard `Option`/`Result` tags required by
+runtime providers. Matrix value-position `consider` patterns also accept
+qualified paths and bind their payloads through the shared checker. Unknown
+owners, missing variants, and patterns for the wrong target enum are rejected
+during source checking, including `--analyze`.
+
+**Verification:** Paired [Ny](../../tests/language/qualified-enum-patterns.ny)
+and [Matrix](../../tests/language/qualified-enum-patterns-matrix.matrix)
+consumers cover canonical and legacy namespaces, qualified construction,
+statement and expression matches, guards, payload and unit variants, and user
+enums through all six routes and both standalone assembler/linker pipelines.
+The [rejection contract](../../tests/tools/qualified_enum_contract.py) checks
+invalid owners/variants and target types in ordinary compilation and analysis.
+Both positive consumers are registered for installed source/binary checks.
 
 ### F26 — Database results need richer values and resource ergonomics
 
@@ -783,3 +804,151 @@ schema/SQL-aware completion. PostgreSQL currently supports POSIX numeric-host
 or private Unix-socket connections; SQLite and PostgreSQL capability depends on
 available runtime client libraries. Provider errors do not echo credentials or
 SQL values. Result-limit failure is not a transaction rollback guarantee.
+
+### F27 — Vector normalization lost finite directions at extreme magnitudes
+
+**Status:** Fixed for the paired Ny/Matrix source fixtures; public contract
+documented in the [vector reference](../../docs/standard-library/math-vectors.md).
+
+**Evidence:** `vec2.new(3 * scale, 4 * scale)` with `scale = pow(10.0, 200.0)`
+returned infinite length and a zero normalized vector. At `pow(10.0, -200.0)`,
+the squared length underflowed to zero, so `normalize()` returned the original
+tiny vector. Both defects reproduced on all six execution routes. The old
+math fixture only exercised ordinary vector magnitudes.
+
+**Resolution:** Matrix-authored `hypot2`, `hypot3`, and `is_finite` helpers
+provide shared scaled norms and scalar classification. Existing vector
+`length()` methods use the new helpers. `vec2` and `vec3` add `is_finite()` and
+`try_normalize() -> Option<vecN>`. Checked normalization divides each component
+by the largest magnitude before computing the unit direction. It accepts
+finite nonzero vectors even when their unscaled length overflows, including
+subnormal inputs whose reciprocal would overflow. Zero, NaN and infinity
+return `None`. `normalize()` preserves zero inputs and now consistently
+preserves non-finite inputs; previously their results could mix zeros and NaNs.
+
+**Verification:** [Ny](../../tests/language/vector-norms.ny) and
+[Matrix](../../tests/language/vector-norms-matrix.matrix) consumers pass all
+12 source-route slots. Independent coordinate expectations cover Pythagorean
+directions, large/tiny normal values, the smallest subnormal, unrepresentable
+lengths, signed zero, non-finite components, and preservation of input aliases.
+Native `Option<vec2>` and `Option<vec3>` work for these fixtures; this is not a
+blanket claim about arbitrary aggregate enum payloads. The fixtures are also
+registered for installed source/binary consumption.
+
+**Remaining limits:** These approximate norms are not correctly rounded.
+Rounding near the upper finite boundary can produce infinity even for a
+representable mathematical norm; checked normalization remains finite.
+Squared lengths, dot/cross products and distance's initial subtraction can
+still overflow. F29 removes the standard RNG's aggregate-global native blocker
+and adds independent state; this does not add general native aggregate-global
+support. Relative/absolute comparison and interpolation remain future work.
+Probes and route evidence are under `build/math-library-work`.
+
+### F28 — Scientific notation needs a source-language contract
+
+**Status:** Implemented in both frontends and shared NIL decoding.
+
+**Evidence:** The numeric literal `1.0e200` is not accepted by either Ny or
+Matrix. Ny treats the exponent suffix as an undefined identifier; Matrix
+reports `expected a statement, found 'e200'`. The vector fixtures therefore
+construct extreme magnitudes with `pow`, including `pow(2.0, -1074.0)` for the
+smallest subnormal. Minimal probes are in
+`build/math-library-work/literal-probes`.
+
+**Resolution:** Decimal literals accept `e`/`E`, an optional exponent sign,
+and mandatory exponent digits. The exponent makes the value `f64`, even without
+a decimal point. Hexadecimal `e`/`E` digits retain their integer meaning.
+Shared locale-independent conversion accepts finite normal/subnormal values,
+rejects overflow and nonzero values rounding to zero, and accepts exact zero
+with arbitrarily large exponents. Validation runs before lowering and in editor
+analysis, including numeric match patterns and unchecked compilation. The VM,
+NIL validator and LLVM backend use the same conversion. Preprocessing preserves
+exponent tokens without hiding neighboring range macros. Editor highlighting
+and word selection include the complete signed exponent.
+
+**Verification:** Paired [Ny](../../tests/language/scientific-literals.ny) and
+[Matrix](../../tests/language/scientific-literals-matrix.matrix) fixtures cover
+inferred types, globals, arrays, statement/expression matches, signed zero,
+maximum finite values, normal/subnormal boundaries and ordinary/hexadecimal
+literals through all six routes and both assembler/linker pipelines. The
+[negative contract](../../tests/tools/scientific_literals_contract.py) checks
+malformed/range diagnostics in both languages, editor analysis, all compilation
+modes, unchecked builds, and preservation of an existing output artifact.
+Parser, lexer, preprocessing and NIL-loader tests cover token boundaries and
+direct textual/binary NIL. Textual NIL retains its existing `.5` and `1.`
+mantissas; source syntax still requires digits on both sides of a decimal point.
+
+### F29 — Random state blocked native code and range promises exceeded the implementation
+
+**Status:** Fixed for the scoped random API; its distribution contract is
+explicit in the [random-generator reference](../../docs/standard-library/random.md).
+
+**Evidence:** The global RNG's aggregate state lacked native global metadata,
+preventing the existing broad math fixture from compiling natively. Floating
+ranges accepted NaN/infinite endpoints, overflowed when subtracting opposite
+finite extremes, and could round to the excluded upper endpoint for adjacent
+values. The integer sampler's comment incorrectly claimed unbiased full-i32
+coverage: two consecutive MINSTD draws are determined by one of only
+2147483646 states, fewer than the 2^32 possible i32 outputs.
+
+**Resolution:** Scalar global storage preserves the original sequence and uses
+the existing native global contract. Matrix-authored `random_generator` adds
+constructor/reseed, scalar draws, bounded draws and explicit cloning. Every
+step normalizes state before multiplication, including public-field edits.
+Assignment shares state; cloning allocates independent state at the same
+position. Floating bounds must be finite; equal finite bounds preserve their
+minimum without advancing state. Overflowing spans use weighted endpoints,
+and rounded results outside the half-open interval return the minimum.
+Integer sequences and rejection behavior remain compatible, with unsupported
+uniformity/full-domain claims removed.
+
+**Verification:** Paired [Ny](../../tests/language/random-generators.ny) and
+[Matrix](../../tests/language/random-generators-matrix.matrix) consumers check
+independently computed modular-exponentiation sequences, extreme seed
+normalization, aliasing/cloning, global/instance isolation, inclusive integer
+bounds, a rejection requiring four draws, and finite/adjacent/subnormal floating
+intervals. Negative cases cover both APIs and languages. The broad existing
+`math-runtime` fixture now runs through all six routes with unchanged output.
+The new fixtures and broad math consumer are registered for installed source
+and binary-library imports, including assembler/linker pipelines.
+
+**Remaining limits:** MINSTD is deterministic and non-cryptographic; separately
+owned streams are not a statistical independence guarantee. Wider-state and
+uniform full-width sampling remain future work. The global integer-range
+wrapper uses a temporary record; reusable instances avoid that allocation.
+General native aggregate globals remain unsupported. Audit oracles and route
+evidence are under `build/random-library-work`.
+
+### F30 — Large integer expressions can narrow before an i64 argument conversion
+
+**Status:** Confirmed authoring/diagnostic gap; no inference change in this pass.
+
+**Evidence:** Passing `-9223372036854775807 - 1` to an `i64` parameter produces
+zero on both frontends and all six routes. The emitted NIL performs `NEG i32`
+and `SUB i32` before the call. The generator's normalization was correct; its
+test had constructed the wrong seed. Oversized bare literals are accepted
+without a width diagnostic, and the outer parameter type does not widen inner
+arithmetic. A small-literal array also infers `array<i32>` in Matrix rather than
+using an enclosing `array<i64>` annotation to widen its elements.
+
+Independent Ny/Matrix probes also show `2147483647 + 1` (Matrix `plus`)
+wrapping to `-2147483648` before conversion into an i64 destination/parameter.
+Binding the first operand as i64 produces `2147483648` on every route. Matrix's
+unannotated arithmetic therefore does not yet follow the intended wider
+`number` default. Its type reference now states the actual distinction between
+declared types and inferred literal expressions. The probe sources, NIL and
+12 successful route executions are in `build/random-library-work/width-probes`.
+
+**Workaround:** Bind `let maximum: i64 = 9223372036854775807` in Ny or
+`value maximum as number is 9223372036854775807` in Matrix, then construct the
+minimum with `-maximum - 1` or `minus maximum minus 1`. The paired RNG fixtures
+use this form and verify the true i64 extrema against independent oracles.
+An explicit cast on the literal operand also fixes its arithmetic width.
+
+**Next step / acceptance:** Define literal-range and contextual-inference policy
+for both frontends. Diagnose values outside an inferred integer width, or adopt
+specified wider inference; keep explicit wrapping arithmetic distinct from
+accidental narrowing of a literal. Matrix's intended `number` default needs
+matching inferred expression/array behavior and documentation. Cover nested
+arithmetic, calls, arrays, editor diagnostics and all execution routes before
+changing the language contract.

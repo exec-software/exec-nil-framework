@@ -1,0 +1,86 @@
+book validation.qualified_enums
+
+read everything from nil.std.core
+read everything from ny.lang.core
+read ny.lang.core as legacy
+
+Signal begin choice
+    when Ready holding override integer
+    when Idle
+end choice
+
+main returns override integer begin paragraph
+    value selected as Option of override integer is Option.Some holding 9
+    consider selected
+        when nil.std.core.Option.None then say 0
+        when nil.std.core.Option.Some holding payload then say payload
+    end consider
+    consider selected
+        when ny.lang.core.Option.Some holding payload provided payload is greater than 20 then say 0
+        when ny.lang.core.Option.Some holding payload then say payload plus 1
+        otherwise say 0
+    end consider
+    say consider selected
+        when Option.Some holding payload give payload plus 2
+        otherwise give 0
+    end consider
+    say consider selected
+        when nil.std.core.Option.Some holding payload give payload plus 3
+        otherwise give 0
+    end consider
+    say consider selected
+        when ny.lang.core.Option.Some holding payload give payload plus 4
+        otherwise give 0
+    end consider
+
+    value empty as Option of override integer is Option.None
+    consider empty
+        when nil.std.core.Option.Some holding payload then say 0
+        when nil.std.core.Option.None then say 14
+    end consider
+    say consider empty
+        when ny.lang.core.Option.None give 15
+        otherwise give 0
+    end consider
+    value qualified as nil.std.core.Option of override integer is nil.std.core::Option.Some holding 16
+    consider qualified
+        when Option.Some holding payload then say payload
+        otherwise say 0
+    end consider
+    value legacy as ny.lang.core.Option of override integer is ny.lang.core::Option.Some holding 17
+    consider legacy
+        when nil.std.core.Option.Some holding payload then say payload
+        otherwise say 0
+    end consider
+
+    value success as Result of floating, text is Result.Ok holding minus 2.375
+    consider success
+        when nil.std.core.Result.Error holding message then say message
+        when nil.std.core.Result.Ok holding payload then say payload equals minus 2.375
+    end consider
+    value failed as Result of floating, text is Result.Error holding "legacy error"
+    say consider failed
+        when ny.lang.core.Result.Error holding message give message
+        otherwise give "wrong"
+    end consider
+
+    value active as Signal is Signal.Ready holding 18
+    consider active
+        when validation.qualified_enums.Signal.Ready holding payload then say payload
+        otherwise say 0
+    end consider
+    value idle as Signal is validation.qualified_enums::Signal.Idle
+    say consider idle
+        when Signal.Idle give 19
+        otherwise give 0
+    end consider
+    consider selected
+        when legacy.Option.Some holding payload then say payload plus 11
+        otherwise say 0
+    end consider
+    say consider selected
+        when legacy.Option.Some holding payload give payload plus 12
+        otherwise give 0
+    end consider
+    give 0
+end paragraph

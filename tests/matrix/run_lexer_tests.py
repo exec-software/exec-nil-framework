@@ -39,6 +39,8 @@ NEGATIVE_EXPECTATIONS = {
     "backtick-unterminated.matrix": "unterminated escaped identifier",
     "backtick-empty.matrix": "cannot be empty",
     "string-unterminated.matrix": "unterminated text literal",
+    "exponent-missing.matrix": "exponent requires at least one digit",
+    "exponent-underflow.matrix": "outside the representable",
 }
 
 # Words the parser matches positionally on folded text rather than reserving,
@@ -48,6 +50,9 @@ SOFT_WORDS = {
     "least", "most", "greater", "less", "than", "equal", "left", "right",
     "by", "each", "length", "milliseconds", "receiver", "x86_64",
 }
+
+# Lowercase markers inside a numeric token are not standalone word terminals.
+LEXICAL_TERMINALS = {"e"}
 
 
 def check_grammar_sync(root):
@@ -63,7 +68,7 @@ def check_grammar_sync(root):
     table = set(re.findall(r'\{"([a-z_]+)", kw::', lexer_path.read_text()))
 
     problems = []
-    for word in sorted(terminals - table - SOFT_WORDS):
+    for word in sorted(terminals - table - SOFT_WORDS - LEXICAL_TERMINALS):
         problems.append(f"grammar uses '{word}' but the lexer does not "
                         f"reserve it; add it to keyword_table or to SOFT_WORDS")
     for word in sorted(table - terminals):

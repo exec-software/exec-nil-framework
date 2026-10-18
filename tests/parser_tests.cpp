@@ -2,8 +2,12 @@
 #include "codegen.hpp"
 #include "nil_loader.hpp"
 #include "type_checker.hpp"
+#include "matrix_lexer.hpp"
+#include "numeric_literal.hpp"
 
+#include <cmath>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <map>
 #include <sstream>
@@ -435,6 +439,50 @@ void test_enum_variant_mismatch_terminates() {
         "a well-formed enum must keep its declaration");
 }
 
+void test_scientific_numeric_literals() {
+  const std::string source = "1e3 1.5e-3 1E+2 5e-324 0xDEAD 0x1E3";
+  const std::vector<std::string> expected = {
+      "1e3", "1.5e-3", "1E+2", "5e-324", "0xDEAD", "0x1E3"};
+  ny::lexer ny_lexer(source);
+  const auto ny_tokens = ny_lexer.scan_tokens();
+  matrix::lexer matrix_lexer(source);
+  const auto matrix_tokens = matrix_lexer.scan();
+  check(ny_tokens.size() == expected.size() + 1 &&
+            matrix_tokens.size() == expected.size() + 1 && !matrix_lexer.has_errors(),
+        "both lexers preserve exponent signs inside a single number token");
+  for (std::size_t i = 0; i < expected.size(); ++i) {
+    check(i < ny_tokens.size() && ny_tokens[i].kind == ny::token_kind::number_literal &&
+              ny_tokens[i].lexeme == expected[i], "Ny numeric token " + expected[i]);
+    check(i < matrix_tokens.size() && matrix_tokens[i].kind == matrix::token_kind::number_literal &&
+              matrix_tokens[i].lexeme == expected[i], "Matrix numeric token " + expected[i]);
+  }
+  const std::string ny_range = "1..3";
+  const auto range = ny::lexer(ny_range).scan_tokens();
+  check(range.size() == 4 && range[1].kind == ny::token_kind::double_dot,
+        "numeric scanning preserves Ny ranges");
+  const std::string matrix_period = "say 1e3.";
+  const auto sentence = matrix::lexer(matrix_period).scan();
+  check(sentence.size() == 4 && sentence[2].kind == matrix::token_kind::statement_end,
+        "numeric scanning preserves Matrix sentence periods");
+
+  double number = 0.0;
+  check(!ny::parse_floating_literal("5e-324", number) &&
+            number == std::numeric_limits<double>::denorm_min(),
+        "the smallest representable subnormal is accepted and rounded");
+  check(!ny::parse_floating_literal("-0e999999999999999999999", number) &&
+            number == 0.0 && std::signbit(number), "negative exact zero preserves its sign");
+  check(!ny::parse_floating_literal("+1E+2", number) && number == 100.0,
+        "signed textual NIL exponent literal");
+  for (const auto *spelling : {"1e", "1e+", "1e-", "1e309", "1e-324", "1e-9999999999"}) {
+    check(ny::parse_floating_literal(spelling, number) != nullptr,
+          std::string("invalid or unrepresentable float is rejected: ") + spelling);
+  }
+  for (const auto *spelling : {"0xDEAD", "0xfeed", "0x1E3", "-0x1E3"}) {
+    check(!ny::is_floating_literal_spelling(spelling),
+          std::string("hexadecimal e/E remains an integer digit: ") + spelling);
+  }
+}
+
 } // namespace
 
 int main() {
@@ -448,6 +496,7 @@ int main() {
   test_nested_qualified_generic_call_still_parses();
   test_checker_sessions_do_not_share_impl_visitation();
   test_enum_variant_mismatch_terminates();
+  test_scientific_numeric_literals();
   if (failures != 0)
     return 1;
 

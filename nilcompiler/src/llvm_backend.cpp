@@ -3886,9 +3886,9 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           try {
             std::size_t consumed = 0;
             if (is_floating_literal_spelling(arg)) {
-              const double value = std::stod(arg, &consumed);
-              if (consumed != arg.size())
-                throw std::invalid_argument("trailing numeric characters");
+              double value = 0.0;
+              if (const auto *message = parse_floating_literal(arg, value))
+                throw std::invalid_argument(message);
               impl_->pushValue(
                   llvm::ConstantFP::get(llvm::Type::getDoubleTy(ctx), value),
                   "f64");

@@ -32,6 +32,12 @@ let byte: u8 = 255 as u8
 let fraction: f64 = 0.5
 ```
 
+An outer `i64` destination or parameter does not widen arithmetic inside its
+initializer or argument. Bind or cast an operand before that arithmetic:
+`(2147483647 as i64) + 1` is `2147483648`, while `2147483647 + 1` wraps at
+`i32` before assignment. Oversized bare integer operands currently lack a
+range diagnostic; see [F30](../../matrix/docs/next-version-findings.md#f30--large-integer-expressions-can-narrow-before-an-i64-argument-conversion).
+
 ### Arithmetic and conversions
 
 Integer addition, subtraction, multiplication, and unary negation wrap at the

@@ -1,0 +1,39 @@
+book tests.scientific-literals-matrix
+read everything from nil.std.math
+
+constant global-scale as floating is 1e3
+
+half receives input as floating returns floating begin paragraph
+    give input over 2e0
+end paragraph
+
+classify receives input as floating returns override integer begin paragraph
+    consider input
+        when 1e3 then give 1
+        when 1.5e-3 then give 2
+        otherwise give 0
+    end consider
+    give 0
+end paragraph
+
+main returns override integer begin paragraph
+    value inferred is 1e0
+    say (half with input being inferred) equals 0.5
+    say global-scale equals 1000.0
+    say 1E+2 equals 100.0 and 1.25e-2 equals 0.0125
+    say minus 2.5e+2 equals minus 250.0
+    say 1e3 minus 2.0 equals 998.0
+    say 0xDEAD equals 57005 and 0x1E3 equals 483 and 0xfeed equals 65261
+    value items is [1e0, 2.5e1, 3E-1]
+    say (items at 0) equals 1.0 and (items at 1) equals 25.0 and (items at 2) equals 0.3
+    say (classify with input being 1000.0) equals 1 and (classify with input being 0.0015) equals 2
+    say consider 1e3 when 1E+3 give true otherwise give false end consider
+    say 1.7976931348623157e308 is greater than 1.7e308
+    say 2.2250738585072014e-308 is greater than 2.225073858507201e-308
+    say 5e-324 is greater than 0.0 and 5e-324 plus 5e-324 equals 1e-323
+    say 5e-324 over 5e-324 equals 1.0
+    say 0e999999999999999999999 equals 0.0 and 0e-999999999999999999999 equals 0.0
+    say (atan2 with y being minus 0e3, x being minus 1.0) is less than 0.0 and (atan2 with y being 0E-99999999999999, x being minus 1.0) is greater than 0.0
+    say 1.25 plus 2.5 equals 3.75.
+    give 0
+end paragraph

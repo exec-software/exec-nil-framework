@@ -1,0 +1,55 @@
+!!! Scaled Euclidean norms avoid squaring large or tiny input components.
+!!! These helpers use ordinary IEEE f64 operations, without a new intrinsic.
+book nil.std.math
+
+read everything from nil.std.math.math
+
+public is-finite receives value-number as override double returns boolean begin paragraph
+    !!! NaN fails equality; either infinity minus itself is NaN.
+    give value-number equals value-number and (value-number minus value-number) equals 0.0
+end paragraph
+
+norm-magnitude receives component as override double returns override double begin paragraph
+    when component is less than 0.0 then give minus component end when
+    give component
+end paragraph
+
+norm-scale2 receives x as override double, y as override double returns override double begin paragraph
+    value first is norm-magnitude with component being x
+    value second is norm-magnitude with component being y
+    when first is greater than second then give first end when
+    give second
+end paragraph
+
+norm-scale3 receives x as override double, y as override double, z as override double returns override double begin paragraph
+    value first is norm-scale2 with x being x, y being y
+    value second is norm-magnitude with component being z
+    when first is greater than second then give first end when
+    give second
+end paragraph
+
+!!! NaN propagates, including when another component is infinite.
+!!! Infinite components otherwise produce positive infinity. A finite norm
+!!! can still overflow at or near the upper f64 boundary due to rounding.
+public hypot2 receives x as override double, y as override double returns override double begin paragraph
+    when not (is-finite with value-number being x) or not (is-finite with value-number being y) then
+        give (norm-magnitude with component being x) plus (norm-magnitude with component being y)
+    end when
+    value scale is norm-scale2 with x being x, y being y
+    when scale equals 0.0 then give 0.0 end when
+    value first is x over scale
+    value second is y over scale
+    give scale times (sqrt with x being (first times first plus second times second))
+end paragraph
+
+public hypot3 receives x as override double, y as override double, z as override double returns override double begin paragraph
+    when not (is-finite with value-number being x) or not (is-finite with value-number being y) or not (is-finite with value-number being z) then
+        give (norm-magnitude with component being x) plus (norm-magnitude with component being y) plus (norm-magnitude with component being z)
+    end when
+    value scale is norm-scale3 with x being x, y being y, z being z
+    when scale equals 0.0 then give 0.0 end when
+    value first is x over scale
+    value second is y over scale
+    value third is z over scale
+    give scale times (sqrt with x being (first times first plus second times second plus third times third))
+end paragraph

@@ -6,7 +6,9 @@
 #include "type_checker.hpp"
 #include "diagnostics.hpp"
 #include "nil_contract.hpp"
+#include "numeric_literal.hpp"
 #include "ownership_check.hpp"
+#include "standard_namespace.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstring> // for strlen
@@ -1583,7 +1585,13 @@ type_info type_checker::infer_literal_type(const std::string &literal) const {
   if (literal == "true" || literal == "false")
     return type_bool;
 
-  // numeric detection: simple heuristic (integers vs floats)
+  if (is_floating_literal_spelling(literal)) {
+    double value = 0.0;
+    if (!parse_floating_literal(literal, value)) return type_f64;
+  }
+  if (has_hexadecimal_integer_prefix(literal)) return type_i32;
+
+  // Decimal integer detection (floating/hex literals handled above).
   bool numeric = true;
   bool has_dot = false;
   for (size_t i = 0; i < literal.size(); ++i) {
@@ -1668,7 +1676,43 @@ type_checker::infer_type_from_pattern(const ast_pattern &pattern) {
   }
 }
 
-void type_checker::bind_pattern_to_type(const ast_pattern &pattern,
+const symbol *type_checker::resolve_pattern_type_symbol(std::string name) const {
+  const auto lookup = [&](const std::string &candidate) -> const symbol * {
+    if (candidate.find("::") != std::string::npos)
+      return resolve_qualified_name(candidate);
+    const auto qualified = resolve_type_name_with_imports(candidate);
+    if (const auto *found = symbols_.lookup_type(qualified.value_or(candidate)))
+      return found;
+    // An impl can add its receiver to the current namespace. Match owners
+    // still resolve in the enclosing module's type scope.
+    std::string scope = current_module_.value_or("");
+    while (!scope.empty()) {
+      if (const auto *found = symbols_.lookup_type(scope + "::" + candidate))
+        return found;
+      const auto separator = scope.rfind("::");
+      if (separator == std::string::npos) break;
+      scope.resize(separator);
+    }
+    // The standard built-ins remain available for matching returned values
+    // when a caller imports only the provider (for example nil.std.io.file).
+    if (candidate == "Option" || candidate == "Result")
+      return symbols_.lookup_type("nil::std::core::" + candidate);
+    return nullptr;
+  };
+  const symbol *found = lookup(name);
+  if (!found) {
+    const auto separator = name.rfind("::");
+    const auto leaf_start = separator == std::string::npos ? 0 : separator + 2;
+    const auto leaf = name.substr(leaf_start);
+    if (leaf == "option" || leaf == "result") {
+      name[leaf_start] = static_cast<char>(std::toupper(name[leaf_start]));
+      found = lookup(name);
+    }
+  }
+  return found && found->kind == symbol_kind::type_symbol ? found : nullptr;
+}
+
+void type_checker::bind_pattern_to_type(ast_pattern &pattern,
                                         const type_info &inferred_type,
                                         int line) {
   switch (pattern.kind) {
@@ -1711,7 +1755,7 @@ void type_checker::bind_pattern_to_type(const ast_pattern &pattern,
     // inferred_type itself (best-effort fallback).
     auto parts = parse_generic_type_string(inferred_type.name);
 
-    if (parts.base_name == "tuple" && !parts.type_args.empty()) {
+    if (pattern.name.empty() && parts.base_name == "tuple" && !parts.type_args.empty()) {
       for (size_t i = 0; i < pattern.subpatterns.size(); ++i) {
         std::string arg_type =
             (i < parts.type_args.size() ? parts.type_args[i]
@@ -1720,6 +1764,38 @@ void type_checker::bind_pattern_to_type(const ast_pattern &pattern,
         bind_pattern_to_type(pattern.subpatterns[i], tinfo, line);
       }
       return;
+    }
+
+    std::string path = pattern.name;
+    for (auto dot = path.find('.'); dot != std::string::npos;
+         dot = path.find('.', dot + 2))
+      path.replace(dot, 1, "::");
+    path = canonical_std_namespace(std::move(path));
+    const auto owner_end = path.rfind("::");
+    if (owner_end != std::string::npos) {
+      const auto owner = path.substr(0, owner_end);
+      const auto variant = path.substr(owner_end + 2);
+      const symbol *owner_symbol = resolve_pattern_type_symbol(owner);
+      if (!owner_symbol || (owner_symbol->defining_node &&
+          owner_symbol->defining_node->kind != ast_node_kind::enum_decl_node)) {
+        add_error(line, "Unknown enum owner '" + owner + "' in match pattern");
+      } else {
+        // Variant symbols are predeclared, so this also checks enums whose
+        // declaration follows the matching function in source order.
+        if (!symbols_.lookup(owner_symbol->name + "::" + variant))
+          add_error(line, "Unknown variant '" + variant + "' in match pattern for enum '" + owner + "'");
+        const auto target_parts = parse_generic_type_string(resolve_type(inferred_type.name).name);
+        const symbol *target_symbol = resolve_pattern_type_symbol(target_parts.base_name);
+        const bool unknown_target = inferred_type.name == "<unknown>" ||
+            inferred_type.name == "<error>" || inferred_type.name == "any";
+        if (!unknown_target && (!target_symbol ||
+            target_symbol->name != owner_symbol->name))
+          add_error(line, "Match pattern enum '" + owner +
+              "' does not match target type '" + inferred_type.name + "'");
+        // Retain the checked declaration identity for lowering, including
+        // namespace aliases whose spelling has no standalone runtime meaning.
+        pattern.name = owner_symbol->name + "::" + variant;
+      }
     }
 
     // Handle enum constructor patterns like "EnumName::VariantName"
@@ -1772,7 +1848,7 @@ void type_checker::bind_pattern_to_type(const ast_pattern &pattern,
         const std::string &payload_name = type_parts.type_args[*payload_index];
         const type_info payload_type{payload_name,
                                      is_primitive_name(payload_name)};
-        for (const auto &subpattern : pattern.subpatterns)
+        for (auto &subpattern : pattern.subpatterns)
           bind_pattern_to_type(subpattern, payload_type, line);
         return;
       }
@@ -1816,7 +1892,7 @@ void type_checker::bind_pattern_to_type(const ast_pattern &pattern,
               }
               type_info assoc_type{assoc_type_name,
                                    is_primitive_name(assoc_type_name)};
-              for (const auto &sp : pattern.subpatterns) {
+              for (auto &sp : pattern.subpatterns) {
                 bind_pattern_to_type(sp, assoc_type, line);
               }
               return;
@@ -1828,7 +1904,7 @@ void type_checker::bind_pattern_to_type(const ast_pattern &pattern,
     }
 
     // Fallback: bind each subpattern to the broader inferred_type
-    for (const auto &sp : pattern.subpatterns) {
+    for (auto &sp : pattern.subpatterns) {
       bind_pattern_to_type(sp, inferred_type, line);
     }
     return;
@@ -3752,7 +3828,7 @@ void type_checker::visit(ast_match_stmt &s) {
 
   type_info target_type = last_expr_type_.value_or(type_unknown);
 
-  for (const auto &arm : s.arms) {
+  for (auto &arm : s.arms) {
     // Infer pattern type if possible
     std::optional<type_info> pattern_type =
         infer_type_from_pattern(arm.pattern);
@@ -5775,7 +5851,7 @@ void type_checker::visit(ast_string_literal &e) {
 
 void type_checker::visit(ast_number_literal &e) {
   // Infer i32 or f64 based on content
-  if (e.value.find('.') != std::string::npos) {
+  if (is_floating_literal_spelling(e.value)) {
     last_expr_type_ = type_f64;
   } else {
     last_expr_type_ = type_i32;
@@ -5796,6 +5872,25 @@ void type_checker::visit(ast_match_expr &e) {
   type_info target_type = last_expr_type_.value_or(type_unknown);
 
   // Helper to convert expression to pattern (since ast_match_expr uses exprs)
+  const auto constructor_name = [](const ast_expr &expression) -> std::string {
+    if (expression.kind == ast_node_kind::identifier_expr_node)
+      return static_cast<const ast_identifier_expr &>(expression).name;
+    if (expression.kind == ast_node_kind::member_access_expr_node) {
+      const auto &member = static_cast<const ast_member_access_expr &>(expression);
+      if (member.object && member.object->kind == ast_node_kind::identifier_expr_node)
+        return static_cast<const ast_identifier_expr &>(*member.object).name +
+               "::" + member.member_name;
+    }
+    return {};
+  };
+  const auto has_enum_owner = [&](const std::string &name) {
+    const auto separator = name.rfind("::");
+    if (separator == std::string::npos) return false;
+    const auto owner = name.substr(0, separator);
+    const symbol *type = resolve_pattern_type_symbol(owner);
+    return type && type->defining_node &&
+           type->defining_node->kind == ast_node_kind::enum_decl_node;
+  };
   std::function<ast_pattern(const ast_expr_ptr &)> expr_to_pattern;
   expr_to_pattern = [&](const ast_expr_ptr &expr) -> ast_pattern {
     ast_pattern p;
@@ -5823,16 +5918,20 @@ void type_checker::visit(ast_match_expr &e) {
       if (name == "_")
         p.kind = ast_pattern_kind::wildcard_pattern;
       else {
-        p.kind = ast_pattern_kind::variable_pattern;
+        p.kind = has_enum_owner(name)
+                     ? ast_pattern_kind::constructor_pattern
+                     : ast_pattern_kind::variable_pattern;
         p.name = name;
       }
+    } else if (expr->kind == ast_node_kind::member_access_expr_node) {
+      p.name = constructor_name(*expr);
+      if (has_enum_owner(p.name))
+        p.kind = ast_pattern_kind::constructor_pattern;
     } else if (expr->kind == ast_node_kind::call_expr_node) {
       // Constructor pattern: some(v)
       auto call = static_cast<ast_call_expr *>(expr.get());
-      if (call->callee &&
-          call->callee->kind == ast_node_kind::identifier_expr_node) {
+      if (call->callee && has_enum_owner(p.name = constructor_name(*call->callee))) {
         p.kind = ast_pattern_kind::constructor_pattern;
-        p.name = static_cast<ast_identifier_expr *>(call->callee.get())->name;
         for (const auto &arg : call->args) {
           p.subpatterns.push_back(expr_to_pattern(arg));
         }
@@ -5848,8 +5947,22 @@ void type_checker::visit(ast_match_expr &e) {
     // Convert expr pattern to ast_pattern
     ast_pattern pattern = expr_to_pattern(c.pattern);
 
-    // Infer pattern type
-    std::optional<type_info> pattern_type = infer_type_from_pattern(pattern);
+    const bool wildcard = c.pattern &&
+        c.pattern->kind == ast_node_kind::identifier_expr_node &&
+        static_cast<const ast_identifier_expr &>(*c.pattern).name == "_";
+    const bool enum_pattern = pattern.kind == ast_pattern_kind::constructor_pattern;
+    const bool value_pattern = !wildcard && !enum_pattern;
+    std::optional<type_info> pattern_type;
+    if (value_pattern && c.pattern) {
+      // Non-enum expression patterns compare against ordinary values. They
+      // must resolve fields, calls, and globals normally, not create bindings
+      // that hide undefined identifiers from editor analysis.
+      last_expr_type_.reset();
+      c.pattern->accept(*this);
+      pattern_type = last_expr_type_;
+    } else {
+      pattern_type = infer_type_from_pattern(pattern);
+    }
 
     // Check compatibility with target
     if (pattern_type.has_value() && target_type.name != "<unknown>") {
@@ -5868,7 +5981,24 @@ void type_checker::visit(ast_match_expr &e) {
             ? target_type
             : (pattern_type.has_value() ? *pattern_type : type_any);
 
-    bind_pattern_to_type(pattern, binding_type, e.line);
+    if (!value_pattern)
+      bind_pattern_to_type(pattern, binding_type, e.line);
+    if (pattern.kind == ast_pattern_kind::constructor_pattern && c.pattern) {
+      ast_expr *constructor = c.pattern.get();
+      if (constructor->kind == ast_node_kind::call_expr_node)
+        constructor = static_cast<ast_call_expr *>(constructor)->callee.get();
+      if (constructor && constructor->kind == ast_node_kind::identifier_expr_node)
+        static_cast<ast_identifier_expr *>(constructor)->name = pattern.name;
+      else if (constructor && constructor->kind == ast_node_kind::member_access_expr_node) {
+        auto &member = *static_cast<ast_member_access_expr *>(constructor);
+        const auto separator = pattern.name.rfind("::");
+        if (separator != std::string::npos && member.object &&
+            member.object->kind == ast_node_kind::identifier_expr_node) {
+          static_cast<ast_identifier_expr &>(*member.object).name = pattern.name.substr(0, separator);
+          member.member_name = pattern.name.substr(separator + 2);
+        }
+      }
+    }
 
     // Check guard
     if (c.guard) {

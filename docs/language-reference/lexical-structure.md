@@ -78,11 +78,15 @@ Examples: `x`, `myFunction`, `counter_1`, `_private`
 #### Numbers
 
 ```
-number_literal = digit { digit }
-               | '0x' hex_digit { hex_digit }
+number_literal = digit { digit } [ '.' digit { digit } ]
+                 [ ('e' | 'E') [ '+' | '-' ] digit { digit } ]
+               | ('0x' | '0X') hex_digit { hex_digit }
 ```
 
-Examples: `42`, `3.14`, `0xFF`
+Examples: `42`, `3.14`, `1e3`, `1.5E-3`, `0xFF`. A decimal point or exponent
+makes the literal `f64`; see the [floating literal contract](expressions.md#float-literals)
+for range diagnostics. A fractional part requires digits on both sides of the
+point, leaving `..` available for ranges.
 
 #### Strings
 

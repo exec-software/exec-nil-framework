@@ -1,0 +1,7 @@
+say 1e3.
+say 1.5e-3.
+say 1E+2.
+say 5e-324.
+say 0e999999999999999999999.
+say 0xDEAD.
+say 0x1E3.

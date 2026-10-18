@@ -2354,7 +2354,10 @@ ny::ast_expr_ptr parser::parse_postfix() {
     // 'Type.Variant holding v' constructs a variant with a payload, which
     // lowers to the same call shape Ny writes as 'Type.Variant(v)'.
     if (check(kw::holding) &&
-        expr->kind == ny::ast_node_kind::member_access_expr_node) {
+        (expr->kind == ny::ast_node_kind::member_access_expr_node ||
+         (expr->kind == ny::ast_node_kind::identifier_expr_node &&
+          static_cast<const ny::ast_identifier_expr &>(*expr).name.find("::") !=
+              std::string::npos))) {
       advance();
       std::vector<ny::ast_expr_ptr> payload{parse_unary()};
       expr = std::make_shared<ny::ast_call_expr>(
@@ -3002,18 +3005,20 @@ ny::ast_expr_ptr parser::parse_consider_expression() {
                       "arm pattern");
         break;
       }
-      ny::ast_expr_ptr base = std::make_shared<ny::ast_identifier_expr>(
-          nil_symbol(advance().lexeme), arm_line);
-      if (check(matrix::token_kind::dot) &&
-          (peek(1).is_name() || peek(1).kind == matrix::token_kind::keyword)) {
-        advance();
+      const std::string variant_name = nil_path(parse_dotted_name());
+      const auto separator = variant_name.rfind("::");
+      ny::ast_expr_ptr base;
+      if (separator != std::string::npos) {
+        auto owner = std::make_shared<ny::ast_identifier_expr>(
+            variant_name.substr(0, separator), arm_line);
         base = std::make_shared<ny::ast_member_access_expr>(
-            base, advance().lexeme, arm_line);
+            owner, variant_name.substr(separator + 2), arm_line);
       } else {
         error(peek(), "expected '.<variant>' after the choice name",
               "a value-position arm matches a literal or a choice variant: "
               "'when 1 give ...' or 'when choice.Variant [holding name] "
               "give ...'");
+        base = std::make_shared<ny::ast_identifier_expr>(variant_name, arm_line);
       }
       if (match(kw::holding)) {
         std::vector<ny::ast_expr_ptr> bound;

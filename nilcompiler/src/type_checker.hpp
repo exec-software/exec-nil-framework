@@ -259,7 +259,8 @@ private:
   // Bind pattern variables into the current symbol table scope with the
   // provided `inferred_type` as the canonical type for each bound variable.
   // This function is a no-op for purely literal or wildcard patterns.
-  void bind_pattern_to_type(const ast_pattern &pattern,
+  const symbol *resolve_pattern_type_symbol(std::string name) const;
+  void bind_pattern_to_type(ast_pattern &pattern,
                             const type_info &inferred_type, int line = 0);
 
   // Built-in types

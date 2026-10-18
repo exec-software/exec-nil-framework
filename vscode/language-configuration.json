@@ -72,7 +72,7 @@
       "'"
     ]
   ],
-  "wordPattern": "(-?\\d*\\.?\\d\\w*)|([A-Za-z_][A-Za-z0-9_]*)",
+  "wordPattern": "0[xX][0-9A-Fa-f]+|[0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|[A-Za-z_][A-Za-z0-9_]*",
   "indentationRules": {
     "increaseIndentPattern": "^\\s*(?:(?:pub|abstract|virtual|override)\\s+)*(?:(?:fn|function|fun|struct|enum|trait|impl|class|test|example|property|attempt|match|loop)\\b|(?:if|while|for)\\b)(?!.*\\bend\\b).*$|^.*\\{[^}\"']*$",
     "decreaseIndentPattern": "^\\s*(?:end\\b|else\\b|elseif\\b|when\\b|fault\\b|recover\\b|})",

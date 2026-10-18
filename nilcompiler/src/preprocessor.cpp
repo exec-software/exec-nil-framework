@@ -1124,6 +1124,34 @@ std::string preprocessor::expand_macros(const std::string &text) const {
   std::string out;
   out.reserve(text.size());
 
+  // Protect numeric tokens from identifier/parameter replacement: a macro
+  // named e3 or E must not change 1e3 or 1E+2. Respect language token boundaries
+  // so macros after ranges/member dots remain expandable. Hexadecimal e/E are
+  // digits, so the following +/- still begins an ordinary operator.
+  const auto numeric_end = [](const std::string &input, size_t start) {
+    const bool hex = start + 1 < input.size() && input[start] == '0' &&
+        (input[start + 1] == 'x' || input[start + 1] == 'X');
+    size_t end = start;
+    if (hex) {
+      end += 2;
+      while (end < input.size() &&
+             std::isxdigit(static_cast<unsigned char>(input[end]))) ++end;
+      return end;
+    }
+    const auto digit = [](char c) { return c >= '0' && c <= '9'; };
+    while (end < input.size() && digit(input[end])) ++end;
+    if (end + 1 < input.size() && input[end] == '.' && digit(input[end + 1])) {
+      ++end;
+      while (end < input.size() && digit(input[end])) ++end;
+    }
+    if (end < input.size() && (input[end] == 'e' || input[end] == 'E')) {
+      ++end;
+      if (end < input.size() && (input[end] == '+' || input[end] == '-')) ++end;
+      while (end < input.size() && digit(input[end])) ++end;
+    }
+    return end;
+  };
+
   size_t i = 0;
   while (i < text.size()) {
     // Check for string literal and skip it (don't expand macros inside strings)
@@ -1137,6 +1165,13 @@ std::string preprocessor::expand_macros(const std::string &text) const {
       }
       if (i < text.size())
         out += text[i++];
+      continue;
+    }
+
+    if (std::isdigit(static_cast<unsigned char>(text[i]))) {
+      const auto end = numeric_end(text, i);
+      out.append(text, i, end - i);
+      i = end;
       continue;
     }
 
@@ -1233,6 +1268,10 @@ std::string preprocessor::expand_macros(const std::string &text) const {
               if (std::isspace(static_cast<unsigned char>(replacement[p]))) {
                 tokens.push_back({std::string(1, replacement[p]), false, -1});
                 p++;
+              } else if (std::isdigit(static_cast<unsigned char>(replacement[p]))) {
+                const auto end = numeric_end(replacement, p);
+                tokens.push_back({replacement.substr(p, end - p), false, -1});
+                p = end;
               } else if (std::isalpha(
                              static_cast<unsigned char>(replacement[p])) ||
                          replacement[p] == '_') {

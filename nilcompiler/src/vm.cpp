@@ -1021,10 +1021,9 @@ void VM::executeInstruction(const Instruction &instr) {
     // A hexadecimal integer may contain e/E as a digit, so determine its
     // radix before treating exponent characters as a floating-point marker.
     if (is_floating_literal_spelling(instr.args[0])) {
-      std::size_t consumed = 0;
-      const auto value = std::stod(instr.args[0], &consumed);
-      if (consumed != instr.args[0].size())
-        throw std::runtime_error("Invalid numeric literal: " + instr.args[0]);
+      double value = 0.0;
+      if (const auto *message = parse_floating_literal(instr.args[0], value))
+        throw std::runtime_error(std::string(message) + ": " + instr.args[0]);
       pushStack(value);
     } else {
       const std::string &literal = instr.args[0];

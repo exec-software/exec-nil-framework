@@ -66,6 +66,17 @@ test("grammar scopes annotations, literals, operators, and both line comments", 
   assert.ok(scopesForFragment(grammar, "# hash comment", "hash comment").includes("comment.line.number-sign.ny"));
 });
 
+test("grammar keeps scientific literals whole and preserves hexadecimal integers", async () => {
+  const grammar = await loadNyGrammar();
+  assert.ok(grammar);
+  for (const literal of ["1e3", "1.5E-3", "2E+2", "5e-324", "0e99999999999999999999"]) {
+    assert.ok(scopesForFragment(grammar, `let value = ${literal}-2.0`, literal).includes("constant.numeric.decimal.ny"));
+  }
+  assert.ok(scopesForFragment(grammar, "let value = 0x1E3", "0x1E3").includes("constant.numeric.hex.ny"));
+  const config = JSON.parse(fs.readFileSync("language-configuration.json", "utf8")) as { wordPattern: string };
+  assert.deepEqual("1e3 1.5E-3 2E+2 0x1E3".match(new RegExp(config.wordPattern, "g")), ["1e3", "1.5E-3", "2E+2", "0x1E3"]);
+});
+
 test("grammar maintains both accepted multiline comment forms", async () => {
   const grammar = await loadNyGrammar();
   assert.ok(grammar);

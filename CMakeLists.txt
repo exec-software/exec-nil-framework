@@ -2254,6 +2254,92 @@ if(BUILD_TESTING)
             --expected-exit 0
             --routes all
         )
+        foreach(enum_frontend IN ITEMS ny matrix)
+            if(enum_frontend STREQUAL "ny")
+                set(enum_fixture qualified-enum-patterns)
+            else()
+                set(enum_fixture qualified-enum-patterns-matrix)
+            endif()
+            add_ny_route_test(
+                ny.routes.${enum_fixture}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${enum_fixture}.${enum_frontend}"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${enum_fixture}.stdout"
+                --expected-exit 0
+                --routes all
+                --compiler-arg=--sdk-path
+                --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+            )
+            if(TARGET nilassembler AND TARGET nillinker)
+                add_test(
+                    NAME ny.tools.${enum_fixture}
+                    COMMAND "${Python3_EXECUTABLE}"
+                            "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_toolchain_pipeline.py"
+                            --compiler $<TARGET_FILE:nilcompiler>
+                            --assembler $<TARGET_FILE:nilassembler>
+                            --linker $<TARGET_FILE:nillinker>
+                            --runtime $<TARGET_FILE:nilruntime>
+                            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${enum_fixture}.${enum_frontend}"
+                            --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${enum_fixture}.stdout"
+                            --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/tests/tools"
+                )
+                set_tests_properties(ny.tools.${enum_fixture} PROPERTIES
+                    LABELS "tools;native;rc" SKIP_RETURN_CODE 77 TIMEOUT 240)
+            endif()
+        endforeach()
+        add_test(
+            NAME ny.qualified-enum-contract
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/qualified_enum_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                    --llvm "${NIL_ENABLE_LLVM}"
+        )
+        set_tests_properties(ny.qualified-enum-contract PROPERTIES
+            LABELS "typecheck;analysis;rc" TIMEOUT 120)
+        foreach(scientific_frontend IN ITEMS ny matrix)
+            if(scientific_frontend STREQUAL "ny")
+                set(scientific_fixture scientific-literals)
+            else()
+                set(scientific_fixture scientific-literals-matrix)
+            endif()
+            add_ny_route_test(
+                ny.routes.${scientific_fixture}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${scientific_fixture}.${scientific_frontend}"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${scientific_fixture}.stdout"
+                --expected-exit 0
+                --routes all
+                --compiler-arg=--sdk-path
+                --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+            )
+            if(TARGET nilassembler AND TARGET nillinker)
+                add_test(
+                    NAME ny.tools.${scientific_fixture}
+                    COMMAND "${Python3_EXECUTABLE}"
+                            "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_toolchain_pipeline.py"
+                            --compiler $<TARGET_FILE:nilcompiler>
+                            --assembler $<TARGET_FILE:nilassembler>
+                            --linker $<TARGET_FILE:nillinker>
+                            --runtime $<TARGET_FILE:nilruntime>
+                            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${scientific_fixture}.${scientific_frontend}"
+                            --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${scientific_fixture}.stdout"
+                            --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                            --work-dir "${CMAKE_CURRENT_BINARY_DIR}/tests/tools"
+                )
+                set_tests_properties(ny.tools.${scientific_fixture} PROPERTIES
+                    LABELS "tools;native;rc" SKIP_RETURN_CODE 77 TIMEOUT 240)
+            endif()
+        endforeach()
+        add_test(
+            NAME ny.scientific-literals-contract
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/scientific_literals_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --llvm "${NIL_ENABLE_LLVM}"
+        )
+        set_tests_properties(ny.scientific-literals-contract PROPERTIES
+            LABELS "typecheck;analysis;rc" TIMEOUT 120)
         add_ny_route_test(
             ny.routes.canonical-option-result-methods
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/canonical-option-result-methods.ny"
@@ -2300,15 +2386,42 @@ if(BUILD_TESTING)
             --compiler-arg=--sdk-path
             --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
         )
+        foreach(nil_math_fixture IN ITEMS vector-norms vector-norms-matrix random-generators random-generators-matrix)
+            if(nil_math_fixture MATCHES "-matrix$")
+                set(nil_math_suffix matrix)
+            else()
+                set(nil_math_suffix ny)
+            endif()
+            add_ny_route_test(
+                ny.routes.${nil_math_fixture}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_math_fixture}.${nil_math_suffix}"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_math_fixture}.stdout"
+                --expected-exit 0
+                --routes all
+                --compiler-arg=--sdk-path
+                --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+            )
+        endforeach()
         add_ny_route_test(
             ny.routes.math-runtime
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/math-runtime.ny"
             --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/math-runtime.stdout"
             --expected-exit 0
-            --routes text-interpreter,binary-interpreter
+            --routes all
             --compiler-arg=--sdk-path
             --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
         )
+        add_test(
+            NAME ny.random-range-contract
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/random_range_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                    --llvm "${NIL_ENABLE_LLVM}"
+        )
+        set_tests_properties(ny.random-range-contract PROPERTIES
+            LABELS "stdlib;runtime;rc" TIMEOUT 180)
         add_ny_route_test(
             ny.routes.math-invalid-range-runtime
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/math-invalid-range-runtime.ny"

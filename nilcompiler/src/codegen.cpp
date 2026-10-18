@@ -8,9 +8,11 @@
 #include "inline_asm.hpp"
 #include "diagnostics.hpp"
 #include "nil_contract.hpp"
+#include "numeric_literal.hpp"
 #include "ownership_check.hpp"
 #include "concurrency_contract.hpp"
 #include "owned_contract.hpp"
+#include "standard_namespace.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -2721,9 +2723,9 @@ public:
         const auto &first = *arr.elements.front();
         if (first.kind == ast_node_kind::number_literal_node) {
           const auto &number = static_cast<const ast_number_literal &>(first);
-          element_type = number.value.find_first_of(".eE") == std::string::npos
-                             ? "i32"
-                             : "f64";
+          element_type = is_floating_literal_spelling(number.value)
+                             ? "f64"
+                             : "i32";
         } else if (first.kind == ast_node_kind::boolean_literal_node) {
           element_type = "bool";
         } else if (first.kind == ast_node_kind::char_literal_node) {
@@ -4814,13 +4816,92 @@ private:
     arguments.push_back(metadata->payload_type);
   }
 
+  std::string resolved_variant_name(
+      const std::string &variant_name,
+      const std::optional<std::string> &enum_type, int debug_line,
+      bool matching = false) {
+    const std::string normalized =
+        canonical_std_namespace(canonicalize_variant_name(variant_name));
+    const auto separator = normalized.rfind("::");
+    if (separator == std::string::npos)
+      return normalized;
+    const std::string owner = normalized.substr(0, separator);
+    const ast_enum_decl *declaration = nullptr;
+    if (owner.find("::") == std::string::npos) {
+      if (enum_type) {
+        const auto parsed = parse_generic_type_name(*enum_type);
+        const auto base = parsed ? parsed->base_name : *enum_type;
+        const auto *target = base.find("::") != std::string::npos
+            ? cg_.lookup_enum_decl(canonical_builtin_enum_base(base)) : nullptr;
+        if (target && canonical_builtin_enum_base(target->name) == owner)
+          declaration = target;
+      }
+      if (!declaration && !current_module_.empty())
+        declaration = cg_.lookup_enum_decl(current_module_ + "::" + owner);
+    }
+    if (!declaration)
+      declaration = cg_.lookup_enum_decl(owner);
+    // Lowercase declarations predate the built-in Option/Result spelling.
+    if (!declaration) {
+      std::string original = canonical_std_namespace(variant_name);
+      for (auto dot = original.find('.'); dot != std::string::npos;
+           dot = original.find('.', dot + 2))
+        original.replace(dot, 1, "::");
+      declaration = cg_.lookup_enum_decl(original.substr(0, original.rfind("::")));
+    }
+    if (!declaration) {
+      if (matching)
+        cg_.reject_codegen_construct(debug_line,
+            "unknown enum owner '" + owner + "' in match pattern",
+            "qualify the pattern with a declared enum type");
+      return normalized;
+    }
+    const std::string leaf = normalized.substr(separator + 2);
+    const auto variant = std::find_if(declaration->variants.begin(),
+        declaration->variants.end(), [&](const ast_enum_variant &candidate) {
+          return variant_leaf_name(declaration->name + "::" + candidate.name) == leaf;
+        });
+    if (variant == declaration->variants.end()) {
+      if (matching)
+        cg_.reject_codegen_construct(debug_line,
+            "unknown variant '" + leaf + "' in match pattern for enum '" + owner + "'",
+            "use a variant declared by the matched enum");
+      return normalized;
+    }
+    if (matching && enum_type) {
+      const auto parsed = parse_generic_type_name(*enum_type);
+      const std::string base = parsed ? parsed->base_name : *enum_type;
+      auto *target = cg_.lookup_enum_decl(base);
+      if (!target)
+        target = cg_.lookup_enum_decl(canonical_builtin_enum_base(base));
+      if (target && target != declaration)
+        cg_.reject_codegen_construct(debug_line,
+            "match pattern enum '" + owner + "' does not match target type '" + *enum_type + "'",
+            "use a variant from the target enum");
+    }
+    // A source spelling is an alias, not a runtime tag. Recover the owning
+    // declaration so bare, qualified, and legacy namespace spellings agree,
+    // without collapsing distinct enums that share a leaf name.
+    const auto module = cg_.declaration_modules_.find(declaration);
+    const std::string qualified_owner =
+        module != cg_.declaration_modules_.end() && !module->second.empty()
+            ? module->second + "::" + declaration->name : declaration->name;
+    // Runtime intrinsics also construct these two standard enums. Preserve
+    // their established tags after validating the actual declaration above.
+    if (qualified_owner == "nil::std::core::Option" ||
+        qualified_owner == "nil::std::core::Result")
+      return canonicalize_variant_name(declaration->name + "::" + variant->name);
+    return canonicalize_variant_name(qualified_owner + "::" + variant->name);
+  }
+
   void emit_new_variant(const std::string &variant_name,
                         std::size_t payload_count,
                         const std::optional<std::string> &enum_type,
                         int debug_line) {
-    std::vector<std::string> arguments = {variant_name,
+    const auto resolved = resolved_variant_name(variant_name, enum_type, debug_line);
+    std::vector<std::string> arguments = {resolved,
                                           std::to_string(payload_count)};
-    append_variant_metadata(arguments, variant_name, enum_type);
+    append_variant_metadata(arguments, resolved, enum_type);
     if (arguments.size() == 4 && payload_count != 0) {
       std::vector<std::string> payload_types;
       const auto payload_type = trim_type_name(arguments[3]);
@@ -4859,8 +4940,9 @@ private:
   void emit_is_variant(const std::string &variant_name,
                        const std::optional<std::string> &enum_type,
                        int debug_line) {
-    std::vector<std::string> arguments = {variant_name};
-    append_variant_metadata(arguments, variant_name, enum_type);
+    const auto resolved = resolved_variant_name(variant_name, enum_type, debug_line, true);
+    std::vector<std::string> arguments = {resolved};
+    append_variant_metadata(arguments, resolved, enum_type);
     push_instr("IS_VARIANT", arguments, debug_line);
   }
 

@@ -18,6 +18,7 @@ Design notes:
 
 #include <optional>
 #include "parser.hpp"
+#include "numeric_literal.hpp"
 #include "standard_namespace.hpp"
 #include "diagnostics.hpp"
 
@@ -383,6 +384,16 @@ parser::parser(const std::string &source, const parser_options &opts)
   // Lex the input immediately and store the tokens.
   lexer lex(source_);
   tokens_ = lex.scan_tokens();
+  // Validate every numeric token, including patterns and unchecked builds.
+  // This keeps malformed/range errors visible to --analyze before lowering.
+  for (const auto &number : tokens_) {
+    if (number.kind == token_kind::number_literal &&
+        is_floating_literal_spelling(number.lexeme)) {
+      double value = 0.0;
+      if (const auto *message = parse_floating_literal(number.lexeme, value))
+        add_error(number, message);
+    }
+  }
 
   // If options request token recording, nothing else special for now.
   if (options_.record_tokens) {

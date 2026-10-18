@@ -38,7 +38,11 @@ FIXTURES = ("scalar-array-parity", "stl-array-primitives", "native-nested-refere
             "text-comparison-runtime", "text-value-ordering", "text-value-ordering-matrix",
             "text-whitespace-escapes", "text-whitespace-escapes-matrix",
             "reflection-values", "reflection-values-matrix",
-            "standard-namespace-aliases", "database-sqlite-runtime")
+            "standard-namespace-aliases", "database-sqlite-runtime",
+            "vector-norms", "vector-norms-matrix",
+            "qualified-enum-patterns", "qualified-enum-patterns-matrix",
+            "scientific-literals", "scientific-literals-matrix",
+            "random-generators", "random-generators-matrix", "math-runtime")
 
 
 def fixture_source(name: str, directory: Path | None = None) -> Path:
