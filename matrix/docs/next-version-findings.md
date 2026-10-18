@@ -1020,9 +1020,9 @@ pattern binding directly; no grammar change was made in this pass.
 
 ### F32 — Floating averages can overflow for finite inputs
 
-**Status:** Confirmed open numerical bug.
+**Status:** Fixed for finite-input overflow; severe-cancellation accuracy remains limited.
 
-`average_f64` currently computes `sum_f64(items) / count`. For
+`average_f64` previously computed `sum_f64(items) / count`. For
 `[1e308, 1e308]`, the intermediate sum overflows to positive infinity although
 the mean `1e308` is representable. Negative inputs behave symmetrically, and
 `[1e308, 1e308, -1e308]` also produces positive infinity instead of a finite
@@ -1030,11 +1030,27 @@ mean. Paired Ny/Matrix probes reproduce these results on all six routes;
 sources and reports are under `build/text-core-work/average-overflow` in the
 v1 library checkout.
 
-**Next step:** Implement a bounded finite-input averaging algorithm without
-changing `sum_f64` or the existing empty/NaN/infinity contracts. Qualify extreme
-magnitudes, cancellation, subnormals and ordinary rounding against independent
-numerical oracles. Scaling the inputs is a candidate, but its loss of very
-small terms under severe cancellation needs explicit consideration.
+**Resolution:** Accumulate two compensated subtotals. Values of magnitude at
+most one retain their scale so subnormal terms survive; larger values use an
+exact power-of-two divisor greater than the count, leaving overflow headroom.
+Retain the rounding tail when merging the subtotals, restore the original
+scale when safe, and clamp the result to the input interval. `sum_f64` is
+unchanged. Empty inputs still return `None`; any nonfinite input deliberately
+uses the original ordered sum/division path, including its order dependence.
+
+**Verification:** Paired Ny/Matrix fixtures cover finite extremes, repeated
+maximum values, cancellation across both subtotals, subnormal ties, aliases
+and nonfinite compatibility on all execution routes and installed libraries.
+Finite expectations come from exact rational arithmetic on the binary64
+inputs. The [averaging contract](../../docs/standard-library/floating-averages.md)
+records the algorithm and evidence boundary.
+
+**Remaining numerical limitation:** Compensation is not exact accumulation.
+For `[1e100, 1e308, 1.7976931348623157e308, -1e308, -1.7976931348623157e308]`,
+the small residual can still disappear, yielding zero instead of a mean near
+`2e99`. Do not promise correct rounding, universal ULP accuracy or permutation
+invariance. An exact or expanded accumulator is separate future work. There
+is no new public API or compiler intrinsic in this fix.
 
 ### F33 — Native iteration over an array literal selects an absent iterator
 

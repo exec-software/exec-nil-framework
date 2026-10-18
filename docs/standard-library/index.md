@@ -20,6 +20,8 @@ The [checked text-span reference](text-spans.md) defines exact byte ranges,
 empty-span results, and overflow-safe compatibility slicing.
 The [checked integer-conversion reference](integer-conversion.md) covers
 decimal parsing and matching `Result` behavior on VM and native routes.
+The [floating-average reference](floating-averages.md) defines bounded finite
+averaging, nonfinite compatibility behavior and numerical accuracy limits.
 
 ```text
 nilstd/
@@ -309,6 +311,8 @@ This changes the older library behavior around NaNs. It does not change
 the language's IEEE operators: NaN remains unequal to itself under `==`,
 and ordinary ordered comparisons with NaN remain false. `sum_f64` and
 `average_f64` continue to propagate NaN through ordinary arithmetic.
+For finite inputs, `average_f64` uses compensated subtotals to avoid sum
+overflow; see the [averaging contract](floating-averages.md) for accuracy limits.
 Sorting preserves the original relative order of signed zeros and NaNs.
 
 The explicitly named insertion sorts remain O(n²). `merge_sort_i32` retains
