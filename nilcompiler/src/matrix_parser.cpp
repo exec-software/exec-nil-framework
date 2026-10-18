@@ -1,4 +1,5 @@
 #include "matrix_parser.hpp"
+#include "numeric_literal.hpp"
 #include "standard_namespace.hpp"
 
 #include <algorithm>
@@ -1190,6 +1191,20 @@ std::shared_ptr<ny::ast_program> parser::parse_program() {
   // 'sleep for ...' are appended once, after the page's own declarations.
   for (auto &decl : synthesized_)
     program->declarations.push_back(decl);
+  // Check every source integer, including unused/default expressions. Only
+  // direct unary minimum literals may use the positive boundary magnitude.
+  for (size_t index = 0; index < tokens_.size(); ++index) {
+    const auto &number = tokens_[index];
+    if (number.kind != matrix::token_kind::number_literal ||
+        ny::is_floating_literal_spelling(number.lexeme)) continue;
+    ny::integer_literal_info info;
+    if (const auto *message = ny::parse_integer_literal(number.lexeme, info)) {
+      const auto boundary = integer_boundaries_.find(index);
+      if (boundary == integer_boundaries_.end() ||
+          ny::parse_integer_literal(boundary->second->value, info))
+        error(number, message);
+    }
+  }
   return program;
 }
 
@@ -2196,6 +2211,13 @@ ny::ast_expr_ptr parser::parse_unary() {
   // Prefix 'minus' is negation, as in English ("minus five").
   if (match(kw::minus)) {
     auto operand = parse_unary();
+    if (operand && operand->kind == ny::ast_node_kind::number_literal_node) {
+      auto &number = static_cast<ny::ast_number_literal &>(*operand);
+      if (const auto folded = ny::negated_integer_boundary(number.value)) {
+        number.value = *folded;
+        return operand;
+      }
+    }
     return std::make_shared<ny::ast_unary_expr>(ny::token_kind::minus, operand,
                                                 line);
   }
@@ -2452,8 +2474,12 @@ ny::ast_expr_ptr parser::parse_primary() {
   const token &start = peek();
   const int line = start.line;
 
-  if (check(matrix::token_kind::number_literal))
-    return std::make_shared<ny::ast_number_literal>(advance().lexeme, line);
+  if (check(matrix::token_kind::number_literal)) {
+    auto number = std::make_shared<ny::ast_number_literal>(advance().lexeme, line);
+    if (ny::is_integer_minimum_magnitude(number->value))
+      integer_boundaries_.emplace(pos_ - 1, number);
+    return number;
+  }
 
   if (check(matrix::token_kind::string_literal))
     return std::make_shared<ny::ast_string_literal>(advance().lexeme, line);
@@ -2807,9 +2833,16 @@ ny::ast_expr_ptr parser::parse_build() {
 ny::ast_pattern parser::parse_pattern() {
   ny::ast_pattern pattern;
 
+  const bool negative_number = check(kw::minus) &&
+      peek(1).kind == matrix::token_kind::number_literal;
+  if (negative_number) advance();
   if (check(matrix::token_kind::number_literal)) {
     pattern.kind = ny::ast_pattern_kind::literal_pattern;
-    pattern.literal_value = advance().lexeme;
+    const auto number = advance();
+    pattern.literal_value = (negative_number ? "-" : "") + number.lexeme;
+    if (negative_number && ny::is_integer_minimum_magnitude(number.lexeme))
+      integer_boundaries_.emplace(pos_ - 1,
+          std::make_shared<ny::ast_number_literal>(pattern.literal_value, number.line));
     pattern.literal_kind = ny::ast_node_kind::number_literal_node;
     return pattern;
   }
@@ -2958,9 +2991,9 @@ ny::ast_expr_ptr parser::parse_consider_expression() {
 
       // A literal arm compares the target against a value, which is an
       // ordinary expression pattern.
-      if (check(matrix::token_kind::number_literal)) {
-        pattern_expr = std::make_shared<ny::ast_number_literal>(
-            advance().lexeme, arm_line);
+      if (check(matrix::token_kind::number_literal) ||
+          (check(kw::minus) && peek(1).kind == matrix::token_kind::number_literal)) {
+        pattern_expr = parse_unary();
         if (match(kw::provided)) guard = parse_expression();
         match(kw::then); // optional, for symmetry with the statement form
         if (!expect(kw::give, "before the value of a 'consider' arm")) break;

@@ -1,0 +1,118 @@
+!!! Values and arithmetic distinguish inferred integer from long on every route.
+book tests.integer-literal-widths-matrix
+read everything from nil.std.core
+
+constant global-wide is 4294967296
+constant global-minimum is minus 9223372036854775808
+
+wide-sum receives items as array of override long returns override long begin paragraph
+    give (items at 0) plus (items at 1)
+end paragraph
+
+narrow-first receives items as array of override integer returns override integer begin paragraph
+    give items at 0
+end paragraph
+
+literal-return returns override long begin paragraph
+    give 4294967296
+end paragraph
+
+increment receives input as override long returns override long begin paragraph
+    give input plus 1
+end paragraph
+
+classify receives input as override long returns override integer begin paragraph
+    consider input
+        when 4294967296 then give 2
+        when minus 9223372036854775808 then give 1
+        when 0x7FFFFFFFFFFFFFFF then give 3
+        otherwise give 0
+    end consider
+    give 0
+end paragraph
+
+classify-mask receives input as override integer returns override integer begin paragraph
+    consider input
+        when 0 then give 0
+        when minus 0xFFFFFFFF then give 6
+        otherwise give 0
+    end consider
+    give 0
+end paragraph
+
+main returns override integer begin paragraph
+    say 2147483647
+    say 2147483647 plus 1
+    say minus 2147483648
+    say minus 2147483648 minus 1
+    say minus (2147483648)
+    say minus (minus 2147483648)
+    say 2147483648
+    say 2147483648 plus 1
+    say 4294967295 plus 1
+    say minus 2147483649 minus 1
+    say 9223372036854775807
+    say 9223372036854775807 plus 1
+    say minus 9223372036854775808
+    say minus 9223372036854775808 minus 1
+    say minus (minus 9223372036854775808)
+    say minus 0x8000000000000000
+    say 0x7FFFFFFF plus 1
+    say 0x80000000
+    say 0xFFFFFFFF
+    value sign-mask is 0x80000000
+    value all-bits is 0xFFFFFFFF
+    say sign-mask
+    say all-bits
+    say 0xFFFFFFFF becomes override long
+    say minus 0x80000000
+    say 0x100000000
+    say 0x7FFFFFFFFFFFFFFF
+    say 0xFFFFFFFF bitwise and 0x80000000
+    say 0x100000000 bitwise or 0x00000001
+    say 0x100000000 shifted right by 32
+    say 4294967295 shifted right by 32
+    say global-wide
+    say global-minimum
+    say increment with input being (literal-return with nothing)
+
+    value low-first is [1, 2147483648]
+    value high-first is [2147483648, 1]
+    say wide-sum with items being low-first
+    say wide-sum with items being high-first
+    value small is 7
+    value wide is 4294967296
+    value variables-low-first is [small, wide]
+    value variables-high-first is [wide, small]
+    say wide-sum with items being variables-low-first
+    say wide-sum with items being variables-high-first
+    value signed-masks is [all-bits, 4294967296]
+    say wide-sum with items being signed-masks
+    say wide-sum with items being [0xFFFFFFFF, 4294967296]
+    say wide-sum with items being [4294967296, 0xFFFFFFFF]
+    value minimums is [minus 2147483648, minus 9223372036854775808]
+    say minimums at 0
+    say minimums at 1
+    say narrow-first with items being [0xFFFFFFFF, 0x80000000]
+
+    value narrowed as override integer is 4294967297
+    value narrow-items as array of override integer is [2147483648, 4294967297]
+    say narrowed
+    say narrow-items at 0
+    say narrow-items at 1
+    say 4294967295 becomes override integer
+    say (minus 2147483649) becomes override integer
+    say (4294967295 becomes override integer) becomes override long
+
+    say classify with input being minus 9223372036854775808
+    say classify with input being 4294967296
+    say classify with input being 9223372036854775807
+    say consider minus 9223372036854775808 when minus 9223372036854775808 give 4 otherwise give 0 end consider
+    say consider 4294967296 when 0x100000000 give 5 otherwise give 0 end consider
+    say classify-mask with input being 1
+    say consider 1 when minus 0xFFFFFFFF give 7 otherwise give 0 end consider
+    say abs-i64 with x being 0
+    say abs-i64 with x being minus 4294967296
+    say abs-i32 with x being 0
+    give 0
+end paragraph

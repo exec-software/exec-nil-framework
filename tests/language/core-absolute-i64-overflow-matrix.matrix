@@ -1,0 +1,7 @@
+book tests.core-absolute-i64-overflow
+read everything from nil.std.core
+
+main returns override integer begin paragraph
+    say abs-i64 with x being minus 9223372036854775808
+    give 0
+end paragraph

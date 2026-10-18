@@ -23,7 +23,14 @@ Scalar casts to these targets fail explicitly. Do not use their acceptance in
 a declaration as evidence of supported arithmetic or layout. `char`, general
 references, and arbitrary foreign types also need independent qualification.
 
-Integer literals initially infer `i32`; floating literals infer `f64`.
+Decimal integer literals infer `i32` when representable, otherwise `i64`.
+Negated literal boundaries include `-2147483648` (`i32`) and
+`-9223372036854775808` (`i64`). Values outside signed 64-bit range are source
+errors. Floating literals infer `f64`.
+
+Hexadecimal values through `0xFFFFFFFF` retain `i32` mask semantics; larger
+supported values infer `i64`. Positive values above `0x7FFFFFFFFFFFFFFF` are
+rejected; negated `0x8000000000000000` can represent the signed minimum.
 Use explicit types or casts when width matters:
 
 ```ny
@@ -35,8 +42,9 @@ let fraction: f64 = 0.5
 An outer `i64` destination or parameter does not widen arithmetic inside its
 initializer or argument. Bind or cast an operand before that arithmetic:
 `(2147483647 as i64) + 1` is `2147483648`, while `2147483647 + 1` wraps at
-`i32` before assignment. Oversized bare integer operands currently lack a
-range diagnostic; see [F30](../../matrix/docs/next-version-findings.md#f30--large-integer-expressions-can-narrow-before-an-i64-argument-conversion).
+`i32` before assignment. See [NIL-0007](../design/NIL-0007-integer-literal-widths.md)
+for literal ranges, hexadecimal compatibility and the boundary between literal
+inference and contextual typing.
 
 ### Arithmetic and conversions
 
@@ -88,6 +96,12 @@ let values: array<i32> = [1, 2, 3]
 println(values[0])
 values[1] = 7
 ```
+
+Inferred integer arrays containing both `i32` and `i64` elements use `i64`
+regardless of element order. For example, `[1, 2147483648]` and
+`[2147483648, 1]` both infer `array<i64>`. This also applies to typed variable
+elements. Array types remain invariant: an `array<i64>` cannot be passed as
+`array<i32>` through an implicit element conversion.
 
 Typed pointers use `ptr<T>`. Allocation and deallocation are explicit:
 

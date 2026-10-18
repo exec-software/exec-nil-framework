@@ -1,4 +1,5 @@
 #include "native_runtime.hpp"
+#include "integer_conversion.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -404,6 +405,91 @@ void check_conversion_contract(bool &ok) {
                     "minimum i64 formatting failed");
   ok &= expect_text(nyrt_i64_to_text(INT64_MAX), "9223372036854775807",
                     "maximum i64 formatting failed");
+
+  struct i64_success_case {
+    const char *text;
+    std::int64_t expected;
+  };
+  const i64_success_case wide_successes[] = {
+      {"0", 0}, {"+0", 0}, {"-0", 0}, {"+0007", 7},
+      {"00000000000000000000000000000000000000000000000001", 1},
+      {"2147483648", 2147483648LL}, {"-2147483649", -2147483649LL},
+      {"9223372036854775807", INT64_MAX},
+      {"+9223372036854775807", INT64_MAX},
+      {"-9223372036854775808", INT64_MIN},
+  };
+  for (const auto &test : wide_successes) {
+    std::int64_t parsed = -7;
+    const char *wide_error = reinterpret_cast<const char *>(std::uintptr_t{1});
+    ok &= expect(nyrt_try_i64(test.text, &parsed, &wide_error) == 1 &&
+                     parsed == test.expected && wide_error == nullptr,
+                 "valid i64 conversion did not preserve all signed bits");
+  }
+  const failure_case wide_failures[] = {
+      {"", "value is empty"}, {"+", "value has no digits"},
+      {"-", "value has no digits"},
+      {" 1", "value contains a digit outside the requested base"},
+      {"1 ", "value contains a digit outside the requested base"},
+      {"1\t", "value contains a digit outside the requested base"},
+      {"1\n", "value contains a digit outside the requested base"},
+      {"1.0", "value contains a digit outside the requested base"},
+      {"1e3", "value contains a digit outside the requested base"},
+      {"0x10", "value contains a digit outside the requested base"},
+      {"1_000", "value contains a digit outside the requested base"},
+      {"++1", "value contains a digit outside the requested base"},
+      {"+-1", "value contains a digit outside the requested base"},
+      {"--1", "value contains a digit outside the requested base"},
+      {"+ 1", "value contains a digit outside the requested base"},
+      {"１２", "value contains a digit outside the requested base"},
+      {"١", "value contains a digit outside the requested base"},
+      {"12x", "value contains a digit outside the requested base"},
+      {"9223372036854775808", "value is outside the i64 range"},
+      {"-9223372036854775809", "value is outside the i64 range"},
+      {"18446744073709551615", "value is outside the i64 range"},
+  };
+  for (const auto &test : wide_failures) {
+    std::int64_t parsed = 42;
+    const char *wide_error = nullptr;
+    ok &= expect(nyrt_try_i64(test.text, &parsed, &wide_error) == 0 && parsed == 0 &&
+                     wide_error != nullptr &&
+                     wide_error == std::string("convert.try_to_i64: ") + test.expected_error,
+                 "invalid i64 conversion did not preserve exact interpreter errors");
+  }
+  std::int64_t wide_value = 42;
+  const char *wide_error = nullptr;
+  const std::string huge_integer(400, '9');
+  ok &= expect(nyrt_try_i64(huge_integer.c_str(), &wide_value, &wide_error) == 0 &&
+                   wide_value == 0 && wide_error != nullptr &&
+                   wide_error == std::string("convert.try_to_i64: value is outside the i64 range"),
+               "long i64 magnitude did not fail before host overflow");
+  ok &= expect(nyrt_try_i64(nullptr, &wide_value, &wide_error) == 0 && wide_value == 0 &&
+                   wide_error != nullptr &&
+                   wide_error == std::string("convert.try_to_i64: invalid arguments"),
+               "null i64 input did not clear output and report invalid arguments");
+  ok &= expect(nyrt_try_i64("1", nullptr, &wide_error) == 0 && wide_error != nullptr,
+               "null i64 value output was accepted");
+  ok &= expect(nyrt_try_i64("-9223372036854775808", &wide_value, nullptr) == 1 &&
+                   wide_value == INT64_MIN &&
+                   nyrt_try_i64("bad", &wide_value, nullptr) == 0 && wide_value == 0,
+               "optional i64 error output changed status or value behavior");
+  const char *retained_error = nullptr;
+  nyrt_try_i64("bad", &wide_value, &retained_error);
+  nyrt_try_i64("", &wide_value, &wide_error);
+  ok &= expect(nyrt_try_i64("7", &wide_value, &wide_error) == 1 && wide_value == 7 &&
+                   wide_error == nullptr && retained_error != nullptr &&
+                   retained_error == std::string("convert.try_to_i64: value contains a digit outside the requested base"),
+               "later conversion invalidated an earlier owned error or retained a stale error");
+
+  // VM text retains its byte length; the native C-string ABI accepts only
+  // NUL-free text, which the compiler checks before calling the runtime.
+  // Exercise the shared span parser rather than pretending a C string can
+  // distinguish a terminator from an embedded byte with an unseen suffix.
+  for (const auto input : {std::string_view("12\0x", 4), std::string_view("\0", 1)}) {
+    const auto parsed = ny::detail::parse_signed_integer(input, 10, false);
+    ok &= expect(!parsed.ok && parsed.value == 0 && parsed.error != nullptr &&
+                     parsed.error == std::string("value contains a digit outside the requested base"),
+                 "length-aware integer conversion accepted an embedded NUL");
+  }
 }
 
 void check_file_contract(bool &ok) {

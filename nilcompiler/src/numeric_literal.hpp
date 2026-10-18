@@ -3,6 +3,10 @@
 
 #include <charconv>
 #include <cmath>
+#include <cstdint>
+#include <limits>
+#include <optional>
+#include <string>
 #include <string_view>
 
 namespace ny {
@@ -20,6 +24,64 @@ inline bool has_hexadecimal_integer_prefix(std::string_view spelling) {
 inline bool is_floating_literal_spelling(std::string_view spelling) {
   return !has_hexadecimal_integer_prefix(spelling) &&
          spelling.find_first_of(".eE") != std::string_view::npos;
+}
+
+struct integer_literal_info {
+  std::uint64_t magnitude = 0;
+  bool negative = false;
+  bool hexadecimal = false;
+
+  const char *inferred_type() const {
+    // Preserve hexadecimal masks' historical 32-bit arithmetic contract.
+    const std::uint64_t narrow_limit = hexadecimal ? UINT32_MAX
+        : negative ? std::uint64_t(INT32_MAX) + 1 : INT32_MAX;
+    return magnitude <= narrow_limit ? "i32" : "i64";
+  }
+};
+
+// Parse a source integer without overflowing a host signed integer. The one
+// extra positive magnitude is permitted only while recognizing unary minimum
+// literals; it must never reach a PUSH_CONST as a positive signed word.
+inline const char *parse_integer_literal(std::string_view spelling,
+                                        integer_literal_info &result,
+                                        bool allow_minimum_magnitude = false) {
+  result = {};
+  if (!spelling.empty() && (spelling.front() == '+' || spelling.front() == '-')) {
+    result.negative = spelling.front() == '-';
+    spelling.remove_prefix(1);
+  }
+  result.hexadecimal = has_hexadecimal_integer_prefix(spelling);
+  if (result.hexadecimal) spelling.remove_prefix(2);
+  if (spelling.empty()) return "integer literal requires digits";
+  const auto converted = std::from_chars(spelling.data(),
+      spelling.data() + spelling.size(), result.magnitude,
+      result.hexadecimal ? 16 : 10);
+  if (converted.ec == std::errc::invalid_argument ||
+      converted.ptr != spelling.data() + spelling.size())
+    return "invalid character in integer literal";
+  const std::uint64_t limit = std::uint64_t(INT64_MAX) +
+      (result.negative || allow_minimum_magnitude ? 1 : 0);
+  if (converted.ec == std::errc::result_out_of_range || result.magnitude > limit)
+    return "integer literal is outside the representable signed i64 range";
+  return nullptr;
+}
+
+inline bool is_integer_minimum_magnitude(std::string_view spelling) {
+  integer_literal_info info;
+  return !parse_integer_literal(spelling, info, true) && !info.negative &&
+         info.magnitude == std::uint64_t(INT64_MAX) + 1;
+}
+
+// Fold only the two signed boundaries. Other negations remain ordinary typed
+// arithmetic, including hexadecimal i32 masks and double-negation wrapping.
+inline std::optional<std::string>
+negated_integer_boundary(std::string_view spelling) {
+  integer_literal_info info;
+  if (parse_integer_literal(spelling, info, true) || info.negative) return {};
+  if ((!info.hexadecimal && info.magnitude == std::uint64_t(INT32_MAX) + 1) ||
+      info.magnitude == std::uint64_t(INT64_MAX) + 1)
+    return "-" + std::string(spelling);
+  return {};
 }
 
 // Source literals and textual/binary NIL must agree on both spelling and

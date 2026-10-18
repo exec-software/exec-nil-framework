@@ -3,6 +3,7 @@
 #include "nil_loader.hpp"
 #include "type_checker.hpp"
 #include "matrix_lexer.hpp"
+#include "matrix_parser.hpp"
 #include "numeric_literal.hpp"
 
 #include <cmath>
@@ -483,6 +484,113 @@ void test_scientific_numeric_literals() {
   }
 }
 
+void test_integer_literal_ranges_and_unchecked_arrays() {
+  for (const auto &entry : std::vector<std::pair<std::string, std::string>>{
+           {"2147483647", "i32"}, {"-2147483648", "i32"},
+           {"2147483648", "i64"}, {"-2147483649", "i64"},
+           {"9223372036854775807", "i64"}, {"-9223372036854775808", "i64"},
+           {"0xFFFFFFFF", "i32"}, {"0x100000000", "i64"},
+           {"-0x8000000000000000", "i64"}, {"0002147483648", "i64"}}) {
+    ny::integer_literal_info info;
+    check(!ny::parse_integer_literal(entry.first, info) &&
+              info.inferred_type() == entry.second,
+          "integer literal width for " + entry.first);
+  }
+  for (const auto *spelling : {"9223372036854775808", "-9223372036854775809",
+                              "0x8000000000000000", "0xFFFFFFFFFFFFFFFF",
+                              "18446744073709551616", "0x", "12junk"}) {
+    ny::integer_literal_info info;
+    check(ny::parse_integer_literal(spelling, info) != nullptr,
+          std::string("invalid signed integer is rejected: ") + spelling);
+  }
+  for (const auto *spelling : {"9223372036854775808", "0x8000000000000000"}) {
+    ny::parser valid("fn main() -> i32\nlet value = -(" + std::string(spelling) +
+                     ")\nreturn 0\nend fn\n");
+    valid.parse_program();
+    check(!valid.has_errors(), "Ny parenthesized unary minimum parses");
+    matrix::parser valid_matrix("book tests.integer-boundaries\nmain returns number begin paragraph\n"
+        "value sample is minus (" + std::string(spelling) + ")\ngive 0\nend paragraph\n");
+    valid_matrix.parse_program();
+    check(!valid_matrix.has_errors(), "Matrix parenthesized unary minimum parses");
+    ny::parser invalid("fn unused(value: i64 = " + std::string(spelling) +
+                       ")\nend fn\n");
+    invalid.parse_program();
+    check(invalid.has_errors(), "unused default cannot hide a positive minimum magnitude");
+  }
+
+  ny::parser unchecked(
+      "fn main() -> i32\n"
+      " let wide = 2147483648\n let small: i32 = 1\n"
+      " let a = [1, 2147483648]\n let b = [2147483648, 1]\n"
+      " let c = [small, wide]\n let d = [wide, small]\n"
+      " let e = [-2147483648, 0xFFFFFFFF]\n"
+      " let f = [1, 0x100000000]\n"
+      " let legacy = 2147483647 + 1\n return 0\nend fn\n");
+  const auto program = unchecked.parse_program();
+  check(program && !unchecked.has_errors(), "unchecked array fixture parses");
+  if (!program || unchecked.has_errors()) return;
+  // Deliberately skip type_checker::check. The CLI's --no-typecheck flag still
+  // invokes the checker and therefore cannot qualify this fallback by itself.
+  ny::codegen generator;
+  std::vector<ny::codegen_diagnostic> diagnostics;
+  const auto module = generator.generate_module(*program, &diagnostics);
+  check(module && diagnostics.empty(), "unchecked literal/variable arrays lower");
+  if (module) {
+    std::vector<std::string> elements;
+    bool legacy_word_add = false;
+    for (const auto &function : module->functions)
+      for (const auto &instruction : function.body) {
+        if (instruction.opname == "NEW_ARRAY_LITERAL" && instruction.args.size() == 2)
+          elements.push_back(instruction.args[1]);
+        if (instruction.opname == "ADD" && instruction.args.empty()) legacy_word_add = true;
+      }
+    check(elements == std::vector<std::string>{"i64", "i64", "i64", "i64", "i32", "i64"},
+          "unchecked arrays join every literal/variable width symmetrically");
+    check(legacy_word_add, "unchecked arithmetic keeps legacy untyped word semantics");
+  }
+  for (const auto *elements : {"1, true, 2147483648", "2147483648, true, 1"}) {
+    ny::parser mixed("fn main() -> i32\nlet values = [" + std::string(elements) +
+                     "]\nreturn 0\nend fn\n");
+    const auto mixed_program = mixed.parse_program();
+    ny::type_checker checker;
+    check(mixed_program && !checker.check(*mixed_program),
+          "final integer array width cannot inherit bool/i32 compatibility");
+  }
+  ny::parser arms("fn main() -> i32\nmatch 7\n"
+                  "0 -> return 2\n - 1\n"
+                  "-2 -> return 3\n_ -> return 0\nend match\nreturn 0\nend fn\n");
+  const auto arm_program = arms.parse_program();
+  check(arm_program && !arms.has_errors(),
+        "negative later arms coexist with multiline subtraction");
+  if (arm_program && !arms.has_errors()) {
+    const auto function = std::dynamic_pointer_cast<ny::ast_function_decl>(arm_program->declarations[0]);
+    const auto block = std::dynamic_pointer_cast<ny::ast_block_stmt>(function->body);
+    const auto match = std::dynamic_pointer_cast<ny::ast_match_stmt>(block->statements[0]);
+    const auto result = match && !match->arms.empty()
+        ? std::dynamic_pointer_cast<ny::ast_return_stmt>(match->arms[0].body) : nullptr;
+    const auto subtraction = result ? std::dynamic_pointer_cast<ny::ast_binary_expr>(result->value) : nullptr;
+    check(match && match->arms.size() == 3 && subtraction &&
+              subtraction->op == ny::token_kind::minus,
+          "only a numeric pattern followed by an arrow ends the previous expression");
+  }
+  ny::parser arithmetic_patterns(
+      "fn main() -> i32\n"
+      "println(match 1 { 2 - 1 -> 7; _ -> 0; })\n"
+      "println(match 1 { 1 when 2 == 3 - 1 -> 8; _ -> 0; })\n"
+      "match 7\n-1 -> return 1\n"
+      "7 -> println(match 1 { 2 - 1 -> 7; _ -> 0; })\n"
+      "-2 -> return 2\n_ -> return 0\nend match\n"
+      "return 0\nend fn\n");
+  const auto arithmetic_program = arithmetic_patterns.parse_program();
+  check(arithmetic_program && !arithmetic_patterns.has_errors(),
+        "subtraction in patterns/guards and nested matches is not an arm boundary");
+  if (arithmetic_program && !arithmetic_patterns.has_errors()) {
+    ny::type_checker checker;
+    check(checker.check(*arithmetic_program),
+          "arithmetic expression patterns and guards retain their checked meaning");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -497,6 +605,7 @@ int main() {
   test_checker_sessions_do_not_share_impl_visitation();
   test_enum_variant_mismatch_terminates();
   test_scientific_numeric_literals();
+  test_integer_literal_ranges_and_unchecked_arrays();
   if (failures != 0)
     return 1;
 

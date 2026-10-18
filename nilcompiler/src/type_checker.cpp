@@ -822,7 +822,7 @@ bool type_checker::are_types_compatible(const type_info &t1,
   }
 
   // Allow i32 ↔ i64 implicit conversion (integer literal coercion).
-  // Integer literals are always typed as i32; comparing them to i64 variables
+  // Small integer literals infer i32; comparing them to i64 variables
   // (e.g. `handle < 0`) is valid and common.
   if ((t1.name == "i32" && t2.name == "i64") ||
       (t1.name == "i64" && t2.name == "i32")) {
@@ -1589,37 +1589,9 @@ type_info type_checker::infer_literal_type(const std::string &literal) const {
     double value = 0.0;
     if (!parse_floating_literal(literal, value)) return type_f64;
   }
-  if (has_hexadecimal_integer_prefix(literal)) return type_i32;
-
-  // Decimal integer detection (floating/hex literals handled above).
-  bool numeric = true;
-  bool has_dot = false;
-  for (size_t i = 0; i < literal.size(); ++i) {
-    char c = literal[i];
-    if (c == '+' || c == '-') {
-      // sign allowed at start only
-      if (i > 0) {
-        numeric = false;
-        break;
-      }
-      continue;
-    }
-    if (c == '.') {
-      if (has_dot) {
-        numeric = false;
-        break;
-      }
-      has_dot = true;
-      continue;
-    }
-    if (!std::isdigit(static_cast<unsigned char>(c))) {
-      numeric = false;
-      break;
-    }
-  }
-  if (numeric) {
-    return has_dot ? type_f64 : type_i32;
-  }
+  integer_literal_info integer;
+  if (!parse_integer_literal(literal, integer))
+    return integer.inferred_type() == std::string_view("i64") ? type_i64 : type_i32;
 
   // Fallback to string
   return type_string;
@@ -5850,11 +5822,17 @@ void type_checker::visit(ast_string_literal &e) {
 }
 
 void type_checker::visit(ast_number_literal &e) {
-  // Infer i32 or f64 based on content
   if (is_floating_literal_spelling(e.value)) {
     last_expr_type_ = type_f64;
   } else {
-    last_expr_type_ = type_i32;
+    integer_literal_info integer;
+    if (const auto *message = parse_integer_literal(e.value, integer)) {
+      add_error(e.line, message);
+      last_expr_type_ = type_unknown;
+    } else {
+      last_expr_type_ = integer.inferred_type() == std::string_view("i64")
+          ? type_i64 : type_i32;
+    }
   }
   e.inferred_type = last_expr_type_->name;
 }
@@ -6053,17 +6031,28 @@ void type_checker::visit(ast_array_literal_expr &e) {
   }
 
   std::optional<type_info> elem_type;
+  std::vector<type_info> element_types;
   for (auto &el : e.elements) {
     el->accept(*this);
     type_info t = last_expr_type_.value_or(type_unknown);
+    element_types.push_back(t);
     if (!elem_type.has_value()) {
       elem_type = t;
     } else {
-      if (!are_types_compatible(*elem_type, t)) {
-        add_error(e.line, "Array element type mismatch. Expected '" +
-                              elem_type->name + "', got '" + t.name + "'");
-      }
+      // Scalar i32/i64 compatibility must not make an array's width depend
+      // on element order. Existing array values remain invariant; this join
+      // applies only while constructing a new literal.
+      if ((elem_type->name == "i32" && t.name == "i64") ||
+          (elem_type->name == "i64" && t.name == "i32"))
+        elem_type = type_i64;
     }
+  }
+  // Recheck every element against the final width: a previously compatible
+  // bool/i32 pair does not make bool compatible with a later i64 element.
+  for (const auto &type : element_types) {
+    if (!are_types_compatible(*elem_type, type))
+      add_error(e.line, "Array element type mismatch. Expected '" +
+                            elem_type->name + "', got '" + type.name + "'");
   }
 
   // Construct array type string: array<T>

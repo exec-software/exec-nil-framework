@@ -755,7 +755,8 @@ all checker contracts instead of inferring provenance from the final line number
 
 ### F24 — Reflection formatting exposed missing native conversion intrinsics
 
-**Status:** Formatter fixed; broader conversion parity remains open.
+**Status:** Formatter fixed; checked i64 parsing now has native support;
+broader conversion parity remains open.
 
 A pure Matrix diagnostic formatter using `Convert.char_to_i32`,
 `Convert.i32_to_char`, and `Convert.to_hex_padded` compiled and ran in the VM but
@@ -763,6 +764,13 @@ failed native lowering. The shipped helper now uses portable text operations
 and small Ny control-character constants. The paired Ny/Matrix fixtures exercise
 UTF-8, quotes, backslashes, control escaping, and declaration values through all
 six routes. Do not infer native support for every `Convert` intrinsic from this.
+
+The v1 library pass also found that `Convert.try_to_i64` succeeded in both
+interpreted frontends but failed LLVM lowering. Native support now constructs
+the existing `Result<i64, text>` with the correct payload width and managed
+error text. VM/native integer parsing shares one implementation; paired
+fixtures and direct ABI tests pin signed extrema, invalid input and exact
+errors. See the [checked integer-conversion contract](../../docs/standard-library/integer-conversion.md).
 
 ### F25 — Fully qualified enum patterns silently miss matching values
 
@@ -921,9 +929,10 @@ evidence are under `build/random-library-work`.
 
 ### F30 — Large integer expressions can narrow before an i64 argument conversion
 
-**Status:** Confirmed authoring/diagnostic gap; no inference change in this pass.
+**Status:** Literal-range and mixed-integer-array fixes implemented; contextual
+typing and Matrix's universal `number` default remain open.
 
-**Evidence:** Passing `-9223372036854775807 - 1` to an `i64` parameter produces
+**Evidence before the fix:** Passing `-9223372036854775807 - 1` to an `i64` parameter produces
 zero on both frontends and all six routes. The emitted NIL performs `NEG i32`
 and `SUB i32` before the call. The generator's normalization was correct; its
 test had constructed the wrong seed. Oversized bare literals are accepted
@@ -939,16 +948,162 @@ unannotated arithmetic therefore does not yet follow the intended wider
 declared types and inferred literal expressions. The probe sources, NIL and
 12 successful route executions are in `build/random-library-work/width-probes`.
 
-**Workaround:** Bind `let maximum: i64 = 9223372036854775807` in Ny or
-`value maximum as number is 9223372036854775807` in Matrix, then construct the
-minimum with `-maximum - 1` or `minus maximum minus 1`. The paired RNG fixtures
-use this form and verify the true i64 extrema against independent oracles.
-An explicit cast on the literal operand also fixes its arithmetic width.
+**Resolution:** [NIL-0007](../../docs/design/NIL-0007-integer-literal-widths.md)
+defines shared range-aware inference: decimal literals use `i32` when
+representable and `i64` otherwise. Signed boundary literals represent both
+minimum values directly. Hexadecimal masks through `0xFFFFFFFF` retain their
+historical `i32` width; larger supported hexadecimal values use `i64`. Values
+outside the signed 64-bit carrier range fail before artifact output, including
+unused/default expressions, editor analysis and unchecked compilation.
+Mixed `i32`/`i64` arrays now infer `array<i64>` in either element order,
+including elements supplied by typed variables. Array types remain invariant.
+The original large-literal expression now constructs the intended i64 minimum.
+This repairs the existing `abs_i64` guard in `nil.std.core`: the old SDK
+panicked for zero and returned the unchanged minimum value for overflow.
+The baseline reproducer is under `build/integer-width-work/abs-baseline`.
 
-**Next step / acceptance:** Define literal-range and contextual-inference policy
-for both frontends. Diagnose values outside an inferred integer width, or adopt
-specified wider inference; keep explicit wrapping arithmetic distinct from
-accidental narrowing of a literal. Matrix's intended `number` default needs
-matching inferred expression/array behavior and documentation. Cover nested
-arithmetic, calls, arrays, editor diagnostics and all execution routes before
-changing the language contract.
+**Verification:** Paired
+[Ny](../../tests/language/integer-literal-widths.ny) and
+[Matrix](../../tests/language/integer-literal-widths-matrix.matrix) fixtures cover
+integer boundaries, globals, nested calls, both match forms, wide array values,
+explicit narrowing, retained wrapping behavior and core `abs_i64` results.
+Separate paired overflow fixtures require `abs_i64` to reject the signed
+minimum on every enabled execution route. The
+[contract runner](../../tests/tools/integer_literals_contract.py) checks invalid
+source literals and existing-artifact preservation across compilation modes,
+editor diagnostics, array invariance, and the type-checking-disabled flag.
+Fixtures are registered for all six routes, standalone assembler/linker
+pipelines and installed source/binary-library consumption.
+
+**Remaining context / workaround:** To widen arithmetic on small operands,
+bind one operand as `i64` in Ny or `number` in Matrix before the operation.
+For example, `(2147483647 as i64) + 1` retains the wider result. The signed
+minimum itself can now be written directly in either language.
+
+**Next step / acceptance:** Decide broader contextual inference and Matrix's
+intended universal `number` default separately. Small literals still infer
+`i32`, so `2147483647 + 1` still wraps before assignment to `i64`; a parameter
+or destination annotation does not change an inner expression's width. A
+future change must cover generic identities, mixed-language arrays/calls and
+explicit narrow arithmetic, with matching editor and execution evidence.
+
+### F31 — Text substring bounds overflowed before clamping
+
+**Status:** Compatibility fix and checked text-span APIs implemented.
+
+**Evidence:** With the prior SDK, `substring("abcd", 1, 9223372036854775807)`
+returns empty text rather than `"bcd"`. Adding start and length wraps before
+the bounds check, then the narrowed count is negative. The underlying text
+runtime already checks the remaining length safely; the library wrapper
+introduced the error. Baseline evidence is in
+`build/text-core-work/substring-baseline.json` in the v1 library checkout.
+
+**Resolution:** Validate the start, then compare the requested length with
+`size - start`. The existing helper retains its empty/clipped result policy.
+Matrix-authored `try_substring` and `try_char_at` add exact checked byte access
+as `Option<text>`, including `Some("")` for valid empty spans and `None` for
+invalid bounds. They retain `i64` arguments until validation and share the
+same public `nil.std.text` identity across frontends and legacy imports.
+See the [text-span contract](../../docs/standard-library/text-spans.md).
+
+**Verification:** Paired source fixtures cover whole/empty/end spans, invalid
+and extreme positions/counts, UTF-8 byte positions, source preservation,
+aliases, returned values and compatibility clamping. They are registered for
+all execution routes, standalone assembler/linker pipelines and installed
+source/binary libraries.
+
+**Authoring friction:** A Matrix documentation example using
+`when Option.Some holding value then say value` fails because `value` is a
+reserved binding name, but the diagnostic says it expected `then`. Renaming
+the binding to `span` works. A future diagnostic should identify the reserved
+pattern binding directly; no grammar change was made in this pass.
+
+### F32 — Floating averages can overflow for finite inputs
+
+**Status:** Confirmed open numerical bug.
+
+`average_f64` currently computes `sum_f64(items) / count`. For
+`[1e308, 1e308]`, the intermediate sum overflows to positive infinity although
+the mean `1e308` is representable. Negative inputs behave symmetrically, and
+`[1e308, 1e308, -1e308]` also produces positive infinity instead of a finite
+mean. Paired Ny/Matrix probes reproduce these results on all six routes;
+sources and reports are under `build/text-core-work/average-overflow` in the
+v1 library checkout.
+
+**Next step:** Implement a bounded finite-input averaging algorithm without
+changing `sum_f64` or the existing empty/NaN/infinity contracts. Qualify extreme
+magnitudes, cancellation, subnormals and ordinary rounding against independent
+numerical oracles. Scaling the inputs is a candidate, but its loss of very
+small terms under severe cancellation needs explicit consideration.
+
+### F33 — Native iteration over an array literal selects an absent iterator
+
+**Status:** Confirmed open lowering bug.
+
+Iterating directly over a text array literal prints its values in the VM, but
+native compilation names an undefined `__ritual_iter` callee. Both Ny and
+Matrix reproduce this on the prior SDK. Indexed traversal of a bound array
+using `range`/`repeat while` works and is used by the checked-conversion
+fixtures. Minimal programs and the VM/native comparison are preserved under
+`build/convert-audit/foreach-literal` in the v1 library checkout.
+
+**Next step:** Carry the iterable expression's resolved array type into loop
+lowering, including literals and returned arrays, and qualify element widths,
+text lifetimes and empty arrays across routes.
+
+### F34 — Renamed module aliases survive into unresolved function calls
+
+**Status:** Confirmed open name-resolution bug.
+
+Ny `namespace words = ny.lang.text` followed by `words::substring(...)`
+passes source compilation but emits a call containing the alias name rather
+than the actual module owner. The VM reports an unknown function. Matrix's
+`read nil.std.text as words` has the same lowering failure when combined with
+an ordinary import that makes the function discoverable. These minimal cases
+use the existing `substring`, so the checked-span addition did not cause the
+failure. Prior-SDK sources and diagnostics are under
+`build/text-core-work/friction-repros/namespace-alias.*` and
+`baseline-results.json`.
+
+Fully qualified canonical and legacy module names work; the checked-text
+fixtures exercise those spellings. Namespace renaming is distinct from the
+supported built-in `ny.lang.*` to `nil.std.*` compatibility mapping.
+
+**Next step:** Resolve renamed import/namespace owners consistently during
+checking and code generation, with mixed-language source and binary-library
+tests.
+
+### F35 — A Matrix generic parameter can consume the next parameter
+
+**Status:** Confirmed open parser bug.
+
+A signature containing `actual as Option of text, label as text` fails at
+the second parameter's `as`, reporting `expected 'begin paragraph' to open
+the body` and MX0105. Moving the generic parameter last allows the equivalent
+program to compile and print `ok`. The prior SDK reproduces both outcomes;
+minimal sources and exact diagnostics are in
+`build/text-core-work/friction-repros/generic-parameter.matrix` and
+`baseline-results.json`.
+
+The checked-text fixtures put `Option of text` last as a temporary workaround.
+**Next step:** Distinguish commas within generic arguments from commas between
+function parameters, then test nested generic types and named arguments without
+requiring parameter reordering.
+
+### F36 — Conversion intrinsics do not preserve a custom Result owner
+
+**Status:** Confirmed open provider-declaration validation gap.
+
+A user-defined `custom::Result<T,E>` can be declared as the return type of a
+function annotated `@intrinsic("convert.try_to_i32")`. The native ABI check
+accepts its shape, but the provider constructs the standard `Result::Ok` tag;
+matching the custom result misses. The VM has the same mismatch. The prior-SDK
+probe returns its fallthrough sentinel `99` instead of parsed value `7` on
+both routes. Evidence is under `build/text-core-work/review/provider-owner*`.
+
+The existing public `nil.std.core.Convert` API uses the standard Result owner
+and is unaffected. The new checked-i64 provider follows the same ownership
+convention; this pass tests malformed structural signatures but does not add
+custom enum support. **Next step:** Reject an incompatible nominal provider
+owner during source/NIL validation, or explicitly support that owner throughout
+construction and matching, with matching VM/native evidence.

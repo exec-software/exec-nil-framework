@@ -138,6 +138,10 @@ std::int32_t nyrt_write_bytes_atomic(const char *path, const void *bytes,
 
 std::int32_t nyrt_try_i32(const char *text, std::int32_t *value_out,
                           const char **error_out) noexcept;
+// Additive conversion ABI. Native text is NUL-free; failures clear value_out
+// and return a context-owned error using the same lifetime as nyrt_try_i32.
+std::int32_t nyrt_try_i64(const char *text, std::int64_t *value_out,
+                          const char **error_out) noexcept;
 const char *nyrt_i32_to_text(std::int32_t value) noexcept;
 const char *nyrt_i64_to_text(std::int64_t value) noexcept;
 

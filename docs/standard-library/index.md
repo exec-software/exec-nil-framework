@@ -1,7 +1,7 @@
 # Standard-library status
 
-Ny and Matrix share `nilstd`, one standard library compiled to NIL. Its 73 active
-sources (68 Ny and five Matrix) form 16 logical SDK modules, including `prelude`.
+Ny and Matrix share `nilstd`, one standard library compiled to NIL. Its 74 active
+sources (68 Ny and six Matrix) form 16 logical SDK modules, including `prelude`.
 Support remains evidence-scoped. Focused fixtures exercise `nilstd` and `nillib`
 through textual/binary NIL, bundles, LLVM JIT and AOT, and standalone
 assembler/linker pipelines. Local SDK qualification records the exact source
@@ -16,6 +16,10 @@ three-component lengths, finite-value checks, and checked normalization shared
 by Ny and Matrix.
 The [random-generator reference](random.md) defines independent mutable
 streams, reproducible seeds, cloning, and bounded integer/floating sampling.
+The [checked text-span reference](text-spans.md) defines exact byte ranges,
+empty-span results, and overflow-safe compatibility slicing.
+The [checked integer-conversion reference](integer-conversion.md) covers
+decimal parsing and matching `Result` behavior on VM and native routes.
 
 ```text
 nilstd/
