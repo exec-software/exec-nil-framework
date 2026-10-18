@@ -52,6 +52,11 @@ below.
 
 ### Active evidence boundary
 
+Finite `average_f64` inputs use compensated subtotals to avoid intermediate
+sum overflow. Paired Ny/Matrix fixtures cover the VM and native paths; the
+[floating-average contract](../docs/standard-library/floating-averages.md)
+describes nonfinite compatibility behavior and the remaining accuracy limits.
+
 Checked text access (`try_substring`, `try_char_at`) and checked decimal
 `Convert.try_to_i64` parsing have paired Ny/Matrix VM/native fixtures. See the
 [text-span contract](../docs/standard-library/text-spans.md) and

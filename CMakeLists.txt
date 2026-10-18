@@ -2301,7 +2301,8 @@ if(BUILD_TESTING)
         foreach(parity_fixture IN ITEMS scientific-literals scientific-literals-matrix
                                         integer-literal-widths integer-literal-widths-matrix
                                         checked-text-spans checked-text-spans-matrix
-                                        checked-i64-conversion checked-i64-conversion-matrix)
+                                        checked-i64-conversion checked-i64-conversion-matrix
+                                        average-f64 average-f64-matrix)
             if(parity_fixture MATCHES "-matrix$")
                 set(parity_frontend matrix)
             else()

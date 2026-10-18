@@ -45,6 +45,7 @@ FIXTURES = ("scalar-array-parity", "stl-array-primitives", "native-nested-refere
             "integer-literal-widths", "integer-literal-widths-matrix",
             "checked-text-spans", "checked-text-spans-matrix",
             "checked-i64-conversion", "checked-i64-conversion-matrix",
+            "average-f64", "average-f64-matrix",
             "random-generators", "random-generators-matrix", "math-runtime")
 
 

@@ -1,0 +1,122 @@
+book validation.average-f64
+read everything from ny.lang.core
+read everything from ny.lang.math
+
+require receives ok as boolean, label as text returns nothing begin paragraph
+    when not ok then evaluate panic with label end when
+end paragraph
+
+!!! Oracles are nearest binary64 values of exact Fraction sums of the binary64
+!!! inputs divided by count. Nonzero tolerances below are four oracle ULPs;
+!!! zero tolerances deliberately cover exact results and subnormal rounding.
+near receives items as array of floating, expected as floating, tolerance as floating, label as text returns nothing begin paragraph
+    value result is average-f64 with arr being items
+    evaluate require with ok being (result.is-some with nothing), label being label
+    value actual is result.unwrap with nothing
+    evaluate require with ok being (is-finite with actual), label being label
+    variable lower is items at 0
+    variable upper is items at 0
+    repeat for index from 0 to (the length of items)
+        when (items at index) is less than lower then set lower to (items at index) end when
+        when (items at index) is greater than upper then set upper to (items at index) end when
+    end repeat
+    evaluate require with ok being (actual is at least lower and actual is at most upper), label being label
+    evaluate require with ok being ((abs with (actual minus expected)) is at most tolerance), label being label
+end paragraph
+
+nan-mean receives items as array of floating, label as text returns nothing begin paragraph
+    value result is average-f64 with arr being items
+    evaluate require with ok being (result.is-some with nothing), label being label
+    value actual is result.unwrap with nothing
+    evaluate require with ok being (actual does not equal actual), label being label
+end paragraph
+
+infinite-mean receives items as array of floating, expected as floating, label as text returns nothing begin paragraph
+    value result is average-f64 with arr being items
+    evaluate require with ok being (result.is-some with nothing), label being label
+    value actual is result.unwrap with nothing
+    evaluate require with ok being (actual equals expected), label being label
+end paragraph
+
+main returns override integer begin paragraph
+    value empty-mean is average-f64 with arr being []
+    evaluate require with ok being (empty-mean.is-none with nothing), label being "empty mean is absent"
+    evaluate near with items being [2.0, 4.0, 6.0], expected being 4.0, tolerance being 0.0, label being "ordinary exact mean"
+    evaluate near with items being [0.1, 0.2, 0.3], expected being 0.2, tolerance being 1.1102230246251565e-16, label being "fractional mean"
+    evaluate near with items being [minus 3.0, 0.0, 3.0], expected being 0.0, tolerance being 0.0, label being "ordinary cancellation"
+    evaluate near with items being [0.0, minus 0.0], expected being 0.0, tolerance being 0.0, label being "zero mean"
+    value zero-mean is average-f64 with arr being [minus 0.0, minus 0.0]
+    evaluate require with ok being ((atan2 with y being (zero-mean.unwrap with nothing), x being minus 1.0) is greater than 0.0), label being "negative-zero mean retains positive zero"
+    value original is [2.0, minus 0.0, 8.0]
+    value alias is original
+    evaluate near with items being original, expected being 3.3333333333333335, tolerance being 1.7763568394002505e-15, label being "input alias mean"
+    evaluate require with ok being ((the length of alias) equals 3 and (alias at 0) equals 2.0 and (alias at 2) equals 8.0), label being "input values preserved"
+    evaluate require with ok being ((atan2 with y being (alias at 1), x being minus 1.0) is less than 0.0), label being "input negative zero preserved"
+    say "ordinary means and source aliases"
+
+    value maximum is 1.7976931348623157e308
+    evaluate near with items being [maximum], expected being maximum, tolerance being 0.0, label being "maximum singleton"
+    evaluate near with items being [minus maximum], expected being minus maximum, tolerance being 0.0, label being "minimum singleton"
+    evaluate near with items being [1e308, 1e308], expected being 1e308, tolerance being 7.98336123813888e292, label being "positive intermediate overflow"
+    evaluate near with items being [minus 1e308, minus 1e308], expected being minus 1e308, tolerance being 7.98336123813888e292, label being "negative intermediate overflow"
+    evaluate near with items being [maximum, maximum, maximum], expected being maximum, tolerance being 7.98336123813888e292, label being "maximum repeated"
+    evaluate near with items being [maximum, maximum, maximum, maximum, maximum], expected being maximum, tolerance being 0.0, label being "constant maximum endpoint"
+    evaluate near with items being [minus maximum, minus maximum, minus maximum], expected being minus maximum, tolerance being 7.98336123813888e292, label being "minimum repeated"
+    evaluate near with items being [1e308, 1e308, minus 1e308], expected being 3.333333333333333e307, tolerance being 1.99584030953472e292, label being "positive mixed overflow"
+    evaluate near with items being [1e308, minus 1e308, 1e308], expected being 3.333333333333333e307, tolerance being 1.99584030953472e292, label being "mixed permutation"
+    evaluate near with items being [minus 1e308, minus 1e308, 1e308], expected being minus 3.333333333333333e307, tolerance being 1.99584030953472e292, label being "negative mixed overflow"
+    evaluate near with items being [1e308, 1e308, minus 1e308, minus 1e308], expected being 0.0, tolerance being 0.0, label being "balanced overflowing groups"
+    evaluate near with items being [maximum, minus maximum], expected being 0.0, tolerance being 0.0, label being "opposite maxima"
+    say "finite overflow and mixed signs"
+
+    evaluate near with items being [1e16, 1.0, minus 1e16], expected being 0.3333333333333333, tolerance being 2.220446049250313e-16, label being "moderate cancellation residue"
+    evaluate near with items being [1e16, 1.0, 1.0, minus 1e16], expected being 0.5, tolerance being 0.0, label being "two cancellation units"
+    evaluate near with items being [3.0, 1.0000000000000002, minus 2.0, minus 1.0, minus 1.0], expected being 4.4408920985006264e-17, tolerance being 2.465190328815662e-32, label being "compensation tail before small terms"
+    evaluate near with items being [2.0000000000000004, 1.9999999999999998, minus 1.0, minus 1.0, minus 1.0, minus 1.0], expected being 3.700743415417188e-17, tolerance being 2.465190328815662e-32, label being "opposite compensation tails"
+    evaluate near with items being [minus 1.0, 2.0000000000000004, minus 1.0, 1.9999999999999998, minus 1.0, minus 1.0], expected being 3.700743415417188e-17, tolerance being 2.465190328815662e-32, label being "compensation tail permutation"
+    evaluate near with items being [minus 2.0000000000000004, minus 1.9999999999999998, 1.0, 1.0, 1.0, 1.0], expected being minus 3.700743415417188e-17, tolerance being 2.465190328815662e-32, label being "negative compensation tails"
+    evaluate near with items being [1e308, 1.0, minus 1e308], expected being 0.3333333333333333, tolerance being 2.220446049250313e-16, label being "extreme cancellation residue"
+    evaluate near with items being [1e308, 1e308, minus 1e308, minus 1e308, 3e-300], expected being 6.000000000000001e-301, tolerance being 3.3156184e-316, label being "tiny residue after overflow"
+    evaluate near with items being [3e-300, minus 1e308, 1e308, minus 1e308, 1e308], expected being 6.000000000000001e-301, tolerance being 3.3156184e-316, label being "tiny residue permutation"
+    evaluate near with items being [1e308, 1e-308, minus 1e308], expected being 3.33333333333333e-309, tolerance being 2e-323, label being "subnormal cancellation residue"
+    evaluate near with items being [maximum, minus maximum, 2.2250738585072014e-308], expected being 7.41691286169067e-309, tolerance being 2e-323, label being "minimum normal residue"
+    evaluate near with items being [1e308, 1e308, minus 1e308, minus 1e308, 5e-324], expected being 0.0, tolerance being 0.0, label being "unrepresentable final residue rounds to zero"
+    say "compensated cancellation"
+
+    value tiny is 5e-324
+    evaluate near with items being [tiny, tiny], expected being tiny, tolerance being 0.0, label being "repeated minimum subnormal"
+    evaluate near with items being [minus tiny, minus tiny], expected being minus tiny, tolerance being 0.0, label being "negative minimum subnormal"
+    evaluate near with items being [tiny, 0.0, tiny], expected being tiny, tolerance being 0.0, label being "subnormal thirds"
+    evaluate near with items being [tiny, 0.0], expected being 0.0, tolerance being 0.0, label being "subnormal tie rounds to even zero"
+    evaluate near with items being [1.5e-323, 0.0], expected being 1e-323, tolerance being 0.0, label being "subnormal tie rounds to even nonzero"
+    evaluate near with items being [tiny, 1e-323, 1.5e-323], expected being 1e-323, tolerance being 0.0, label being "mixed subnormal mean"
+    evaluate near with items being [2.2250738585072014e-308, 2.2250738585072014e-308, 2.2250738585072014e-308], expected being 2.2250738585072014e-308, tolerance being 0.0, label being "minimum normal repeated"
+    evaluate near with items being [2.2250738585072014e-308, 2.225073858507201e-308], expected being 2.2250738585072014e-308, tolerance being 0.0, label being "normal boundary tie"
+    say "subnormal means and rounding"
+
+    variable large-values as array of floating is []
+    variable small-values as array of floating is []
+    repeat for index from 0 to 257
+        append maximum to large-values
+        append tiny to small-values
+    end repeat
+    evaluate near with items being large-values, expected being maximum, tolerance being 7.98336123813888e292, label being "257 maximum values"
+    evaluate near with items being small-values, expected being tiny, tolerance being 0.0, label being "257 minimum subnormals"
+    say "repeated maximum and subnormal means"
+
+    value infinity is exp with 1000.0
+    value nan is sqrt with minus 1.0
+    evaluate infinite-mean with items being [infinity], expected being infinity, label being "positive infinity singleton"
+    evaluate infinite-mean with items being [minus infinity], expected being minus infinity, label being "negative infinity singleton"
+    evaluate infinite-mean with items being [infinity, 1e308, 1e308], expected being infinity, label being "positive infinity propagates"
+    evaluate infinite-mean with items being [minus infinity, 1e308, 1e308], expected being minus infinity, label being "negative infinity precedes large terms"
+    evaluate nan-mean with items being [nan], label being "NaN singleton"
+    evaluate nan-mean with items being [1.0, nan, 2.0], label being "NaN inside input"
+    evaluate nan-mean with items being [infinity, minus infinity], label being "opposite infinities"
+    evaluate nan-mean with items being [infinity, nan, minus infinity], label being "NaN and infinities"
+    evaluate nan-mean with items being [1e308, 1e308, minus infinity], label being "historical overflow before opposite infinity"
+    evaluate nan-mean with items being [minus 1e308, minus 1e308, infinity], label being "historical negative overflow before infinity"
+    evaluate require with ok being ((sum-f64 with arr being [1e308, 1e308]) equals infinity), label being "sum retains ordinary overflowing arithmetic"
+    say "nonfinite input contracts"
+    give 0
+end paragraph
