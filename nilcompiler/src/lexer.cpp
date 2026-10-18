@@ -445,6 +445,10 @@ token lexer::number() {
      while (std::isxdigit(static_cast<unsigned char>(peek()))) {
        advance();
      }
+     // Keep an invalid adjacent identifier suffix in the numeric token so it
+     // remains a source-literal error even when type-check errors are ignored.
+     while (std::isalnum(static_cast<unsigned char>(peek())) || peek() == '_')
+       advance();
      std::string text = src.substr(start, current - start);
      return token{token_kind::number_literal, text, line};
   }

@@ -30,6 +30,7 @@ not assigned architecture identifiers.
 | NIL-0004 | [Debugger state belongs to the VM](../../notebook/decisions/NIL-0004-debugger-state-belongs-to-the-vm.md) | Implemented as a preview |
 | NIL-0005 | [Generated non-void fallthrough is explicit](../../notebook/decisions/NIL-0005-generated-nonvoid-fallthrough-is-explicit.md) | Implemented and verified |
 | NIL-0006 | [Opt-in AI control for NIL programs](NIL-0006-ai-module.md) | Partial Windows prototype; interpreter introspection and Unix transport remain proposed |
+| NIL-0007 | [Integer literal widths and range validation](NIL-0007-integer-literal-widths.md) | Implemented |
 | NIL-0093 | [Executable context is artifact self-description](NIL-0093-executable-context.md) | Implemented within the documented inspection profile |
 
 ## Retained Ny feature references

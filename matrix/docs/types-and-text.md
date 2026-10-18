@@ -71,14 +71,18 @@ gets a message naming the real constraint instead of "unknown identifier".
 
 ### Two consequences worth knowing
 
-**A declared `number` is 64-bit; current literal inference is still 32-bit.**
-Matrix's intended ordinary integer type is the wider `number`, but unannotated
-integer literals and their arithmetic currently share Ny's `i32` inference.
+**A declared `number` is 64-bit; small integer literals still infer 32 bits.**
+Ny and Matrix infer decimal literals as `i32` when representable and `i64`
+otherwise. Negated boundary literals represent the signed minima directly;
+values outside signed 64-bit range are rejected. Hexadecimal values through
+`0xFFFFFFFF` retain 32-bit mask semantics. Matrix's intended universal
+`number` default remains a separate language decision.
 For example, `2147483647 plus 1` wraps before conversion even if assigned to
 a `number` or passed to a `number` parameter. Bind an operand as `number`, or
 cast it with `becomes override long`, before performing arithmetic that needs
-64 bits. An `array of number` also needs correctly typed elements; its annotation
-does not widen an inferred integer-literal array. This discrepancy is tracked
+64 bits. Mixed `i32`/`i64` array elements now infer `array of number` in either
+order; an unannotated all-small-literal array still infers `array of override integer`.
+Array types remain invariant. The remaining inference questions are tracked
 in [F30](next-version-findings.md#f30--large-integer-expressions-can-narrow-before-an-i64-argument-conversion).
 Ny APIs accepting `i32` may instead require `becomes override integer`.
 

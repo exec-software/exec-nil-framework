@@ -921,9 +921,10 @@ evidence are under `build/random-library-work`.
 
 ### F30 — Large integer expressions can narrow before an i64 argument conversion
 
-**Status:** Confirmed authoring/diagnostic gap; no inference change in this pass.
+**Status:** Literal-range and mixed-integer-array fixes implemented; contextual
+typing and Matrix's universal `number` default remain open.
 
-**Evidence:** Passing `-9223372036854775807 - 1` to an `i64` parameter produces
+**Evidence before the fix:** Passing `-9223372036854775807 - 1` to an `i64` parameter produces
 zero on both frontends and all six routes. The emitted NIL performs `NEG i32`
 and `SUB i32` before the call. The generator's normalization was correct; its
 test had constructed the wrong seed. Oversized bare literals are accepted
@@ -939,16 +940,41 @@ unannotated arithmetic therefore does not yet follow the intended wider
 declared types and inferred literal expressions. The probe sources, NIL and
 12 successful route executions are in `build/random-library-work/width-probes`.
 
-**Workaround:** Bind `let maximum: i64 = 9223372036854775807` in Ny or
-`value maximum as number is 9223372036854775807` in Matrix, then construct the
-minimum with `-maximum - 1` or `minus maximum minus 1`. The paired RNG fixtures
-use this form and verify the true i64 extrema against independent oracles.
-An explicit cast on the literal operand also fixes its arithmetic width.
+**Resolution:** [NIL-0007](../../docs/design/NIL-0007-integer-literal-widths.md)
+defines shared range-aware inference: decimal literals use `i32` when
+representable and `i64` otherwise. Signed boundary literals represent both
+minimum values directly. Hexadecimal masks through `0xFFFFFFFF` retain their
+historical `i32` width; larger supported hexadecimal values use `i64`. Values
+outside the signed 64-bit carrier range fail before artifact output, including
+unused/default expressions, editor analysis and unchecked compilation.
+Mixed `i32`/`i64` arrays now infer `array<i64>` in either element order,
+including elements supplied by typed variables. Array types remain invariant.
+The original large-literal expression now constructs the intended i64 minimum.
+This repairs the existing `abs_i64` guard in `nil.std.core`: the old SDK
+panicked for zero and returned the unchanged minimum value for overflow.
+The baseline reproducer is under `build/integer-width-work/abs-baseline`.
 
-**Next step / acceptance:** Define literal-range and contextual-inference policy
-for both frontends. Diagnose values outside an inferred integer width, or adopt
-specified wider inference; keep explicit wrapping arithmetic distinct from
-accidental narrowing of a literal. Matrix's intended `number` default needs
-matching inferred expression/array behavior and documentation. Cover nested
-arithmetic, calls, arrays, editor diagnostics and all execution routes before
-changing the language contract.
+**Verification:** Paired
+[Ny](../../tests/language/integer-literal-widths.ny) and
+[Matrix](../../tests/language/integer-literal-widths-matrix.matrix) fixtures cover
+integer boundaries, globals, nested calls, both match forms, wide array values,
+explicit narrowing, retained wrapping behavior and core `abs_i64` results.
+Separate paired overflow fixtures require `abs_i64` to reject the signed
+minimum on every enabled execution route. The
+[contract runner](../../tests/tools/integer_literals_contract.py) checks invalid
+source literals and existing-artifact preservation across compilation modes,
+editor diagnostics, array invariance, and the type-checking-disabled flag.
+Fixtures are registered for all six routes, standalone assembler/linker
+pipelines and installed source/binary-library consumption.
+
+**Remaining context / workaround:** To widen arithmetic on small operands,
+bind one operand as `i64` in Ny or `number` in Matrix before the operation.
+For example, `(2147483647 as i64) + 1` retains the wider result. The signed
+minimum itself can now be written directly in either language.
+
+**Next step / acceptance:** Decide broader contextual inference and Matrix's
+intended universal `number` default separately. Small literals still infer
+`i32`, so `2147483647 + 1` still wraps before assignment to `i64`; a parameter
+or destination annotation does not change an inner expression's width. A
+future change must cover generic identities, mixed-language arrays/calls and
+explicit narrow arithmetic, with matching editor and execution evidence.

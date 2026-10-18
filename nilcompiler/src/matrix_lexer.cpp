@@ -318,6 +318,8 @@ token lexer::scan_number() {
     }
     while (std::isxdigit(static_cast<unsigned char>(peek())))
       spelling.push_back(advance());
+    while (std::isalnum(static_cast<unsigned char>(peek())) || peek() == '_')
+      spelling.push_back(advance());
     token t = make(token_kind::number_literal, spelling, line, col);
     t.key = spelling;
     return t;

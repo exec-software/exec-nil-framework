@@ -10,7 +10,13 @@ not supply placeholder values.
 42          # i32
 42 as i64   # explicit width
 0xFF        # hex
+2147483648  # inferred i64
 ```
+
+Decimal literals infer `i32` or `i64` by representable range. Hexadecimal
+literals through `0xFFFFFFFF` retain 32-bit mask semantics. Out-of-range
+integers are rejected before code generation; see the
+[integer width contract](types.md#scalar-values).
 
 ### Float Literals
 ```ny

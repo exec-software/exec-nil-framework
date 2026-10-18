@@ -35,6 +35,17 @@ namespace ny {
 
 static thread_local std::optional<std::string> parser_current_module;
 
+// Nested matches temporarily replace the enclosing target/body boundary.
+// Patterns and guards disable it: subtraction immediately before their arrow
+// belongs to the expression, not to a following negative literal arm.
+struct match_boundary_scope {
+  std::optional<size_t> &boundary;
+  const std::optional<size_t> previous;
+  match_boundary_scope(std::optional<size_t> &value, size_t depth)
+      : boundary(value), previous(value) { boundary = depth; }
+  ~match_boundary_scope() { boundary = previous; }
+};
+
 // ----------------------------
 // Utilities
 // ----------------------------
@@ -465,6 +476,22 @@ std::shared_ptr<ast_program> parser::parse_program() {
     } else {
       // Try to recover and continue parsing.
       synchronize();
+    }
+  }
+  // Validate the complete token stream, not just expressions reached by the
+  // checker/code generator. Defaults, unused lambdas and unchecked builds
+  // must diagnose unsupported integer words as well. Unary minimum literals
+  // have replaced their positive boundary spelling by this point.
+  for (size_t index = 0; index < tokens_.size(); ++index) {
+    const auto &number = tokens_[index];
+    if (number.kind != token_kind::number_literal ||
+        is_floating_literal_spelling(number.lexeme)) continue;
+    integer_literal_info info;
+    if (const auto *message = parse_integer_literal(number.lexeme, info)) {
+      const auto boundary = integer_boundaries_.find(index);
+      if (boundary == integer_boundaries_.end() ||
+          parse_integer_literal(boundary->second->value, info))
+        add_error(number, message);
     }
   }
   return program;
@@ -2716,6 +2743,11 @@ std::shared_ptr<ast_stmt> parser::parse_expr_statement() {
 // Expressions (precedence climbing)
 // ----------------------------
   std::shared_ptr<ast_expr> parser::parse_expression() {
+  struct depth_scope {
+    size_t &depth;
+    explicit depth_scope(size_t &value) : depth(value) { ++depth; }
+    ~depth_scope() { --depth; }
+  } scope(expression_depth_);
   return parse_assignment();
 }
 
@@ -2848,7 +2880,12 @@ std::shared_ptr<ast_expr> parser::parse_comparison() {
 
   std::shared_ptr<ast_expr> parser::parse_term() {
   auto expr = parse_factor();
-  while (match(token_kind::plus) || match(token_kind::minus)) {
+  while (check(token_kind::plus) || check(token_kind::minus)) {
+    // A numeric arm following an expression/return can begin with unary
+    // minus. Its arrow distinguishes it from a multiline subtraction.
+    if (match_arm_boundary_depth_ == expression_depth_ &&
+        check(token_kind::minus) && is_match_arm_start()) break;
+    advance();
     auto op = previous();
     auto right = parse_factor();
     expr = std::make_shared<ast_binary_expr>(expr, op.kind, right, op.line);
@@ -2894,6 +2931,14 @@ std::shared_ptr<ast_expr> parser::parse_unary() {
       match(token_kind::tilde)) {
     auto op = previous();
     auto right = parse_unary();
+    if (op.kind == token_kind::minus && right &&
+        right->kind == ast_node_kind::number_literal_node) {
+      auto &number = static_cast<ast_number_literal &>(*right);
+      if (const auto folded = negated_integer_boundary(number.value)) {
+        number.value = *folded;
+        return right;
+      }
+    }
     return std::make_shared<ast_unary_expr>(op.kind, right, op.line);
   } else if (match(token_kind::not_kw)) {
     auto op = previous();
@@ -3249,7 +3294,10 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
   if (match(token_kind::number_literal)) {
     auto num_tok = previous();
     debug_peek("matched number_literal");
-    return std::make_shared<ast_number_literal>(num_tok.lexeme, num_tok.line);
+    auto number = std::make_shared<ast_number_literal>(num_tok.lexeme, num_tok.line);
+    if (is_integer_minimum_magnitude(number->value))
+      integer_boundaries_.emplace(pos_ - 1, number);
+    return number;
   }
   if (match(token_kind::string_literal)) {
     auto str_tok = previous();
@@ -3469,6 +3517,7 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
 std::shared_ptr<ast_expr> parser::parse_match_expression() {
   // 'match' already consumed
   token start_tok = previous();
+  match_boundary_scope boundary(match_arm_boundary_depth_, expression_depth_ + 1);
 
   // Parse target expression
   auto target = parse_expression();
@@ -3487,6 +3536,8 @@ std::shared_ptr<ast_expr> parser::parse_match_expression() {
     if (!use_braces && check(token_kind::end_kw))
       break;
 
+    // Patterns and guards may contain subtraction before the arrow.
+    match_arm_boundary_depth_.reset();
     // Pattern
     ast_expr_ptr pattern = nullptr;
 
@@ -3515,6 +3566,7 @@ std::shared_ptr<ast_expr> parser::parse_match_expression() {
 
     // Body: For expression-style match arms we accept a single expression
     // statement. For block-style match arms, parse_statement handles both.
+    match_arm_boundary_depth_ = expression_depth_ + 1;
     auto body = parse_statement();
 
     cases.emplace_back(pattern, guard, body);
@@ -3663,11 +3715,20 @@ ast_pattern parser::parse_pattern() {
     }
   }
 
+  // A sign belongs to the literal in a statement pattern, including signed
+  // minima whose positive magnitude cannot be represented as an i64 word.
+  const bool negative_number = check(token_kind::minus) &&
+      pos_ + 1 < tokens_.size() &&
+      tokens_[pos_ + 1].kind == token_kind::number_literal;
+  if (negative_number) advance();
   // Numeric literal pattern
   if (match(token_kind::number_literal)) {
     token n = previous();
     pat.kind = ast_pattern_kind::literal_pattern;
-    pat.literal_value = n.lexeme;
+    pat.literal_value = (negative_number ? "-" : "") + n.lexeme;
+    if (negative_number && is_integer_minimum_magnitude(n.lexeme))
+      integer_boundaries_.emplace(pos_ - 1,
+          std::make_shared<ast_number_literal>(pat.literal_value, n.line));
     return pat;
   }
 
@@ -3750,7 +3811,9 @@ bool parser::is_match_arm_start() const {
   }
 
   // First token must be an identifier (variant, `_`, bare name) or literal.
-  bool first_ok = (first.kind == token_kind::identifier ||
+  const bool negative_number = first.kind == token_kind::minus &&
+      i + 1 < tokens_.size() && tokens_[i + 1].kind == token_kind::number_literal;
+  bool first_ok = (negative_number || first.kind == token_kind::identifier ||
                    first.kind == token_kind::number_literal ||
                    first.kind == token_kind::true_kw ||
                    first.kind == token_kind::false_kw ||
@@ -3760,6 +3823,7 @@ bool parser::is_match_arm_start() const {
     return false;
 
   i++; // consume the identifier / literal
+  if (negative_number) ++i;
 
   // Skip optional `:: qualifier` or `.qualifier` sequences
   while (i + 1 < tokens_.size() &&
@@ -3794,6 +3858,7 @@ bool parser::is_match_arm_start() const {
 std::shared_ptr<ast_stmt> parser::parse_match_statement() {
   // 'match' already consumed by the caller (i.e., parse_statement)
   token start_tok = previous();
+  match_boundary_scope boundary(match_arm_boundary_depth_, expression_depth_ + 1);
 
   // Parse the target expression for the match statement.
   auto target = parse_expression();
@@ -3812,6 +3877,7 @@ std::shared_ptr<ast_stmt> parser::parse_match_statement() {
     if (!use_braces && check(token_kind::end_kw))
       break;
 
+    match_arm_boundary_depth_.reset();
     // Parse the structural pattern for this arm
     ast_pattern pattern = parse_pattern();
 
@@ -3828,6 +3894,7 @@ std::shared_ptr<ast_stmt> parser::parse_match_statement() {
     // A single `->` after a pattern-like token signals a new arm; statement
     // keywords (return, let, if, …) signal more statements in this arm.
     int body_line = previous().line;
+    match_arm_boundary_depth_ = expression_depth_ + 1;
     auto body_block = std::make_shared<ast_block_stmt>(body_line);
     body_block->statements.push_back(parse_statement());
     while (!is_at_end() &&

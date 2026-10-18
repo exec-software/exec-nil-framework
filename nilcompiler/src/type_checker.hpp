@@ -266,6 +266,7 @@ private:
   // Built-in types
   type_info type_void{"void", true};
   type_info type_i32{"i32", true};
+  type_info type_i64{"i64", true};
   type_info type_f64{"f64", true};
   type_info type_bool{"bool", true};
   type_info type_string{"String", true};

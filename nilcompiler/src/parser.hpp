@@ -21,6 +21,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "ast.hpp"
@@ -213,7 +214,13 @@ private:
 
   // Token stream / source tracking
   std::vector<token> tokens_;
+  // Keep the AST spelling for the single magnitude that becomes valid only
+  // under direct unary minus, including otherwise unused/default expressions.
+  std::unordered_map<size_t, std::shared_ptr<ast_number_literal>>
+      integer_boundaries_;
   size_t pos_ = 0; // current token index (points at the next token)
+  size_t expression_depth_ = 0;
+  std::optional<size_t> match_arm_boundary_depth_;
   parser_options options_;
 
   // Local copy of preprocessor options (for convenience in the parser).

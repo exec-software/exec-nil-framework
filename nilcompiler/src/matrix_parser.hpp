@@ -80,6 +80,8 @@ public:
 
 private:
   std::vector<token> tokens_;
+  std::unordered_map<size_t, std::shared_ptr<ny::ast_number_literal>>
+      integer_boundaries_;
   size_t pos_ = 0;
   std::vector<ny::diagnostic> diagnostics_;
   std::vector<matrix::diagnostic> rich_;

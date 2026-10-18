@@ -2298,16 +2298,17 @@ if(BUILD_TESTING)
         )
         set_tests_properties(ny.qualified-enum-contract PROPERTIES
             LABELS "typecheck;analysis;rc" TIMEOUT 120)
-        foreach(scientific_frontend IN ITEMS ny matrix)
-            if(scientific_frontend STREQUAL "ny")
-                set(scientific_fixture scientific-literals)
+        foreach(numeric_fixture IN ITEMS scientific-literals scientific-literals-matrix
+                                         integer-literal-widths integer-literal-widths-matrix)
+            if(numeric_fixture MATCHES "-matrix$")
+                set(numeric_frontend matrix)
             else()
-                set(scientific_fixture scientific-literals-matrix)
+                set(numeric_frontend ny)
             endif()
             add_ny_route_test(
-                ny.routes.${scientific_fixture}
-                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${scientific_fixture}.${scientific_frontend}"
-                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${scientific_fixture}.stdout"
+                ny.routes.${numeric_fixture}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${numeric_fixture}.${numeric_frontend}"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${numeric_fixture}.stdout"
                 --expected-exit 0
                 --routes all
                 --compiler-arg=--sdk-path
@@ -2315,19 +2316,19 @@ if(BUILD_TESTING)
             )
             if(TARGET nilassembler AND TARGET nillinker)
                 add_test(
-                    NAME ny.tools.${scientific_fixture}
+                    NAME ny.tools.${numeric_fixture}
                     COMMAND "${Python3_EXECUTABLE}"
                             "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_toolchain_pipeline.py"
                             --compiler $<TARGET_FILE:nilcompiler>
                             --assembler $<TARGET_FILE:nilassembler>
                             --linker $<TARGET_FILE:nillinker>
                             --runtime $<TARGET_FILE:nilruntime>
-                            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${scientific_fixture}.${scientific_frontend}"
-                            --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${scientific_fixture}.stdout"
+                            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${numeric_fixture}.${numeric_frontend}"
+                            --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${numeric_fixture}.stdout"
                             --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
                             --work-dir "${CMAKE_CURRENT_BINARY_DIR}/tests/tools"
                 )
-                set_tests_properties(ny.tools.${scientific_fixture} PROPERTIES
+                set_tests_properties(ny.tools.${numeric_fixture} PROPERTIES
                     LABELS "tools;native;rc" SKIP_RETURN_CODE 77 TIMEOUT 240)
             endif()
         endforeach()
@@ -2340,6 +2341,16 @@ if(BUILD_TESTING)
         )
         set_tests_properties(ny.scientific-literals-contract PROPERTIES
             LABELS "typecheck;analysis;rc" TIMEOUT 120)
+        add_test(
+            NAME ny.integer-literals-contract
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/integer_literals_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --llvm "${NIL_ENABLE_LLVM}"
+        )
+        set_tests_properties(ny.integer-literals-contract PROPERTIES
+            LABELS "typecheck;analysis;rc" TIMEOUT 180)
         add_ny_route_test(
             ny.routes.canonical-option-result-methods
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/canonical-option-result-methods.ny"
@@ -2634,6 +2645,35 @@ if(BUILD_TESTING)
             absolute-overflow
             core-absolute-overflow-reject.stderr
         )
+        foreach(absolute_frontend IN ITEMS ny matrix)
+            if(absolute_frontend STREQUAL "ny")
+                set(absolute_fixture core-absolute-i64-overflow)
+            else()
+                set(absolute_fixture core-absolute-i64-overflow-matrix)
+            endif()
+            add_ny_route_test(
+                ny.routes.${absolute_fixture}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${absolute_fixture}.${absolute_frontend}"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/routes/empty.stdout"
+                --expected-stderr "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/core-absolute-i64-overflow.stderr"
+                --expected-exit 1
+                --routes text-interpreter,binary-interpreter,bundle-text,bundle-binary
+                --compiler-arg=--sdk-path
+                --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+            )
+            if(NIL_ENABLE_LLVM)
+                add_ny_route_test(
+                    ny.routes.native-${absolute_fixture}
+                    --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${absolute_fixture}.${absolute_frontend}"
+                    --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/routes/empty.stdout"
+                    --expected-stderr "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/core-absolute-i64-overflow.native.stderr"
+                    --expected-exit 1
+                    --routes llvm-jit,llvm-aot
+                    --compiler-arg=--sdk-path
+                    --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+                )
+            endif()
+        endforeach()
         add_ny_core_algorithm_reject_test(
             ny.routes.core-gcd-overflow-reject
             gcd-overflow

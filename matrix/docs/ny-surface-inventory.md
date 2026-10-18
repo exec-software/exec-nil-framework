@@ -95,9 +95,10 @@ semantic weight.
 | `char` | no spelling | needs independent qualification |
 | `any` | no spelling | erasure/recovery is rejected |
 
-Integer literals infer `integer`; floating literals infer `real`. Matrix keeps
-Ny's promotion order `real`, `long`, `integer`, `byte` and Ny's wrapping
-integer arithmetic at the resolved width.
+Decimal integer literals infer `i32` or `i64` by range; 32-bit hexadecimal masks
+retain `i32` inference. Floating literals infer `f64`. Matrix keeps Ny's
+promotion order `f64`, `i64`, `i32`, `u8` and wrapping integer arithmetic at
+the resolved width. See the shared [literal-width decision](../../docs/design/NIL-0007-integer-literal-widths.md).
 
 ### Conversions
 

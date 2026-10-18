@@ -1439,6 +1439,62 @@ public:
     push_instr(opcode, {type}, expression.line);
   }
 
+  // Recover only unambiguous expression types for direct AST clients that do
+  // not run the checker. This supplies array element metadata, without adding
+  // typed arithmetic or implicit scalar storage conversions to that path.
+  std::string unambiguous_expression_type(const ast_expr &expression) const {
+    if (expression.inferred_type)
+      return substitute_nil_type_name(*expression.inferred_type, substitutions);
+    switch (expression.kind) {
+    case ast_node_kind::number_literal_node: {
+      const auto &number = static_cast<const ast_number_literal &>(expression);
+      if (is_floating_literal_spelling(number.value)) return "f64";
+      integer_literal_info info;
+      return parse_integer_literal(number.value, info) ? "" : info.inferred_type();
+    }
+    case ast_node_kind::boolean_literal_node: return "bool";
+    case ast_node_kind::char_literal_node: return "u8";
+    case ast_node_kind::string_literal_node: return "text";
+    case ast_node_kind::cast_expr_node:
+      return substitute_nil_type_name(
+          static_cast<const ast_cast_expr &>(expression).target_type, substitutions);
+    case ast_node_kind::identifier_expr_node: {
+      const auto &name = static_cast<const ast_identifier_expr &>(expression).name;
+      const auto local = local_var_types.find(name);
+      return local == local_var_types.end() ? "" :
+          substitute_nil_type_name(local->second, substitutions);
+    }
+    case ast_node_kind::unary_expr_node: {
+      const auto &unary = static_cast<const ast_unary_expr &>(expression);
+      if (unary.operand && (unary.op == token_kind::minus || unary.op == token_kind::tilde))
+        return unambiguous_expression_type(*unary.operand);
+      return {};
+    }
+    case ast_node_kind::array_literal_expr_node: {
+      const auto &array = static_cast<const ast_array_literal_expr &>(expression);
+      const auto element = unambiguous_array_element_type(array);
+      return element == "any" ? "" : "array<" + element + ">";
+    }
+    default: return {};
+    }
+  }
+
+  std::string unambiguous_array_element_type(const ast_array_literal_expr &array) const {
+    std::string result;
+    for (const auto &element : array.elements) {
+      if (!element) return "any";
+      auto type = unambiguous_expression_type(*element);
+      if (type.empty() || type == "any" || type == "__local" || type == "<unknown>")
+        return "any";
+      if (type == "int") type = "i32";
+      if (result.empty()) result = type;
+      else if ((result == "i32" && type == "i64") ||
+               (result == "i64" && type == "i32")) result = "i64";
+      else if (result != type) return "any";
+    }
+    return result.empty() ? "any" : result;
+  }
+
   void emit_stmt(const ast_stmt &s) {
     switch (s.kind) {
     case ast_node_kind::block_stmt_node: {
@@ -1467,6 +1523,10 @@ public:
           ds.declaration->kind == ast_node_kind::variable_decl_node) {
         const auto &vd =
             static_cast<const ast_variable_decl &>(*ds.declaration);
+        const auto fallback_type = vd.initializer
+            ? unambiguous_expression_type(*vd.initializer) : std::string{};
+        const auto local_type = vd.type_name.value_or(
+            fallback_type.empty() ? "__local" : fallback_type);
         if (vd.initializer) {
           emit_expr(*vd.initializer, vd.type_name);
           // NY-001: When a type annotation is present (e.g. `let x: f64 =
@@ -1479,7 +1539,7 @@ public:
           // The initializer resolves before introducing the new binding:
           // `let value = value + 1` reads the visible outer declaration.
           declare_local(vd.name,
-                        vd.type_name.value_or(vd.initializer->inferred_type.value_or("__local")));
+                        local_type);
           nil_instruction instr;
           instr.opname = "STORE_LOCAL";
           instr.args.push_back(vd.name);
@@ -1496,7 +1556,7 @@ public:
         // Always mark as a known local (even without type) so the identifier
         // handler can distinguish locals from fn-pointer references.
         local_var_types[vd.name] =
-            vd.type_name.value_or(vd.initializer ? vd.initializer->inferred_type.value_or("__local") : "__local");
+            local_type;
       }
       break;
     }
@@ -2312,8 +2372,22 @@ public:
             // Load target, push literal, compare for equality
             push_instr("LOAD_LOCAL", {tmp_target}, match_s.line);
             if (arm.pattern.literal_kind == ast_node_kind::number_literal_node) {
+              integer_literal_info integer;
+              const bool integral = !is_floating_literal_spelling(arm.pattern.literal_value);
+              if (integral) {
+                if (const auto *message = parse_integer_literal(arm.pattern.literal_value, integer)) {
+                  cg_.reject_codegen_construct(match_s.line, message,
+                      "use a signed i64 value or a supported floating-point literal");
+                  break;
+                }
+              }
               push_instr("PUSH_CONST", {arm.pattern.literal_value},
                          match_s.line);
+              // Newly accepted signed hexadecimal patterns must match the
+              // existing unary NEG expression, including 32-bit mask wrap.
+              if (integral && integer.negative && integer.hexadecimal &&
+                  integer.inferred_type() == std::string_view("i32"))
+                push_instr("CAST", {"i32"}, match_s.line);
             } else if (arm.pattern.literal_kind == ast_node_kind::boolean_literal_node) {
               push_instr("PUSH_CONST", {arm.pattern.literal_value == "true" ? "1" : "0"},
                          match_s.line);
@@ -2653,6 +2727,14 @@ public:
     switch (e.kind) {
     case ast_node_kind::number_literal_node: {
       const auto &num = static_cast<const ast_number_literal &>(e);
+      if (!is_floating_literal_spelling(num.value)) {
+        integer_literal_info integer;
+        if (const auto *message = parse_integer_literal(num.value, integer)) {
+          cg_.reject_codegen_construct(num.line, message,
+              "use a signed i64 value or a supported floating-point literal");
+          break;
+        }
+      }
       push_instr("PUSH_CONST", {num.value}, num.line);
       break;
     }
@@ -2712,28 +2794,11 @@ public:
             element && *element != "any")
           element_type = *element;
       }
-      if (element_type == "any" && !arr.elements.empty() &&
-          arr.elements.front()->inferred_type) {
-        element_type = *arr.elements.front()->inferred_type;
-      }
-      // `--no-typecheck` deliberately leaves inferred_type unset. Preserve
-      // the unambiguous builtin literal type anyway so native lowering can
-      // enforce an exact array ABI instead of accepting a wildcard handle.
-      if (element_type == "any" && !arr.elements.empty()) {
-        const auto &first = *arr.elements.front();
-        if (first.kind == ast_node_kind::number_literal_node) {
-          const auto &number = static_cast<const ast_number_literal &>(first);
-          element_type = is_floating_literal_spelling(number.value)
-                             ? "f64"
-                             : "i32";
-        } else if (first.kind == ast_node_kind::boolean_literal_node) {
-          element_type = "bool";
-        } else if (first.kind == ast_node_kind::char_literal_node) {
-          element_type = "u8";
-        } else if (first.kind == ast_node_kind::string_literal_node) {
-          element_type = "text";
-        }
-      }
+      // Direct AST clients may omit checker metadata. Recover every known
+      // element's width so native lowering can enforce an exact array ABI
+      // instead of accepting a wildcard handle or trusting the first value.
+      if (element_type == "any")
+        element_type = unambiguous_array_element_type(arr);
       push_instr("NEW_ARRAY_LITERAL",
                  {std::to_string(arr.elements.size()), element_type}, arr.line);
       break;
