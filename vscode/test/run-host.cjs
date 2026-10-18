@@ -16,7 +16,7 @@ const report = path.join(reportDirectory, "latest.json");
 fs.rmSync(report, { force: true });
 const tools = process.env.NIL_VSCODE_TOOL_DIRECTORY || process.env.NY_VSCODE_TOOL_DIRECTORY || path.join(repository, "build", "cmake", "bin");
 const settings = {
-  "ny.sdkPath": repository,
+  "ny.sdkPath": process.env.NIL_VSCODE_SDK_PATH || repository,
   "ny.languageServer.enabled": true,
   "ny.languageServer.diagnostics.enabled": true,
   "security.workspace.trust.enabled": false,
@@ -27,7 +27,7 @@ const settings = {
   "telemetry.telemetryLevel": "off"
 };
 for (const [setting, tool] of Object.entries({
-  server: "nillsp", compiler: "nilcompiler", interpreter: "nilinterpreter", debugger: "nildebugger"
+  server: "nillsp", compiler: "nilcompiler", interpreter: "nilinterpreter", debugger: "nildebugger", projectTool: "nilbuild"
 })) {
   const executable = path.join(tools, tool + (process.platform === "win32" ? ".exe" : ""));
   fs.accessSync(executable, fs.constants.X_OK);

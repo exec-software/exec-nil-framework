@@ -1123,3 +1123,50 @@ convention; this pass tests malformed structural signatures but does not add
 custom enum support. **Next step:** Reject an incompatible nominal provider
 owner during source/NIL validation, or explicitly support that owner throughout
 construction and matching, with matching VM/native evidence.
+
+### F37 — Editor and application builds lacked shared project context
+
+**Status:** Initial project/check/build integration implemented; semantic
+workspace services remain open work.
+
+The extension previously offered file tasks and repository CMake/CTest tasks,
+while compiler analysis supplied only two style rules beyond compiler errors.
+No local application project driver or target manifest was implemented. The
+language server's tolerant document index also remained separate from compiler
+import/type resolution, and imported diagnostics appeared only in an output
+channel.
+
+**Resolution:** `nilbuild` and `nil.project.v1` establish one explicit local
+project context for checking, VM/native builds and running. Builds check first
+and publish staged outputs only after success. Compiler-owned default rules
+add conservative unreachable-statement and discarded-standard-outcome warnings,
+with a discoverable catalog, rule suppression and warnings-as-errors. VS Code
+uses project context for live checks and project tasks, and publishes imported
+Problems only when an exact bounded source snapshot matches current disk text.
+
+**Remaining boundaries:** One executable entrypoint and its import graph;
+complete rebuilds; Linux process execution. Unopened imports are type checked
+but not recursively linted. The analyzer does not inspect lambda bodies inside
+expressions or prove arbitrary control-flow reachability. Unsaved import
+overlays, a shared semantic symbol/reference index, semantic completion,
+cross-file rename/references, language-authored analyzer hosting, project
+reference graphs and incremental builds remain separate increments. See the
+[developer-tooling plan](../../docs/developer-tooling.md) for acceptance criteria.
+
+### F38 — The frontend directory could hide the repository standard library
+
+**Status:** SDK discovery fixed; compatibility regressions added.
+
+`nilcompiler --analyze -I <repository>` reported `NIL0003` for `nil.std.text`,
+while adding `<repository>/nilstd/src` resolved the same import. SDK discovery
+mistook the repository's `ny/` frontend directory for a legacy standard-library
+root and stopped before considering `nilstd/src`. The editor's repository-root
+configuration exposed this collision.
+
+**Resolution:** Source and binary SDK discovery now recognize the historical
+`ny/lang/` namespace tree instead of any directory named `ny/`. Canonical SDK
+markers and search order remain intact. The
+[analysis contract](../../tests/tools/analysis_contract.py) covers Ny and Matrix
+imports through the repository root from an unrelated working directory, plus
+a legacy `share/ny/stdlib/ny/lang` layout without a prelude marker. The new
+repository-root regression reproduces the failure with the previous compiler.

@@ -211,6 +211,7 @@ exports.run = async function run() {
       });
     }
     await require("./analyzer-checks.cjs").run({ check, workspace });
+    await require("./project-checks.cjs").run({ check, workspace });
     report.status = "PASS";
   } catch (error) {
     report.status = "FAIL";

@@ -27,7 +27,10 @@ the compiler-backed source debugger.
 - Completion, hover, definition, and document outline for Matrix declarations,
   paragraph parameters, local bindings, and known receiver members.
 - Compiler-backed checks of current Ny and Matrix buffers, with Problems entries
-  and quick fixes for the default style analyzer.
+  and guarded quick fixes for the default analyzer. Unreachable statements and
+  discarded checked outcomes receive semantic warnings in both languages.
+- Project check, build, and run commands using `nilbuild`, with VM/native targets
+  and a shared `nil.project.json` configuration.
 - A `nildebugger --dap` source-debug adapter with source breakpoints, stepping,
   lexical locals, call stacks, incremental output, and cooperative pause.
 - Commands and a `ny` Task Provider for:
@@ -49,6 +52,7 @@ Build or install a NIL Framework SDK containing these commands:
 - `nilinterpreter`
 - `nillsp`
 - `nildebugger` (for F5 source debugging)
+- `nilbuild` (for project commands and tasks)
 
 Matrix editing needs a Matrix-aware `nillsp`. Updating the VSIX alone does not
 update the SDK binaries. After rebuilding or selecting a newer SDK, run
@@ -70,7 +74,7 @@ From a NIL Framework repository checkout, the standard SDK build is:
 The extension discovers each executable in this order:
 
 1. its explicit setting (`ny.server.path`, `ny.compiler.path`,
-   `ny.interpreter.path`, or `ny.debugger.path`);
+   `ny.interpreter.path`, `ny.debugger.path`, or `ny.projectTool.path`);
 2. the root named by `ny.sdkPath`, then that checkout's `sdk` and
    `build/cmake/bin` developer output;
 3. a workspace root, its project-local `sdk`, and its
@@ -113,9 +117,54 @@ The SDK and CTest commands target a NIL Framework repository checkout. The SDK c
 runs `scripts/build-sdk.sh`; the CTest command uses `ny.buildDirectory`, which
 defaults to `build/cmake`.
 
+## Projects
+
+Create `nil.project.json` in the project directory. The extension supplies JSON
+completion and validation for the manifest:
+
+```json
+{
+  "schema": "nil.project.v1",
+  "name": "hello",
+  "entry": "src/main.matrix",
+  "includePaths": ["lib"],
+  "analysis": { "disabledRules": [], "warningsAsErrors": false }
+}
+```
+
+**Check Project**, **Build Project**, and **Build and Run Project** each have VM
+and Native variants in the Command Palette. They select the nearest ancestor
+manifest without searching above the active file's workspace folder, save open
+file buffers, and invoke `nilbuild` without a command shell. Project tasks also
+appear in **Tasks: Run Task**. Native builds require an SDK with LLVM support.
+
+The manifest defines the entry point, import paths, SDK, output directory, and
+analyzer policy used by both project commands and live checks. Paths are relative
+to the manifest; `sdkPath` defaults to the extension's selected SDK and
+`outputDirectory` defaults to `build`. Project configuration takes precedence
+over file-only `ny.analysis.includePaths` and `ny.compiler.noStdlib` settings.
+Save manifest edits before checking sources. A project's SDK determines tool
+discovery unless an explicit tool setting overrides it.
+
+A task can select a manifest and target explicitly:
+
+```json
+{
+  "type": "ny",
+  "task": "project-run",
+  "project": "${workspaceFolder}/nil.project.json",
+  "target": "vm",
+  "programArgs": ["hello"]
+}
+```
+
+Project tasks read saved files; commands save open file buffers first. Existing
+current-file commands remain available for standalone files.
+
 ## Tasks
 
-The `ny` task type accepts `compile`, `run`, `native`, `build-sdk`, and `ctest`.
+The `ny` task type accepts `compile`, `run`, `native`, `build-sdk`, `ctest`,
+`project-check`, `project-build`, and `project-run`.
 For example:
 
 ```json
@@ -163,6 +212,7 @@ editor builds.
 | `ny.compiler.path` | empty | Explicit `nilcompiler` path or command. |
 | `ny.interpreter.path` | empty | Explicit `nilinterpreter` path or command. |
 | `ny.debugger.path` | empty | Explicit `nildebugger` path or command. |
+| `ny.projectTool.path` | empty | Explicit `nilbuild` path or command. |
 | `ny.compiler.noStdlib` | `false` | Add `--no-stdlib` to compiler tasks and editor checks. |
 | `ny.compiler.extraArgs` | `[]` | Extra arguments for every compiler task. |
 | `ny.native.extraArgs` | `[]` | Extra arguments for native compiler tasks. |
@@ -185,18 +235,27 @@ operational failures are reported in **NIL Framework: Show Analysis Output**.
 
 Compiler errors and default analyzer warnings appear with source `nil-analysis`
 in Problems, separately from the experimental language-server diagnostics.
-The default analyzer checks trailing whitespace and missing final newlines.
+The default analyzer checks trailing whitespace (`NIL1001`), missing final
+newlines (`NIL1002`), unreachable statements (`NIL2001`), and standalone calls
+that discard a standard `Option` or `Result` (`NIL2002`). Project policy can
+suppress individual rules or promote warnings to errors.
 Its quick fixes only apply to the exact document version that was checked.
 Compiler spans use UTF-8 byte offsets; the extension converts valid boundaries
-to editor positions without guessing locations. Findings in imported files or
-without a reliable location appear in the analysis output channel.
+to editor positions without guessing locations. Imported findings appear in
+Problems only when an exact compiler snapshot still matches disk and the import
+has no unsaved edits. Import snapshots are limited to 1 MiB of encoded JSON.
+Missing, changed, or omitted snapshots and unlocated findings remain in the
+analysis output channel. Imported findings never offer automatic edits. Reports
+from multiple entry documents are combined without duplicate Problems; source
+edits, saves, and external file changes invalidate and refresh open documents.
 
-Checks preserve the source's parent directory, workspace root, configured SDK
-root, and `ny.analysis.includePaths` for import lookup. Untitled buffers use a
+Checks preserve the source's parent directory and configured SDK root for import
+lookup. Project manifests supply import roots; standalone files additionally use
+the workspace root and `ny.analysis.includePaths`. Untitled buffers use a
 synthetic filename under the workspace root, without writing that file. Relative
 include paths resolve against the owning workspace folder. Unsaved edits in
 other imported buffers are not overlaid; save those files to recheck dependents.
-`ny.compiler.extraArgs` and `ny.native.extraArgs` apply to build tasks only.
+`ny.compiler.extraArgs` and `ny.native.extraArgs` apply to current-file build tasks only.
 Editor checks are disabled in untrusted workspaces and can be switched off with
 `ny.analysis.enabled`.
 

@@ -2,6 +2,7 @@
 #include "ast.hpp"
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -28,6 +29,8 @@ struct reflected_annotation {
 struct analysis_session {
   std::string primary_path, logical_path, language, stdin_source;
   bool source_stdin = false, semantic_checked = false, truncated = false;
+  bool warnings_as_errors = false;
+  std::set<std::string> disabled_rules;
   std::size_t reflection_bytes = 0;
   std::map<std::string, std::string> sources;
   std::vector<analysis_diagnostic> diagnostics;

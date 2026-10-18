@@ -4,6 +4,14 @@ All notable changes to the NIL Framework VS Code extension are documented here.
 
 ## 1.0.0-rc.1
 
+- Add `nil.project.json` validation and `nilbuild` project check/build/run commands
+  and tasks for VM and native targets; reuse project imports, SDK, and analyzer
+  policy in current-document checks.
+- Display compiler semantic warnings for unreachable code and discarded checked
+  outcomes, with manifest suppression and warnings-as-errors settings.
+- Place imported compiler diagnostics in Problems only against verified source
+  snapshots; aggregate reports and refresh dependents after source changes.
+
 - Present the extension as NIL Framework (Ny + Matrix) and discover the renamed
   `nilcompiler`, `nilinterpreter`, `nildebugger`, and `nillsp` SDK commands.
 - Preserve the extension identifier, `ny.*` settings/commands, task/debug types,

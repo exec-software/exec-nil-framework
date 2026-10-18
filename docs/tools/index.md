@@ -15,6 +15,7 @@ A complete SDK has the following top-level shape:
 ```text
 nilcompiler  nilinterpreter  nilassembler  nillinker
 nillsp       nildebugger     nilschema     nilagent
+nilbuild
 nillib/      nilstd/         docs/         manifest.json
 ```
 
@@ -33,6 +34,13 @@ and semantic analysis. The current compiler re-checks that embedded interface
 and regenerates imported bodies. Direct compiled-body linking is a later format
 step, so `nillib` is a source-independent distribution today, not yet a
 zero-recompilation module cache.
+
+## `nilbuild`
+
+The [project driver](projects.md) provides `describe`, `check`, `build` and
+`run` over a `nil.project.json` file. It shares compiler analysis and project
+settings with the VS Code extension. Both VM and native targets are available;
+project process execution is currently qualified on Linux.
 
 ## `nilcompiler`
 

@@ -284,3 +284,21 @@ test("analysis invocation preserves spaces and shell characters as literal argum
     args: ["--analyze", "--source-stdin", shellSource, "-I", workRoot, "-I", imports]
   });
 });
+
+test("analysis source snapshots are optional, bounded, absolute and unique", () => {
+  const imported = path.join(workRoot, "imported.ny");
+  const response = envelope({ sources: [{ path: imported, text: "é😀\r\n" }] });
+  assert.deepEqual(parseAnalysisOutput(JSON.stringify(response), source, 1), response);
+  for (const sources of [null, {}, [{ path: "relative.ny", text: "" }], [{ path: source, text: "" }],
+    [{ path: imported, text: 7 }], [{ path: imported, text: "" }, { path: imported, text: "" }],
+    [{ path: imported, text: "\n".repeat(600_000) }]]) {
+    assert.throws(() => parseAnalysisOutput(JSON.stringify(envelope({ sources })), source, 1));
+  }
+});
+
+test("analysis invocation carries the same rule policy as project checks", () => {
+  assert.deepEqual(analysisInvocation("nilcompiler", source, undefined, false, [], {
+    disabledRules: ["NIL1001", "NIL2002"], warningsAsErrors: true
+  }).args, ["--analyze", "--source-stdin", source, "--disable-rule", "NIL1001", "--disable-rule", "NIL2002",
+    "--warnings-as-errors", "-I", workRoot]);
+});

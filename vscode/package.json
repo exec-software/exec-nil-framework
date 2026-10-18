@@ -50,7 +50,14 @@
     "workspaceContains:**/*.matrix",
     "workspaceContains:**/*.mat",
     "onCommand:ny.analyzeCurrentFile",
-    "onCommand:ny.showAnalysisOutput"
+    "onCommand:ny.showAnalysisOutput",
+    "onCommand:ny.checkProject",
+    "onCommand:ny.checkNativeProject",
+    "onCommand:ny.buildProject",
+    "onCommand:ny.buildNativeProject",
+    "onCommand:ny.runProject",
+    "onCommand:ny.runNativeProject",
+    "workspaceContains:**/nil.project.json"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -247,6 +254,30 @@
       {
         "command": "ny.showAnalysisOutput",
         "title": "NIL Framework: Show Analysis Output"
+      },
+      {
+        "command": "ny.checkProject",
+        "title": "NIL Framework: Check Project (VM)"
+      },
+      {
+        "command": "ny.checkNativeProject",
+        "title": "NIL Framework: Check Project (Native)"
+      },
+      {
+        "command": "ny.buildProject",
+        "title": "NIL Framework: Build Project (VM)"
+      },
+      {
+        "command": "ny.buildNativeProject",
+        "title": "NIL Framework: Build Project (Native)"
+      },
+      {
+        "command": "ny.runProject",
+        "title": "NIL Framework: Build and Run Project (VM)"
+      },
+      {
+        "command": "ny.runNativeProject",
+        "title": "NIL Framework: Build and Run Project (Native)"
       }
     ],
     "configuration": {
@@ -355,6 +386,12 @@
           "default": [],
           "scope": "resource",
           "description": "Additional source import roots for compiler analysis. Relative paths resolve against the workspace folder. Supports ${workspaceFolder}, ${env:NAME}, and ~."
+        },
+        "ny.projectTool.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Absolute path or command name for nilbuild. Overrides SDK and PATH discovery."
         }
       }
     },
@@ -372,7 +409,10 @@
               "run",
               "native",
               "build-sdk",
-              "ctest"
+              "ctest",
+              "project-check",
+              "project-build",
+              "project-run"
             ],
             "description": "NIL Framework task to execute."
           },
@@ -409,6 +449,19 @@
           "buildDirectory": {
             "type": "string",
             "description": "CMake build directory for ctest."
+          },
+          "project": {
+            "type": "string",
+            "description": "Path to nil.project.json. Defaults to the nearest project within the active workspace."
+          },
+          "target": {
+            "type": "string",
+            "enum": [
+              "vm",
+              "native"
+            ],
+            "default": "vm",
+            "description": "Backend used by project tasks."
           }
         }
       }
@@ -460,6 +513,30 @@
           "line": 2,
           "message": 3
         }
+      },
+      {
+        "name": "nilproject",
+        "label": "NIL project analysis",
+        "owner": "nil-project",
+        "source": "nilbuild",
+        "fileLocation": "absolute",
+        "pattern": {
+          "regexp": "^(.+):(\\d+):(\\d+): (error|warning|note|help) ([^:]+): (.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "code": 5,
+          "message": 6
+        }
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": [
+          "nil.project.json"
+        ],
+        "url": "./schemas/nil.project.schema.json"
       }
     ]
   }

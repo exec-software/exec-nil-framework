@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NIL Framework project",
+  "description": "A Ny or Matrix executable project for nilbuild. Paths are relative to this file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "name",
+    "entry"
+  ],
+  "properties": {
+    "schema": {
+      "const": "nil.project.v1"
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "not": {
+        "pattern": "\\.[nN][yY]$|\\.[mM][aA][tT]([rR][iI][xX])?$"
+      },
+      "description": "Artifact name; cannot end in a source extension."
+    },
+    "entry": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\.[nN][yY]$|\\.[mM][aA][tT]([rR][iI][xX])?$",
+      "description": "Entry source (.ny, .matrix, or .mat).",
+      "allOf": [
+        {
+          "not": {
+            "pattern": "\u0000"
+          }
+        }
+      ]
+    },
+    "includePaths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "not": {
+          "pattern": "\u0000"
+        }
+      },
+      "default": [],
+      "description": "Additional import directories; the project directory is always searched."
+    },
+    "sdkPath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "SDK root, relative to this file unless absolute.",
+      "allOf": [
+        {
+          "not": {
+            "pattern": "\u0000"
+          }
+        }
+      ]
+    },
+    "outputDirectory": {
+      "type": "string",
+      "minLength": 1,
+      "default": "build",
+      "allOf": [
+        {
+          "not": {
+            "pattern": "\u0000"
+          }
+        }
+      ]
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "disabledRules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^NIL[0-9]{4}$"
+          },
+          "uniqueItems": true,
+          "default": [],
+          "description": "Disabled shipped analyzer rules. Unknown rule codes are rejected by nilbuild."
+        },
+        "warningsAsErrors": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  }
+}

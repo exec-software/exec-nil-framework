@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import * as os from "node:os";
+import { constants as fileConstants, promises as fs } from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 
 import { analysisInvocation, AnalysisResult, createByteRangeMapper, maxAnalysisOutputBytes, parseAnalysisOutput } from "./analysisModel";
+import { projectForResource } from "./projectContext";
 import { languageDocumentSelector, savedSourcePath } from "./languages";
 import { expandConfiguredPath } from "./toolchain";
 import { configuredSdkPath, nyConfiguration, resolveConfiguredTool, toolNotFoundMessage } from "./vscodeToolchain";
@@ -38,12 +40,18 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pending = new Map<string, AnalysisJob>();
   private readonly fixes = new Map<string, CachedFix>();
+  private readonly importWatchers = new Map<string, vscode.FileSystemWatcher>();
+  private readonly contributions = new Map<string, Map<string, vscode.Diagnostic[]>>();
   private readonly reports = new Map<string, string>();
   private active: { job: AnalysisJob; controller: AbortController } | undefined;
   private disposed = false;
 
   constructor() {
-    this.subscriptions.push(
+    const watcher = vscode.workspace.createFileSystemWatcher("**/*.{ny,matrix,mat,json}");
+    const changed = (uri: vscode.Uri) => {
+      if (/\.(ny|matrix|mat)$/i.test(uri.fsPath) || path.basename(uri.fsPath) === "nil.project.json") this.scheduleAll();
+    };
+    this.subscriptions.push(watcher, watcher.onDidChange(changed), watcher.onDidCreate(changed), watcher.onDidDelete(changed),
       vscode.languages.registerCodeActionsProvider(languageDocumentSelector, this, {
         providedCodeActionKinds: [vscode.CodeActionKind.QuickFix]
       }),
@@ -60,12 +68,14 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
       }),
       vscode.commands.registerCommand("ny.showAnalysisOutput", () => this.showOutput()),
       vscode.workspace.onDidOpenTextDocument(document => this.schedule(document)),
-      vscode.workspace.onDidChangeTextDocument(event => this.schedule(event.document)),
+      vscode.workspace.onDidChangeTextDocument(event => {
+        if (this.supported(event.document) || path.basename(event.document.uri.fsPath) === "nil.project.json") this.scheduleAll();
+      }),
       // A saved import can affect any open entry document.
       vscode.workspace.onDidSaveTextDocument(document => {
-        if (this.supported(document)) this.scheduleAll();
+        if (this.supported(document) || path.basename(document.uri.fsPath) === "nil.project.json") this.scheduleAll();
       }),
-      vscode.workspace.onDidCloseTextDocument(document => this.invalidate(document.uri)),
+      vscode.workspace.onDidCloseTextDocument(document => { this.invalidate(document.uri); this.scheduleAll(); }),
       vscode.workspace.onDidGrantWorkspaceTrust(() => this.scheduleAll()),
       vscode.workspace.onDidChangeConfiguration(event => {
         if (["ny.analysis", "ny.compiler.path", "ny.compiler.noStdlib", "ny.sdkPath"].some(key => event.affectsConfiguration(key))) {
@@ -108,7 +118,8 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
     this.pending.get(key)?.resolve(false);
     this.pending.delete(key);
     if (this.active?.job.key === key) this.active.controller.abort();
-    this.diagnostics.delete(uri);
+    this.contributions.delete(key);
+    this.renderDiagnostics();
     for (const [token, fix] of this.fixes) if (fix.job.key === key) this.fixes.delete(token);
     if (this.reports.delete(key)) this.renderOutput();
   }
@@ -172,20 +183,26 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
 
   private async check(job: AnalysisJob, signal: AbortSignal): Promise<boolean> {
     if (!this.current(job) || signal.aborted) return false;
-    const tool = resolveConfiguredTool("nilcompiler", job.document.uri);
+    const project = projectForResource(job.document.uri);
+    if (project && vscode.workspace.textDocuments.some(document => document.uri.scheme === "file" &&
+      path.normalize(document.uri.fsPath) === path.normalize(project.projectFile) && document.isDirty)) {
+      throw new Error("Save nil.project.json before checking sources with its project settings.");
+    }
+    const configuredSdk = configuredSdkPath(job.document.uri);
+    const workspaceRoot = this.workspaceRoot(job.document);
+    const sdkRoot = project?.sdkPath ?? (configuredSdk ? path.resolve(workspaceRoot ?? process.cwd(), configuredSdk) : undefined);
+    const tool = resolveConfiguredTool("nilcompiler", job.document.uri, sdkRoot);
     if (!tool.executable) throw new Error(toolNotFoundMessage("nilcompiler", tool));
     const configuration = nyConfiguration(job.document.uri);
-    const workspaceRoot = this.workspaceRoot(job.document);
     const configuredRoots = configuration.get<unknown>("analysis.includePaths", []);
     const roots = [
-      ...(workspaceRoot ? [workspaceRoot] : []),
-      ...(Array.isArray(configuredRoots) ? configuredRoots.filter((root): root is string => typeof root === "string" && root.trim() !== "") : [])
+      ...(project ? project.includePaths : workspaceRoot ? [workspaceRoot] : []),
+      ...(!project && Array.isArray(configuredRoots) ? configuredRoots.filter((root): root is string => typeof root === "string" && root.trim() !== "") : [])
         .map(root => path.resolve(workspaceRoot ?? path.dirname(job.source), expandConfiguredPath(root, workspaceRoot)))
     ];
-    const sdk = configuredSdkPath(job.document.uri);
-    const sdkRoot = sdk ? path.resolve(workspaceRoot ?? process.cwd(), sdk) : undefined;
+    this.watchImportRoots([...roots, ...(sdkRoot ? [sdkRoot] : [])]);
     const invocation = analysisInvocation(tool.executable, job.source, sdkRoot,
-      configuration.get<boolean>("compiler.noStdlib", false), roots);
+      !project && configuration.get<boolean>("compiler.noStdlib", false), roots, project?.analysis);
     const result = await new Promise<AnalysisResult>((resolve, reject) => {
       const child = execFile(invocation.command, [...invocation.args], {
         cwd: path.dirname(job.source), encoding: "utf8", windowsHide: true,
@@ -208,13 +225,55 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
     });
     if (signal.aborted || !this.current(job)) return false;
     if (result.language !== job.document.languageId) throw new Error("Compiler analyzed the document as a different language.");
-    this.publish(job, result);
-    return true;
+    return this.publish(job, result, signal);
   }
 
-  private publish(job: AnalysisJob, result: AnalysisResult): void {
+  private watchImportRoots(roots: readonly string[]): void {
+    for (const root of roots) {
+      const directory = path.resolve(root);
+      if (vscode.workspace.getWorkspaceFolder(vscode.Uri.file(directory)) || this.importWatchers.has(directory)) continue;
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(directory, "**/*.{ny,matrix,mat}"));
+      this.importWatchers.set(directory, watcher);
+      this.subscriptions.push(watcher, watcher.onDidCreate(() => this.scheduleAll()),
+        watcher.onDidChange(() => this.scheduleAll()), watcher.onDidDelete(() => this.scheduleAll()));
+    }
+  }
+
+  private async publish(job: AnalysisJob, result: AnalysisResult, signal: AbortSignal): Promise<boolean> {
+    const imported = new Map<string, { uri: vscode.Uri; text: string; mapRange: ReturnType<typeof createByteRangeMapper> }>();
+    for (const snapshot of result.sources ?? []) {
+      // VS Code strips a leading BOM from its document model. Keep these
+      // findings in Output until the protocol describes that normalization.
+      if (snapshot.text.startsWith("\uFEFF")) continue;
+      const normalized = path.normalize(snapshot.path);
+      const editor = vscode.workspace.textDocuments.find(document => document.uri.scheme === "file" && path.normalize(document.uri.fsPath) === normalized);
+      if (editor?.isDirty) continue;
+      try {
+        const expectedSize = Buffer.byteLength(snapshot.text, "utf8");
+        const handle = await fs.open(snapshot.path, fileConstants.O_RDONLY | (fileConstants.O_NONBLOCK ?? 0));
+        let disk: string;
+        try {
+          const stat = await handle.stat();
+          if (!stat.isFile() || stat.size !== expectedSize) continue;
+          // Bound the read even if another process replaces or grows the file.
+          const bytes = Buffer.alloc(expectedSize + 1);
+          let count = 0;
+          while (count < bytes.length) {
+            const result = await handle.read(bytes, count, bytes.length - count, count);
+            if (result.bytesRead === 0) break;
+            count += result.bytesRead;
+          }
+          if (count !== expectedSize) continue;
+          disk = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, count));
+        } finally { await handle.close(); }
+        if (disk !== snapshot.text || (editor && (editor.isDirty || editor.getText() !== snapshot.text))) continue;
+        imported.set(normalized, { uri: vscode.Uri.file(snapshot.path), text: snapshot.text, mapRange: createByteRangeMapper(snapshot.text) });
+      } catch { /* Removed, changed, or unreadable dependencies have no safe location. */ }
+    }
+    if (signal.aborted || !this.current(job)) return false;
     const mapRange = createByteRangeMapper(job.text);
-    const diagnostics: vscode.Diagnostic[] = [];
+    const byUri = new Map<string, vscode.Diagnostic[]>();
+    byUri.set(job.key, []);
     const messages: string[] = [];
     const editorRange = (offsets: { start: number; end: number } | undefined): vscode.Range | undefined => {
       if (!offsets) return undefined;
@@ -228,9 +287,22 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
     const severity = { error: vscode.DiagnosticSeverity.Error, warning: vscode.DiagnosticSeverity.Warning,
       note: vscode.DiagnosticSeverity.Information, help: vscode.DiagnosticSeverity.Hint };
     for (const finding of result.diagnostics) {
-      const offsets = finding.path !== null && path.normalize(finding.path) === path.normalize(job.source) &&
-        finding.start !== null && finding.length !== null ? mapRange(finding.start, finding.length) : undefined;
-      const range = editorRange(offsets);
+      const primary = finding.path !== null && path.normalize(finding.path) === path.normalize(job.source);
+      const snapshot = finding.path ? imported.get(path.normalize(finding.path)) : undefined;
+      const offsets = primary && finding.start !== null && finding.length !== null ? mapRange(finding.start, finding.length) : undefined;
+      let range = editorRange(offsets);
+      if (!primary && snapshot && finding.start !== null && finding.length !== null) {
+        const importedOffsets = snapshot.mapRange(finding.start, finding.length);
+        if (importedOffsets) {
+          const position = (offset: number): vscode.Position | undefined => {
+            if (offset > 0 && snapshot.text[offset - 1] === "\r" && snapshot.text[offset] === "\n") return undefined;
+            const lines = snapshot.text.slice(0, offset).split(/\r\n|\r|\n/);
+            return new vscode.Position(lines.length - 1, lines[lines.length - 1]!.length);
+          };
+          const start = position(importedOffsets.start), end = position(importedOffsets.end);
+          if (start && end) range = new vscode.Range(start, end);
+        }
+      }
       if (!range) {
         messages.push(`${finding.severity}[${finding.code}] ${finding.message}\n  ${finding.path ?? "Location unavailable"}${finding.start !== null ? ` (UTF-8 byte ${finding.start})` : ""}${finding.hint ? `\n  ${finding.hint}` : ""}`);
         continue;
@@ -239,17 +311,34 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
         `${finding.message}${finding.hint ? `\n${finding.hint}` : ""}`, severity[finding.severity]);
       diagnostic.source = "nil-analysis";
       diagnostic.code = finding.code;
-      diagnostics.push(diagnostic);
-      const fixOffsets = finding.fix ? mapRange(finding.fix.start, finding.fix.length) : undefined;
+      const uri = primary ? job.key : snapshot!.uri.toString();
+      if (!byUri.has(uri)) byUri.set(uri, []);
+      byUri.get(uri)!.push(diagnostic);
+      const fixOffsets = primary && finding.fix ? mapRange(finding.fix.start, finding.fix.length) : undefined;
       const fixRange = editorRange(fixOffsets);
       if (finding.fix && fixRange) this.fixes.set(randomUUID(), {
         job, diagnostic, description: finding.fix.description, replacement: finding.fix.replacement,
         range: fixRange
       });
     }
-    this.diagnostics.set(job.document.uri, diagnostics);
+    this.contributions.set(job.key, byUri);
+    this.renderDiagnostics();
     if (messages.length) this.report(job.key, messages.join("\n\n"));
     else if (this.reports.delete(job.key)) this.renderOutput();
+    return true;
+  }
+
+  private renderDiagnostics(): void {
+    const combined = new Map<string, Map<string, vscode.Diagnostic>>();
+    for (const report of this.contributions.values()) for (const [uri, items] of report) {
+      if (!combined.has(uri)) combined.set(uri, new Map());
+      for (const item of items) {
+        const identity = JSON.stringify([item.code, item.message, item.severity, item.range.start, item.range.end]);
+        combined.get(uri)!.set(identity, item);
+      }
+    }
+    this.diagnostics.clear();
+    for (const [uri, items] of combined) this.diagnostics.set(vscode.Uri.parse(uri), [...items.values()]);
   }
 
   provideCodeActions(document: vscode.TextDocument, range: vscode.Range, context: vscode.CodeActionContext): vscode.CodeAction[] {
@@ -297,6 +386,8 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
     this.timers.clear();
     this.pending.clear();
     this.fixes.clear();
+    this.contributions.clear();
+    this.importWatchers.clear();
     this.subscriptions.forEach(subscription => subscription.dispose());
     this.diagnostics.dispose();
     this.output.dispose();

@@ -1,6 +1,8 @@
 import * as path from "node:path";
 import { ToolInvocation } from "./taskModel";
 
+export const maxAnalysisSnapshotBytes = 1024 * 1024;
+
 export const maxAnalysisOutputBytes = 8 * 1024 * 1024;
 
 export interface AnalysisFix {
@@ -28,6 +30,7 @@ export interface AnalysisResult {
   success: boolean;
   diagnostics: AnalysisDiagnostic[];
   reflection: Record<string, unknown>;
+  sources?: Array<{ path: string; text: string }>;
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -53,6 +56,18 @@ export function parseAnalysisOutput(stdout: string, expectedSource: string, exit
       typeof result.success !== "boolean" || result.success !== (exitCode === 0) ||
       !Array.isArray(result.diagnostics) || result.diagnostics.length > 10_000 || !object(result.reflection)) {
     throw new Error("Compiler returned an invalid nil.analysis.v1 result.");
+  }
+  if (result.sources !== undefined) {
+    if (!Array.isArray(result.sources) || Buffer.byteLength(JSON.stringify(result.sources), "utf8") > maxAnalysisSnapshotBytes) {
+      throw new Error("Compiler returned invalid or oversized analysis source snapshots.");
+    }
+    const paths = new Set<string>();
+    for (const snapshot of result.sources) {
+      if (!object(snapshot) || typeof snapshot.path !== "string" || !path.isAbsolute(snapshot.path) ||
+          typeof snapshot.text !== "string" || path.normalize(snapshot.path) === path.normalize(expectedSource) ||
+          paths.has(path.normalize(snapshot.path))) throw new Error("Compiler returned an invalid analysis source snapshot.");
+      paths.add(path.normalize(snapshot.path));
+    }
   }
   for (const diagnostic of result.diagnostics) {
     if (!object(diagnostic) || typeof diagnostic.code !== "string" ||
@@ -100,10 +115,13 @@ export function byteRangeToOffsets(text: string, start: number, length: number):
 
 export function analysisInvocation(
   compiler: string, source: string, sdkPath: string | undefined,
-  noStdlib: boolean, includeRoots: readonly string[]
+  noStdlib: boolean, includeRoots: readonly string[],
+  policy: { disabledRules: readonly string[]; warningsAsErrors: boolean } = { disabledRules: [], warningsAsErrors: false }
 ): ToolInvocation {
   const args = ["--analyze", "--source-stdin", source];
   if (noStdlib) args.push("--no-stdlib");
+  for (const code of policy.disabledRules) args.push("--disable-rule", code);
+  if (policy.warningsAsErrors) args.push("--warnings-as-errors");
   const roots = new Set([path.dirname(source), ...(sdkPath ? [sdkPath] : []), ...includeRoots].map(root => path.normalize(root)));
   for (const root of roots) args.push("-I", root);
   return { command: compiler, args };

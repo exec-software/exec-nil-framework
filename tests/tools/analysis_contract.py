@@ -2,6 +2,7 @@
 """Exercise the public no-execution analysis protocol using real source buffers."""
 import argparse
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -12,6 +13,18 @@ def main():
     parser.add_argument('--compiler', required=True)
     parser.add_argument('--stdlib', required=True)
     args = parser.parse_args()
+    listed = subprocess.run([args.compiler, '--list-analysis-rules'], text=True,
+                            capture_output=True, timeout=20)
+    assert listed.returncode == 0 and not listed.stderr, listed
+    catalog = json.loads(listed.stdout)
+    assert catalog['schema'] == 'nil.analyzers.v1'
+    assert len(catalog['analyzers']) == 1 and catalog['analyzers'][0]['id'] == 'nil.default'
+    rules = catalog['analyzers'][0]['rules']
+    assert {r['code'] for r in rules} == {'NIL1001', 'NIL1002', 'NIL2001', 'NIL2002'}
+    for rule in rules:
+        assert rule['title'] and rule['description'] and rule['default_severity'] == 'warning'
+        assert rule['phase'] == ('syntax' if rule['code'].startswith('NIL1') else 'semantic')
+        assert rule['has_fix'] == rule['code'].startswith('NIL1')
     with tempfile.TemporaryDirectory(prefix='nil-analysis-') as directory:
         root = pathlib.Path(directory)
         primary = root / 'unsaved.ny'
@@ -25,9 +38,41 @@ def main():
             assert value['schema'] == 'nil.analysis.v1'
             assert value['source'] == str(path)
             assert value['success'] == (status == 0)
+            assert isinstance(value['sources'], list)
+            assert len(json.dumps(value['sources'], ensure_ascii=False, separators=(',', ':')).encode()) <= 1024 * 1024
+            assert all(s['path'] != str(path) for s in value['sources'])
             for item in value['diagnostics']:
                 assert {'code', 'severity', 'message', 'path', 'start', 'length', 'hint', 'fix'} <= item.keys()
             return value
+
+        # A repository root has a frontend ny/ directory, which is not the
+        # historical SDK ny/lang/ namespace tree. Discover nilstd/src instead,
+        # even when the caller is outside the repository and only adds its root.
+        discovery_environment = os.environ.copy()
+        for name in ('NIL_STDLIB_PATH', 'NY_STDLIB_PATH', 'NIL_LIBRARY_PATH', 'NY_LIBRARY_PATH'):
+            discovery_environment.pop(name, None)
+        repository = pathlib.Path(__file__).resolve().parents[2]
+        def discover(source, path, include_root):
+            proc = subprocess.run([args.compiler, '--analyze', '--source-stdin',
+                                   '-I', str(include_root), str(path)], input=source, text=True,
+                                  capture_output=True, timeout=20, cwd=root, env=discovery_environment)
+            assert proc.returncode == 0 and not proc.stderr, (proc.returncode, proc.stdout, proc.stderr)
+            result = json.loads(proc.stdout)
+            assert result['success'] and not result['diagnostics'], result
+        discover('import nil.std.text\nfn main() -> i32\n println(substring("abc", 0, 1))\n return 0\nend fn\n',
+                 primary, repository)
+        discover('book discovery\nread everything from ny.lang.text\nmain returns override integer begin paragraph\n'
+                 ' say substring with s being "abc", start being 0, length being 1\n give 0\nend paragraph\n',
+                 root / 'discovery.matrix', repository)
+        # Preserve source SDKs installed with the old namespace directory and
+        # conventional share/ny/stdlib prefix. No prelude marker is required.
+        legacy_prefix = root / 'legacy sdk'
+        legacy_module = legacy_prefix / 'share/ny/stdlib/ny/lang'
+        legacy_module.mkdir(parents=True)
+        (legacy_module / 'discovery.ny').write_text(
+            'module ny.lang.discovery\npub fn answer() -> i32\n return 7\nend fn\n')
+        discover('import ny.lang.discovery\nfn main() -> i32\n return answer()\nend fn\n',
+                 primary, legacy_prefix)
 
         # A current buffer wins over disk; main is never executed and no output file exists.
         primary.write_text('this is deliberately invalid on disk')
@@ -71,6 +116,208 @@ def main():
         imported = analyze('import dep.*\nfn main() -> i32\n return broken()\nend fn\n', status=1)
         assert any(d['path'] == str(dep) and d['start'] == len('module dep\npub fn broken() -> i32\n')
                    for d in imported['diagnostics'])
+        assert imported['sources'] == [{'path': str(dep), 'text': dep.read_text()}]
+        # Snapshots are exact, including CRLF and Unicode. Primary input remains
+        # the caller's buffer; imported source is the bytes actually checked.
+        dep_source = 'module dep\r\n# λ🙂\r\npub fn broken() -> i32\r\n return "bad"\r\nend fn\r\n'
+        dep.write_bytes(dep_source.encode())
+        imported = analyze('import dep.*\nfn main() -> i32\n return broken()\nend fn\n', status=1)
+        assert imported['sources'] == [{'path': str(dep), 'text': dep_source}]
+        # Limit encoded JSON, not raw source bytes: a long backslash comment
+        # doubles during JSON escaping and must not consume the source budget.
+        dep.write_text('#' + '\\' * 600000 + '\nmodule dep\npub fn broken() -> i32\n return "bad"\nend fn\n')
+        imported = analyze('import dep.*\nfn main() -> i32\n return broken()\nend fn\n', status=1)
+        assert imported['sources'] == []
+        assert any(d['path'] == str(dep) and d['start'] is not None for d in imported['diagnostics'])
+
+        # The same typed AST rules apply to both surfaces. A retained call and
+        # unwrapped call are handled; plain scalar/void calls are not outcomes.
+        ny_rules = '''import nil.std.core
+import nil.std.text
+fn ordinary() -> i32
+ return 1
+end fn
+fn partial(flag: bool) -> i32
+ if flag then
+  return 1
+ end if
+ return 2
+end fn
+fn total(flag: bool) -> i32
+ if flag then
+  return 1
+ else
+  return 2
+ end if
+ println("after both exits")
+end fn
+fn main() -> i32
+ try_char_at("abc", 0)
+ Convert.try_to_i32("1")
+ let kept = try_char_at("abc", 0)
+ try_char_at("abc", 0).unwrap()
+ ordinary()
+ println(kept.unwrap())
+ return 0
+ println("after return")
+end fn
+'''
+        matrix_rules = '''book rules
+read everything from nil.std.core
+read everything from nil.std.text
+ordinary returns override integer begin paragraph
+ give 1
+end paragraph
+partial receives flag as boolean returns override integer begin paragraph
+ when flag then
+  give 1
+ end when
+ give 2
+end paragraph
+total receives flag as boolean returns override integer begin paragraph
+ when flag then
+  give 1
+ otherwise
+  give 2
+ end when
+ say "after both exits"
+end paragraph
+main returns override integer begin paragraph
+ evaluate try-char-at with s being "abc", index being 0
+ evaluate Convert.try-to-i32 with "1"
+ value kept is try-char-at with s being "abc", index being 0
+ evaluate (try-char-at with s being "abc", index being 0).unwrap with nothing
+ evaluate ordinary with nothing
+ say (kept.unwrap with nothing)
+ give 0
+ say "after return"
+end paragraph
+'''
+        for source, path in ((ny_rules, primary), (matrix_rules, matrix)):
+            data = analyze(source, path=path)
+            codes = [d['code'] for d in data['diagnostics']]
+            assert codes.count('NIL2001') == 2 and codes.count('NIL2002') == 2, data
+            assert len(codes) == 4 and data['reflection']['semantic_checked']
+            assert all(d['path'] == str(path) and d['start'] is not None and d['fix'] is None
+                       for d in data['diagnostics'])
+            promoted = analyze(source, path=path, extra=('--warnings-as-errors',), status=1)
+            assert promoted['reflection']['semantic_checked']
+            assert all(d['severity'] == 'error' for d in promoted['diagnostics'])
+            suppressed = analyze(source, path=path, extra=('--disable-rule', 'NIL2001',
+                                '--disable-rule', 'NIL2002', '--warnings-as-errors'))
+            assert suppressed['diagnostics'] == []
+
+        # Custom nominal enums with the same leaf name are not standard outcomes.
+        custom = '''module custom
+enum Option<T>
+ Some(T)
+ None
+end enum
+enum Result<T, E>
+ Ok(T)
+ Err(E)
+end enum
+fn optional() -> Option<i32>
+ return Option.Some(1)
+end fn
+fn result() -> Result<i32, text>
+ return Result.Ok(1)
+end fn
+fn main() -> i32
+ optional()
+ result()
+ return 0
+end fn
+'''
+        assert analyze(custom)['diagnostics'] == []
+        loop_exits = '''fn main() -> i32
+ while true do
+  break
+  println("after break")
+ end while
+ println("after loop is reachable")
+ while false do
+  continue
+  println("after continue")
+ end while
+ return 0
+end fn
+'''
+        data = analyze(loop_exits)
+        assert [d['code'] for d in data['diagnostics']] == ['NIL2001', 'NIL2001'], data
+        matrix_loops = '''book loops
+main returns override integer begin paragraph
+ repeat while true
+  stop repeating
+  say "after break"
+ end repeat
+ say "after loop is reachable"
+ repeat while false
+  continue repeating
+  say "after continue"
+ end repeat
+ give 0
+end paragraph
+'''
+        data = analyze(matrix_loops, path=matrix)
+        assert [d['code'] for d in data['diagnostics']] == ['NIL2001', 'NIL2001'], data
+        fault_exits = '''struct Problem
+ code: i32
+end struct
+fn main() -> i32
+ attempt
+  raise Problem { code: 1 }
+  println("after raise")
+ fault Problem as problem
+  println(problem.code)
+ recover
+  println("cleanup remains reachable")
+ end attempt
+ println("after handled fault remains reachable")
+ return 0
+end fn
+'''
+        matrix_faults = '''book faults
+Problem begin record
+ field code as override integer
+end record
+main returns override integer begin paragraph
+ attempt
+  raise Problem with code being 1
+  say "after raise"
+ caught Problem as problem
+  say problem.code
+ always
+  say "cleanup remains reachable"
+ end attempt
+ say "after handled fault remains reachable"
+ give 0
+end paragraph
+'''
+        for source, path in ((fault_exits, primary), (matrix_faults, matrix)):
+            data = analyze(source, path=path)
+            assert [d['code'] for d in data['diagnostics']] == ['NIL2001'], data
+        # Include expansion has no safe raw-source line mapping. The rule is
+        # still reported, but no borrowed offsets or fix are exposed.
+        (root / 'included.ny').write_text('fn included() -> i32\n return 1\n println("dead")\nend fn\n')
+        data = analyze('@include "included.ny"\nfn main() -> i32\n return included()\nend fn\n')
+        assert len(data['diagnostics']) == 1, data
+        assert data['diagnostics'][0]['code'] == 'NIL2001'
+        assert data['diagnostics'][0]['start'] is None and data['diagnostics'][0]['length'] is None
+        assert data['diagnostics'][0]['fix'] is None
+        # Dependencies are checked but default style/semantic rules target only
+        # the entry document, so imported SDK implementation details stay quiet.
+        dep.write_text('module dep\npub fn fine() -> i32\n return 1\n println("dead")  \nend fn')
+        data = analyze('import dep.*\nfn main() -> i32\n return fine()\nend fn\n')
+        assert data['diagnostics'] == [] and data['sources'] == []
+        # Rules do not run on an unsuccessfully checked tree.
+        data = analyze('fn main() -> i32\n return "bad"\n println("dead")\nend fn\n', status=1)
+        assert not any(d['code'].startswith('NIL2') for d in data['diagnostics'])
+        promoted = analyze(unicode_source, extra=('--warnings-as-errors',), status=1)
+        assert promoted['reflection']['semantic_checked']
+        assert all(d['severity'] == 'error' and d['fix'] for d in promoted['diagnostics'])
+        assert analyze(unicode_source, extra=('--disable-rule', 'NIL1001', '--disable-rule', 'NIL1002',
+                                             '--warnings-as-errors'))['diagnostics'] == []
 
         # Logical URI identity survives linked workspaces and uppercase suffixes.
         linked = root / 'linked.ny'
@@ -104,7 +351,9 @@ def main():
         ny_raw = 'fn main() -> i32\n println("first\nsecond   \nthird")\n return 0\nend fn\n'
         assert not analyze(ny_raw)['diagnostics']
 
-        for flags in [('--native',), ('--jit',), ('--no-typecheck',), ('-o', 'bad.nil'), ('--', 'arg')]:
+        for flags in [('--native',), ('--jit',), ('--no-typecheck',), ('-o', 'bad.nil'), ('--', 'arg'),
+                      ('--disable-rule',), ('--disable-rule', 'NIL0002'), ('--disable-rule', 'NIL9999'),
+                      ('--list-analysis-rules',)]:
             proc = subprocess.run([args.compiler, '--analyze', str(primary), *flags],
                                   text=True, capture_output=True, timeout=20, cwd=root)
             assert proc.returncode == 2 and not proc.stdout, (flags, proc)
@@ -113,7 +362,7 @@ def main():
                                    text=True, capture_output=True, timeout=20, cwd=root)
         assert collision.returncode == 2 and not collision.stdout
         assert primary.read_text() == 'this is deliberately invalid on disk'
-    print('analysis protocol, UTF-8 fixes, imports, reflection and no-execution checks passed')
+    print('analysis protocol, default rules, policies, source snapshots, reflection and no-execution checks passed')
 
 
 if __name__ == '__main__':

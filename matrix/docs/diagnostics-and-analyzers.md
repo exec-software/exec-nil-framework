@@ -3,6 +3,9 @@
 > Current implementation: [compiler analysis and reflection](../../docs/analysis-api.md)
 > provides live compiler checks, safe formatting fixes, and generated declaration
 > snapshots. The richer analyzer hosting and semantic graph below remain design work.
+> The [project driver and default rules](../../docs/tools/projects.md) now share
+> project context and analyzer policy with VS Code, including conservative
+> unreachable-code and discarded-checked-result warnings.
 
 
 Two requirements that turn out to be one design.

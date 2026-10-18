@@ -49,7 +49,7 @@ test("manifest contributes both frontends, shared tasks, and source debugger int
     "run",
     "native",
     "build-sdk",
-    "ctest"
+    "ctest", "project-check", "project-build", "project-run"
   ]);
   assert.equal(manifest.contributes.debuggers[0]?.type, "ny");
   assert.deepEqual(manifest.contributes.debuggers[0]?.languages, ["ny", "matrix"]);
@@ -172,4 +172,27 @@ test("snippet catalog covers core, testing, fault, interop, and AI constructs", 
   assert.equal(serialized.includes(["ny", "vm"].join("")), false);
   assert.match(serialized, /end fn/);
   assert.match(serialized, /end attempt/);
+});
+
+test("project manifests have packaged schema completion and project commands", () => {
+  const manifest = readJson("package.json") as { contributes: {
+    jsonValidation: Array<{ fileMatch: string[]; url: string }>;
+    commands: Array<{ command: string }>;
+    configuration: { properties: Record<string, unknown> };
+    problemMatchers: Array<{ name: string; pattern: { regexp: string } }>;
+  } };
+  const validation = manifest.contributes.jsonValidation.find(item => item.fileMatch.includes("nil.project.json"));
+  assert.ok(validation);
+  const schema = readJson(validation.url) as { additionalProperties: boolean; required: string[]; properties: Record<string, unknown> };
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(schema.required, ["schema", "name", "entry"]);
+  assert.ok(schema.properties.analysis && schema.properties.includePaths);
+  for (const command of ["checkProject", "checkNativeProject", "buildProject", "buildNativeProject", "runProject", "runNativeProject"]) {
+    assert.ok(manifest.contributes.commands.some(item => item.command === `ny.${command}`));
+  }
+  assert.ok(manifest.contributes.configuration.properties["ny.projectTool.path"]);
+  const matcher = manifest.contributes.problemMatchers.find(item => item.name === "nilproject");
+  assert.ok(matcher);
+  assert.deepEqual(new RegExp(matcher.pattern.regexp).exec("/work/my project/main.matrix:4:7: warning NIL2002: Handle the outcome")?.slice(1),
+    ["/work/my project/main.matrix", "4", "7", "warning", "NIL2002", "Handle the outcome"]);
 });

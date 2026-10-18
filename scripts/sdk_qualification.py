@@ -19,7 +19,7 @@ from sdk_capabilities import capability_errors, collect_capabilities, record_cap
 from sdk_runtime import STATIC_NAMES, SHARED_NAMES, RUNTIME_PAIRS
 
 TOOLS = ("nilcompiler", "nilinterpreter", "nilassembler", "nillinker", "nillsp",
-         "nildebugger", "nilschema", "nilagent")
+         "nildebugger", "nilschema", "nilagent", "nilbuild")
 DIGEST = re.compile(r"[0-9a-f]{64}")
 
 

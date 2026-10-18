@@ -1,4 +1,5 @@
 #include "analysis.hpp"
+#include "default_analyzer.hpp"
 #include "matrix_diagnostics.hpp"
 #include "secure_file_io.hpp"
 #include "matrix_lexer.hpp"
@@ -100,6 +101,7 @@ void validate_analysis_utf8(const std::string &text) {
 void analysis_session::add(std::string code, std::string severity,
     std::string message, const std::string &path, int line, int column,
     int length, std::string hint) {
+  if (disabled_rules.count(code)) return;
   const auto bytes = code.size() + severity.size() + message.size() + path.size() + hint.size();
   if (diagnostics.size() >= 512 || bytes > 256 * 1024 - diagnostic_bytes) {
     truncated = true;
@@ -291,13 +293,15 @@ void analysis_session::lint() {
     protected_line = protected_line || quote;
     auto trim = content_end;
     while (trim > begin && (source[trim - 1] == ' ' || source[trim - 1] == '\t')) --trim;
-    if (!protected_line && trim < content_end && diagnostics.size() < 512) {
+    if (!protected_line && trim < content_end && diagnostics.size() < 512 &&
+        !disabled_rules.count("NIL1001")) {
       diagnostics.push_back({"NIL1001", "warning", "Trailing whitespace", primary_path, "",
         trim, content_end - trim, analysis_fix{trim, content_end - trim, "", "Remove trailing whitespace"}});
     }
     begin = end < source.size() ? end + 1 : source.size();
   }
-  if (!source.empty() && source.back() != '\n' && !quote && diagnostics.size() < 512) {
+  if (!source.empty() && source.back() != '\n' && !quote && diagnostics.size() < 512 &&
+      !disabled_rules.count("NIL1002")) {
     const std::string newline = source.find("\r\n") != std::string::npos ? "\r\n" : "\n";
     diagnostics.push_back({"NIL1002", "warning", "Missing final newline", primary_path, "",
       source.size(), 0, analysis_fix{source.size(), 0, newline, "Add final newline"}});
@@ -322,6 +326,27 @@ std::string analysis_session::json(bool success) const {
              << ",\"replacement\":" << quoted(d.fix->replacement)
              << ",\"description\":" << quoted(d.fix->description) << '}';
     out << '}';
+  }
+  out << "],\"sources\":[";
+  // Byte offsets in dependency diagnostics are valid only for this exact
+  // snapshot. Consumers must compare it with the editor/disk before mapping.
+  // Bound the encoded entries, since escaped source can expand substantially.
+  constexpr std::size_t snapshot_limit = 1024 * 1024;
+  std::size_t snapshot_bytes = 2; // JSON array brackets
+  std::set<std::string> emitted;
+  first = true;
+  for (const auto &d : diagnostics) {
+    if (d.path.empty() || d.path == primary_path || !d.start || !d.length ||
+        !emitted.insert(d.path).second) continue;
+    const auto source = sources.find(d.path);
+    if (source == sources.end()) continue;
+    const auto entry = "{\"path\":" + quoted(d.path) + ",\"text\":" + quoted(source->second) + '}';
+    const auto bytes = entry.size() + (first ? 0 : 1);
+    if (bytes > snapshot_limit - snapshot_bytes) continue;
+    if (!first) out << ',';
+    first = false;
+    out << entry;
+    snapshot_bytes += bytes;
   }
   out << "],\"reflection\":{\"schema\":\"nil.reflection.v1\",\"semantic_checked\":"
       << (semantic_checked ? "true" : "false") << ",\"truncated\":" << (truncated ? "true" : "false")
@@ -387,6 +412,14 @@ int run_analysis_cli(int argc, char **argv, compilation_entry compile) {
       const std::string a = argv[i];
       if (a == "--analyze") continue;
       if (a == "--source-stdin") { session.source_stdin = true; continue; }
+      if (a == "--warnings-as-errors") { session.warnings_as_errors = true; continue; }
+      if (a == "--disable-rule") {
+        if (++i >= argc) throw std::runtime_error("missing value after " + a);
+        if (!is_default_analysis_rule(argv[i]))
+          throw std::runtime_error("unknown analysis rule: " + std::string(argv[i]));
+        session.disabled_rules.insert(argv[i]);
+        continue;
+      }
       if (a == "--emit-reflection" || a == "-I" || a == "--sdk" || a == "--sdk-path") {
         if (++i >= argc) throw std::runtime_error("missing value after " + a);
         if (a == "--emit-reflection") export_path = absolute_path(argv[i]);
@@ -429,6 +462,12 @@ int run_analysis_cli(int argc, char **argv, compilation_entry compile) {
     if (status != 0 && session.diagnostics.empty())
       session.add("NIL0000", "error", fallback.empty() ? "Analysis failed" : fallback);
     if (status == 0) session.lint();
+    session.diagnostics.erase(std::remove_if(session.diagnostics.begin(), session.diagnostics.end(),
+        [&](const analysis_diagnostic &d) { return session.disabled_rules.count(d.code) != 0; }),
+        session.diagnostics.end());
+    if (session.warnings_as_errors) for (auto &d : session.diagnostics) {
+      if (d.severity == "warning") { d.severity = "error"; status = 1; }
+    }
     const auto report = session.json(status == 0);
     if (report.size() > output_limit) throw std::runtime_error("analysis output exceeds 8 MiB");
     if (status == 0 && !export_path.empty()) {

@@ -30,6 +30,20 @@ Hello from Ny
 
 The checked-in source is [`tests/smoke/hello.ny`](../tests/smoke/hello.ny).
 
+## Mixed-language project
+
+[`projects/hello-mixed`](projects/hello-mixed/nil.project.json) contains a
+Matrix entrypoint importing a Ny module. From the repository root with a built
+SDK:
+
+```sh
+sdk/nilbuild run --project examples/projects/hello-mixed/nil.project.json
+sdk/nilbuild run --project examples/projects/hello-mixed/nil.project.json --target native
+```
+
+Both print `Hello from Ny and Matrix`. See the
+[project guide](../docs/tools/projects.md) for the manifest and analyzer policy.
+
 ## Function keyword fixture
 
 The parser accepts both short and long function keywords in the development

@@ -29,6 +29,7 @@ add_subdirectory(nillsp)
 add_subdirectory(nildebugger)
 add_subdirectory(nilassembler)
 add_subdirectory(nillinker)
+add_subdirectory(nilbuild)
 
 if(NIL_BUILD_EXPERIMENTAL_TOOLS)
     add_subdirectory(nilschema)
@@ -388,7 +389,7 @@ if(BUILD_TESTING)
     find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
         set(NY_IDENTITY_TEST_ARGUMENTS)
-        foreach(tool IN ITEMS nilcompiler nilinterpreter nilassembler nillinker nillsp nildebugger nilschema nilagent)
+        foreach(tool IN ITEMS nilcompiler nilinterpreter nilassembler nillinker nillsp nildebugger nilschema nilagent nilbuild)
             if(TARGET ${tool})
                 list(APPEND NY_IDENTITY_TEST_ARGUMENTS --tool "${tool}=$<TARGET_FILE:${tool}>")
             endif()
@@ -402,6 +403,17 @@ if(BUILD_TESTING)
                     ${NY_IDENTITY_TEST_ARGUMENTS}
         )
         set_tests_properties(ny.release-identity PROPERTIES LABELS "tools;release;rc" TIMEOUT 60)
+        add_test(
+            NAME nilbuild.project-contract
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/project_build_contract.py"
+                    --builder $<TARGET_FILE:nilbuild>
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                    --llvm "${NIL_ENABLE_LLVM}"
+        )
+        set_tests_properties(nilbuild.project-contract PROPERTIES LABELS "tools;project;analysis;rc" TIMEOUT 180)
         add_test(
             NAME ny.inline-assembly
             COMMAND "${Python3_EXECUTABLE}"

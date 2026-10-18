@@ -20,6 +20,7 @@ set(
 
 set(NILCOMPILER_CORE_SOURCES
     src/analysis.cpp
+    src/default_analyzer.cpp
     src/lexer.cpp
     src/parser.cpp
     # Matrix front end: a second surface over the same AST, type checker and
