@@ -23,14 +23,21 @@ exports.run = async ({ check, workspace }) => {
     const manifest = { schema: "nil.project.v1", name: "hello", entry: `src/main.${language}`, includePaths: ["lib"] };
     await fs.writeFile(manifestFile, JSON.stringify(manifest));
     await fs.writeFile(path.join(directory, "lib", "answer.ny"), 'module answer\npub fn answer() -> i32\n return 42\nend fn\n');
-    const text = language === "ny" ? 'import answer.*\nfn main() -> i32\n println(answer())\n return 0\nend fn\n' :
-      'book project.example\nread everything from answer\nmain returns override integer begin paragraph\n say (answer with nothing)\n give 0\nend paragraph\n';
+    // Distinguish nilbuild's project cwd and explicit import-root ordering from
+    // the entry directory. Choosing either shadow makes compiler checks fail.
+    await fs.writeFile(path.join(directory, "rooted.ny"), 'module rooted\npub fn rooted() -> i32\n return 0\nend fn\n');
+    await fs.writeFile(path.join(directory, "src", "rooted.ny"), 'module rooted\npub fn rooted() -> i32\n return "wrong root"\nend fn\n');
+    await fs.writeFile(path.join(directory, "src", "answer.ny"), 'module answer\npub fn answer() -> i32\n return "wrong include precedence"\nend fn\n');
+    const text = language === "ny" ? 'import answer.*\nimport rooted.*\nfn main() -> i32\n println(answer())\n return rooted()\nend fn\n' :
+      'book project.example\nread everything from answer\nread everything from rooted\nmain returns override integer begin paragraph\n say (answer with nothing)\n give (rooted with nothing)\nend paragraph\n';
     await fs.writeFile(path.join(directory, manifest.entry), text);
     const document = await vscode.workspace.openTextDocument(path.join(directory, manifest.entry));
     await vscode.window.showTextDocument(document);
-    await check(`${language}: project entry and import roots drive editor analysis`, async () => {
+    await check(`${language}: project cwd and explicit import roots outrank source-directory shadows`, async () => {
       await eventually(() => vscode.commands.executeCommand("ny.analyzeCurrentFile"), "current compiler check");
-      assert.deepEqual(findings(document.uri), []);
+      const projectFindings = [document.uri, ...["rooted.ny", "src/rooted.ny", "src/answer.ny", "lib/answer.ny"]
+        .map(relative => vscode.Uri.file(path.join(directory, relative)))].flatMap(findings);
+      assert.deepEqual(projectFindings, [], "Editor checks must select the same root/include modules as nilbuild, not invalid source-directory shadows.");
       const tasks = await vscode.tasks.fetchTasks({ type: "ny" });
       const projectTasks = tasks.filter(task => task.definition.project === manifestFile);
       assert.equal(projectTasks.length, 6);

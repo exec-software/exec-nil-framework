@@ -1,2 +1,2 @@
 Type checking failed:
-  line 6: Function 'needs_one' expects 1 arguments, got 0
+  {{SOURCE}}:6: Function 'needs_one' expects 1 arguments, got 0

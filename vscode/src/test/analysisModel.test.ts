@@ -302,3 +302,12 @@ test("analysis invocation carries the same rule policy as project checks", () =>
   }).args, ["--analyze", "--source-stdin", source, "--disable-rule", "NIL1001", "--disable-rule", "NIL2002",
     "--warnings-as-errors", "-I", workRoot]);
 });
+
+
+test("project analysis preserves driver import precedence over the entry directory", () => {
+  const entry = path.join(workRoot, "src", "main.matrix");
+  const sdk = path.join(workRoot, "sdk");
+  const library = path.join(workRoot, "lib");
+  assert.deepEqual(analysisInvocation("nilcompiler", entry, sdk, false, [workRoot, library], undefined, false).args,
+    ["--analyze", "--source-stdin", entry, "-I", sdk, "-I", workRoot, "-I", library]);
+});

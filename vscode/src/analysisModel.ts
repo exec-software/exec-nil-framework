@@ -116,13 +116,17 @@ export function byteRangeToOffsets(text: string, start: number, length: number):
 export function analysisInvocation(
   compiler: string, source: string, sdkPath: string | undefined,
   noStdlib: boolean, includeRoots: readonly string[],
-  policy: { disabledRules: readonly string[]; warningsAsErrors: boolean } = { disabledRules: [], warningsAsErrors: false }
+  policy: { disabledRules: readonly string[]; warningsAsErrors: boolean } = { disabledRules: [], warningsAsErrors: false },
+  sourceDirectoryFirst = true
 ): ToolInvocation {
   const args = ["--analyze", "--source-stdin", source];
   if (noStdlib) args.push("--no-stdlib");
   for (const code of policy.disabledRules) args.push("--disable-rule", code);
   if (policy.warningsAsErrors) args.push("--warnings-as-errors");
-  const roots = new Set([path.dirname(source), ...(sdkPath ? [sdkPath] : []), ...includeRoots].map(root => path.normalize(root)));
+  // Project checks preserve nilbuild's SDK/manifest root order. The compiler
+  // itself appends the source directory, after explicitly supplied roots.
+  const roots = new Set([...(sourceDirectoryFirst ? [path.dirname(source)] : []),
+    ...(sdkPath ? [sdkPath] : []), ...includeRoots].map(root => path.normalize(root)));
   for (const root of roots) args.push("-I", root);
   return { command: compiler, args };
 }

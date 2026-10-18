@@ -79,6 +79,8 @@ source: `NIL2001` reports unreachable statements after unconditional exits, and
 `NIL2002` reports standalone calls whose standard `Option`/`Result` outcomes
 are discarded. These are warnings without automatic fixes. Imported modules
 receive compiler checks but are not recursively linted by these rules.
+These rules traverse named function/method and test bodies; expression-embedded
+lambda bodies remain outside this initial traversal.
 
 `nilcompiler --list-analysis-rules` returns a `nil.analyzers.v1` catalog with
 the `nil.default` analyzer and each rule's code, title, description, default

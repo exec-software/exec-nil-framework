@@ -1,2 +1,2 @@
 Type checking failed:
-  line 1: Entry function 'main' must not declare parameters; use the runtime argument intrinsics
+  {{SOURCE}}:1: Entry function 'main' must not declare parameters; use the runtime argument intrinsics

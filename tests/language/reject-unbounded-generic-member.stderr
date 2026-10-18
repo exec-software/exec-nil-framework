@@ -1,2 +1,2 @@
 Type checking failed:
-  line 7: Type 'T' has no member 'fingerprint'
+  {{SOURCE}}:7: Type 'T' has no member 'fingerprint'

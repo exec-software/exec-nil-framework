@@ -115,6 +115,9 @@ nilcompiler --analyze src/main.matrix -I src --disable-rule NIL1001 --warnings-a
 
 Semantic rules run only after successful type and ownership checking. They
 inspect the entry source; imported sources still receive compiler checks.
+The current traversal covers named functions, methods and test blocks, including
+their nested statement blocks; expression-embedded lambda bodies are not yet
+analyzed by these two rules.
 Unreachable-code analysis is conservative structured analysis, not a complete
 control-flow graph. The discarded-result rule uses resolved types rather than
 matching a function name. Semantic warnings do not offer an automatic edit:

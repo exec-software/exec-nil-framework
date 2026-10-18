@@ -202,10 +202,10 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
     ];
     this.watchImportRoots([...roots, ...(sdkRoot ? [sdkRoot] : [])]);
     const invocation = analysisInvocation(tool.executable, job.source, sdkRoot,
-      !project && configuration.get<boolean>("compiler.noStdlib", false), roots, project?.analysis);
+      !project && configuration.get<boolean>("compiler.noStdlib", false), roots, project?.analysis, !project);
     const result = await new Promise<AnalysisResult>((resolve, reject) => {
       const child = execFile(invocation.command, [...invocation.args], {
-        cwd: path.dirname(job.source), encoding: "utf8", windowsHide: true,
+        cwd: project?.directory ?? path.dirname(job.source), encoding: "utf8", windowsHide: true,
         timeout: timeoutMilliseconds, maxBuffer: maxAnalysisOutputBytes, killSignal: "SIGKILL", signal
       }, (error, stdout, stderr) => {
         if (signal.aborted) { reject(new Error("Analysis cancelled.")); return; }
