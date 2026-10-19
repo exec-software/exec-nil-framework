@@ -4,6 +4,27 @@ All notable changes to the NIL Framework VS Code extension are documented here.
 
 ## 1.0.0-rc.1
 
+- Resolve Go to Definition through checked compiler bindings for source variables,
+  parameters and direct/imported functions across Ny and Matrix, including dirty
+  and new sources. Preserve exact UTF-8 name spans and lexical binding identities.
+- Validate the complete semantic source snapshot before navigation; suppress stale,
+  unsupported, failed-check and binary-library destinations. Keep references and
+  rename unavailable until their compiler coverage is complete.
+- Check unsaved imported Ny and Matrix buffers through bounded compiler workspace
+  input, including new named untitled modules and their nested project settings.
+- Cancel checks when any captured buffer or workspace context changes; publish
+  imported Problems only against matching current buffers or verified disk text.
+- Preserve compiler import precedence and guard conflicting aliases of one source.
+- Exclude clean cached models after editor tabs close while retaining every dirty
+  named buffer, so closed aliases cannot block unsaved source checks.
+- Add `nil.project.json` validation and `nilbuild` project check/build/run commands
+  and tasks for VM and native targets; reuse project imports, SDK, and analyzer
+  policy in current-document checks.
+- Display compiler semantic warnings for unreachable code and discarded checked
+  outcomes, with manifest suppression and warnings-as-errors settings.
+- Place imported compiler diagnostics in Problems only against verified source
+  snapshots; aggregate reports and refresh dependents after source changes.
+
 - Present the extension as NIL Framework (Ny + Matrix) and discover the renamed
   `nilcompiler`, `nilinterpreter`, `nildebugger`, and `nillsp` SDK commands.
 - Preserve the extension identifier, `ny.*` settings/commands, task/debug types,

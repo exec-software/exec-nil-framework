@@ -66,7 +66,7 @@ def main() -> None:
         name, separator, path = specification.partition("=")
         assert separator and name not in tools, f"Invalid or duplicate --tool: {specification}"
         tools[name] = Path(path).resolve(strict=True)
-    required = {"nilcompiler", "nilinterpreter", "nilassembler", "nillinker", "nildebugger", "nillsp"}
+    required = {"nilcompiler", "nilinterpreter", "nilassembler", "nillinker", "nildebugger", "nillsp", "nilbuild"}
     assert required <= tools.keys(), f"Missing core tools: {required - tools.keys()}"
     assert set(tools) in (required, required | {"nilagent", "nilschema"}), "Unexpected tool inventory"
 

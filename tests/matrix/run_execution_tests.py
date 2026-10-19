@@ -316,6 +316,7 @@ def check_import_diagnostic_surface(compiler, workdir):
     failures = []
     for language in ("ny", "matrix"):
         root = pathlib.Path(workdir) / ("diagnostic-import-" + language)
+        page = root / ("consumer." + language)
         sources = root / "sources" / "bridge"
         binaries = root / "binaries" / "bridge"
         sources.mkdir(parents=True)
@@ -332,7 +333,7 @@ def check_import_diagnostic_surface(compiler, workdir):
                 "    let result = answer()\n"
                 "    return missing\nend fn\n")
             expected = ("Type checking failed:\n"
-                        "  line 4: Undefined identifier 'missing'\n")
+                        f"  {page.resolve()}:4: Undefined identifier 'missing'\n")
         else:
             dependency = sources / "helper.ny"
             dependency.write_text(
@@ -346,8 +347,9 @@ def check_import_diagnostic_surface(compiler, workdir):
                 "    value result is answer with nothing\n"
                 "    give missing\nend paragraph\n")
             expected = ("error: Undefined identifier 'missing'\n"
-                        "  --> <input>:5\n")
-        page = root / ("consumer." + language)
+                        f"  --> {page.resolve()}:5\n"
+                        "  |\n"
+                        "5 |     give missing\n")
         page.write_text(application)
         base = [str(compiler.resolve()), "--no-stdlib", "--no-bundle", "--quiet"]
 

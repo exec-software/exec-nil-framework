@@ -144,6 +144,10 @@ struct token {
   std::string key;              // lookup key: ASCII-folded, '-' and '_' removed
   int line = 1;
   int column = 1;
+  // Exact UTF-8 byte range in the original source, including delimiters.
+  size_t start = 0;
+  size_t length = 0;
+  bool escaped_identifier = false;
 
   bool is(kw k) const { return kind == token_kind::keyword && word == k; }
   bool is_name() const { return kind == token_kind::identifier; }
@@ -187,6 +191,7 @@ private:
   const std::string &src_;
   std::vector<lex_error> errors_;
   size_t pos_ = 0;
+  size_t token_start_ = 0;
   int line_ = 1;
   int col_ = 1;
 

@@ -1,0 +1,8 @@
+book examples.hello-mixed
+
+read everything from greeting
+
+main returns override integer begin paragraph
+    say greeting with name being "Ny and Matrix"
+    give 0
+end paragraph

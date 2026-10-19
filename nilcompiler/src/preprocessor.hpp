@@ -120,6 +120,15 @@ struct preprocessor_options {
 
   // Built-in macro map for predefined macros (e.g., __FILE__, __LINE__, etc.)
   std::unordered_map<std::string, std::string> builtin_macros;
+
+  // Analysis may provide unsaved source files without changing the filesystem.
+  // An installed callback is authoritative: failure never falls back to disk.
+  std::function<std::optional<std::filesystem::path>(const std::filesystem::path &)> resolve_source;
+  std::function<std::optional<std::string>(const std::filesystem::path &)> read_source;
+  // Zero preserves the ordinary compiler's existing behavior.
+  std::size_t max_output_bytes = 0;
+  std::size_t max_include_depth = 0;
+  std::size_t max_include_visits = 0;
 };
 
 // Result of a preprocessing operation
@@ -219,7 +228,7 @@ private:
                        const std::filesystem::path &relative_to) const;
 
   // Read a text file into a string. Returns optional<string> - nullopt on fail.
-  static std::optional<std::string>
+  std::optional<std::string>
   read_file_to_string(const std::filesystem::path &path);
 
   // Notify of a diagnostic; calls callback if supplied and records into list.
@@ -238,6 +247,7 @@ private:
   std::unordered_map<std::string, macro_def> macro_table_;
   std::vector<std::filesystem::path> include_stack_;
   std::unordered_set<std::string> include_once_set_; // canonical paths
+  std::size_t include_visits_ = 0;
 
   // Diagnostics produced during the current operation
   std::vector<preproc_diagnostic> diagnostics_;

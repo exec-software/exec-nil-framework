@@ -5,6 +5,8 @@ import { NyDebugIntegration } from "./debugger";
 import { NyAnalyzer } from "./analyzer";
 import { NyTaskDefinition, NyTaskKind, NyTaskProvider } from "./tasks";
 import { selectSdkFolder } from "./vscodeToolchain";
+import { projectForResource } from "./projectContext";
+import { ProjectTarget } from "./projectModel";
 import { savedSourcePath } from "./languages";
 
 let languageClientManager: NyLanguageClientManager | undefined;
@@ -95,11 +97,28 @@ async function runToolTask(
   return await executeAndWait(task);
 }
 
+async function runProjectTask(provider: NyTaskProvider, kind: "project-check" | "project-build" | "project-run", target: ProjectTarget): Promise<number | undefined> {
+  if (!(await requireTrustedWorkspace())) return undefined;
+  const resource = vscode.window.activeTextEditor?.document.uri;
+  let project;
+  try { project = projectForResource(resource); }
+  catch (error) { void vscode.window.showErrorMessage(`NIL project: ${error instanceof Error ? error.message : String(error)}`); return undefined; }
+  if (!project) {
+    void vscode.window.showErrorMessage("No nil.project.json found between the active file and its workspace folder.");
+    return undefined;
+  }
+  // The project driver reads the complete saved import graph. Saving all files
+  // avoids silently building a different program from the one in the editor.
+  if (!(await vscode.workspace.saveAll(false))) return undefined;
+  return runToolTask(provider, kind, resource?.scheme === "file" ? resource.fsPath : undefined,
+    { project: project.projectFile, target });
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const provider = new NyTaskProvider();
-  languageClientManager = new NyLanguageClientManager();
   const debugIntegration = new NyDebugIntegration();
   const analyzer = new NyAnalyzer();
+  languageClientManager = new NyLanguageClientManager(document => analyzer.usesCompilerDefinitions(document));
 
   context.subscriptions.push(
     languageClientManager,
@@ -153,6 +172,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const output = (compileTask.definition as NyTaskDefinition).output;
       await runToolTask(provider, "run", source, output ? { output } : {});
     }),
+    ...([ ["ny.checkProject", "project-check", "vm"], ["ny.checkNativeProject", "project-check", "native"],
+      ["ny.buildProject", "project-build", "vm"], ["ny.buildNativeProject", "project-build", "native"],
+      ["ny.runProject", "project-run", "vm"], ["ny.runNativeProject", "project-run", "native"] ] as const)
+      .map(([command, kind, target]) => vscode.commands.registerCommand(command, () => runProjectTask(provider, kind, target))),
     vscode.commands.registerCommand("ny.buildSdk", async () => {
       await runToolTask(provider, "build-sdk");
     }),

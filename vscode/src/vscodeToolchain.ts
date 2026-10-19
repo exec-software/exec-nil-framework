@@ -11,7 +11,8 @@ const settingForTool: Record<NyTool, string> = {
   nilcompiler: "compiler.path",
   nilinterpreter: "interpreter.path",
   nillsp: "server.path",
-  nildebugger: "debugger.path"
+  nildebugger: "debugger.path",
+  nilbuild: "projectTool.path"
 };
 
 function orderedWorkspaceFolders(resource?: vscode.Uri): string[] {
@@ -36,12 +37,12 @@ export function configuredSdkPath(resource?: vscode.Uri): string | undefined {
   return expandConfiguredPath(raw, folders[0]);
 }
 
-export function resolveConfiguredTool(tool: NyTool, resource?: vscode.Uri): ToolResolution {
+export function resolveConfiguredTool(tool: NyTool, resource?: vscode.Uri, sdkPath?: string): ToolResolution {
   const configuration = nyConfiguration(resource);
   return resolveNyTool({
     tool,
     explicitPath: configuration.get<string>(settingForTool[tool], ""),
-    sdkPath: configuration.get<string>("sdkPath", ""),
+    sdkPath: sdkPath ?? configuration.get<string>("sdkPath", ""),
     workspaceFolders: orderedWorkspaceFolders(resource)
   });
 }

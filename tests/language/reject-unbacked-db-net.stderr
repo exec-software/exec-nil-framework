@@ -1,5 +1,5 @@
 Type checking failed:
-  line 5: Undefined identifier 'db_connection'
-  line 5: Type '<unknown>' has no member 'connect'
-  line 6: Undefined identifier 'http_client'
-  line 6: Type '<unknown>' has no member 'new'
+  {{SOURCE}}:5: Undefined identifier 'db_connection'
+  {{SOURCE}}:5: Type '<unknown>' has no member 'connect'
+  {{SOURCE}}:6: Undefined identifier 'http_client'
+  {{SOURCE}}:6: Type '<unknown>' has no member 'new'

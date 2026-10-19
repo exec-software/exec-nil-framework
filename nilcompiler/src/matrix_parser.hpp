@@ -244,7 +244,8 @@ private:
   make_ownership_binding(const std::string &name, const std::string &operation,
                          std::vector<ny::ast_expr_ptr> args,
                          std::vector<std::string> type_args, bool is_mut,
-                         std::optional<std::string> declared_type, int line);
+                         std::optional<std::string> declared_type, int line,
+                         const token &name_token);
 
   // ---- expressions, lowest precedence first ----
   ny::ast_expr_ptr parse_expression();

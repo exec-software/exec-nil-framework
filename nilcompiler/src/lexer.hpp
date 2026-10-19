@@ -141,6 +141,10 @@ struct token {
   token_kind kind;
   std::string lexeme; // The raw text
   int line;           // 1-based line number
+  // Byte range in the lexer's UTF-8 input. Zero length also marks synthesized
+  // recovery tokens, which must not acquire editable source locations.
+  size_t offset = 0;
+  size_t length = 0;
 };
 
 class lexer {

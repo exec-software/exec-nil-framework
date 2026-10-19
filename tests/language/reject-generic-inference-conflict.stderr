@@ -1,2 +1,2 @@
 Type checking failed:
-  line 6: Conflicting types inferred for generic parameter 'T' in function 'choose': 'i32' and 'String'
+  {{SOURCE}}:6: Conflicting types inferred for generic parameter 'T' in function 'choose': 'i32' and 'String'

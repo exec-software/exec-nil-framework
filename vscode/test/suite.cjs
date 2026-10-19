@@ -54,6 +54,16 @@ exports.run = async function run() {
     const extension = vscode.extensions.getExtension("exec-software.ny-language-support");
     assert.ok(extension);
     await bounded(extension.activate(), "extension activation");
+    if (process.env.NIL_VSCODE_SEMANTIC_ONLY) {
+      await require("./semantic-checks.cjs").run({ check, workspace });
+      report.status = "PASS";
+      return;
+    }
+    if (process.env.NIL_VSCODE_WORKSPACE_ONLY) {
+      await require("./workspace-checks.cjs").run({ check, workspace });
+      report.status = "PASS";
+      return;
+    }
     if (process.env.NIL_VSCODE_ANALYSIS_ONLY || process.env.NIL_VSCODE_ANALYSIS_PROBE_ONLY) {
       await require("./analyzer-checks.cjs").run({ check, workspace });
       report.status = "PASS";
@@ -211,6 +221,9 @@ exports.run = async function run() {
       });
     }
     await require("./analyzer-checks.cjs").run({ check, workspace });
+    await require("./project-checks.cjs").run({ check, workspace });
+    await require("./workspace-checks.cjs").run({ check, workspace });
+    await require("./semantic-checks.cjs").run({ check, workspace });
     report.status = "PASS";
   } catch (error) {
     report.status = "FAIL";

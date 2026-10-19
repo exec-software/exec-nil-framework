@@ -39,6 +39,7 @@ REQUIRED_TOOLS = (
     "nildebugger",
     "nilschema",
     "nilagent",
+    "nilbuild",
 )
 MANIFEST_NAME = "manifest.json"
 NATIVE_RUNTIME_ARCHIVE_NAMES = STATIC_NAMES

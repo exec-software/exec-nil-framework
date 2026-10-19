@@ -38,6 +38,7 @@ REQUIRED_TOOLS = (
     "nildebugger",
     "nilschema",
     "nilagent",
+    "nilbuild",
 )
 SDK_DIRECTORIES = ("nillib", "nilstd", "docs")
 RELEASE_DOCUMENTATION_FILES = {

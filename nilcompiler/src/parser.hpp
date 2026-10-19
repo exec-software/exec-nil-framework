@@ -211,6 +211,7 @@ private:
                  const std::optional<std::string> &hint = std::nullopt);
   void add_error_at_line(int line, const std::string &msg,
                          const std::optional<std::string> &hint = std::nullopt);
+  std::optional<source_span> span_for_name(const token &name) const;
 
   // Token stream / source tracking
   std::vector<token> tokens_;
@@ -232,6 +233,11 @@ private:
   // Whether to run the preprocessor before tokenization; mirrors
   // `options_.enable_preprocessor` and is used by the parser implementation.
   bool enable_preprocessing_ = false;
+  // Only exact, unchanged code lines have original-source coordinates. The
+  // preprocessor may normalize blank lines or append a final newline; these
+  // pairs translate those deterministic shifts without changing lexing.
+  bool original_spans_available_ = true;
+  std::vector<std::pair<size_t, size_t>> source_line_offsets_;
 
   // Diagnostics
   std::vector<diagnostic> diagnostics_;

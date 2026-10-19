@@ -1,6 +1,6 @@
 Type checking failed:
-  line 6: Type mismatch in assignment. Expected 'ptr<u8>', got 'ptr<i32>'
-  line 8: Type mismatch in assignment. Expected 'i64', got 'ptr<i32>'
-  line 9: Type mismatch in dereference assignment. Expected 'i32', got 'ptr<u8>'
-  line 10: Type mismatch in indexed assignment. Expected 'i32', got 'ptr<u8>'
-  line 12: Type mismatch in indexed assignment. Expected 'u8', got 'ptr<i32>'
+  {{SOURCE}}:6: Type mismatch in assignment. Expected 'ptr<u8>', got 'ptr<i32>'
+  {{SOURCE}}:8: Type mismatch in assignment. Expected 'i64', got 'ptr<i32>'
+  {{SOURCE}}:9: Type mismatch in dereference assignment. Expected 'i32', got 'ptr<u8>'
+  {{SOURCE}}:10: Type mismatch in indexed assignment. Expected 'i32', got 'ptr<u8>'
+  {{SOURCE}}:12: Type mismatch in indexed assignment. Expected 'u8', got 'ptr<i32>'

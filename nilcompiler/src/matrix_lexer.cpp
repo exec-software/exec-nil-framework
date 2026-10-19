@@ -194,6 +194,8 @@ token lexer::make(token_kind kind, const std::string &lexeme, int line,
   t.lexeme = lexeme;
   t.line = line;
   t.column = col;
+  t.start = token_start_;
+  t.length = pos_ - token_start_;
   return t;
 }
 
@@ -304,6 +306,7 @@ token lexer::scan_backtick_identifier() {
   }
   token t = make(token_kind::identifier, spelling, line, col);
   t.key = fold_key(spelling);
+  t.escaped_identifier = true;
   return t;
 }
 
@@ -446,6 +449,7 @@ std::vector<token> lexer::scan() {
   for (;;) {
     skip_trivia();
     if (at_end()) break;
+    token_start_ = pos_;
     const int line = line_, col = col_;
     const unsigned char c = static_cast<unsigned char>(peek());
 
@@ -563,6 +567,7 @@ std::vector<token> lexer::scan() {
     }
     tokens.push_back(make(token_kind::invalid, std::string(1, static_cast<char>(c)), line, col));
   }
+  token_start_ = pos_;
   token eof = make(token_kind::end_of_file, "", line_, col_);
   tokens.push_back(eof);
   return tokens;

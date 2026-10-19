@@ -2,11 +2,13 @@
 #define NY_COMPILER_TYPE_CHECKER_HPP
 
 #include "ast.hpp"
+#include "semantic_index.hpp"
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace ny {
@@ -23,7 +25,8 @@ struct type_info {
 
 class type_checker : public ast_node::ast_visitor {
 public:
-  explicit type_checker();
+  explicit type_checker(bool collect_semantics = false);
+  const semantic_index &get_semantic_index() const { return semantics_; }
 
   // Entry point
   bool check(ast_program &program);
@@ -142,6 +145,21 @@ public:
 private:
   symbol_table symbols_;
   std::vector<diagnostic> diagnostics_;
+  bool collect_semantics_ = false;
+  semantic_index semantics_;
+  std::size_t semantic_bytes_ = 0;
+  std::map<const ast_node *, std::size_t> semantic_nodes_;
+  std::map<std::tuple<std::string, std::size_t, std::size_t>, std::size_t> semantic_declarations_;
+  std::set<std::tuple<std::string, std::size_t, std::size_t, std::size_t>> semantic_occurrences_;
+  void disable_semantics();
+  std::optional<std::size_t> semantic_declaration(
+      const std::string &name, const std::string &kind, const std::string &type,
+      const std::string &path, const std::optional<source_span> &span);
+  std::optional<std::size_t> semantic_node(const ast_node &node,
+      const std::string &name, const std::string &kind, const std::string &type,
+      const std::string &fallback_path = {});
+  void semantic_reference_to(const ast_node &node, const std::string &name,
+                             const symbol &binding);
 
   struct trait_implementation {
     std::string trait_name;

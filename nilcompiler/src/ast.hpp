@@ -11,6 +11,7 @@
 // - Symbol table is included for early semantic analysis.
 
 #include "lexer.hpp"
+#include <cstddef>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -22,6 +23,12 @@
 #include <vector>
 
 namespace ny {
+
+// Half-open UTF-8 byte range in the original source, never preprocessed text.
+struct source_span {
+  std::size_t start = 0;
+  std::size_t length = 0;
+};
 
 // Forward declarations
 struct ast_node;
@@ -188,6 +195,7 @@ struct ast_node {
   ast_node_kind kind;
   int line;
   std::string source_file;
+  std::optional<source_span> name_span;
   // Annotations collected for the node. This is public so callers (such as the
   // parser) can set annotations directly after creating AST nodes. The type is
   // a vector of structured annotation records allowing semantic analysis to
@@ -400,6 +408,7 @@ struct ast_generic_param {
 // Helper: parameter tuple
 struct ast_param {
   std::string name;
+  std::optional<source_span> name_span;
   std::optional<std::string> type_name; // textual typing for MVP
   bool is_mut =
       false; // optional mut marker for variable params (e.g., for mut x)
@@ -538,6 +547,7 @@ struct ast_struct_field {
   std::string name;
   std::string type_name;
   int line;
+  std::optional<source_span> name_span;
 };
 
 // Struct declaration
@@ -1211,6 +1221,9 @@ struct symbol {
   symbol_kind kind;
   ast_node *defining_node; // The AST node that declared this symbol
   std::optional<std::string> type_name; // textual type if available
+  // Analysis-only retained declaration identity, including parameters which
+  // have no ast_node. Copies retain identity after their lexical scope exits.
+  std::optional<std::size_t> semantic_id;
   std::optional<std::string>
       module; // Optional module path owning this symbol (e.g., "std::io")
   bool is_mut = false; // Indicates when a variable symbol is mutable

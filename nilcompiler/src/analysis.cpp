@@ -1,7 +1,9 @@
 #include "analysis.hpp"
+#include "default_analyzer.hpp"
 #include "matrix_diagnostics.hpp"
 #include "secure_file_io.hpp"
 #include "matrix_lexer.hpp"
+#include "../../common/strict_json.hpp"
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
@@ -14,10 +16,13 @@
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
+#include <tuple>
 
 namespace ny {
 namespace {
 constexpr std::size_t source_limit = 2 * 1024 * 1024;
+constexpr std::size_t workspace_limit = 8 * 1024 * 1024;
+constexpr std::size_t workspace_source_limit = 256;
 constexpr std::size_t output_limit = 8 * 1024 * 1024;
 constexpr std::size_t declaration_limit = 8192;
 std::string quoted(const std::string &text) {
@@ -53,7 +58,62 @@ std::string ny_literal(const std::string &text) {
   return out + '"';
 }
 std::string absolute_path(const std::string &path) {
-  return std::filesystem::weakly_canonical(std::filesystem::absolute(path)).string();
+  return analysis_source_identity(path);
+}
+bool supported_source_path(const std::string &path) {
+  auto ext = std::filesystem::path(path).extension().string();
+  std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+  return ext == ".ny" || ext == ".matrix" || ext == ".mat";
+}
+std::string read_bounded(std::istream &input, std::size_t limit, const std::string &label) {
+  std::string result;
+  char buffer[8192];
+  while (input.read(buffer, sizeof(buffer)) || input.gcount()) {
+    const auto size = static_cast<std::size_t>(input.gcount());
+    if (size > limit - result.size()) throw std::runtime_error(label + " exceeds " + std::to_string(limit / (1024 * 1024)) + " MiB");
+    result.append(buffer, size);
+  }
+  if (input.bad()) throw std::runtime_error("cannot read " + label);
+  return result;
+}
+void read_workspace_request(analysis_session &session, const std::string &request) {
+  using nil::detail::json;
+  const auto value = nil::detail::json_parser(request).parse();
+  if (value.type != json::kind::object || value.object.size() != 2 ||
+      !value.object.count("schema") || !value.object.count("sources"))
+    throw std::runtime_error("workspace request requires only schema and sources fields");
+  if (value.at("schema").type != json::kind::string ||
+      value.at("schema").text != "nil.analysis.workspace.v1")
+    throw std::runtime_error("unsupported analysis workspace schema");
+  const auto &sources = value.at("sources");
+  if (sources.type != json::kind::array || sources.array.empty() || sources.array.size() > workspace_source_limit)
+    throw std::runtime_error("analysis workspace requires 1 to 256 sources");
+  std::size_t bytes = 0;
+  for (const auto &source : sources.array) {
+    if (source.type != json::kind::object || source.object.size() != 2 ||
+        !source.object.count("path") || !source.object.count("text") ||
+        source.at("path").type != json::kind::string || source.at("text").type != json::kind::string)
+      throw std::runtime_error("workspace source requires only string path and text fields");
+    const auto &path = source.at("path").text;
+    const auto &text = source.at("text").text;
+    if (path.empty() || path.size() > 4096 || path.find('\0') != std::string::npos ||
+        !std::filesystem::path(path).is_absolute() || !supported_source_path(path))
+      throw std::runtime_error("workspace source path must be an absolute .ny, .matrix or .mat path of at most 4096 bytes");
+    if (text.find('\0') != std::string::npos) throw std::runtime_error("workspace source contains a NUL byte");
+    if (text.size() > source_limit) throw std::runtime_error("analysis source exceeds 2 MiB: " + path);
+    if (text.size() > workspace_limit - bytes) throw std::runtime_error("analysis workspace sources exceed 8 MiB");
+    bytes += text.size();
+    const auto canonical = absolute_path(path);
+    std::error_code error;
+    const auto status = std::filesystem::status(canonical, error);
+    if ((!error && std::filesystem::exists(status) && !std::filesystem::is_regular_file(status)) ||
+        (error && error != std::errc::no_such_file_or_directory))
+      throw std::runtime_error("workspace source is not a regular file: " + path);
+    if (!session.workspace_sources.emplace(canonical, text).second)
+      throw std::runtime_error("duplicate canonical workspace source path: " + path);
+  }
+  if (!session.workspace_sources.count(session.primary_path))
+    throw std::runtime_error("analysis workspace must include the primary source");
 }
 std::string join(const std::string &prefix, const std::string &name) {
   return prefix.empty() ? name : prefix + "::" + name;
@@ -76,6 +136,52 @@ struct capture_streams {
   ~capture_streams() { std::cout.rdbuf(out); std::cerr.rdbuf(err); }
 };
 } // namespace
+
+std::string analysis_source_identity(const std::string &path) {
+  if (path.find('\0') != std::string::npos) throw std::runtime_error("analysis source path contains a NUL byte");
+  return std::filesystem::weakly_canonical(std::filesystem::absolute(path)).string();
+}
+
+bool analysis_session::workspace_source_exists(const std::string &path) const {
+  try {
+    const auto canonical = analysis_source_identity(path);
+    if (workspace_sources.count(canonical)) return true;
+    std::error_code error;
+    return std::filesystem::is_regular_file(canonical, error);
+  } catch (const std::filesystem::filesystem_error &) {
+    // Import/include candidates are probes. A broken or inaccessible earlier
+    // candidate must not hide a valid source in a subsequent search root.
+    return false;
+  }
+}
+
+std::optional<std::string> analysis_session::read_workspace_source(const std::string &path) {
+  const auto canonical = analysis_source_identity(path);
+  if (const auto cached = sources.find(canonical); cached != sources.end()) return cached->second;
+  std::string source;
+  if (const auto overlay = workspace_sources.find(canonical); overlay != workspace_sources.end()) {
+    source = overlay->second;
+  } else {
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(canonical, error)) return std::nullopt;
+    const auto read = detail::read_regular_file_bounded(canonical, source_limit);
+    if (!read.ok) throw std::runtime_error("cannot read analysis source: " + canonical + ": " + read.error);
+    source.assign(read.bytes.begin(), read.bytes.end());
+  }
+  record_workspace_source(canonical, source);
+  return source;
+}
+
+void analysis_session::record_workspace_source(const std::string &path, const std::string &source) {
+  if (sources.count(path)) return;
+  validate_analysis_utf8(source);
+  if (source.find('\0') != std::string::npos) throw std::runtime_error("workspace source contains a NUL byte: " + path);
+  if (source.size() > source_limit) throw std::runtime_error("analysis source exceeds 2 MiB: " + path);
+  if (sources.size() >= workspace_source_limit) throw std::runtime_error("analysis workspace exceeds 256 source files");
+  if (source.size() > workspace_limit - workspace_read_bytes) throw std::runtime_error("analysis workspace source reads exceed 8 MiB");
+  workspace_read_bytes += source.size();
+  sources.emplace(path, source);
+}
 
 void validate_analysis_utf8(const std::string &text) {
   for (std::size_t i = 0; i < text.size();) {
@@ -100,6 +206,7 @@ void validate_analysis_utf8(const std::string &text) {
 void analysis_session::add(std::string code, std::string severity,
     std::string message, const std::string &path, int line, int column,
     int length, std::string hint) {
+  if (disabled_rules.count(code)) return;
   const auto bytes = code.size() + severity.size() + message.size() + path.size() + hint.size();
   if (diagnostics.size() >= 512 || bytes > 256 * 1024 - diagnostic_bytes) {
     truncated = true;
@@ -291,17 +398,126 @@ void analysis_session::lint() {
     protected_line = protected_line || quote;
     auto trim = content_end;
     while (trim > begin && (source[trim - 1] == ' ' || source[trim - 1] == '\t')) --trim;
-    if (!protected_line && trim < content_end && diagnostics.size() < 512) {
+    if (!protected_line && trim < content_end && diagnostics.size() < 512 &&
+        !disabled_rules.count("NIL1001")) {
       diagnostics.push_back({"NIL1001", "warning", "Trailing whitespace", primary_path, "",
         trim, content_end - trim, analysis_fix{trim, content_end - trim, "", "Remove trailing whitespace"}});
     }
     begin = end < source.size() ? end + 1 : source.size();
   }
-  if (!source.empty() && source.back() != '\n' && !quote && diagnostics.size() < 512) {
+  if (!source.empty() && source.back() != '\n' && !quote && diagnostics.size() < 512 &&
+      !disabled_rules.count("NIL1002")) {
     const std::string newline = source.find("\r\n") != std::string::npos ? "\r\n" : "\n";
     diagnostics.push_back({"NIL1002", "warning", "Missing final newline", primary_path, "",
       source.size(), 0, analysis_fix{source.size(), 0, newline, "Add final newline"}});
   }
+}
+
+std::string analysis_session::semantic_json() const {
+  constexpr std::size_t limit = 4 * 1024 * 1024;
+  if (!semantic_checked || semantic_binary_dependencies || !semantics || !semantics->available ||
+      semantics->symbols.size() > 32768 || semantics->references.size() > 131072)
+    return "null";
+  const auto extension = [](const std::string &path) {
+    auto ext = std::filesystem::path(path).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+    return ext;
+  };
+  const auto native_source = [&](const std::string &path) {
+    if (path.empty() || !std::filesystem::path(path).is_absolute() || !sources.count(path))
+      return false;
+    try { return analysis_source_identity(path) == path; }
+    catch (const std::exception &) { return false; }
+  };
+  const auto valid_span = [&](const std::string &path, source_span span,
+                              std::string name) {
+    if (!native_source(path)) return false;
+    const auto ext = extension(path);
+    if (ext != ".ny" && ext != ".matrix" && ext != ".mat") return false;
+    const auto &text = sources.at(path);
+    if (!span.length || span.start > text.size() || span.length > text.size() - span.start)
+      return false;
+    const auto separator = name.rfind("::");
+    if (separator != std::string::npos) name.erase(0, separator + 2);
+    auto spelling = text.substr(span.start, span.length);
+    if (ext == ".matrix" || ext == ".mat") {
+      // Matrix's bare-identifier resolution folds ASCII case and removes
+      // hyphens/underscores. The checker already selected the binding; this
+      // only verifies that its name span still identifies the original token.
+      const auto folded = [](const std::string &value) {
+        std::string result;
+        for (unsigned char c : value) {
+          if (c == '-' || c == '_') continue;
+          result += static_cast<char>(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
+        }
+        return result;
+      };
+      return folded(spelling) == folded(name);
+    }
+    return spelling == name;
+  };
+  if (!native_source(primary_path)) return "null";
+  std::set<std::string> paths{primary_path};
+  // Even an import with no emitted binding can affect resolution. Preserve
+  // every reached native snapshot so clients can reject a changed graph.
+  for (const auto &[path, text] : sources) {
+    // Changed canonical identity or an input without a native snapshot makes
+    // the whole graph unverifiable, even when its own symbols were omitted.
+    if (!native_source(path)) return "null";
+    paths.insert(path);
+  }
+  std::set<std::size_t> ids;
+  std::string symbol_json;
+  for (const auto &s : semantics->symbols) {
+    if (!valid_span(s.path, s.span, s.name)) continue;
+    const auto entry = "{\"id\":" + std::to_string(s.id) +
+        ",\"kind\":" + quoted(s.kind) + ",\"name\":" + quoted(s.name) +
+        ",\"type\":" + quoted(s.type) + ",\"path\":" + quoted(s.path) +
+        ",\"start\":" + std::to_string(s.span.start) +
+        ",\"length\":" + std::to_string(s.span.length) + '}';
+    if (entry.size() + symbol_json.size() + 1 > limit) return "null";
+    if (!symbol_json.empty()) symbol_json += ',';
+    symbol_json += entry;
+    ids.insert(s.id);
+    paths.insert(s.path);
+  }
+  // A physical name occurrence must resolve to exactly one declaration. A
+  // generic/repeated checker visit that disagrees cannot provide navigation.
+  using occurrence = std::tuple<std::string, std::size_t, std::size_t>;
+  std::map<occurrence, const semantic_reference *> references;
+  std::set<occurrence> ambiguous;
+  for (const auto &r : semantics->references) {
+    if (!ids.count(r.symbol_id) || !valid_span(r.path, r.span, r.name)) continue;
+    const auto key = std::make_tuple(r.path, r.span.start, r.span.length);
+    const auto [it, inserted] = references.emplace(key, &r);
+    if (!inserted && it->second->symbol_id != r.symbol_id) ambiguous.insert(key);
+  }
+  std::string reference_json;
+  for (const auto &[key, r] : references) {
+    if (ambiguous.count(key)) continue;
+    const auto entry = "{\"symbol_id\":" + std::to_string(r->symbol_id) +
+        ",\"path\":" + quoted(r->path) +
+        ",\"start\":" + std::to_string(r->span.start) +
+        ",\"length\":" + std::to_string(r->span.length) + '}';
+    if (entry.size() + symbol_json.size() + reference_json.size() + 1 > limit) return "null";
+    if (!reference_json.empty()) reference_json += ',';
+    reference_json += entry;
+    paths.insert(r->path);
+  }
+  if (paths.size() > 256) return "null";
+  std::string source_json;
+  for (const auto &path : paths) {
+    const auto entry = "{\"path\":" + quoted(path) + ",\"text\":" + quoted(sources.at(path)) + '}';
+    if (entry.size() + source_json.size() + symbol_json.size() + reference_json.size() + 1 > limit)
+      return "null";
+    if (!source_json.empty()) source_json += ',';
+    source_json += entry;
+  }
+  auto result = "{\"schema\":\"nil.semantic.v1\",\"partial\":true,\"sources\":[" + source_json +
+      "],\"symbols\":[" + symbol_json + "],\"references\":[" + reference_json + "]}";
+  return result.size() > limit ? "null" : result;
 }
 
 std::string analysis_session::json(bool success) const {
@@ -323,6 +539,27 @@ std::string analysis_session::json(bool success) const {
              << ",\"description\":" << quoted(d.fix->description) << '}';
     out << '}';
   }
+  out << "],\"sources\":[";
+  // Byte offsets in dependency diagnostics are valid only for this exact
+  // snapshot. Consumers must compare it with the editor/disk before mapping.
+  // Bound the encoded entries, since escaped source can expand substantially.
+  constexpr std::size_t snapshot_limit = 1024 * 1024;
+  std::size_t snapshot_bytes = 2; // JSON array brackets
+  std::set<std::string> emitted;
+  first = true;
+  for (const auto &d : diagnostics) {
+    if (d.path.empty() || d.path == primary_path || !d.start || !d.length ||
+        !emitted.insert(d.path).second) continue;
+    const auto source = sources.find(d.path);
+    if (source == sources.end()) continue;
+    const auto entry = "{\"path\":" + quoted(d.path) + ",\"text\":" + quoted(source->second) + '}';
+    const auto bytes = entry.size() + (first ? 0 : 1);
+    if (bytes > snapshot_limit - snapshot_bytes) continue;
+    if (!first) out << ',';
+    first = false;
+    out << entry;
+    snapshot_bytes += bytes;
+  }
   out << "],\"reflection\":{\"schema\":\"nil.reflection.v1\",\"semantic_checked\":"
       << (semantic_checked ? "true" : "false") << ",\"truncated\":" << (truncated ? "true" : "false")
       << ",\"declarations\":[";
@@ -342,7 +579,16 @@ std::string analysis_session::json(bool success) const {
     out << "{\"owner_id\":" << a.owner_id << ",\"name\":" << quoted(a.name)
         << ",\"arguments\":" << quoted(a.arguments) << ",\"line\":" << a.line << '}';
   }
-  out << "]}}\n";
+  out << "]}";
+  if (semantic_requested) {
+    auto semantic = success ? semantic_json() : "null";
+    // Optional navigation must not crowd otherwise valid diagnostics out of
+    // the established analysis-response bound.
+    if (static_cast<std::size_t>(out.tellp()) + semantic.size() + 16 > output_limit)
+      semantic = "null";
+    out << ",\"semantic\":" << semantic;
+  }
+  out << "}\n";
   return out.str();
 }
 
@@ -387,6 +633,16 @@ int run_analysis_cli(int argc, char **argv, compilation_entry compile) {
       const std::string a = argv[i];
       if (a == "--analyze") continue;
       if (a == "--source-stdin") { session.source_stdin = true; continue; }
+      if (a == "--workspace-stdin") { session.workspace_stdin = true; continue; }
+      if (a == "--semantic-index") { session.semantic_requested = true; continue; }
+      if (a == "--warnings-as-errors") { session.warnings_as_errors = true; continue; }
+      if (a == "--disable-rule") {
+        if (++i >= argc) throw std::runtime_error("missing value after " + a);
+        if (!is_default_analysis_rule(argv[i]))
+          throw std::runtime_error("unknown analysis rule: " + std::string(argv[i]));
+        session.disabled_rules.insert(argv[i]);
+        continue;
+      }
       if (a == "--emit-reflection" || a == "-I" || a == "--sdk" || a == "--sdk-path") {
         if (++i >= argc) throw std::runtime_error("missing value after " + a);
         if (a == "--emit-reflection") export_path = absolute_path(argv[i]);
@@ -396,6 +652,8 @@ int run_analysis_cli(int argc, char **argv, compilation_entry compile) {
       else throw std::runtime_error("unsupported analysis option: " + a);
     }
     if (inputs.size() != 1) throw std::runtime_error("--analyze requires one source path");
+    if (session.source_stdin && session.workspace_stdin)
+      throw std::runtime_error("--source-stdin and --workspace-stdin are mutually exclusive");
     session.logical_path = std::filesystem::absolute(inputs.front()).lexically_normal().string();
     session.primary_path = absolute_path(inputs.front());
     auto ext = std::filesystem::path(session.logical_path).extension().string();
@@ -403,17 +661,15 @@ int run_analysis_cli(int argc, char **argv, compilation_entry compile) {
     if (ext != ".ny" && ext != ".matrix" && ext != ".mat")
       throw std::runtime_error("analysis source must end in .ny, .matrix or .mat");
     session.language = ext == ".ny" ? "ny" : "matrix";
-    if (session.source_stdin) {
+    if (session.source_stdin || session.workspace_stdin) {
 #ifdef _WIN32
       if (_setmode(_fileno(stdin), _O_BINARY) == -1)
         throw std::runtime_error("cannot enable binary analysis stdin");
 #endif
-      char buffer[8192];
-      while (std::cin.read(buffer, sizeof(buffer)) || std::cin.gcount()) {
-        session.stdin_source.append(buffer, static_cast<std::size_t>(std::cin.gcount()));
-        if (session.stdin_source.size() > source_limit) throw std::runtime_error("analysis source exceeds 2 MiB");
-      }
-      if (std::cin.bad()) throw std::runtime_error("cannot read analysis stdin");
+      auto input = read_bounded(std::cin, session.workspace_stdin ? workspace_limit : source_limit,
+                                session.workspace_stdin ? "analysis workspace request" : "analysis source");
+      if (session.workspace_stdin) read_workspace_request(session, input);
+      else session.stdin_source = std::move(input);
     }
     args.insert(args.end(), {"-I", std::filesystem::path(session.primary_path).parent_path().string(),
                             session.primary_path, "-o", "analysis-unused.nil", "--no-bundle", "-q"});
@@ -429,10 +685,17 @@ int run_analysis_cli(int argc, char **argv, compilation_entry compile) {
     if (status != 0 && session.diagnostics.empty())
       session.add("NIL0000", "error", fallback.empty() ? "Analysis failed" : fallback);
     if (status == 0) session.lint();
+    session.diagnostics.erase(std::remove_if(session.diagnostics.begin(), session.diagnostics.end(),
+        [&](const analysis_diagnostic &d) { return session.disabled_rules.count(d.code) != 0; }),
+        session.diagnostics.end());
+    if (session.warnings_as_errors) for (auto &d : session.diagnostics) {
+      if (d.severity == "warning") { d.severity = "error"; status = 1; }
+    }
     const auto report = session.json(status == 0);
     if (report.size() > output_limit) throw std::runtime_error("analysis output exceeds 8 MiB");
     if (status == 0 && !export_path.empty()) {
-      if (session.sources.count(export_path)) throw std::runtime_error("reflection output would overwrite an analyzed source");
+      if (session.sources.count(export_path) || session.workspace_sources.count(export_path))
+        throw std::runtime_error("reflection output would overwrite an analyzed source");
       const auto contents = session.companion_source();
       const auto write = detail::write_file_atomic(export_path,
           std::vector<char>(contents.begin(), contents.end()), true);

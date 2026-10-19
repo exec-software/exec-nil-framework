@@ -24,10 +24,15 @@ the compiler-backed source debugger.
 - Snippets for modules, functions, data types, control flow, faults, tests,
   interop, documentation, and `@ai_context` metadata.
 - A `nillsp` client using standard LSP `Content-Length` framing over stdio.
-- Completion, hover, definition, and document outline for Matrix declarations,
+- Completion, hover, and document outline for Matrix declarations,
   paragraph parameters, local bindings, and known receiver members.
+- Compiler-resolved Go to Definition for variables, parameters and direct/imported
+  functions across Ny and Matrix source files, including unsaved imports.
 - Compiler-backed checks of current Ny and Matrix buffers, with Problems entries
-  and quick fixes for the default style analyzer.
+  and guarded quick fixes for the default analyzer. Unreachable statements and
+  discarded checked outcomes receive semantic warnings in both languages.
+- Project check, build, and run commands using `nilbuild`, with VM/native targets
+  and a shared `nil.project.json` configuration.
 - A `nildebugger --dap` source-debug adapter with source breakpoints, stepping,
   lexical locals, call stacks, incremental output, and cooperative pause.
 - Commands and a `ny` Task Provider for:
@@ -49,6 +54,7 @@ Build or install a NIL Framework SDK containing these commands:
 - `nilinterpreter`
 - `nillsp`
 - `nildebugger` (for F5 source debugging)
+- `nilbuild` (for project commands and tasks)
 
 Matrix editing needs a Matrix-aware `nillsp`. Updating the VSIX alone does not
 update the SDK binaries. After rebuilding or selecting a newer SDK, run
@@ -70,7 +76,7 @@ From a NIL Framework repository checkout, the standard SDK build is:
 The extension discovers each executable in this order:
 
 1. its explicit setting (`ny.server.path`, `ny.compiler.path`,
-   `ny.interpreter.path`, or `ny.debugger.path`);
+   `ny.interpreter.path`, `ny.debugger.path`, or `ny.projectTool.path`);
 2. the root named by `ny.sdkPath`, then that checkout's `sdk` and
    `build/cmake/bin` developer output;
 3. a workspace root, its project-local `sdk`, and its
@@ -113,9 +119,54 @@ The SDK and CTest commands target a NIL Framework repository checkout. The SDK c
 runs `scripts/build-sdk.sh`; the CTest command uses `ny.buildDirectory`, which
 defaults to `build/cmake`.
 
+## Projects
+
+Create `nil.project.json` in the project directory. The extension supplies JSON
+completion and validation for the manifest:
+
+```json
+{
+  "schema": "nil.project.v1",
+  "name": "hello",
+  "entry": "src/main.matrix",
+  "includePaths": ["lib"],
+  "analysis": { "disabledRules": [], "warningsAsErrors": false }
+}
+```
+
+**Check Project**, **Build Project**, and **Build and Run Project** each have VM
+and Native variants in the Command Palette. They select the nearest ancestor
+manifest without searching above the active file's workspace folder, save open
+file buffers, and invoke `nilbuild` without a command shell. Project tasks also
+appear in **Tasks: Run Task**. Native builds require an SDK with LLVM support.
+
+The manifest defines the entry point, import paths, SDK, output directory, and
+analyzer policy used by both project commands and live checks. Paths are relative
+to the manifest; `sdkPath` defaults to the extension's selected SDK and
+`outputDirectory` defaults to `build`. Project configuration takes precedence
+over file-only `ny.analysis.includePaths` and `ny.compiler.noStdlib` settings.
+Save manifest edits before checking sources. A project's SDK determines tool
+discovery unless an explicit tool setting overrides it.
+
+A task can select a manifest and target explicitly:
+
+```json
+{
+  "type": "ny",
+  "task": "project-run",
+  "project": "${workspaceFolder}/nil.project.json",
+  "target": "vm",
+  "programArgs": ["hello"]
+}
+```
+
+Project tasks read saved files; commands save open file buffers first. Existing
+current-file commands remain available for standalone files.
+
 ## Tasks
 
-The `ny` task type accepts `compile`, `run`, `native`, `build-sdk`, and `ctest`.
+The `ny` task type accepts `compile`, `run`, `native`, `build-sdk`, `ctest`,
+`project-check`, `project-build`, and `project-run`.
 For example:
 
 ```json
@@ -163,6 +214,7 @@ editor builds.
 | `ny.compiler.path` | empty | Explicit `nilcompiler` path or command. |
 | `ny.interpreter.path` | empty | Explicit `nilinterpreter` path or command. |
 | `ny.debugger.path` | empty | Explicit `nildebugger` path or command. |
+| `ny.projectTool.path` | empty | Explicit `nilbuild` path or command. |
 | `ny.compiler.noStdlib` | `false` | Add `--no-stdlib` to compiler tasks and editor checks. |
 | `ny.compiler.extraArgs` | `[]` | Extra arguments for every compiler task. |
 | `ny.native.extraArgs` | `[]` | Extra arguments for native compiler tasks. |
@@ -176,29 +228,83 @@ Path settings support `${workspaceFolder}`, `${workspaceFolderBasename}`,
 ## Compiler checks and quick fixes
 
 The extension checks saved and untitled Ny and Matrix documents with
-`nilcompiler --analyze --source-stdin <logical-source-path>`. It sends the current
-buffer over standard input and creates no compiled output. Checks run after a
+`nilcompiler --analyze --workspace-stdin <logical-source-path> --semantic-index`. It sends the current
+buffer, named Ny and Matrix sources in open text/diff tabs, and every dirty named
+source buffer in a `nil.analysis.workspace.v1`
+request over standard input and creates no compiled output. Checks run after a
 400 ms editing pause, one compiler at a time; a new edit cancels the previous
-check. Each check is limited to 10 seconds, 2 MiB of source, and 8 MiB of output.
-An SDK supporting the `nil.analysis.v1` protocol is required. Older compilers and
+check. Each request is limited to 256 source identities, 2 MiB per source, and
+8 MiB in total (including JSON encoding); each check is limited to 10 seconds
+and 8 MiB of output. Requests exceeding these limits are reported without silently
+omitting dirty buffers. An SDK supporting workspace input, `--semantic-index` and
+the `nil.analysis.v1` response protocol is required. Older compilers and
 operational failures are reported in **NIL Framework: Show Analysis Output**.
 
 Compiler errors and default analyzer warnings appear with source `nil-analysis`
 in Problems, separately from the experimental language-server diagnostics.
-The default analyzer checks trailing whitespace and missing final newlines.
+The default analyzer checks trailing whitespace (`NIL1001`), missing final
+newlines (`NIL1002`), unreachable statements (`NIL2001`), and standalone calls
+that discard a standard `Option` or `Result` (`NIL2002`). Project policy can
+suppress individual rules or promote warnings to errors.
 Its quick fixes only apply to the exact document version that was checked.
 Compiler spans use UTF-8 byte offsets; the extension converts valid boundaries
-to editor positions without guessing locations. Findings in imported files or
-without a reliable location appear in the analysis output channel.
+to editor positions without guessing locations. Imported findings appear in
+Problems only when an exact compiler snapshot matches the captured editor buffer
+and its version, or matches disk for unopened imports. Unsaved imported changes
+participate in checking dependent documents across both languages. Import
+snapshots are limited to 1 MiB of encoded JSON.
+Missing, changed, or omitted snapshots and unlocated findings remain in the
+analysis output channel. Imported findings never offer automatic edits. Reports
+from multiple entry documents are combined without duplicate Problems; source
+edits, opens, closes, saves, project/configuration changes, and external file
+changes invalidate and refresh open documents. Results and fixes are discarded
+when any captured buffer changes. An open buffer remains authoritative if its disk
+file is deleted; closing the buffer removes its overlay.
+Clean models cached by VS Code after their tabs close are excluded; dirty named
+buffers remain included even when they have no visible editor.
 
-Checks preserve the source's parent directory, workspace root, configured SDK
-root, and `ny.analysis.includePaths` for import lookup. Untitled buffers use a
-synthetic filename under the workspace root, without writing that file. Relative
-include paths resolve against the owning workspace folder. Unsaved edits in
-other imported buffers are not overlaid; save those files to recheck dependents.
-`ny.compiler.extraArgs` and `ny.native.extraArgs` apply to build tasks only.
+Checks preserve the source's parent directory and configured SDK root for import
+lookup. Project manifests supply import roots; standalone files additionally use
+the workspace root and `ny.analysis.includePaths`. Named untitled files retain
+their absolute source path, so new imported modules can be checked before saving.
+Unnamed untitled buffers use a synthetic filename under the workspace root and
+only participate as the current primary document. Neither case writes a file.
+Relative include paths resolve against the owning workspace folder. Multiple open
+aliases of one source must contain identical text. **Check Current File** still
+checks the selected source; project tasks use the manifest entry and saved files.
+Overlays cover `.ny`, `.matrix`, and `.mat` sources; other `@include` file types
+continue to use saved disk contents.
+`ny.compiler.extraArgs` and `ny.native.extraArgs` apply to current-file build tasks only.
 Editor checks are disabled in untrusted workspaces and can be switched off with
 `ny.analysis.enabled`.
+
+## Compiler definitions
+
+Go to Definition follows the compiler's resolved bindings for source functions,
+variables and parameters, including lexical shadowing, loop and lambda parameters,
+and direct calls across mixed Ny/Matrix imports. Exact original name spans preserve
+UTF-8, CRLF and Matrix surface spelling. Named untitled imports can be destinations
+before they are saved.
+
+The compiler returns a bounded, partial `nil.semantic.v1` index only after a
+successful check. The extension validates every exported source snapshot against
+captured buffers or disk before returning a destination, rechecks versions after
+asynchronous reads, and watches the reached source files. Dirty textual includes
+with other extensions cannot be overlaid and prevent use of that index.
+
+Member dispatch, fields, type uses, pattern bindings and some function-value or
+generated references do not yet provide destinations. Expanded Ny units lack
+source maps. Graphs using binary libraries have no index until their identities
+and source mappings can be represented. Failed checks, changed sources, ambiguous
+locations and index limits produce no destination. The index is limited to
+4 MiB of encoded JSON, 256 source snapshots, 32,768 symbols and 131,072 references;
+its absence does not suppress otherwise valid diagnostics.
+
+When compiler analysis is enabled, its definition provider takes precedence over
+the language server's document-local guesses. Disabling `ny.analysis.enabled`
+retains the older language-server definition behavior. Completion and hover
+continue to work from the tolerant language-server index while source is incomplete.
+References and rename are not exposed from this partial compiler index.
 
 ## Current language-server limits
 

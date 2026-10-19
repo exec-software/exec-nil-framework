@@ -18,6 +18,10 @@ command-line help, and executable tests as bugs.
   program, and run NIL in `nilinterpreter`.
 - [Tool reference](tools/index.md) — current command lines and explicit prototype
   boundaries.
+- [Projects and analysis](tools/projects.md) — one configuration for checking,
+  VM/native builds, running and live editor analysis.
+- [Developer tooling](developer-tooling.md) — current editor support and the
+  sequence toward shared workspace semantics.
 - [Standard-library status](standard-library/index.md) — layout, maturity, and
   what is deliberately outside the core library.
 - [Examples](../examples/README.md) — small examples tied to repository fixtures.
@@ -50,5 +54,6 @@ do not assume every documented combination is accepted by every backend yet.
 
 The canonical component directories are directly under the project root: `nilcompiler`, `nilinterpreter`,
 `nildebugger`, `nillsp`, `nilstd`, `nilaix`, `nilassembler`, `nillinker`,
-`nilschema`, and `nilagent`. First-party package experiments live under
+`nilschema`, `nilagent`, and `nilbuild`. Shared tooling utilities live in `common`.
+First-party package experiments live under
 `packages`.

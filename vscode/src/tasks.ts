@@ -8,6 +8,8 @@ import {
   defaultArtifactPath,
   interpreterInvocation
 } from "./taskModel";
+import { projectForResource } from "./projectContext";
+import { projectInvocation, ProjectTarget } from "./projectModel";
 import { expandConfiguredPath, resolveCommandOnPath } from "./toolchain";
 import { compilerProblemMatchers, savedSourcePath, sourceLabel, taskSourcePath } from "./languages";
 import {
@@ -16,12 +18,14 @@ import {
   resolveConfiguredTool
 } from "./vscodeToolchain";
 
-export type NyTaskKind = "compile" | "run" | "native" | "build-sdk" | "ctest";
+export type NyTaskKind = "compile" | "run" | "native" | "project-check" | "project-build" | "project-run" | "build-sdk" | "ctest";
 
 export interface NyTaskDefinition extends vscode.TaskDefinition {
   readonly type: "ny";
   readonly task: NyTaskKind;
   readonly source?: string;
+  readonly project?: string;
+  readonly target?: ProjectTarget;
   readonly output?: string;
   readonly sdkPath?: string;
   readonly noStdlib?: boolean;
@@ -87,6 +91,12 @@ export class NyTaskProvider implements vscode.TaskProvider {
         }
       }
     }
+    for (const target of ["vm", "native"] as const) {
+      for (const kind of ["project-check", "project-build", "project-run"] as const) {
+        const task = this.createTask({ type: "ny", task: kind, target, source });
+        if (task) tasks.push(task);
+      }
+    }
     for (const kind of ["build-sdk", "ctest"] as const) {
       const task = this.createTask({ type: "ny", task: kind });
       if (task) {
@@ -104,6 +114,7 @@ export class NyTaskProvider implements vscode.TaskProvider {
     if (!vscode.workspace.isTrusted) {
       return undefined;
     }
+    if (definition.task.startsWith("project-")) return this.createProjectTask(definition);
     if (definition.task === "build-sdk") {
       return this.createBuildSdkTask(definition);
     }
@@ -185,6 +196,39 @@ export class NyTaskProvider implements vscode.TaskProvider {
       definition.task === "native"
         ? "Compile through the optional LLVM backend."
         : "Compile to a separate NIL artifact with --no-bundle.";
+    return presentation(task);
+  }
+
+  private createProjectTask(definition: NyTaskDefinition): vscode.Task | undefined {
+    const resource = resourceForSource(definition.source);
+    let project;
+    try { project = projectForResource(resource, definition.project); }
+    catch (error) {
+      void vscode.window.showErrorMessage(`NIL project: ${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
+    }
+    if (!project) return undefined;
+    const configuredSdk = configuredSdkPath(resource);
+    const sdk = definition.sdkPath
+      ? path.resolve(project.directory, expandConfiguredPath(definition.sdkPath, workspaceRoot(resource)))
+      : project.sdkPath ?? (configuredSdk ? path.resolve(workspaceRoot(resource) ?? project.directory, configuredSdk) : undefined);
+    const builder = resolveConfiguredTool("nilbuild", resource, sdk);
+    const compiler = resolveConfiguredTool("nilcompiler", resource, sdk);
+    const interpreter = resolveConfiguredTool("nilinterpreter", resource, sdk);
+    const target = definition.target ?? "vm";
+    if (target !== "vm" && target !== "native") return undefined;
+    if (!builder.executable || !compiler.executable || (target === "vm" && definition.task === "project-run" && !interpreter.executable)) return undefined;
+    const action = definition.task === "project-check" ? "check" : definition.task === "project-build" ? "build" : "run";
+    const invocation = projectInvocation({ builder: builder.executable, compiler: compiler.executable,
+      interpreter: interpreter.executable, sdkPath: sdk, projectFile: project.projectFile,
+      action, target, programArgs: definition.programArgs });
+    const task = new vscode.Task({ ...definition, project: project.projectFile, target }, taskScope(resource),
+      `${action.charAt(0).toUpperCase()}${action.slice(1)} ${project.name} (${target})`, "NIL Framework",
+      new vscode.ProcessExecution(invocation.command, [...invocation.args], { cwd: project.directory }),
+      ["$nilproject", ...compilerProblemMatchers]);
+    if (action === "build") task.group = vscode.TaskGroup.Build;
+    if (action === "check") task.group = vscode.TaskGroup.Test;
+    task.detail = `${project.projectFile} — ${action === "run" ? "check, build, and run" : action} with nilbuild.`;
     return presentation(task);
   }
 

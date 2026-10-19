@@ -46,7 +46,7 @@ modules, `nilstd` with the matching Ny and Matrix sources, compiled HTML in `doc
 hash-bearing `manifest.json`.
 
 The complete command set is `nilcompiler`, `nilinterpreter`, `nilassembler`,
-`nillinker`, `nillsp`, `nildebugger`, `nilschema`, and `nilagent` (with the host
+`nillinker`, `nillsp`, `nildebugger`, `nilschema`, `nilagent`, and `nilbuild` (with the host
 platform's executable suffix where needed). The helper validates this layout
 and only replaces the active SDK after the entire standard library and smoke
 path pass.
@@ -103,7 +103,7 @@ LLVM is optional. If CMake cannot find it, configure with
 compiler, NIL interpreter, debugger, language server, assembler, and linker are
 always built. `NIL_BUILD_EXPERIMENTAL_TOOLS=OFF` omits only `nilschema` and
 `nilagent` in a direct developer build. The SDK helper keeps the option enabled
-because the complete SDK includes all eight commands.
+because the complete SDK includes all nine commands.
 
 When tests are enabled, CMake requires Python rather than silently omitting the
 route matrix and application contracts. Set `NIL_RUN_TESTS=OFF` with the helper,
@@ -132,6 +132,13 @@ This uses `--no-stdlib` because `println` is a compiler/runtime intrinsic and
 the broader library is still being repaired. It uses `--no-bundle` so the
 compiler always leaves an inspectable `.nil` file instead of attempting to
 combine it with an adjacent `nilinterpreter` executable.
+
+## Work with a project
+
+For an application with imports, use a `nil.project.json` manifest and
+`nilbuild check`, `nilbuild build` or `nilbuild run`. The
+[project guide](../tools/projects.md) includes the format and both execution
+targets. The same project context is used by the VS Code extension.
 
 ## Optional LLVM path
 

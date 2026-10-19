@@ -1,0 +1,11 @@
+{
+  "schema": "nil.project.v1",
+  "name": "hello-mixed",
+  "entry": "src/main.matrix",
+  "includePaths": ["src"],
+  "outputDirectory": "build",
+  "analysis": {
+    "disabledRules": [],
+    "warningsAsErrors": false
+  }
+}

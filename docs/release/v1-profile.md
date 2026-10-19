@@ -77,10 +77,11 @@ parallel map, and sleep. The manuals define their precise limits:
 Source `println` has exactly one argument on every route, including unchecked
 frontend mode. Use `println("")` for a blank line.
 
-The eight SDK commands are `nilcompiler`, `nilinterpreter`, `nilassembler`,
-`nillinker`, `nildebugger`, `nillsp`, `nilschema`, and `nilagent`. The last two are
+The nine SDK commands are `nilcompiler`, `nilinterpreter`, `nilassembler`,
+`nillinker`, `nildebugger`, `nillsp`, `nilbuild`, `nilschema`, and `nilagent`. The last two are
 experimental utilities, not v1 language guarantees. The LSP has a deliberately
-limited capability set. `nypm` and `nilaix` are not part of this release.
+limited capability set. `nilbuild` supports the [local-project profile](../tools/projects.md),
+with process execution qualified on Linux. `nypm` and `nilaix` are not part of this release.
 
 Sixteen logical standard-library modules are strictly compiled and packaged,
 including `prelude`. Public imports use `nil.std.*`, with `ny.lang.*` retained

@@ -1123,3 +1123,122 @@ convention; this pass tests malformed structural signatures but does not add
 custom enum support. **Next step:** Reject an incompatible nominal provider
 owner during source/NIL validation, or explicitly support that owner throughout
 construction and matching, with matching VM/native evidence.
+
+### F37 — Editor and application builds lacked shared project context
+
+**Status:** Initial project/check/build integration implemented; semantic
+workspace services remain open work.
+
+The extension previously offered file tasks and repository CMake/CTest tasks,
+while compiler analysis supplied only two style rules beyond compiler errors.
+No local application project driver or target manifest was implemented. The
+language server's tolerant document index also remained separate from compiler
+import/type resolution, and imported diagnostics appeared only in an output
+channel.
+
+**Resolution:** `nilbuild` and `nil.project.v1` establish one explicit local
+project context for checking, VM/native builds and running. Builds check first
+and publish staged outputs only after success. Compiler-owned default rules
+add conservative unreachable-statement and discarded-standard-outcome warnings,
+with a discoverable catalog, rule suppression and warnings-as-errors. VS Code
+uses project context for live checks and project tasks, and publishes imported
+Problems only when an exact bounded source snapshot matches current disk text
+or a captured editor buffer (extended by F39).
+
+**Remaining boundaries:** One executable entrypoint and its import graph;
+complete rebuilds; Linux process execution. Unopened imports are type checked
+but not recursively linted. The analyzer does not inspect lambda bodies inside
+expressions or prove arbitrary control-flow reachability. Complete semantic
+indexing (beyond the initial bindings in F40), semantic completion,
+cross-file rename/references, language-authored analyzer hosting, project
+reference graphs and incremental builds remain separate increments. See the
+[developer-tooling plan](../../docs/developer-tooling.md) for acceptance criteria.
+
+### F38 — The frontend directory could hide the repository standard library
+
+**Status:** SDK discovery fixed; compatibility regressions added.
+
+`nilcompiler --analyze -I <repository>` reported `NIL0003` for `nil.std.text`,
+while adding `<repository>/nilstd/src` resolved the same import. SDK discovery
+mistook the repository's `ny/` frontend directory for a legacy standard-library
+root and stopped before considering `nilstd/src`. The editor's repository-root
+configuration exposed this collision.
+
+**Resolution:** Source and binary SDK discovery now recognize the historical
+`ny/lang/` namespace tree instead of any directory named `ny/`. Canonical SDK
+markers and search order remain intact. The
+[analysis contract](../../tests/tools/analysis_contract.py) covers Ny and Matrix
+imports through the repository root from an unrelated working directory, plus
+a legacy `share/ny/stdlib/ny/lang` layout without a prelude marker. The new
+repository-root regression reproduces the failure with the previous compiler.
+
+### F39 — Unsaved dependencies were invisible to compiler-backed editor checks
+
+**Status:** Workspace source overlays implemented; initial semantic bindings added in F40.
+
+The original analysis command accepted one unsaved primary buffer. Imports and
+Ny textual includes still came from disk, so editing a dependency could leave
+the caller's checks inconsistent with its visible source. Simply hiding dirty
+import diagnostics did not correct the program being analyzed. The editor also
+guarded results primarily by the active document's version.
+
+**Resolution:** A bounded `nil.analysis.workspace.v1` request supplies exact
+source texts to the compiler's existing import and include resolution. New
+source files can participate without being written to disk. Canonical path
+identities prevent conflicting aliases. The editor captures open local source
+buffers together, invalidates results on input changes and maps imported
+diagnostics only against matching snapshots. Build tasks continue to use saved
+files. See [NIL-0009](../../docs/design/NIL-0009-workspace-analysis.md).
+
+**Boundary:** Overlays cover `.ny`, `.matrix` and `.mat`. Other textual include
+extensions remain disk inputs. F40 adds exact watching for all native sources
+in successful semantic snapshots and rejects navigation when an unsupported
+include buffer is dirty.
+
+**Follow-up:** F40 establishes original-source spans and retained binding IDs.
+Complete references, transactional rename and semantic completion still need
+the remaining resolution forms and a reliable model for incomplete programs.
+
+### F40 — Compiler bindings were unavailable after lexical scopes closed
+
+**Status:** Initial source binding index and compiler-backed definitions implemented.
+
+Declaration reflection retained names and line numbers, while local symbol-table
+scopes disappeared after checking. Matching an identifier against those names
+could confuse shadowed locals or different imported declarations. Matrix's
+surface spelling also differs from shared symbol spelling.
+
+**Resolution:** Both tokenizers now retain byte positions. Frontends attach
+original-source UTF-8 name spans to explicit AST names; the checker retains
+snapshot-local IDs at actual declaration and resolution sites. The opt-in
+`--semantic-index` response supplies a bounded `nil.semantic.v1` index for
+functions, variables, parameters and their supported references. VS Code Go to
+Definition consumes those bindings across dirty and new mixed-language imports,
+validating all captured inputs and reached native source snapshots before use.
+See [NIL-0010](../../docs/design/NIL-0010-semantic-source-index.md).
+
+**Boundaries:** The index is explicitly partial. Member dispatch, field and
+type references, pattern bindings and some function-value/generic forms remain
+unindexed. Expanded Ny units need source maps. Binary library dependencies have
+no index until library identities and source mappings are represented. Failed
+checks, ambiguous occurrences and budget limits produce no navigation result.
+References and rename must not treat this subset as a complete occurrence graph.
+
+**Evidence:** Parser source-slice tests and the compiler semantic contract cover
+UTF-8/CRLF, lexical shadowing, imports, input routes, failure suppression,
+preprocessing, binary dependencies and budgets. Real VS Code tests assert exact
+definition ranges and reject stale/unsupported destinations.
+
+### F41 — Matrix function-value spelling bypasses normal name folding
+
+**Status:** Confirmed existing parser inconsistency; unchanged by source indexing.
+
+Given a paragraph named `read-count`, a direct call written as
+`evaluate READ_COUNT with 1` resolves its name. A function value written as
+`the paragraph READ_COUNT` instead reports `Undefined identifier 'READ_COUNT'`,
+while `the paragraph read-count` works. The latter parser path uses `nil_symbol`
+directly instead of ordinary `resolve_name` folding. This was reproduced with
+compiler analysis, independent of editor navigation.
+
+**Next step:** Apply the same declared-name resolution to function values and
+direct calls, then test case/separator variants, escapes, scopes and imports.

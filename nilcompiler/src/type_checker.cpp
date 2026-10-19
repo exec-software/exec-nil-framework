@@ -33,7 +33,8 @@ static std::optional<std::string> promoted_scalar_join(const std::string &left,
          left == "i32" || right == "i32" ? "i32" : "u8";
 }
 
-type_checker::type_checker() {
+type_checker::type_checker(bool collect_semantics)
+    : collect_semantics_(collect_semantics) {
   for (const auto *name : {"owned", "borrow", "borrow_mut"})
     symbols_.insert_symbol_with_context(name, symbol_kind::type_symbol, nullptr,
         std::nullopt, false, visibility_kind::visibility_public, std::nullopt);
@@ -200,10 +201,84 @@ type_checker::type_checker() {
       visibility_kind::visibility_public, std::nullopt);
 }
 
+void type_checker::disable_semantics() {
+  semantics_.available = false;
+  semantics_.symbols.clear();
+  semantics_.references.clear();
+  semantic_nodes_.clear();
+  semantic_declarations_.clear();
+  semantic_occurrences_.clear();
+}
+
+std::optional<std::size_t> type_checker::semantic_declaration(
+    const std::string &name, const std::string &kind, const std::string &type,
+    const std::string &path, const std::optional<source_span> &span) {
+  if (!collect_semantics_ || !semantics_.available || path.empty() ||
+      !span || !span->length) return std::nullopt;
+  const auto key = std::make_tuple(path, span->start, span->length);
+  if (const auto existing = semantic_declarations_.find(key);
+      existing != semantic_declarations_.end()) return existing->second;
+  const auto bytes = name.size() + kind.size() + type.size() + path.size();
+  if (semantics_.symbols.size() >= 32768 || bytes > 4 * 1024 * 1024 - semantic_bytes_) {
+    disable_semantics();
+    return std::nullopt;
+  }
+  const auto id = semantics_.symbols.size();
+  semantics_.symbols.push_back({id, kind, name, type, path, *span});
+  semantic_bytes_ += bytes;
+  semantic_declarations_.emplace(key, id);
+  return id;
+}
+
+std::optional<std::size_t> type_checker::semantic_node(
+    const ast_node &node, const std::string &name, const std::string &kind,
+    const std::string &type, const std::string &fallback_path) {
+  if (!collect_semantics_ || !semantics_.available) return std::nullopt;
+  if (const auto existing = semantic_nodes_.find(&node);
+      existing != semantic_nodes_.end()) return existing->second;
+  auto id = semantic_declaration(name, kind, type,
+      node.source_file.empty() ? fallback_path : node.source_file, node.name_span);
+  if (id) semantic_nodes_.emplace(&node, *id);
+  return id;
+}
+
+void type_checker::semantic_reference_to(const ast_node &node,
+    const std::string &name, const symbol &binding) {
+  if (!collect_semantics_ || !semantics_.available || !node.name_span ||
+      !node.name_span->length) return;
+  auto id = binding.semantic_id;
+  if (!id && binding.defining_node) {
+    const auto &declaration = *binding.defining_node;
+    if (declaration.kind == ast_node_kind::function_decl_node) {
+      const auto &function = static_cast<const ast_function_decl &>(declaration);
+      id = semantic_node(declaration, function.name, "function",
+                         binding.type_name.value_or(""));
+    } else if (declaration.kind == ast_node_kind::variable_decl_node) {
+      const auto &variable = static_cast<const ast_variable_decl &>(declaration);
+      id = semantic_node(declaration, variable.name, "variable",
+                         binding.type_name.value_or(""));
+    }
+  }
+  if (!id || *id >= semantics_.symbols.size()) return;
+  const auto path = node.source_file.empty() ? diagnostic_source_file_ : node.source_file;
+  if (path.empty()) return;
+  const auto key = std::make_tuple(path, node.name_span->start,
+                                  node.name_span->length, *id);
+  if (semantic_occurrences_.count(key)) return;
+  const auto bytes = path.size() + name.size();
+  if (semantics_.references.size() >= 131072 || bytes > 4 * 1024 * 1024 - semantic_bytes_) {
+    disable_semantics();
+    return;
+  }
+  semantics_.references.push_back({*id, path, name, *node.name_span});
+  semantic_occurrences_.insert(key);
+  semantic_bytes_ += bytes;
+}
+
 bool type_checker::check(ast_program &program) {
   // Every check is a fresh semantic session. In particular, AST addresses
   // must never be remembered process-wide or across reused checker instances.
-  *this = type_checker();
+  *this = type_checker(collect_semantics_);
   program.accept(*this);
   auto ownership = check_ownership(program);
   for (const auto &diagnostic : ownership.diagnostics)
@@ -2314,6 +2389,7 @@ void type_checker::visit(ast_program &p) {
 
 void type_checker::visit(ast_function_decl &p) {
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
+  semantic_node(p, p.name, "function", p.return_type.value_or(""), diagnostic_source_file_);
   if (p.name == "owned" || p.name == "owned_move" || p.name == "owned_borrow" ||
       p.name == "owned_borrow_mut" || p.name == "parallel_map")
     add_error(p.line, "Function name '" + p.name + "' is reserved for a checked language operation");
@@ -2418,6 +2494,9 @@ void type_checker::visit(ast_function_decl &p) {
             canonical_param_type, param.is_mut,
             visibility_kind::visibility_private, std::nullopt)) {
       add_error(param.line, "Parameter '" + param.name + "' already declared");
+    } else if (auto *binding = symbols_.lookup_mut(param.name)) {
+      binding->semantic_id = semantic_declaration(param.name, "parameter",
+          canonical_param_type.value_or(""), diagnostic_source_file_, param.name_span);
     }
   }
 
@@ -2568,6 +2647,10 @@ void type_checker::visit(ast_variable_decl &p) {
     add_error(p.line,
               "Variable '" + p.name + "' already declared in this scope");
   }
+  if (auto *binding = symbols_.lookup_mut(var_name);
+      binding && binding->defining_node == &p)
+    binding->semantic_id = semantic_node(p, p.name, "variable", var_type_name,
+                                         diagnostic_source_file_);
   last_expr_type_ = type_void;
 }
 
@@ -3744,6 +3827,8 @@ void type_checker::visit(ast_for_in_stmt &s) {
     symbol sym(var.name, symbol_kind::variable_symbol, nullptr,
                std::optional<std::string>(type_to_register), var.is_mut, false,
                std::nullopt);
+    sym.semantic_id = semantic_declaration(var.name, "variable", type_to_register,
+                                           diagnostic_source_file_, var.name_span);
     if (!symbols_.insert_symbol(sym))
       add_error(var.line, "Loop variable '" + var.name +
                              "' already declared in this scope");
@@ -4542,6 +4627,7 @@ void type_checker::visit(ast_call_expr &e) {
 
     if (s && (s->kind == symbol_kind::function_symbol ||
               s->kind == symbol_kind::variable_symbol)) {
+      semantic_reference_to(*id, id->name, *s);
       // Check if it's a direct function symbol
       if (s->kind == symbol_kind::function_symbol) {
         validate_call_arity(*s, e.args.size(), id->name);
@@ -5361,6 +5447,7 @@ void type_checker::visit(ast_assignment_expr &e) {
           add_error(e.line,
                     "Cannot assign to non-variable symbol '" + id->name + "'");
         } else {
+          semantic_reference_to(*id, id->name, *s);
           if (!is_symbol_visible(s, current_module_.value_or("")))
             add_error(e.line, "Symbol '" + id->name + "' is private to module '" +
                               s->module.value_or("<unknown>") + "'");
@@ -5538,6 +5625,7 @@ void type_checker::visit(ast_identifier_expr &e) {
       e.resolved_global_name = *global;
       last_expr_type_ = resolve_global_type(*variable);
       e.inferred_type = last_expr_type_->name;
+      semantic_reference_to(e, e.name, *variable);
       return;
     }
   }
@@ -5811,6 +5899,7 @@ void type_checker::visit(ast_identifier_expr &e) {
 
     last_expr_type_ = value_type(*s, {});
     e.inferred_type = last_expr_type_->name;
+    semantic_reference_to(e, e.name, *s);
   }
   // std::cerr << "[type_checker] visit(identifier) DONE name='" << e.name <<
   // "'" << std::endl;
@@ -7918,9 +8007,13 @@ void type_checker::visit(ast_lambda_expr &e) {
   // Enter lambda scope, check body
   symbols_.enter_scope();
   for (const auto &p : e.params) {
-    symbols_.insert_symbol_with_context(
+    if (symbols_.insert_symbol_with_context(
         p.name, symbol_kind::variable_symbol, nullptr, p.type_name, p.is_mut,
-        visibility_kind::visibility_private, std::nullopt);
+        visibility_kind::visibility_private, std::nullopt)) {
+      if (auto *binding = symbols_.lookup_mut(p.name))
+        binding->semantic_id = semantic_declaration(p.name, "parameter",
+            p.type_name.value_or(""), diagnostic_source_file_, p.name_span);
+    }
   }
 
   // Save current return type and set for lambda

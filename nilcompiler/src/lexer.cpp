@@ -39,6 +39,7 @@ std::vector<token> lexer::scan_tokens() {
     }
 
     char c = advance();
+    const size_t emitted_before = tokens.size();
 
     switch (c) {
     case '(':
@@ -225,9 +226,14 @@ std::vector<token> lexer::scan_tokens() {
       }
       break;
     } // switch
+    if (tokens.size() != emitted_before) {
+      tokens.back().offset = start;
+      tokens.back().length = current - start;
+    }
   } // while
 
   tokens.push_back(make_token(token_kind::eof, "", line));
+  tokens.back().offset = current;
   if (lex_dump) std::cerr << "TOKEN " << line << " eof \n";
   return tokens;
 }

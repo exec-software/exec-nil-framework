@@ -5,6 +5,7 @@
  */
 #include "codegen.hpp"
 #include "analysis.hpp"
+#include "default_analyzer.hpp"
 #include "standard_namespace.hpp"
 #include "nil_version.hpp"
 #include "diagnostics.hpp"
@@ -377,8 +378,11 @@ static void print_usage(std::ostream &out = std::cerr) {
   out << "Usage:\n"
       << "  nilcompiler [options] -o <output> <input1.ny> [<input2.ny> ...]\n"
       << "  nilcompiler [options] <input1.ny> [<input2.ny> ...] out.nil\n"
-      << "  nilcompiler --analyze [--source-stdin] [-I <root>] <input.ny|matrix>\n"
+      << "  nilcompiler --analyze [--source-stdin | --workspace-stdin] [-I <root>] <input.ny|matrix>\n"
+      << "              [--semantic-index]  Include checked source bindings for editor navigation\n"
       << "              [--emit-reflection <analysis_snapshot.ny>]\n"
+      << "              [--disable-rule <code>] [--warnings-as-errors]\n"
+      << "  nilcompiler --list-analysis-rules  List built-in analyzer rules as JSON\n"
       << "  nilcompiler --to-nydata <input.json>\n"
       << "  nilcompiler --to-json <input.nydata>\n"
       << "\nOptions:\n"
@@ -1199,8 +1203,11 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     for (const auto &cand : candidates) {
       std::error_code candidate_ec;
       if (std::filesystem::is_directory(cand, candidate_ec) &&
-          (std::filesystem::exists(cand / "ny", candidate_ec) ||
-           std::filesystem::exists(cand / "prelude.ny", candidate_ec))) {
+          // The framework repository itself has a Ny frontend directory.
+          // Only the historical ny/lang namespace tree identifies a legacy
+          // source SDK; a bare ny/ must not hide a later nilstd/src candidate.
+          (std::filesystem::is_directory(cand / "ny/lang", candidate_ec) ||
+           std::filesystem::is_regular_file(cand / "prelude.ny", candidate_ec))) {
         sdk_stdlib = std::filesystem::weakly_canonical(cand, candidate_ec);
         if (candidate_ec)
           sdk_stdlib = cand;
@@ -1228,9 +1235,9 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
       std::error_code candidate_error;
       if (std::filesystem::is_directory(candidate, candidate_error) &&
           (candidate.filename() == "nillib" ||
-           std::filesystem::exists(candidate / "ny", candidate_error) ||
-           std::filesystem::exists(candidate / "prelude.nil",
-                                   candidate_error))) {
+           std::filesystem::is_directory(candidate / "ny/lang", candidate_error) ||
+           std::filesystem::is_regular_file(candidate / "prelude.nil",
+                                            candidate_error))) {
         sdk_nillib =
             std::filesystem::weakly_canonical(candidate, candidate_error);
         if (candidate_error)
@@ -1345,6 +1352,10 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     for (const auto &dir : search_dirs) {
       for (const auto &cand : candidates) {
         std::filesystem::path p = dir / cand;
+        if (analysis && analysis->workspace_stdin && analysis->workspace_source_exists(p.string())) {
+          resolved_import_paths.insert(import_path);
+          return ny::analysis_source_identity(p.string());
+        }
         std::error_code status_error;
         if (std::filesystem::is_regular_file(p, status_error)) {
           std::error_code ec;
@@ -1392,6 +1403,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
         resolved_import_paths.insert(import_path);
         if (!loaded_libraries.insert(library_key).second)
           return std::nullopt;
+        if (analysis) analysis->semantic_binary_dependencies = true;
 
         std::ifstream library(path, std::ios::binary);
         if (!library) {
@@ -1445,7 +1457,15 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     parsed_paths.insert(p);
 
     std::string src;
-    if (analysis && analysis->source_stdin && p == analysis->primary_path) {
+    if (analysis && analysis->workspace_stdin && embedded == embedded_sources.end()) {
+      p = ny::analysis_source_identity(p);
+      const auto source = analysis->read_workspace_source(p);
+      if (!source) {
+        std::cerr << "Error: cannot open input file: " << p << "\n";
+        return 1;
+      }
+      src = *source;
+    } else if (analysis && analysis->source_stdin && p == analysis->primary_path) {
       src = analysis->stdin_source;
     } else if (embedded != embedded_sources.end()) {
       src = embedded->second;
@@ -1483,6 +1503,8 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     if (analysis) {
       ny::validate_analysis_utf8(src);
       if (units.size() >= 256) throw std::runtime_error("analysis exceeds 256 source units");
+      if (analysis->workspace_stdin || analysis->semantic_requested)
+        analysis->record_workspace_source(p, src);
       analysis->sources[p] = src;
     }
 
@@ -1520,6 +1542,19 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     } else {
       ny::parser_options parse_options;
       parse_options.filename = diagnostic_path;
+      if (analysis && (analysis->workspace_stdin || analysis->semantic_requested)) {
+        parse_options.preproc_options.resolve_source = [analysis](const std::filesystem::path &path)
+            -> std::optional<std::filesystem::path> {
+          if (!analysis->workspace_source_exists(path.string())) return std::nullopt;
+          return ny::analysis_source_identity(path.string());
+        };
+        parse_options.preproc_options.read_source = [analysis](const std::filesystem::path &path) {
+          return analysis->read_workspace_source(path.string());
+        };
+        parse_options.preproc_options.max_output_bytes = 8 * 1024 * 1024;
+        parse_options.preproc_options.max_include_depth = 32;
+        parse_options.preproc_options.max_include_visits = 1024;
+      }
       ny::parser parser(src, parse_options);
       prog = parser.parse_program();
       if (parser.has_errors()) {
@@ -1725,7 +1760,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
   }
 
   // Type check
-  ny::type_checker checker;
+  ny::type_checker checker(analysis && analysis->semantic_requested);
 
   // A Matrix page must not be told about 'i64' and 'String': those are Ny's
   // internal spellings and do not exist in the language the author is
@@ -1753,7 +1788,8 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     if (!any_matrix_input) std::cerr << heading << "\n";
     if (!any_matrix_input) {
       for (const auto &diag : checker.get_diagnostics())
-        std::cerr << "  line " << diag.line << ": " << diag.message << "\n";
+        std::cerr << "  " << (diag.source_file.empty() ? "line " : diag.source_file + ":")
+                  << diag.line << ": " << diag.message << "\n";
       return;
     }
     const bool colour = ny_stderr_is_terminal();
@@ -1765,15 +1801,22 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
       rich.primary.column = 0; // no column available from the shared checker
       // ny::type_checker::diagnostic has no hint field; see step 3 in the
       // diagnostics design for giving it one.
+      const unit *owner = only_page;
+      if (!diag.source_file.empty()) {
+        owner = nullptr;
+        for (const auto &u : units) if (u.path == diag.source_file) { owner = &u; break; }
+      }
       std::cerr << matrix::render_diagnostic(
-          rich, only_page ? only_page->source : std::string(),
-          only_page ? only_page->path : std::string(), colour);
+          rich, owner ? owner->source : std::string(),
+          owner ? owner->path : diag.source_file, colour);
     }
   };
 
   const bool checked = checker.check(*combined);
   if (analysis) {
     analysis->semantic_checked = checked;
+    if (checked && analysis->semantic_requested)
+      analysis->semantics = checker.get_semantic_index();
     for (const auto &u : units) analysis->reflect(*u.program, u.path);
     for (const auto &d : checker.get_diagnostics()) {
       std::string path = d.source_file;
@@ -1786,6 +1829,8 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
           ? matrix::to_surface_vocabulary(d.message) : d.message;
       analysis->add("NIL0002", "error", message, path, d.line);
     }
+    if (checked) for (const auto &u : units)
+      if (u.path == analysis->primary_path) ny::run_default_analyzer(*u.program, *analysis);
     return checked ? 0 : 1;
   }
   if (!checked) {
@@ -2359,6 +2404,17 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
 }
 
 int main(int argc, char **argv) {
+  for (int i = 1; i < argc; ++i) {
+    if (std::string(argv[i]) == "--") break;
+    if (std::string(argv[i]) == "--list-analysis-rules") {
+      if (argc != 2) {
+        std::cerr << "Analysis error: --list-analysis-rules must be used alone\n";
+        return 2;
+      }
+      std::cout << ny::default_analysis_rules_json();
+      return 0;
+    }
+  }
   for (int i = 1; i < argc; ++i) {
     if (std::string(argv[i]) == "--") break;
     if (std::string(argv[i]) == "--analyze")
