@@ -1,0 +1,7 @@
+!!! Matrix's first starter program!
+
+book matrix.welcome
+
+main returns nothing begin paragraph
+    say "Hello, World! I am alive!"
+end paragraph
