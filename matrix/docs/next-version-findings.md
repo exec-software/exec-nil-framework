@@ -1148,8 +1148,8 @@ or a captured editor buffer (extended by F39).
 **Remaining boundaries:** One executable entrypoint and its import graph;
 complete rebuilds; Linux process execution. Unopened imports are type checked
 but not recursively linted. The analyzer does not inspect lambda bodies inside
-expressions or prove arbitrary control-flow reachability. A shared semantic
-symbol/reference index, semantic completion,
+expressions or prove arbitrary control-flow reachability. Complete semantic
+indexing (beyond the initial bindings in F40), semantic completion,
 cross-file rename/references, language-authored analyzer hosting, project
 reference graphs and incremental builds remain separate increments. See the
 [developer-tooling plan](../../docs/developer-tooling.md) for acceptance criteria.
@@ -1174,7 +1174,7 @@ repository-root regression reproduces the failure with the previous compiler.
 
 ### F39 — Unsaved dependencies were invisible to compiler-backed editor checks
 
-**Status:** Workspace source overlays implemented; semantic indexing remains open.
+**Status:** Workspace source overlays implemented; initial semantic bindings added in F40.
 
 The original analysis command accepted one unsaved primary buffer. Imports and
 Ny textual includes still came from disk, so editing a dependency could leave
@@ -1190,15 +1190,55 @@ buffers together, invalidates results on input changes and maps imported
 diagnostics only against matching snapshots. Build tasks continue to use saved
 files. See [NIL-0009](../../docs/design/NIL-0009-workspace-analysis.md).
 
-**Boundary:** Overlays and source watching cover `.ny`, `.matrix` and `.mat`.
-Other textual include extensions are still read from disk and require a new
-check after editing; the future dependency graph must track those inputs too.
+**Boundary:** Overlays cover `.ny`, `.matrix` and `.mat`. Other textual include
+extensions remain disk inputs. F40 adds exact watching for all native sources
+in successful semantic snapshots and rejects navigation when an unsupported
+include buffer is dirty.
 
-**Next step:** Retain precise original-source name spans and resolved symbol
-identities through checking. Ny tokens currently retain line information;
-Matrix adds columns, but the shared AST does not yet retain precise declaration
-and reference name spans. Local symbol scopes are discarded after checking.
-Those gaps prevent reliable cross-file references and transactional rename;
-matching names in declaration reflection is insufficient. Textual expansion,
-generated specializations and binary-library sources also need explicit
-non-editable boundaries until a trustworthy source mapping exists.
+**Follow-up:** F40 establishes original-source spans and retained binding IDs.
+Complete references, transactional rename and semantic completion still need
+the remaining resolution forms and a reliable model for incomplete programs.
+
+### F40 — Compiler bindings were unavailable after lexical scopes closed
+
+**Status:** Initial source binding index and compiler-backed definitions implemented.
+
+Declaration reflection retained names and line numbers, while local symbol-table
+scopes disappeared after checking. Matching an identifier against those names
+could confuse shadowed locals or different imported declarations. Matrix's
+surface spelling also differs from shared symbol spelling.
+
+**Resolution:** Both tokenizers now retain byte positions. Frontends attach
+original-source UTF-8 name spans to explicit AST names; the checker retains
+snapshot-local IDs at actual declaration and resolution sites. The opt-in
+`--semantic-index` response supplies a bounded `nil.semantic.v1` index for
+functions, variables, parameters and their supported references. VS Code Go to
+Definition consumes those bindings across dirty and new mixed-language imports,
+validating all captured inputs and reached native source snapshots before use.
+See [NIL-0010](../../docs/design/NIL-0010-semantic-source-index.md).
+
+**Boundaries:** The index is explicitly partial. Member dispatch, field and
+type references, pattern bindings and some function-value/generic forms remain
+unindexed. Expanded Ny units need source maps. Binary library dependencies have
+no index until library identities and source mappings are represented. Failed
+checks, ambiguous occurrences and budget limits produce no navigation result.
+References and rename must not treat this subset as a complete occurrence graph.
+
+**Evidence:** Parser source-slice tests and the compiler semantic contract cover
+UTF-8/CRLF, lexical shadowing, imports, input routes, failure suppression,
+preprocessing, binary dependencies and budgets. Real VS Code tests assert exact
+definition ranges and reject stale/unsupported destinations.
+
+### F41 — Matrix function-value spelling bypasses normal name folding
+
+**Status:** Confirmed existing parser inconsistency; unchanged by source indexing.
+
+Given a paragraph named `read-count`, a direct call written as
+`evaluate READ_COUNT with 1` resolves its name. A function value written as
+`the paragraph READ_COUNT` instead reports `Undefined identifier 'READ_COUNT'`,
+while `the paragraph read-count` works. The latter parser path uses `nil_symbol`
+directly instead of ordinary `resolve_name` folding. This was reproduced with
+compiler analysis, independent of editor navigation.
+
+**Next step:** Apply the same declared-name resolution to function values and
+direct calls, then test case/separator variants, escapes, scopes and imports.

@@ -379,6 +379,7 @@ static void print_usage(std::ostream &out = std::cerr) {
       << "  nilcompiler [options] -o <output> <input1.ny> [<input2.ny> ...]\n"
       << "  nilcompiler [options] <input1.ny> [<input2.ny> ...] out.nil\n"
       << "  nilcompiler --analyze [--source-stdin | --workspace-stdin] [-I <root>] <input.ny|matrix>\n"
+      << "              [--semantic-index]  Include checked source bindings for editor navigation\n"
       << "              [--emit-reflection <analysis_snapshot.ny>]\n"
       << "              [--disable-rule <code>] [--warnings-as-errors]\n"
       << "  nilcompiler --list-analysis-rules  List built-in analyzer rules as JSON\n"
@@ -1402,6 +1403,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
         resolved_import_paths.insert(import_path);
         if (!loaded_libraries.insert(library_key).second)
           return std::nullopt;
+        if (analysis) analysis->semantic_binary_dependencies = true;
 
         std::ifstream library(path, std::ios::binary);
         if (!library) {
@@ -1501,7 +1503,8 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     if (analysis) {
       ny::validate_analysis_utf8(src);
       if (units.size() >= 256) throw std::runtime_error("analysis exceeds 256 source units");
-      if (analysis->workspace_stdin) analysis->record_workspace_source(p, src);
+      if (analysis->workspace_stdin || analysis->semantic_requested)
+        analysis->record_workspace_source(p, src);
       analysis->sources[p] = src;
     }
 
@@ -1539,7 +1542,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     } else {
       ny::parser_options parse_options;
       parse_options.filename = diagnostic_path;
-      if (analysis && analysis->workspace_stdin) {
+      if (analysis && (analysis->workspace_stdin || analysis->semantic_requested)) {
         parse_options.preproc_options.resolve_source = [analysis](const std::filesystem::path &path)
             -> std::optional<std::filesystem::path> {
           if (!analysis->workspace_source_exists(path.string())) return std::nullopt;
@@ -1757,7 +1760,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
   }
 
   // Type check
-  ny::type_checker checker;
+  ny::type_checker checker(analysis && analysis->semantic_requested);
 
   // A Matrix page must not be told about 'i64' and 'String': those are Ny's
   // internal spellings and do not exist in the language the author is
@@ -1812,6 +1815,8 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
   const bool checked = checker.check(*combined);
   if (analysis) {
     analysis->semantic_checked = checked;
+    if (checked && analysis->semantic_requested)
+      analysis->semantics = checker.get_semantic_index();
     for (const auto &u : units) analysis->reflect(*u.program, u.path);
     for (const auto &d : checker.get_diagnostics()) {
       std::string path = d.source_file;

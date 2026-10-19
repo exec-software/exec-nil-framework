@@ -9,6 +9,19 @@
 namespace matrix {
 namespace {
 
+ny::source_span name_span(const token &name) {
+  // Keep delimiters around escaped names out of the editable name range.
+  return name.escaped_identifier
+             ? ny::source_span{name.start + 1, name.length - 2}
+             : ny::source_span{name.start, name.length};
+}
+
+template <typename Node>
+std::shared_ptr<Node> named(std::shared_ptr<Node> node, const token &name) {
+  if (node) node->name_span = name_span(name);
+  return node;
+}
+
 // NOTE ON NAMES: this file sees two unrelated 'token_kind' enums --
 // matrix::token_kind from the lexer, and ny::token_kind which is what
 // ast_binary_expr/ast_unary_expr store as their operator. They are always
@@ -725,10 +738,11 @@ std::shared_ptr<ny::ast_decl> parser::parse_read() {
       expected_name("as the alias after 'as'");
       return nullptr;
     }
+    const token &alias_token = peek();
     const std::string alias = nil_symbol(advance().lexeme);
     skip_terminators();
-    return std::make_shared<ny::ast_namespace_alias_decl>(alias, path, false,
-                                                          line);
+    return named(std::make_shared<ny::ast_namespace_alias_decl>(alias, path, false,
+                                                             line), alias_token);
   }
   skip_terminators();
   return std::make_shared<ny::ast_import_decl>(path, std::vector<std::string>{},
@@ -799,6 +813,7 @@ parser::parse_parameters(std::vector<std::string> &names) {
 
     params.emplace_back(name, type, mutable_binding, line, default_value,
                         variadic);
+    params.back().name_span = name_span(name_token);
     names.push_back(name);
 
     if (variadic) break; // a variadic tail is final
@@ -923,6 +938,7 @@ std::shared_ptr<ny::ast_decl> parser::parse_book_binding(bool is_public) {
     expected_name("after the binding keyword");
     return nullptr;
   }
+  const token &name_token = peek();
   const std::string name = nil_symbol(advance().lexeme);
   std::optional<std::string> type;
   if (match(kw::as)) type = parse_type();
@@ -933,6 +949,7 @@ std::shared_ptr<ny::ast_decl> parser::parse_book_binding(bool is_public) {
 
   auto decl = std::make_shared<ny::ast_variable_decl>(
       name, init, type, mutable_binding, is_public, line);
+  decl->name_span = name_span(name_token);
   decl->is_const = constant_binding;
   return decl;
 }
@@ -1043,6 +1060,7 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
     return nullptr;
   }
 
+  const token &name_token = peek();
   const int line = peek().line;
   const std::string name = advance().lexeme;
 
@@ -1080,23 +1098,23 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
     // yet; each is lifted as the format grows to hold it.
     auto record = parse_record(is_public, line, name, std::move(generics));
     if (record) record->annotations = std::move(annotations);
-    return record;
+    return named(record, name_token);
   }
   if (check(kw::begin) && peek(1).is(kw::choice)) {
     auto choice = parse_choice(is_public, line, name, std::move(generics));
     if (choice) choice->annotations = std::move(annotations);
-    return choice;
+    return named(choice, name_token);
   }
   if (check(kw::begin) && peek(1).is(kw::contract)) {
     refuse_annotations("a contract");
-    return parse_contract(is_public, line, name, std::move(generics));
+    return named(parse_contract(is_public, line, name, std::move(generics)), name_token);
   }
   if (check(kw::begin) && peek(1).is(kw::test))
-    return parse_test(line, name);
+    return named(parse_test(line, name), name_token);
   if (check(kw::inherits) || (check(kw::begin) && peek(1).is(kw::class_))) {
     auto klass = parse_class(is_public, is_abstract, line, name, std::move(generics));
     if (klass) klass->annotations = std::move(annotations);
-    return klass;
+    return named(klass, name_token);
   }
 
   // '<Type> provides <Contract> begin implementation', or a bare
@@ -1128,9 +1146,9 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
     auto target = parse_type();
     skip_terminators();
     if (!target) return nullptr;
-    return std::make_shared<ny::ast_type_alias_decl>(
+    return named(std::make_shared<ny::ast_type_alias_decl>(
         nil_symbol(name), *target, std::vector<ny::ast_generic_param>{},
-        is_public, line);
+        is_public, line), name_token);
   }
 
   // Declaration kinds beyond paragraphs are a later stage. Diagnose precisely
@@ -1152,7 +1170,7 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
   for (const auto &annotation : annotations)
     if (annotation.name == "intrinsic") intrinsic_backed = true;
   if (intrinsic_backed)
-    return finish_intrinsic(is_public, line, name, std::move(annotations));
+    return named(finish_intrinsic(is_public, line, name, std::move(annotations)), name_token);
 
   auto paragraph = parse_paragraph(is_public, line, name);
   if (paragraph) {
@@ -1162,7 +1180,7 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
       fn->generic_params = std::move(generics);
     }
   }
-  return paragraph;
+  return named(paragraph, name_token);
 }
 
 std::shared_ptr<ny::ast_program> parser::parse_program() {
@@ -1239,10 +1257,11 @@ parser::parse_member(paragraph_context context) {
           "[receives ...] [returns <type>] begin paragraph'");
     return nullptr;
   }
+  const token &name_token = peek();
   const int line = peek().line;
   const std::string name = advance().lexeme;
-  return parse_paragraph(is_public, line, name, context, is_abstract,
-                         is_virtual, is_override);
+  return named(parse_paragraph(is_public, line, name, context, is_abstract,
+                               is_virtual, is_override), name_token);
 }
 
 // '<name> [inherits B, C] begin class' ... 'end class'
@@ -1285,6 +1304,7 @@ parser::parse_class(bool is_public, bool is_abstract, int line,
       }
       ny::ast_struct_field field;
       field.line = peek().line;
+      field.name_span = name_span(peek());
       field.name = nil_symbol(advance().lexeme); // a member: written spelling
       if (!expect(kw::as, "after a field name")) continue;
       auto type = parse_type();
@@ -1436,8 +1456,12 @@ std::shared_ptr<ny::ast_stmt> parser::parse_attempt() {
         if (type) fault_type = *type;
       }
       std::string bound;
+      std::optional<ny::source_span> bound_span;
       if (match(kw::as)) {
-        if (peek().is_name()) bound = resolve_name(advance().lexeme);
+        if (peek().is_name()) {
+          bound_span = name_span(peek());
+          bound = resolve_name(advance().lexeme);
+        }
         else expected_name("after 'as' in a handler");
       } else {
         error(peek(), "expected 'as <name>' to bind the fault",
@@ -1452,6 +1476,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_attempt() {
       collect(handler_body);
       handlers.push_back(std::make_shared<ny::ast_fault_handler>(
           fault_type, bound, guard, handler_body, line));
+      handlers.back()->name_span = bound_span;
       continue;
     }
     const size_t before = pos_;
@@ -1470,8 +1495,9 @@ std::shared_ptr<ny::ast_stmt> parser::parse_raise() {
   // Re-raising a retained catch-all token keeps the original raise location
   // and type.
   if (peek().is_name() && peek(1).is(kw::again)) {
-    auto token_expr = std::make_shared<ny::ast_identifier_expr>(
-        resolve_name(advance().lexeme), line);
+    const token &name_token = peek();
+    auto token_expr = named(std::make_shared<ny::ast_identifier_expr>(
+                              resolve_name(advance().lexeme), line), name_token);
     advance(); // 'again'
     skip_terminators();
     return std::make_shared<ny::ast_raise_stmt>(token_expr, line);
@@ -1516,12 +1542,14 @@ std::shared_ptr<ny::ast_stmt> parser::parse_raise() {
 std::shared_ptr<ny::ast_stmt> parser::make_ownership_binding(
     const std::string &name, const std::string &operation,
     std::vector<ny::ast_expr_ptr> args, std::vector<std::string> type_args,
-    bool is_mut, std::optional<std::string> declared_type, int line) {
+    bool is_mut, std::optional<std::string> declared_type, int line,
+    const token &name_token) {
   auto callee = std::make_shared<ny::ast_identifier_expr>(operation, line);
   auto call = std::make_shared<ny::ast_call_expr>(
       callee, std::move(args), std::move(type_args), line);
   auto decl = std::make_shared<ny::ast_variable_decl>(
       name, call, std::move(declared_type), is_mut, false, line);
+  decl->name_span = name_span(name_token);
   return std::make_shared<ny::ast_decl_stmt>(decl, line);
 }
 
@@ -1555,7 +1583,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_own() {
           "write 'own variable samples as array of override byte sized 64'");
 
   return make_ownership_binding(name, "owned", {count}, {element}, is_mut,
-                                "owned<" + element + ">", line);
+                                "owned<" + element + ">", line, name_token);
 }
 
 // 'borrow v from b [exclusively]' -> let v = owned_borrow[_mut](b)
@@ -1566,21 +1594,23 @@ std::shared_ptr<ny::ast_stmt> parser::parse_borrow() {
     expected_name("after 'borrow'");
     return nullptr;
   }
+  const token &name_token = peek();
   const std::string name = resolve_name(advance().lexeme);
   if (!expect(kw::from, "after the view name")) return nullptr;
   if (!peek().is_name()) {
     expected_name("as the owner after 'from'");
     return nullptr;
   }
-  auto owner = std::make_shared<ny::ast_identifier_expr>(
-      resolve_name(advance().lexeme), line);
+  const token &owner_token = peek();
+  auto owner = named(std::make_shared<ny::ast_identifier_expr>(
+                         resolve_name(advance().lexeme), line), owner_token);
   // Mutability belongs to the view type, so the view binding itself is never
   // declared mutable.
   const bool exclusive = match(kw::exclusively);
   skip_terminators();
   return make_ownership_binding(
       name, exclusive ? "owned_borrow_mut" : "owned_borrow", {owner}, {}, false,
-      std::nullopt, line);
+      std::nullopt, line, name_token);
 }
 
 // 'move b into c' -> let c = owned_move(b). The source binding is invalidated.
@@ -1591,19 +1621,21 @@ std::shared_ptr<ny::ast_stmt> parser::parse_move() {
     expected_name("as the owner after 'move'");
     return nullptr;
   }
-  auto owner = std::make_shared<ny::ast_identifier_expr>(
-      resolve_name(advance().lexeme), line);
+  const token &owner_token = peek();
+  auto owner = named(std::make_shared<ny::ast_identifier_expr>(
+                         resolve_name(advance().lexeme), line), owner_token);
   if (!expect(kw::into, "after the owner being moved")) return nullptr;
   if (!peek().is_name()) {
     expected_name("as the destination after 'into'");
     return nullptr;
   }
+  const token &destination_token = peek();
   const std::string destination = resolve_name(advance().lexeme);
   skip_terminators();
   // A move destination chooses its own binding mutability; default to mutable
   // so the moved buffer stays writable.
   return make_ownership_binding(destination, "owned_move", {owner}, {}, true,
-                                std::nullopt, line);
+                                std::nullopt, line, destination_token);
 }
 
 // Declare a time intrinsic on first use, so 'now in milliseconds' needs no
@@ -1786,6 +1818,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_binding_statement() {
 
   auto decl = std::make_shared<ny::ast_variable_decl>(
       name, init, type, mutable_binding, false, line);
+  decl->name_span = name_span(name_token);
   decl->is_const = constant_binding;
   return std::make_shared<ny::ast_decl_stmt>(decl, line);
 }
@@ -1928,6 +1961,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_repeat() {
       expected_name("as the loop variable");
       return nullptr;
     }
+    const token &var_token = peek();
     const int var_line = peek().line;
     const std::string var = nil_symbol(advance().lexeme);
 
@@ -1940,6 +1974,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_repeat() {
       auto body = parse_block(kw::repeat);
       std::vector<ny::ast_param> loop_vars{
           ny::ast_param(var, std::nullopt, false, var_line, std::nullopt)};
+      loop_vars.front().name_span = name_span(var_token);
       return std::make_shared<ny::ast_for_in_stmt>(std::move(loop_vars),
                                                    iterable, body, line);
     }
@@ -1961,6 +1996,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_repeat() {
         range_callee, std::move(range_args), std::vector<std::string>{}, line);
     std::vector<ny::ast_param> loop_vars{
         ny::ast_param(var, std::nullopt, false, var_line, std::nullopt)};
+    loop_vars.front().name_span = name_span(var_token);
     return std::make_shared<ny::ast_for_in_stmt>(std::move(loop_vars), range,
                                                  body, line);
   }
@@ -2360,8 +2396,10 @@ ny::ast_expr_ptr parser::parse_postfix() {
     if (check(matrix::token_kind::dot) &&
         (peek(1).is_name() || peek(1).kind == matrix::token_kind::keyword)) {
       advance();
+      const token &member_token = peek();
       const std::string member = nil_symbol(advance().lexeme);
-      expr = std::make_shared<ny::ast_member_access_expr>(expr, member, line);
+      expr = named(std::make_shared<ny::ast_member_access_expr>(expr, member, line),
+                   member_token);
       continue;
     }
 
@@ -2526,8 +2564,9 @@ ny::ast_expr_ptr parser::parse_primary() {
         expected_name("after 'the paragraph'");
         return nullptr;
       }
-      return std::make_shared<ny::ast_identifier_expr>(
-          nil_symbol(advance().lexeme), line);
+      const token &name_token = peek();
+      return named(std::make_shared<ny::ast_identifier_expr>(
+                       nil_symbol(advance().lexeme), line), name_token);
     }
     error(peek(), "expected 'length of' or 'paragraph' after 'the'");
     return nullptr;
@@ -2544,8 +2583,9 @@ ny::ast_expr_ptr parser::parse_primary() {
             "the worker must be a statically resolved paragraph, not a value");
       return nullptr;
     }
-    auto worker = std::make_shared<ny::ast_identifier_expr>(
-        resolve_name(advance().lexeme), line);
+    const token &worker_token = peek();
+    auto worker = named(std::make_shared<ny::ast_identifier_expr>(
+                            resolve_name(advance().lexeme), line), worker_token);
     if (!expect(kw::across, "after the worker name")) return nullptr;
     auto inputs = parse_postfix();
     auto callee =
@@ -2603,9 +2643,11 @@ ny::ast_expr_ptr parser::parse_primary() {
   // 'my' is the receiver itself.
   if (match(kw::my)) {
     auto receiver = std::make_shared<ny::ast_identifier_expr>("self", line);
-    if (peek().is_name())
-      return std::make_shared<ny::ast_member_access_expr>(
-          receiver, nil_symbol(advance().lexeme), line);
+    if (peek().is_name()) {
+      const token &member_token = peek();
+      return named(std::make_shared<ny::ast_member_access_expr>(
+                       receiver, nil_symbol(advance().lexeme), line), member_token);
+    }
     return receiver;
   }
 
@@ -2633,10 +2675,11 @@ ny::ast_expr_ptr parser::parse_primary() {
 
     if (qualified) {
       const std::string name = parse_dotted_name();
-      return std::make_shared<ny::ast_identifier_expr>(nil_path(name), line);
+      return named(std::make_shared<ny::ast_identifier_expr>(nil_path(name), line),
+                   previous());
     }
-    return std::make_shared<ny::ast_identifier_expr>(
-        resolve_name(advance().lexeme), line);
+    return named(std::make_shared<ny::ast_identifier_expr>(
+                     resolve_name(advance().lexeme), line), start);
   }
 
   // Statement-only constructs in value position. Naming the construct is the
@@ -2725,6 +2768,7 @@ parser::parse_record(bool is_public, int line, const std::string &name,
     }
     ny::ast_struct_field field;
     field.line = peek().line;
+    field.name_span = name_span(peek());
     field.name = nil_symbol(advance().lexeme); // a member: written spelling
     if (!expect(kw::as, "after a field name")) continue;
     auto type = parse_type();
@@ -3085,6 +3129,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_allocate() {
     expected_name("after 'allocate'");
     return nullptr;
   }
+  const token &name_token = peek();
   const std::string name = nil_symbol(advance().lexeme);
   if (!expect(kw::as, "after the allocation name")) return nullptr;
   auto type = parse_type();
@@ -3104,6 +3149,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_allocate() {
   auto init = std::make_shared<ny::ast_allocate_expr>(element, count, line);
   auto decl = std::make_shared<ny::ast_variable_decl>(name, init, type, true,
                                                       false, line);
+  decl->name_span = name_span(name_token);
   return std::make_shared<ny::ast_decl_stmt>(decl, line);
 }
 

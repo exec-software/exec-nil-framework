@@ -11,6 +11,7 @@ import { projectForResource } from "./projectContext";
 import { analysisSourcePath, languageDocumentSelector, savedSourcePath, sourceLanguage } from "./languages";
 import { expandConfiguredPath } from "./toolchain";
 import { configuredSdkPath, nyConfiguration, resolveConfiguredTool, toolNotFoundMessage } from "./vscodeToolchain";
+import { definitionAt, SemanticIndex, SemanticSource } from "./semanticModel";
 
 const debounceMilliseconds = 400;
 const timeoutMilliseconds = 10_000;
@@ -43,7 +44,7 @@ interface CachedFix {
 }
 
 /** Compiler analysis is independent of nillsp's deliberately partial parser. */
-export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider {
+export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider, vscode.DefinitionProvider {
   private readonly diagnostics = vscode.languages.createDiagnosticCollection("nil-analysis");
   private readonly output = vscode.window.createOutputChannel("NIL Framework Analysis");
   private readonly subscriptions: vscode.Disposable[] = [];
@@ -53,6 +54,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
   private readonly importWatchers = new Map<string, vscode.FileSystemWatcher>();
   private readonly contributions = new Map<string, Map<string, vscode.Diagnostic[]>>();
   private readonly reports = new Map<string, string>();
+  private readonly semantics = new Map<string, { job: AnalysisJob; index: SemanticIndex }>();
   private active: { job: AnalysisJob; controller: AbortController } | undefined;
   private disposed = false;
   private generation = 0;
@@ -75,6 +77,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
       vscode.languages.registerCodeActionsProvider(languageDocumentSelector, this, {
         providedCodeActionKinds: [vscode.CodeActionKind.QuickFix]
       }),
+      vscode.languages.registerDefinitionProvider(languageDocumentSelector, this),
       vscode.commands.registerCommand("ny.applyAnalysisFix", (token: unknown) => this.applyFix(token)),
       vscode.commands.registerCommand("ny.analyzeCurrentFile", async () => {
         const document = vscode.window.activeTextEditor?.document;
@@ -128,6 +131,8 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
       this.supported(document) && nyConfiguration(this.contextUri(document)).get<boolean>("analysis.enabled", true);
   }
 
+  usesCompilerDefinitions(document: vscode.TextDocument): boolean { return this.enabled(document); }
+
   private openTabSources(): Set<string> {
     const sources = new Set<string>();
     const add = (uri: vscode.Uri) => {
@@ -166,6 +171,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
 
   private invalidate(uri: vscode.Uri): void {
     const key = uri.toString();
+    this.semantics.delete(key);
     const timer = this.timers.get(key);
     if (timer) clearTimeout(timer);
     this.timers.delete(key);
@@ -345,6 +351,17 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
     }
   }
 
+  private watchSemanticSources(index: SemanticIndex): void {
+    for (const source of index.sources) {
+      const key = `source:${source.path}`;
+      if (this.importWatchers.has(key)) continue;
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(path.dirname(source.path), path.basename(source.path)));
+      this.importWatchers.set(key, watcher);
+      this.subscriptions.push(watcher, watcher.onDidCreate(() => this.scheduleAll()),
+        watcher.onDidChange(() => this.scheduleAll()), watcher.onDidDelete(() => this.scheduleAll()));
+    }
+  }
+
   private async publish(job: AnalysisJob, result: AnalysisResult, signal: AbortSignal): Promise<boolean> {
     const imported = new Map<string, { uris: vscode.Uri[]; text: string; mapRange: ReturnType<typeof createByteRangeMapper> }>();
     for (const snapshot of result.sources ?? []) {
@@ -436,10 +453,99 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
       });
     }
     this.contributions.set(job.key, byUri);
+    if (result.semantic) {
+      this.watchSemanticSources(result.semantic);
+      this.semantics.set(job.key, { job, index: result.semantic });
+    }
     this.renderDiagnostics();
     if (messages.length) this.report(job.key, messages.join("\n\n"));
     else if (this.reports.delete(job.key)) this.renderOutput();
     return true;
+  }
+
+  private async matchesDiskSnapshot(snapshot: SemanticSource): Promise<boolean> {
+    const size = Buffer.byteLength(snapshot.text, "utf8");
+    try {
+      const handle = await fs.open(snapshot.path, fileConstants.O_RDONLY | (fileConstants.O_NONBLOCK ?? 0));
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.size !== size) return false;
+        const bytes = Buffer.alloc(size + 1);
+        let count = 0;
+        while (count < bytes.length) {
+          const read = await handle.read(bytes, count, bytes.length - count, count);
+          if (!read.bytesRead) break;
+          count += read.bytesRead;
+        }
+        return count === size && new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, count)) === snapshot.text;
+      } finally { await handle.close(); }
+    } catch { return false; }
+  }
+
+  async provideDefinition(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): Promise<vscode.LocationLink[] | undefined> {
+    if (!this.enabled(document) || token.isCancellationRequested) return undefined;
+    const version = document.version;
+    const key = document.uri.toString();
+    let cached = this.semantics.get(key);
+    if (!cached || !this.current(cached.job)) {
+      if (!await this.analyzeNow(document)) return undefined;
+      cached = this.semantics.get(key);
+    }
+    if (!cached || token.isCancellationRequested || document.version !== version || !this.current(cached.job)) return undefined;
+    const { job, index } = cached;
+    const primary = job.inputs.find(input => input.document === document);
+    if (!primary) return undefined;
+    const match = definitionAt(index, primary.identity, document.offsetAt(position));
+    if (!match) return undefined;
+    // Textual includes can have other extensions and cannot be overlaid yet.
+    // Observe their open models too, including aliases and edits during awaits.
+    const localDocuments = (): vscode.TextDocument[] => vscode.workspace.textDocuments.filter(item =>
+      (item.uri.scheme === "file" || item.uri.scheme === "untitled") && path.isAbsolute(item.uri.fsPath));
+    const observed = localDocuments().map(item => ({ document: item, version: item.version, dirty: item.isDirty, identity: "" }));
+    await Promise.all(observed.map(async item => { item.identity = await this.sourceIdentity(item.document.uri.fsPath); }));
+    // Validate the complete exported input set, not only the destination. An
+    // unchanged target can resolve differently after another dependency edit.
+    for (const input of job.inputs) {
+      if (await this.sourceIdentity(input.source) !== input.identity) {
+        this.invalidate(document.uri);
+        return undefined;
+      }
+    }
+    for (const source of index.sources) {
+      if (token.isCancellationRequested || !this.current(job) || source.text.startsWith("\uFEFF")) return undefined;
+      if (await this.sourceIdentity(source.path) !== path.normalize(source.path)) {
+        this.invalidate(document.uri);
+        return undefined;
+      }
+      const inputs = job.inputs.filter(input => input.identity === path.normalize(source.path));
+      const models = observed.filter(item => item.identity === path.normalize(source.path));
+      if (!inputs.length && models.some(item => item.document.isDirty || item.document.getText() !== source.text)) return undefined;
+      if (inputs.length) {
+        if (inputs.some(input => input.text !== source.text)) return undefined;
+      } else {
+        if (!await this.matchesDiskSnapshot(source)) {
+          this.invalidate(document.uri);
+          return undefined;
+        }
+      }
+    }
+    if (token.isCancellationRequested || !this.current(job) || document.version !== version ||
+        localDocuments().length !== observed.length || observed.some(item => item.document.isClosed ||
+          item.document.version !== item.version || item.document.isDirty !== item.dirty)) return undefined;
+    const range = (text: string, start: number, end: number): vscode.Range | undefined => {
+      const point = (offset: number): vscode.Position | undefined => {
+        if (offset > 0 && text[offset - 1] === "\r" && text[offset] === "\n") return undefined;
+        const lines = text.slice(0, offset).split(/\r\n|\r|\n/);
+        return new vscode.Position(lines.length - 1, lines[lines.length - 1]!.length);
+      };
+      const first = point(start), last = point(end);
+      return first && last ? new vscode.Range(first, last) : undefined;
+    };
+    const originSelectionRange = range(job.text, match.origin.start, match.origin.end);
+    const targetRange = range(match.targetText, match.targetOffsets.start, match.targetOffsets.end);
+    if (!originSelectionRange || !targetRange) return undefined;
+    const targetInput = job.inputs.find(input => input.identity === path.normalize(match.target.path));
+    return [{ originSelectionRange, targetUri: targetInput?.document.uri ?? vscode.Uri.file(match.target.path), targetRange, targetSelectionRange: targetRange }];
   }
 
   private renderDiagnostics(): void {
@@ -501,6 +607,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
     this.pending.clear();
     this.fixes.clear();
     this.contributions.clear();
+    this.semantics.clear();
     this.importWatchers.clear();
     this.subscriptions.forEach(subscription => subscription.dispose());
     this.diagnostics.dispose();

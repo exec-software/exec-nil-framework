@@ -1,5 +1,6 @@
 #pragma once
 #include "ast.hpp"
+#include "semantic_index.hpp"
 #include <map>
 #include <optional>
 #include <set>
@@ -29,6 +30,9 @@ struct reflected_annotation {
 struct analysis_session {
   std::string primary_path, logical_path, language, stdin_source;
   bool source_stdin = false, workspace_stdin = false, semantic_checked = false, truncated = false;
+  bool semantic_requested = false;
+  bool semantic_binary_dependencies = false;
+  std::optional<semantic_index> semantics;
   bool warnings_as_errors = false;
   std::set<std::string> disabled_rules;
   std::size_t reflection_bytes = 0;
@@ -47,6 +51,7 @@ struct analysis_session {
   void reflect(const ast_program &program, const std::string &path);
   void lint();
   std::string json(bool success) const;
+  std::string semantic_json() const;
   std::string companion_source() const;
   bool workspace_source_exists(const std::string &path) const;
   std::optional<std::string> read_workspace_source(const std::string &path);

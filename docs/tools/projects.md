@@ -145,7 +145,8 @@ the analysis output. Quick fixes remain limited to the unchanged primary
 document version. Project tasks use saved files; save source changes before
 building or running.
 
-This establishes project-aware checking and build tasks. Completion, hover and
-local navigation still use the language server's tolerant document index. Full
-semantic navigation, cross-file references, rename and signature help are
+Go to Definition uses the compiler's checked source bindings for supported
+variables, parameters and direct/imported functions, including unsaved sources.
+Completion and hover still use the language server's tolerant document index.
+Member/type navigation, complete cross-file references, rename and signature help are
 tracked in the [developer-tooling plan](../developer-tooling.md).

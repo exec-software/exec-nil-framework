@@ -262,7 +262,7 @@ test("analysis invocation includes the source parent before SDK and configured r
   assert.deepEqual(analysisInvocation("nilcompiler", source, sdk, true, roots), {
     command: "nilcompiler",
     args: [
-      "--analyze", "--workspace-stdin", source, "--no-stdlib",
+      "--analyze", "--workspace-stdin", source, "--semantic-index", "--no-stdlib",
       "-I", workRoot, "-I", sdk, "-I", imports
     ]
   });
@@ -272,7 +272,7 @@ test("analysis invocation includes the source parent before SDK and configured r
 test("analysis invocation omits unconfigured options while retaining local imports", () => {
   assert.deepEqual(analysisInvocation("nilcompiler", source, undefined, false, []), {
     command: "nilcompiler",
-    args: ["--analyze", "--workspace-stdin", source, "-I", workRoot]
+    args: ["--analyze", "--workspace-stdin", source, "--semantic-index", "-I", workRoot]
   });
 });
 
@@ -282,7 +282,7 @@ test("analysis invocation preserves spaces and shell characters as literal argum
   const imports = path.join(workRoot, "imports & 'quoted'");
   assert.deepEqual(analysisInvocation(compiler, shellSource, undefined, false, [imports]), {
     command: compiler,
-    args: ["--analyze", "--workspace-stdin", shellSource, "-I", workRoot, "-I", imports]
+    args: ["--analyze", "--workspace-stdin", shellSource, "--semantic-index", "-I", workRoot, "-I", imports]
   });
 });
 
@@ -300,7 +300,7 @@ test("analysis source snapshots are optional, bounded, absolute and unique", () 
 test("analysis invocation carries the same rule policy as project checks", () => {
   assert.deepEqual(analysisInvocation("nilcompiler", source, undefined, false, [], {
     disabledRules: ["NIL1001", "NIL2002"], warningsAsErrors: true
-  }).args, ["--analyze", "--workspace-stdin", source, "--disable-rule", "NIL1001", "--disable-rule", "NIL2002",
+  }).args, ["--analyze", "--workspace-stdin", source, "--semantic-index", "--disable-rule", "NIL1001", "--disable-rule", "NIL2002",
     "--warnings-as-errors", "-I", workRoot]);
 });
 
@@ -310,7 +310,7 @@ test("project analysis preserves driver import precedence over the entry directo
   const sdk = path.join(workRoot, "sdk");
   const library = path.join(workRoot, "lib");
   assert.deepEqual(analysisInvocation("nilcompiler", entry, sdk, false, [workRoot, library], undefined, false).args,
-    ["--analyze", "--workspace-stdin", entry, "-I", sdk, "-I", workRoot, "-I", library]);
+    ["--analyze", "--workspace-stdin", entry, "--semantic-index", "-I", sdk, "-I", workRoot, "-I", library]);
 });
 
 test("workspace requests preserve exact mixed-language buffers and Unicode", () => {

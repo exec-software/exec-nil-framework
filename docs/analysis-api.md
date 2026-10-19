@@ -7,6 +7,7 @@ semantic and ownership checks. It does not generate or execute a program.
 ```sh
 sdk/nilcompiler --analyze -I sdk/nilstd application.matrix
 sdk/nilcompiler --analyze --source-stdin -I sdk/nilstd application.matrix < buffer.txt
+sdk/nilcompiler --analyze --semantic-index -I sdk/nilstd application.matrix
 sdk/nilcompiler --analyze -I sdk/nilstd application.matrix \
   --emit-reflection analysis_snapshot.ny
 ```
@@ -64,8 +65,10 @@ textual includes and embedded library sources, to 256 sources and 8 MiB in
 total, with 2 MiB per source. Textual preprocessing allows 32 include levels,
 1,024 visits per source unit and 8 MiB of expanded text; macro substitution is
 bounded during expansion.
-These limits apply to workspace analysis, leaving ordinary compilation and the
-legacy raw-stdin analysis interface unchanged.
+These source-provider limits also apply when `--semantic-index` is requested,
+including disk and raw-stdin analysis, so every consumed native source can be
+captured consistently. Ordinary compilation and analysis without either option
+retain their existing behavior.
 
 Overlays participate at each normal source candidate, preserving import-root,
 extension and source-before-binary search order. Only reachable files are
@@ -75,7 +78,8 @@ locations remain unavailable until an include source map exists. Synthetic
 binary-library source identities cannot be replaced by workspace buffers.
 
 Results still use `nil.analysis.v1`. This is one immutable input snapshot for a
-check, not a persistent compiler server or a symbol/reference index. Sources
+check, not a persistent compiler server. The optional semantic index below
+records supported bindings from that check. Sources
 without overlays continue to come from disk. CLI project builds use saved files.
 An open buffer remains authoritative if its file is deleted on disk. Removing
 that buffer from the request restores normal missing-file resolution.
@@ -165,6 +169,90 @@ declarations/annotations and 1 MiB of metadata, and marks truncation explicitly.
 The full JSON response is limited to 8 MiB. These are representation limits,
 not a compiler execution sandbox or time budget.
 
+## Semantic source index
+
+`--analyze --semantic-index` adds a `semantic` member to the analysis report.
+The flag works with disk input, `--source-stdin`, and `--workspace-stdin`.
+Without the flag, the member is absent. A successful supported check returns
+`nil.semantic.v1`; an unavailable index is `null`.
+
+```json
+{
+  "schema": "nil.semantic.v1",
+  "partial": true,
+  "sources": [
+    {
+      "path": "/project/main.ny",
+      "text": "fn main() -> i32\n let value = 7\n return value\nend fn\n"
+    }
+  ],
+  "symbols": [
+    {"id": 0, "kind": "function", "name": "main", "type": "i32", "path": "/project/main.ny", "start": 3, "length": 4},
+    {"id": 1, "kind": "variable", "name": "value", "type": "i32", "path": "/project/main.ny", "start": 22, "length": 5}
+  ],
+  "references": [
+    {"symbol_id": 1, "path": "/project/main.ny", "start": 40, "length": 5}
+  ]
+}
+```
+
+All paths in this object, including the primary source, use canonical native
+identities. This differs from the diagnostic envelope's logical primary path.
+`sources` contains the exact text of **every consumed native input**, including
+the primary buffer and textual includes with other extensions. Consumers must
+validate the full set before using a binding: an unchanged destination can
+resolve differently after another dependency changes. These snapshots are
+independent of the smaller diagnostic `sources` array described above.
+
+Each symbol has a nonnegative numeric `id`, a `kind` (`function`, `variable`, or
+`parameter`), its compiler `name`, a display `type`, and a declaration name
+location. `type` is a variable/parameter type or a function's return type, and
+can be empty; it is not a stable type graph or complete callable signature.
+IDs belong to this snapshot only. Each reference names its resolved
+`symbol_id` and occurrence location. `start` and `length` are nonempty UTF-8
+byte ranges in the corresponding exact source text.
+
+The checker records these links when it resolves a symbol, before lexical
+scopes are discarded. Initial coverage includes local/global variables,
+function and lambda parameters, loop binders, variable reads and assignments,
+and direct source-function calls across Ny and Matrix imports. Qualified
+function references are included where the resolver retains the exact
+declaration. Repeated visits that disagree about an occurrence's binding do
+not emit a link. A matching name alone never creates one.
+
+Both frontends retain original name-token ranges. Matrix's surface spelling
+can differ from its compiler name through identifier folding. Ny retains
+original ranges when preprocessing is unchanged, or differs only by verified
+blank-line/final-newline normalization. Other textual transformations suppress
+the unit's name spans. Generated/interpolated nodes without an original name
+token remain unlocated. There are no guessed offsets into expanded text.
+
+`partial: true` is deliberate. Field/member dispatch, type-use strings,
+pattern bindings, full generic/overload occurrence coverage, failed-code
+recovery, and source maps for expansion/generated code remain incomplete.
+An empty reference list does not prove that a symbol is unused. This version
+supports definition navigation for emitted bindings; it is not a complete
+Find All References or rename contract.
+
+The index is available only when the full analysis succeeds, including rule
+policy. Parser, import, type, ownership, and warnings-as-errors failures return
+`semantic: null`. Any consumed binary library also makes the index unavailable
+until the protocol can validate binary dependency identities and source maps.
+A source whose canonical identity changes during export invalidates the whole
+index.
+
+Limits are 256 source snapshots, 32,768 symbols, 131,072 references, 4 MiB of
+encoded semantic JSON, and a 4 MiB checker metadata-string budget. Exceeding
+an index limit returns `semantic: null`; symbols or inputs are not silently
+truncated to create a smaller graph. The index is also withheld if adding it
+would exceed the full analysis response's 8 MiB bound. Existing input/provider
+limits still produce an analysis error as described above. Source text and
+span validation may omit unsupported individual locations within an otherwise
+valid partial index.
+
+See [NIL-0010](design/NIL-0010-semantic-source-index.md) for the design decision
+and [developer tooling](developer-tooling.md) for the remaining coverage.
+
 ## Reflection from Ny or Matrix
 
 `nil.std.reflection` exposes immutable value records:
@@ -238,17 +326,25 @@ not forwarded to analysis. Existing structural LSP diagnostics remain separate.
 Within a `nil.project.json` project, live checks inherit project import roots,
 SDK location and rule policy. Project build/run tasks use `nilbuild` and saved
 files. The current-file command keeps the active file as its primary source;
-other open source buffers supply dependencies. A shared semantic symbol/reference
-index remains follow-up work.
+other open source buffers supply dependencies. Live analysis requests the
+semantic index and uses its resolved links for Go to Definition. Before
+navigation it checks input versions, canonical identities, and every exported
+source against its captured buffer or current bounded disk read. It also
+observes open aliases and rejects changed models during asynchronous checks.
+With compiler analysis enabled, the extension suppresses the language server's
+older definition guesses. Disabling compiler analysis retains that fallback.
 
 An untitled buffer with an explicit absolute source filename can participate
 as an unsaved import. An unnamed untitled buffer has no import identity and is
 included only when it is the primary file. Conflicting open aliases and input
 limits produce an analysis error rather than selecting one buffer silently.
-Only supported Ny/Matrix source filenames participate in overlays and automatic
-source watching. Other textual include extensions remain disk inputs; their
-edits require another check. Tracking arbitrary include dependencies is part
-of the future semantic workspace graph.
+Only supported Ny/Matrix source filenames participate in overlays. A successful
+semantic index adds file watchers for all exported native inputs, including
+other textual include extensions. These includes remain disk inputs; unsaved
+include edits cannot be substituted by the overlay protocol, and navigation
+is withheld while a matching open include model differs from disk. A failed or
+unavailable index cannot discover new dependency watchers. No navigation is
+published from stale, failed, oversized, or otherwise unverifiable bindings.
 
 Use a current SDK/compiler. The extension prefers the repository's `sdk` tools;
 a stale SDK can otherwise mask a newer build-tree compiler.

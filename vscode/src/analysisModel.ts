@@ -1,5 +1,7 @@
 import * as path from "node:path";
 import { ToolInvocation } from "./taskModel";
+import { parseSemanticIndex, SemanticIndex } from "./semanticModel";
+export { byteRangeToOffsets, createByteRangeMapper, TextOffsets } from "./sourceOffsets";
 
 export const maxAnalysisSnapshotBytes = 1024 * 1024;
 
@@ -73,6 +75,7 @@ export interface AnalysisResult {
   diagnostics: AnalysisDiagnostic[];
   reflection: Record<string, unknown>;
   sources?: Array<{ path: string; text: string }>;
+  semantic?: SemanticIndex | null;
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -126,33 +129,9 @@ export function parseAnalysisOutput(stdout: string, expectedSource: string, exit
       throw new Error("Compiler returned an invalid analysis fix.");
     }
   }
+  const semantic = parseSemanticIndex(result.semantic);
+  if (semantic && !result.success) throw new Error("Failed analysis cannot publish semantic bindings.");
   return result as unknown as AnalysisResult;
-}
-
-export interface TextOffsets { start: number; end: number; }
-
-// Index scalar boundaries once: compiler spans are UTF-8 bytes; VS Code offsets
-// count UTF-16 code units. Interior bytes must never become an approximate edit.
-export function createByteRangeMapper(text: string): (start: number, length: number) => TextOffsets | undefined {
-  const boundaries = new Uint32Array(Buffer.byteLength(text, "utf8") + 1);
-  let bytes = 0;
-  let units = 0;
-  boundaries[0] = 1;
-  for (const scalar of text) {
-    bytes += Buffer.byteLength(scalar, "utf8");
-    units += scalar.length;
-    boundaries[bytes] = units + 1;
-  }
-  return (start, length) => {
-    if (!validSpan(start, length) || start + length >= boundaries.length) return undefined;
-    const first = boundaries[start];
-    const last = boundaries[start + length];
-    return first && last ? { start: first - 1, end: last - 1 } : undefined;
-  };
-}
-
-export function byteRangeToOffsets(text: string, start: number, length: number): TextOffsets | undefined {
-  return createByteRangeMapper(text)(start, length);
 }
 
 export function analysisInvocation(
@@ -161,7 +140,7 @@ export function analysisInvocation(
   policy: { disabledRules: readonly string[]; warningsAsErrors: boolean } = { disabledRules: [], warningsAsErrors: false },
   sourceDirectoryFirst = true
 ): ToolInvocation {
-  const args = ["--analyze", "--workspace-stdin", source];
+  const args = ["--analyze", "--workspace-stdin", source, "--semantic-index"];
   if (noStdlib) args.push("--no-stdlib");
   for (const code of policy.disabledRules) args.push("--disable-rule", code);
   if (policy.warningsAsErrors) args.push("--warnings-as-errors");

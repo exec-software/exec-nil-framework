@@ -23,7 +23,9 @@ Design notes:
 #include "diagnostics.hpp"
 
 #include <cassert>
+#include <algorithm>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <vector>
@@ -365,6 +367,53 @@ static bool looks_like_generic_call_arguments(const std::vector<token> &tokens,
 // ----------------------------
 // Parser: constructor + public methods
 // ----------------------------
+static bool unchanged_source_lines(
+    const std::string &original, const std::string &processed,
+    std::vector<std::pair<size_t, size_t>> &line_offsets) {
+  if (original == processed) return true;
+  size_t original_pos = 0;
+  size_t processed_pos = 0;
+  while (original_pos < original.size()) {
+    const size_t end = original.find('\n', original_pos);
+    const size_t length =
+        (end == std::string::npos ? original.size() : end) - original_pos;
+    const bool blank =
+        original.find_first_not_of(" \t\r", original_pos) >= original_pos + length;
+    const size_t emitted_length = blank ? 0 : length;
+    if (processed_pos + emitted_length >= processed.size() ||
+        processed.compare(processed_pos, emitted_length, original, original_pos,
+                          emitted_length) != 0 ||
+        processed[processed_pos + emitted_length] != '\n') {
+      line_offsets.clear();
+      return false;
+    }
+    line_offsets.emplace_back(processed_pos, original_pos);
+    processed_pos += emitted_length + 1;
+    original_pos += length + (end != std::string::npos ? 1 : 0);
+  }
+  if (processed_pos != processed.size()) {
+    line_offsets.clear();
+    return false;
+  }
+  return true;
+}
+
+std::optional<source_span> parser::span_for_name(const token &name) const {
+  if (!original_spans_available_ || name.length == 0 ||
+      name.length != name.lexeme.size())
+    return std::nullopt;
+  size_t offset = name.offset;
+  if (!source_line_offsets_.empty()) {
+    const auto following = std::upper_bound(
+        source_line_offsets_.begin(), source_line_offsets_.end(), offset,
+        [](size_t value, const auto &line) { return value < line.first; });
+    if (following == source_line_offsets_.begin()) return std::nullopt;
+    const auto &line = *std::prev(following);
+    offset = line.second + (offset - line.first);
+  }
+  return source_span{offset, name.length};
+}
+
 parser::parser(const std::string &source, const parser_options &opts)
     : tokens_(), pos_(0), options_(opts), diagnostics_(), source_(source),
       filename_(opts.filename), preproc_options_(opts.preproc_options),
@@ -388,6 +437,11 @@ parser::parser(const std::string &source, const parser_options &opts)
       diagnostics_.push_back(d);
     }
 
+    // Retain source locations only when every original code line survived
+    // byte-for-byte. Includes, macros and other transformations need an
+    // explicit source map before their names can be used for editor actions.
+    original_spans_available_ = unchanged_source_lines(
+        source_, pres_res.output, source_line_offsets_);
     // Use the preprocessed output as the lexer's input
     source_ = pres_res.output;
   }
@@ -1289,6 +1343,7 @@ parser::parse_function_declaration(visibility_kind vis, bool is_abstract,
       }
       ast_param param;
       param.name = p.lexeme;
+      param.name_span = span_for_name(p);
       param.line = p.line;
       param.is_mut = is_mut;
       param.is_variadic = is_variadic;
@@ -1349,6 +1404,7 @@ parser::parse_function_declaration(visibility_kind vis, bool is_abstract,
   // and then enter a new lexical scope for its parameters and body.
   bool is_pub_bool = (vis == visibility_kind::visibility_public);
   auto fn = std::make_shared<ast_function_decl>(name);
+  fn->name_span = span_for_name(name_tok);
   fn->params = params;
   fn->return_type = return_type;
   fn->body = nullptr;
@@ -1660,6 +1716,7 @@ parser::parse_variable_declaration(visibility_kind visibility) {
   auto var_decl = std::make_shared<ast_variable_decl>(
       name_tok.lexeme, initializer, maybe_type, is_mut,
       visibility == visibility_kind::visibility_public, name_tok.line);
+  var_decl->name_span = span_for_name(name_tok);
   var_decl->visibility = visibility;
 
   // Attach any immediate annotations that directly preceded the current token
@@ -1740,6 +1797,7 @@ std::shared_ptr<ast_decl> parser::parse_type_declaration(visibility_kind vis) {
       make_type_alias_decl(alias_name, target_type, std::move(generic_params),
                            is_pub_bool, name_tok.line);
   // Ensure the alias AST node reflects the full visibility enum
+  alias_decl->name_span = span_for_name(name_tok);
   alias_decl->visibility = vis;
 
   // Parsing must preserve a user alias's spelling. Expanding its target here
@@ -1785,6 +1843,7 @@ parser::parse_namespace_alias_declaration(visibility_kind vis) {
   bool is_pub_bool = (vis == visibility_kind::visibility_public);
   auto alias_decl = std::make_shared<ast_namespace_alias_decl>(
       alias_tok.lexeme, target_module, is_pub_bool, alias_tok.line);
+  alias_decl->name_span = span_for_name(alias_tok);
   alias_decl->visibility = vis;
 
   // Register alias symbol into the parser symbol table as a type-like symbol.
@@ -2551,6 +2610,7 @@ std::shared_ptr<ast_stmt> parser::parse_for_statement() {
         token name_tok = advance(); // safe after check
         ast_param p;
         p.name = name_tok.lexeme;
+        p.name_span = span_for_name(name_tok);
         p.line = name_tok.line;
         p.is_mut = var_mut;
         loop_vars.push_back(p);
@@ -2574,6 +2634,7 @@ std::shared_ptr<ast_stmt> parser::parse_for_statement() {
       token first_tok = advance();
       ast_param p;
       p.name = first_tok.lexeme;
+      p.name_span = span_for_name(first_tok);
       p.line = first_tok.line;
       p.is_mut = var_mut;
       loop_vars.push_back(p);
@@ -2599,6 +2660,7 @@ std::shared_ptr<ast_stmt> parser::parse_for_statement() {
       token name_tok = advance();
       ast_param p2;
       p2.name = name_tok.lexeme;
+      p2.name_span = span_for_name(name_tok);
       p2.line = name_tok.line;
       p2.is_mut = next_var_mut;
       loop_vars.push_back(p2);
@@ -3056,8 +3118,10 @@ std::shared_ptr<ast_expr> parser::parse_call(std::shared_ptr<ast_expr> callee) {
         token rb = consume(token_kind::right_brace,
                            "Expected '}' after struct fields");
 
+        const auto type_span = callee->name_span;
         callee = make_struct_literal_expr(struct_name, fields,
                                           pending_type_args, rb.line);
+        callee->name_span = type_span;
         pending_type_args.clear(); // Consumed
         continue;
       }
@@ -3069,6 +3133,7 @@ std::shared_ptr<ast_expr> parser::parse_call(std::shared_ptr<ast_expr> callee) {
           consume(token_kind::identifier, "Expected member name after '.'");
       callee = std::make_shared<ast_member_access_expr>(
           callee, member_tok.lexeme, member_tok.line);
+      callee->name_span = span_for_name(member_tok);
       continue;
     }
 
@@ -3098,6 +3163,7 @@ std::shared_ptr<ast_expr> parser::parse_call(std::shared_ptr<ast_expr> callee) {
       // For now, we reuse ast_member_access_expr.
       callee = std::make_shared<ast_member_access_expr>(
           callee, member_tok.lexeme, member_tok.line);
+      callee->name_span = span_for_name(member_tok);
       continue;
     }
 
@@ -3200,10 +3266,14 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
   }
 
   if (match(token_kind::self_kw)) {
-    return std::make_shared<ast_identifier_expr>("self", previous().line);
+    auto self = std::make_shared<ast_identifier_expr>("self", previous().line);
+    self->name_span = span_for_name(previous());
+    return self;
   } else if (check(token_kind::identifier) && peek().lexeme == "self") {
     advance();
-    return std::make_shared<ast_identifier_expr>("self", previous().line);
+    auto self = std::make_shared<ast_identifier_expr>("self", previous().line);
+    self->name_span = span_for_name(previous());
+    return self;
   }
 
   if (match(token_kind::function_kw)) {
@@ -3215,8 +3285,10 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
     while (!check(token_kind::right_paren) && !is_at_end()) {
       ast_param p;
       if (match(token_kind::mut_kw)) p.is_mut = true;
-      p.name = consume(token_kind::identifier, "Expected parameter name").lexeme;
-      p.line = previous().line;
+      const token parameter = consume(token_kind::identifier, "Expected parameter name");
+      p.name = parameter.lexeme;
+      p.name_span = span_for_name(parameter);
+      p.line = parameter.line;
       if (match(token_kind::colon)) p.type_name = parse_type_name();
       if (match(token_kind::equal))  p.default_value = parse_expression();
       params.push_back(std::move(p));
@@ -3256,9 +3328,10 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
     std::vector<ast_param> params;
     while (!check(token_kind::right_paren) && !is_at_end()) {
       ast_param p;
-      p.name =
-          consume(token_kind::identifier, "Expected parameter name").lexeme;
-      p.line = previous().line;
+      const token parameter = consume(token_kind::identifier, "Expected parameter name");
+      p.name = parameter.lexeme;
+      p.name_span = span_for_name(parameter);
+      p.line = parameter.line;
       if (match(token_kind::colon)) {
         p.type_name = parse_type_name();
       }
@@ -3432,6 +3505,7 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
   }
   if (match(token_kind::identifier)) {
     auto id_tok = previous();
+    auto name_tok = id_tok;
     std::string name = id_tok.lexeme;
     // A qualified reference may spell its module path with dots:
     // `tour.mixed::Measurement` is how an Ny client names a type in a
@@ -3459,7 +3533,8 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
         bool is_dot = check(token_kind::dot);
         advance(); // consume the separator
         if (check(token_kind::identifier) || check(token_kind::println_kw)) {
-          name += "::" + advance().lexeme;
+          name_tok = advance();
+          name += "::" + name_tok.lexeme;
         } else {
           add_error(peek(),
                     std::string("Expected identifier after '") +
@@ -3467,21 +3542,26 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
           break;
         }
       }
-      return std::make_shared<ast_identifier_expr>(
+      auto identifier = std::make_shared<ast_identifier_expr>(
           canonical_std_namespace(std::move(name)), id_tok.line);
+      identifier->name_span = span_for_name(name_tok);
+      return identifier;
     }
     while (match(token_kind::double_colon)) {
       std::string seg;
       if (check(token_kind::identifier) || check(token_kind::println_kw)) {
-        seg = advance().lexeme;
+        name_tok = advance();
+        seg = name_tok.lexeme;
       } else {
         add_error(peek(), "Expected identifier after '::'");
       }
       name += "::" + seg;
     }
     // debug_peek("matched identifier");
-    return std::make_shared<ast_identifier_expr>(
+    auto identifier = std::make_shared<ast_identifier_expr>(
         canonical_std_namespace(std::move(name)), id_tok.line);
+    identifier->name_span = span_for_name(name_tok);
+    return identifier;
   }
   if (match(token_kind::left_paren)) {
     debug_peek("matched left_paren -> parse sub-expression");
@@ -4127,6 +4207,7 @@ parser::parse_struct_declaration(visibility_kind vis) {
     }
 
     fields.push_back({field_name.lexeme, canonical_type, field_name.line});
+    fields.back().name_span = span_for_name(field_name);
 
     // Optional comma between fields (not required in VB-style)
     match(token_kind::comma);
@@ -4138,6 +4219,7 @@ parser::parse_struct_declaration(visibility_kind vis) {
       name, std::move(fields), std::move(generic_params), is_pub_bool,
       name_tok.line);
   // Ensure AST node reflects enum-based visibility
+  struct_decl->name_span = span_for_name(name_tok);
   struct_decl->visibility = vis;
   // Register struct as a type symbol and record its visibility flag. Provide
   // module context (if any).
@@ -4221,6 +4303,7 @@ std::shared_ptr<ast_decl> parser::parse_enum_declaration(visibility_kind vis) {
   auto enum_decl = std::make_shared<ast_enum_decl>(name, std::move(variants),
                                                    std::move(generic_params),
                                                    is_pub_bool, name_tok.line);
+  enum_decl->name_span = span_for_name(name_tok);
   enum_decl->visibility = vis;
   symbol_table_.insert_symbol_with_context(name, symbol_kind::type_symbol,
                                            enum_decl.get(), std::nullopt, false,
@@ -4290,33 +4373,36 @@ std::shared_ptr<ast_decl> parser::parse_trait_declaration(visibility_kind vis) {
             is_mut = true;
           }
 
+          token param_token;
           std::string param_name;
           std::string param_type;
 
           if (check(token_kind::self_kw)) {
-            param_name = advance().lexeme;
+            param_token = advance();
+            param_name = param_token.lexeme;
             if (match(token_kind::colon)) {
               param_type = parse_type_name();
             } else {
               param_type = "Self";
             }
           } else if (check(token_kind::identifier) && peek().lexeme == "self") {
-            param_name = advance().lexeme;
+            param_token = advance();
+            param_name = param_token.lexeme;
             if (match(token_kind::colon)) {
               param_type = parse_type_name();
             } else {
               param_type = "Self";
             }
           } else {
-            param_name =
-                consume(token_kind::identifier, "Expected parameter name")
-                    .lexeme;
+            param_token = consume(token_kind::identifier, "Expected parameter name");
+            param_name = param_token.lexeme;
             consume(token_kind::colon, "Expected ':' after parameter name");
             param_type = parse_type_name();
           }
 
           ast_param p;
           p.name = param_name;
+          p.name_span = span_for_name(param_token);
           p.type_name = param_type;
           p.is_mut = is_mut;
           p.line = fn_name_tok.line;
@@ -4391,6 +4477,7 @@ std::shared_ptr<ast_decl> parser::parse_trait_declaration(visibility_kind vis) {
         fn->generic_params = fn_gen_params;
         fn->is_pub = false;
         fn->line = fn_name_tok.line;
+        fn->name_span = span_for_name(fn_name_tok);
         methods.push_back(fn);
       } else {
         // Signature only
@@ -4402,6 +4489,7 @@ std::shared_ptr<ast_decl> parser::parse_trait_declaration(visibility_kind vis) {
         fn->generic_params = fn_gen_params;
         fn->is_pub = false;
         fn->line = fn_name_tok.line;
+        fn->name_span = span_for_name(fn_name_tok);
         methods.push_back(fn);
         // An explicit empty `end fn` is also a signature-only declaration.
         if (check(token_kind::end_kw) && pos_ + 1 < tokens_.size() &&
@@ -4423,6 +4511,7 @@ std::shared_ptr<ast_decl> parser::parse_trait_declaration(visibility_kind vis) {
   bool is_pub_bool_t = (vis == visibility_kind::visibility_public);
   auto trait_decl = std::make_shared<ast_trait_decl>(
       name, generic_params, methods, is_pub_bool_t, name_tok.line);
+  trait_decl->name_span = span_for_name(name_tok);
   trait_decl->visibility = vis;
 
   // Register symbol for the trait using the trait node and resolved
@@ -4742,6 +4831,7 @@ parser::parse_class_declaration(visibility_kind visibility, bool is_abstract) {
         if (check(token_kind::semicolon))
           advance();
         fields.push_back(ast_struct_field{field_name.lexeme, type_name, field_name.line});
+        fields.back().name_span = span_for_name(field_name);
       } else {
         // Not a method, not a field (identifier), not end. To avoid infinite
         // loop, we MUST advance/synchronize.
@@ -4758,6 +4848,7 @@ parser::parse_class_declaration(visibility_kind visibility, bool is_abstract) {
   auto cls = std::make_shared<ast_class_decl>(name, base_classes, fields,
                                               methods, generic_params,
                                               is_abstract, name_tok.line);
+  cls->name_span = span_for_name(name_tok);
   cls->visibility = visibility;
 
   // Register symbol

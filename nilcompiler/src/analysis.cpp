@@ -16,6 +16,7 @@
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
+#include <tuple>
 
 namespace ny {
 namespace {
@@ -412,6 +413,113 @@ void analysis_session::lint() {
   }
 }
 
+std::string analysis_session::semantic_json() const {
+  constexpr std::size_t limit = 4 * 1024 * 1024;
+  if (!semantic_checked || semantic_binary_dependencies || !semantics || !semantics->available ||
+      semantics->symbols.size() > 32768 || semantics->references.size() > 131072)
+    return "null";
+  const auto extension = [](const std::string &path) {
+    auto ext = std::filesystem::path(path).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+    return ext;
+  };
+  const auto native_source = [&](const std::string &path) {
+    if (path.empty() || !std::filesystem::path(path).is_absolute() || !sources.count(path))
+      return false;
+    try { return analysis_source_identity(path) == path; }
+    catch (const std::exception &) { return false; }
+  };
+  const auto valid_span = [&](const std::string &path, source_span span,
+                              std::string name) {
+    if (!native_source(path)) return false;
+    const auto ext = extension(path);
+    if (ext != ".ny" && ext != ".matrix" && ext != ".mat") return false;
+    const auto &text = sources.at(path);
+    if (!span.length || span.start > text.size() || span.length > text.size() - span.start)
+      return false;
+    const auto separator = name.rfind("::");
+    if (separator != std::string::npos) name.erase(0, separator + 2);
+    auto spelling = text.substr(span.start, span.length);
+    if (ext == ".matrix" || ext == ".mat") {
+      // Matrix's bare-identifier resolution folds ASCII case and removes
+      // hyphens/underscores. The checker already selected the binding; this
+      // only verifies that its name span still identifies the original token.
+      const auto folded = [](const std::string &value) {
+        std::string result;
+        for (unsigned char c : value) {
+          if (c == '-' || c == '_') continue;
+          result += static_cast<char>(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
+        }
+        return result;
+      };
+      return folded(spelling) == folded(name);
+    }
+    return spelling == name;
+  };
+  if (!native_source(primary_path)) return "null";
+  std::set<std::string> paths{primary_path};
+  // Even an import with no emitted binding can affect resolution. Preserve
+  // every reached native snapshot so clients can reject a changed graph.
+  for (const auto &[path, text] : sources) {
+    // Changed canonical identity or an input without a native snapshot makes
+    // the whole graph unverifiable, even when its own symbols were omitted.
+    if (!native_source(path)) return "null";
+    paths.insert(path);
+  }
+  std::set<std::size_t> ids;
+  std::string symbol_json;
+  for (const auto &s : semantics->symbols) {
+    if (!valid_span(s.path, s.span, s.name)) continue;
+    const auto entry = "{\"id\":" + std::to_string(s.id) +
+        ",\"kind\":" + quoted(s.kind) + ",\"name\":" + quoted(s.name) +
+        ",\"type\":" + quoted(s.type) + ",\"path\":" + quoted(s.path) +
+        ",\"start\":" + std::to_string(s.span.start) +
+        ",\"length\":" + std::to_string(s.span.length) + '}';
+    if (entry.size() + symbol_json.size() + 1 > limit) return "null";
+    if (!symbol_json.empty()) symbol_json += ',';
+    symbol_json += entry;
+    ids.insert(s.id);
+    paths.insert(s.path);
+  }
+  // A physical name occurrence must resolve to exactly one declaration. A
+  // generic/repeated checker visit that disagrees cannot provide navigation.
+  using occurrence = std::tuple<std::string, std::size_t, std::size_t>;
+  std::map<occurrence, const semantic_reference *> references;
+  std::set<occurrence> ambiguous;
+  for (const auto &r : semantics->references) {
+    if (!ids.count(r.symbol_id) || !valid_span(r.path, r.span, r.name)) continue;
+    const auto key = std::make_tuple(r.path, r.span.start, r.span.length);
+    const auto [it, inserted] = references.emplace(key, &r);
+    if (!inserted && it->second->symbol_id != r.symbol_id) ambiguous.insert(key);
+  }
+  std::string reference_json;
+  for (const auto &[key, r] : references) {
+    if (ambiguous.count(key)) continue;
+    const auto entry = "{\"symbol_id\":" + std::to_string(r->symbol_id) +
+        ",\"path\":" + quoted(r->path) +
+        ",\"start\":" + std::to_string(r->span.start) +
+        ",\"length\":" + std::to_string(r->span.length) + '}';
+    if (entry.size() + symbol_json.size() + reference_json.size() + 1 > limit) return "null";
+    if (!reference_json.empty()) reference_json += ',';
+    reference_json += entry;
+    paths.insert(r->path);
+  }
+  if (paths.size() > 256) return "null";
+  std::string source_json;
+  for (const auto &path : paths) {
+    const auto entry = "{\"path\":" + quoted(path) + ",\"text\":" + quoted(sources.at(path)) + '}';
+    if (entry.size() + source_json.size() + symbol_json.size() + reference_json.size() + 1 > limit)
+      return "null";
+    if (!source_json.empty()) source_json += ',';
+    source_json += entry;
+  }
+  auto result = "{\"schema\":\"nil.semantic.v1\",\"partial\":true,\"sources\":[" + source_json +
+      "],\"symbols\":[" + symbol_json + "],\"references\":[" + reference_json + "]}";
+  return result.size() > limit ? "null" : result;
+}
+
 std::string analysis_session::json(bool success) const {
   std::ostringstream out;
   out << "{\"schema\":\"nil.analysis.v1\",\"source\":" << quoted(logical_path)
@@ -471,7 +579,16 @@ std::string analysis_session::json(bool success) const {
     out << "{\"owner_id\":" << a.owner_id << ",\"name\":" << quoted(a.name)
         << ",\"arguments\":" << quoted(a.arguments) << ",\"line\":" << a.line << '}';
   }
-  out << "]}}\n";
+  out << "]}";
+  if (semantic_requested) {
+    auto semantic = success ? semantic_json() : "null";
+    // Optional navigation must not crowd otherwise valid diagnostics out of
+    // the established analysis-response bound.
+    if (static_cast<std::size_t>(out.tellp()) + semantic.size() + 16 > output_limit)
+      semantic = "null";
+    out << ",\"semantic\":" << semantic;
+  }
+  out << "}\n";
   return out.str();
 }
 
@@ -517,6 +634,7 @@ int run_analysis_cli(int argc, char **argv, compilation_entry compile) {
       if (a == "--analyze") continue;
       if (a == "--source-stdin") { session.source_stdin = true; continue; }
       if (a == "--workspace-stdin") { session.workspace_stdin = true; continue; }
+      if (a == "--semantic-index") { session.semantic_requested = true; continue; }
       if (a == "--warnings-as-errors") { session.warnings_as_errors = true; continue; }
       if (a == "--disable-rule") {
         if (++i >= argc) throw std::runtime_error("missing value after " + a);

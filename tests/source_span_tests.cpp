@@ -1,0 +1,188 @@
+#include "lexer.hpp"
+#include "parser.hpp"
+
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <string>
+
+namespace {
+void require(bool condition, const std::string &message) {
+  if (!condition) throw std::runtime_error(message);
+}
+
+void expect_span(const std::string &source,
+                 const std::optional<ny::source_span> &span,
+                 size_t offset, const std::string &name) {
+  require(span.has_value(), "missing source span for " + name);
+  require(span->start == offset && span->length == name.size(),
+          "incorrect source byte range for " + name);
+  require(source.substr(span->start, span->length) == name,
+          "source byte range does not select " + name);
+}
+
+template <typename T, typename U>
+std::shared_ptr<T> node(const std::shared_ptr<U> &value) {
+  auto result = std::dynamic_pointer_cast<T>(value);
+  require(bool(result), "unexpected AST shape");
+  return result;
+}
+
+std::shared_ptr<ny::ast_variable_decl> variable(const ny::ast_stmt_ptr &statement) {
+  return node<ny::ast_variable_decl>(node<ny::ast_decl_stmt>(statement)->declaration);
+}
+
+void test_original_source(const std::string &newline, bool preprocess) {
+  const std::string prefix = "\xef\xbb\xbf// UTF-8: café 🧭" + newline + " \t" + newline;
+  std::string source = prefix;
+  for (const auto *line : {
+      "struct Sample", "  value: i32", "end struct", "type Count = i32",
+      "fn compute(input: i32) -> i32", "  let local = input",
+      "  let object = Sample { value: local }",
+      "  for (index, value) in [local]", "    println(index, value)", "  end for",
+      "  let closure = fn(arg: i32) -> i32", "    return arg", "  end fn",
+      "  return object.value + pkg.part::read(local)", "end fn"}) {
+    source += line;
+    source += newline;
+  }
+  source.resize(source.size() - newline.size()); // Missing final newline is supported.
+  ny::parser_options options;
+  options.enable_preprocessor = preprocess;
+  ny::parser parser(source, options);
+  const auto program = parser.parse_program();
+  for (const auto &diagnostic : parser.diagnostics())
+    std::cerr << diagnostic.line << ": " << diagnostic.message << '\n';
+  require(program && !parser.has_errors(), "source-span fixture must parse");
+  require(program->declarations.size() == 3, "source-span declaration count");
+  const auto record = node<ny::ast_struct_decl>(program->declarations[0]);
+  expect_span(source, record->name_span, source.find("Sample"), "Sample");
+  expect_span(source, record->fields.at(0).name_span, source.find("value"), "value");
+  const auto alias = node<ny::ast_type_alias_decl>(program->declarations[1]);
+  expect_span(source, alias->name_span, source.find("Count"), "Count");
+  const auto function = node<ny::ast_function_decl>(program->declarations[2]);
+  expect_span(source, function->name_span, source.find("compute"), "compute");
+  expect_span(source, function->params.at(0).name_span, source.find("input"), "input");
+  const auto body = node<ny::ast_block_stmt>(function->body);
+  const auto local = variable(body->statements.at(0));
+  expect_span(source, local->name_span, source.find("local ="), "local");
+  expect_span(source, local->initializer->name_span, source.find("= input") + 2, "input");
+  const auto object = variable(body->statements.at(1));
+  expect_span(source, object->initializer->name_span, source.find("= Sample") + 2, "Sample");
+  const auto loop = node<ny::ast_for_in_stmt>(body->statements.at(2));
+  expect_span(source, loop->variables.at(0).name_span, source.find("index"), "index");
+  expect_span(source, loop->variables.at(1).name_span, source.find("index, value") + 7, "value");
+  const auto lambda = node<ny::ast_lambda_expr>(variable(body->statements.at(3))->initializer);
+  expect_span(source, lambda->params.at(0).name_span, source.find("arg:"), "arg");
+  const auto result = node<ny::ast_return_stmt>(body->statements.at(4));
+  const auto addition = node<ny::ast_binary_expr>(result->value);
+  const auto member = node<ny::ast_member_access_expr>(addition->left);
+  expect_span(source, member->name_span, source.find("object.value") + 7, "value");
+  expect_span(source, member->object->name_span, source.find("return object") + 7, "object");
+  const auto call = node<ny::ast_call_expr>(addition->right);
+  expect_span(source, call->callee->name_span, source.find("::read") + 2, "read");
+}
+
+void test_transformed_source_is_not_editable() {
+  ny::parser parser("@define READ compute\nfn READ(input: i32) -> i32 { return input }\n");
+  const auto program = parser.parse_program();
+  require(program && !parser.has_errors(), "macro fixture must parse");
+  const auto function = node<ny::ast_function_decl>(program->declarations.at(0));
+  require(function->name == "compute", "macro must expand");
+  require(!function->name_span && !function->params.at(0).name_span,
+          "transformed source must not expose editable declaration ranges");
+  const auto body = node<ny::ast_block_stmt>(function->body);
+  require(!node<ny::ast_return_stmt>(body->statements.at(0))->value->name_span,
+          "transformed source must not expose editable identifier ranges");
+}
+
+void test_methods_and_fields() {
+  const std::string source =
+      "class Reader\nvalue: i32\n"
+      "fn read(self) -> i32 { return self.value }\nend class\n"
+      "trait Readable\nfn measure(self, amount: i32) -> i32\nend trait\n";
+  ny::parser parser(source);
+  const auto program = parser.parse_program();
+  require(program && !parser.has_errors(), "method span fixture must parse");
+  const auto record = node<ny::ast_class_decl>(program->declarations.at(0));
+  expect_span(source, record->name_span, source.find("Reader"), "Reader");
+  expect_span(source, record->fields.at(0).name_span, source.find("value"), "value");
+  const auto &method = record->methods.at(0);
+  expect_span(source, method->name_span, source.find("read("), "read");
+  expect_span(source, method->params.at(0).name_span, source.find("self"), "self");
+  const auto result = node<ny::ast_return_stmt>(
+      node<ny::ast_block_stmt>(method->body)->statements.at(0));
+  const auto member = node<ny::ast_member_access_expr>(result->value);
+  expect_span(source, member->object->name_span, source.find("return self") + 7, "self");
+  const auto trait = node<ny::ast_trait_decl>(program->declarations.at(1));
+  expect_span(source, trait->name_span, source.find("Readable"), "Readable");
+  expect_span(source, trait->methods.at(0)->name_span, source.find("measure"), "measure");
+  expect_span(source, trait->methods.at(0)->params.at(1).name_span,
+              source.find("amount"), "amount");
+}
+
+void test_mapping_preserves_preprocessed_literal_semantics() {
+  const std::string source =
+      "fn literal() { let value = \"a\n \t\nb\"\nreturn value }\n";
+  ny::parser parser(source);
+  const auto program = parser.parse_program();
+  require(program && !parser.has_errors(), "multiline literal fixture must parse");
+  const auto function = node<ny::ast_function_decl>(program->declarations.at(0));
+  const auto body = node<ny::ast_block_stmt>(function->body);
+  const auto text = node<ny::ast_string_literal>(variable(body->statements.at(0))->initializer);
+  require(text->value == "a\n\nb", "source mapping must preserve existing preprocessing semantics");
+  const auto result = node<ny::ast_return_stmt>(body->statements.at(1));
+  expect_span(source, result->value->name_span, source.find("return value") + 7, "value");
+}
+
+void test_interpolated_identifier_is_not_guessed() {
+  ny::parser parser("fn message(value: i32) { println(\"\\n{value}\") }\n");
+  const auto program = parser.parse_program();
+  require(program && !parser.has_errors(), "interpolation fixture must parse");
+  const auto function = node<ny::ast_function_decl>(program->declarations.at(0));
+  const auto body = node<ny::ast_block_stmt>(function->body);
+  const auto print = node<ny::ast_println_stmt>(body->statements.at(0));
+  const auto text = node<ny::ast_interpolated_string_expr>(print->args.at(0));
+  bool found = false;
+  for (const auto &part : text->parts) {
+    if (!part.is_literal) {
+      found = true;
+      require(!part.expression->name_span,
+              "decoded interpolation must not guess original byte coordinates");
+    }
+  }
+  require(found, "interpolation expression missing");
+}
+
+void test_lexer_source_ranges() {
+  const std::string source = "// λ 🧭\r\nlet value = \"a\\nb\"";
+  ny::lexer lexer(source);
+  const auto tokens = lexer.scan_tokens();
+  require(tokens.size() == 5, "lexer fixture token count");
+  require(tokens[1].offset == source.find("value") && tokens[1].length == 5,
+          "lexer identifier byte range must count UTF-8 and CRLF bytes");
+  require(source.substr(tokens[3].offset, tokens[3].length) == "\"a\\nb\"",
+          "lexer literal range must describe raw bytes rather than decoded text");
+  require(tokens.back().offset == source.size() && tokens.back().length == 0,
+          "EOF source range must be empty at end of input");
+  const ny::token synthesized{ny::token_kind::identifier, "generated", 1};
+  require(synthesized.length == 0, "synthesized token must have no source range");
+}
+} // namespace
+
+int main() {
+  try {
+    test_lexer_source_ranges();
+    for (const auto &newline : {std::string("\n"), std::string("\r\n")})
+      for (const bool preprocess : {false, true})
+        test_original_source(newline, preprocess);
+    test_transformed_source_is_not_editable();
+    test_methods_and_fields();
+    test_mapping_preserves_preprocessed_literal_semantics();
+    test_interpolated_identifier_is_not_guessed();
+    std::cout << "source span tests passed\n";
+    return 0;
+  } catch (const std::exception &error) {
+    std::cerr << "FAIL: " << error.what() << '\n';
+    return 1;
+  }
+}

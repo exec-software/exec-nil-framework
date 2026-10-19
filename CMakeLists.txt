@@ -1014,6 +1014,19 @@ if(BUILD_TESTING)
                     --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
         )
         set_tests_properties(nil.analysis PROPERTIES LABELS "analysis;typecheck" TIMEOUT 90)
+        add_executable(ny_source_span_tests tests/source_span_tests.cpp)
+        target_link_libraries(ny_source_span_tests PRIVATE nilcompiler_core)
+        target_compile_features(ny_source_span_tests PRIVATE cxx_std_17)
+        add_test(NAME parser.source-spans COMMAND ny_source_span_tests)
+        add_executable(nil_matrix_source_spans tests/matrix_source_spans.cpp)
+        target_link_libraries(nil_matrix_source_spans PRIVATE nilcompiler_core)
+        target_compile_features(nil_matrix_source_spans PRIVATE cxx_std_17)
+        add_test(NAME parser.matrix-source-spans COMMAND nil_matrix_source_spans)
+        add_test(NAME nil.semantic-index
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/semantic_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler>)
+        set_tests_properties(parser.source-spans parser.matrix-source-spans nil.semantic-index
+            PROPERTIES LABELS "analysis;semantic" TIMEOUT 60)
         add_test(NAME nil.reflection-consumer
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/reflection_contract.py"
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>

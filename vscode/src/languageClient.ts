@@ -10,6 +10,7 @@ import { resolveConfiguredTool, toolNotFoundMessage } from "./vscodeToolchain";
 import { languageDocumentSelector } from "./languages";
 
 export class NyLanguageClientManager implements vscode.Disposable {
+  constructor(private readonly compilerDefinitionsEnabled: (document: vscode.TextDocument) => boolean = () => false) {}
   private client: LanguageClient | undefined;
   private readonly outputChannel = vscode.window.createOutputChannel(
     "NIL Framework Language Server",
@@ -55,6 +56,8 @@ export class NyLanguageClientManager implements vscode.Disposable {
       outputChannel: this.outputChannel,
       revealOutputChannelOn: RevealOutputChannelOn.Error,
       middleware: {
+        provideDefinition: (document, position, token, next) => this.compilerDefinitionsEnabled(document)
+          ? undefined : next(document, position, token),
         handleDiagnostics: (uri, diagnostics, next) => {
           const enabled = vscode.workspace
             .getConfiguration("ny", uri)

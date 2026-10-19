@@ -83,7 +83,8 @@ The framework includes:
 - **Project tooling.** `nilbuild` shares project settings and default analyzer
   rules with VS Code, and checks applications before VM or native builds.
   Live editor analysis includes unsaved source dependencies through a shared
-  workspace snapshot.
+  workspace snapshot. Compiler-resolved source bindings support Go to Definition
+  for local variables, parameters and imported functions across both languages.
 
 See the [standard-library reference](docs/standard-library/index.md),
 [analysis API](docs/analysis-api.md), and [tool reference](docs/tools/index.md)

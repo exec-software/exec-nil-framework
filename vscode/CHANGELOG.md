@@ -4,6 +4,12 @@ All notable changes to the NIL Framework VS Code extension are documented here.
 
 ## 1.0.0-rc.1
 
+- Resolve Go to Definition through checked compiler bindings for source variables,
+  parameters and direct/imported functions across Ny and Matrix, including dirty
+  and new sources. Preserve exact UTF-8 name spans and lexical binding identities.
+- Validate the complete semantic source snapshot before navigation; suppress stale,
+  unsupported, failed-check and binary-library destinations. Keep references and
+  rename unavailable until their compiler coverage is complete.
 - Check unsaved imported Ny and Matrix buffers through bounded compiler workspace
   input, including new named untitled modules and their nested project settings.
 - Cancel checks when any captured buffer or workspace context changes; publish

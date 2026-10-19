@@ -33,6 +33,7 @@ not assigned architecture identifiers.
 | NIL-0007 | [Integer literal widths and range validation](NIL-0007-integer-literal-widths.md) | Implemented |
 | NIL-0008 | [Shared project context and default analysis](NIL-0008-project-tooling.md) | Implemented initial local-project profile |
 | NIL-0009 | [Workspace source snapshots for analysis](NIL-0009-workspace-analysis.md) | Implemented initial source-overlay contract |
+| NIL-0010 | [Compiler bindings for source navigation](NIL-0010-semantic-source-index.md) | Implemented initial partial source index and definition navigation |
 | NIL-0093 | [Executable context is artifact self-description](NIL-0093-executable-context.md) | Implemented within the documented inspection profile |
 
 ## Retained Ny feature references

@@ -24,8 +24,10 @@ the compiler-backed source debugger.
 - Snippets for modules, functions, data types, control flow, faults, tests,
   interop, documentation, and `@ai_context` metadata.
 - A `nillsp` client using standard LSP `Content-Length` framing over stdio.
-- Completion, hover, definition, and document outline for Matrix declarations,
+- Completion, hover, and document outline for Matrix declarations,
   paragraph parameters, local bindings, and known receiver members.
+- Compiler-resolved Go to Definition for variables, parameters and direct/imported
+  functions across Ny and Matrix source files, including unsaved imports.
 - Compiler-backed checks of current Ny and Matrix buffers, with Problems entries
   and guarded quick fixes for the default analyzer. Unreachable statements and
   discarded checked outcomes receive semantic warnings in both languages.
@@ -226,7 +228,7 @@ Path settings support `${workspaceFolder}`, `${workspaceFolderBasename}`,
 ## Compiler checks and quick fixes
 
 The extension checks saved and untitled Ny and Matrix documents with
-`nilcompiler --analyze --workspace-stdin <logical-source-path>`. It sends the current
+`nilcompiler --analyze --workspace-stdin <logical-source-path> --semantic-index`. It sends the current
 buffer, named Ny and Matrix sources in open text/diff tabs, and every dirty named
 source buffer in a `nil.analysis.workspace.v1`
 request over standard input and creates no compiled output. Checks run after a
@@ -234,8 +236,8 @@ request over standard input and creates no compiled output. Checks run after a
 check. Each request is limited to 256 source identities, 2 MiB per source, and
 8 MiB in total (including JSON encoding); each check is limited to 10 seconds
 and 8 MiB of output. Requests exceeding these limits are reported without silently
-omitting dirty buffers. An SDK supporting workspace input and the `nil.analysis.v1`
-response protocol is required. Older compilers and
+omitting dirty buffers. An SDK supporting workspace input, `--semantic-index` and
+the `nil.analysis.v1` response protocol is required. Older compilers and
 operational failures are reported in **NIL Framework: Show Analysis Output**.
 
 Compiler errors and default analyzer warnings appear with source `nil-analysis`
@@ -275,6 +277,34 @@ continue to use saved disk contents.
 `ny.compiler.extraArgs` and `ny.native.extraArgs` apply to current-file build tasks only.
 Editor checks are disabled in untrusted workspaces and can be switched off with
 `ny.analysis.enabled`.
+
+## Compiler definitions
+
+Go to Definition follows the compiler's resolved bindings for source functions,
+variables and parameters, including lexical shadowing, loop and lambda parameters,
+and direct calls across mixed Ny/Matrix imports. Exact original name spans preserve
+UTF-8, CRLF and Matrix surface spelling. Named untitled imports can be destinations
+before they are saved.
+
+The compiler returns a bounded, partial `nil.semantic.v1` index only after a
+successful check. The extension validates every exported source snapshot against
+captured buffers or disk before returning a destination, rechecks versions after
+asynchronous reads, and watches the reached source files. Dirty textual includes
+with other extensions cannot be overlaid and prevent use of that index.
+
+Member dispatch, fields, type uses, pattern bindings and some function-value or
+generated references do not yet provide destinations. Expanded Ny units lack
+source maps. Graphs using binary libraries have no index until their identities
+and source mappings can be represented. Failed checks, changed sources, ambiguous
+locations and index limits produce no destination. The index is limited to
+4 MiB of encoded JSON, 256 source snapshots, 32,768 symbols and 131,072 references;
+its absence does not suppress otherwise valid diagnostics.
+
+When compiler analysis is enabled, its definition provider takes precedence over
+the language server's document-local guesses. Disabling `ny.analysis.enabled`
+retains the older language-server definition behavior. Completion and hover
+continue to work from the tolerant language-server index while source is incomplete.
+References and rename are not exposed from this partial compiler index.
 
 ## Current language-server limits
 
