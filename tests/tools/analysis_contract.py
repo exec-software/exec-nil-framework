@@ -362,7 +362,198 @@ end paragraph
                                    text=True, capture_output=True, timeout=20, cwd=root)
         assert collision.returncode == 2 and not collision.stdout
         assert primary.read_text() == 'this is deliberately invalid on disk'
-    print('analysis protocol, default rules, policies, source snapshots, reflection and no-execution checks passed')
+
+        # A workspace request is a single immutable source view. Only imports
+        # selected by ordinary candidate/root ordering enter the graph.
+        workspace_root = root / 'workspace with spaces'
+        workspace_root.mkdir()
+        workspace_primary = workspace_root / 'entry.ny'
+        workspace_dep = workspace_root / 'dependency.ny'
+        workspace_primary.write_text('invalid entry on disk')
+        workspace_dep.write_text('invalid dependency on disk')
+        entry_source = 'import dependency.*\nfn main() -> i32\n return answer()\nend fn\n'
+        dependency_source = 'module dependency\npub fn answer() -> i32\n return 42\nend fn\n'
+
+        def workspace(sources, *, path=workspace_primary, extra=(), status=0, raw=None, error=None):
+            request = raw if raw is not None else json.dumps({
+                'schema': 'nil.analysis.workspace.v1',
+                'sources': [{'path': str(p), 'text': text} for p, text in sources],
+            }, ensure_ascii=False).encode()
+            proc = subprocess.run([args.compiler, '--analyze', '--workspace-stdin', '--no-stdlib',
+                                   '-I', args.stdlib, str(path), *extra], input=request,
+                                  capture_output=True, timeout=20, cwd=root)
+            assert proc.returncode == status, (proc.returncode, proc.stdout, proc.stderr)
+            if status == 2:
+                assert not proc.stdout and proc.stderr.startswith(b'Analysis error:'), proc
+                if error:
+                    assert error in proc.stderr.decode(), proc.stderr
+                return None
+            assert not proc.stderr, proc.stderr
+            value = json.loads(proc.stdout)
+            assert value['schema'] == 'nil.analysis.v1' and value['source'] == str(path), value
+            assert value['success'] == (status == 0), value
+            assert len(json.dumps(value['sources'], ensure_ascii=False, separators=(',', ':')).encode()) <= 1024 * 1024
+            return value
+
+        buffers = [(workspace_primary, entry_source), (workspace_dep, dependency_source)]
+        data = workspace(buffers)
+        assert data['reflection']['semantic_checked'] and not data['diagnostics'], data
+        assert workspace_primary.read_text() == 'invalid entry on disk'
+        assert workspace_dep.read_text() == 'invalid dependency on disk'
+        assert not (root / 'analysis-unused.nil').exists()
+        # The imported snapshot is exactly the dirty text, including UTF-8 and
+        # CRLF. Fixing it without saving removes the dependent diagnostic.
+        dirty_dependency = dependency_source.replace('\n', '\r\n').replace('return 42', 'return "λ🙂"')
+        data = workspace([(workspace_primary, entry_source), (workspace_dep, dirty_dependency)], status=1)
+        assert data['sources'] == [{'path': str(workspace_dep), 'text': dirty_dependency}], data
+        assert any(d['path'] == str(workspace_dep) and d['start'] is not None for d in data['diagnostics'])
+        assert not workspace(buffers)['diagnostics']
+        # An unrelated broken buffer is neither parsed nor reflected.
+        unused = workspace_root / 'unrelated.ny'
+        data = workspace(buffers + [(unused, 'deliberately malformed source')])
+        assert not data['diagnostics'] and all(d['source_path'] != str(unused) for d in data['reflection']['declarations'])
+        # A new Matrix module in a directory that does not exist participates
+        # in Ny imports; the reciprocal frontend direction uses the same view.
+        fresh = workspace_root / 'new' / 'package.matrix'
+        matrix_dependency = 'book new\npublic answer returns override integer begin paragraph\n give 42\nend paragraph\n'
+        data = workspace([(workspace_primary, entry_source.replace('dependency.*', 'new.*')),
+                          (fresh, matrix_dependency)])
+        assert data['reflection']['semantic_checked'] and not fresh.exists(), data
+        matrix_entry = workspace_root / 'entry.matrix'
+        matrix_source = 'book consumer\nread everything from dependency\nmain returns override integer begin paragraph\n give answer with nothing\nend paragraph\n'
+        assert not workspace([(matrix_entry, matrix_source), (workspace_dep, dependency_source)],
+                             path=matrix_entry)['diagnostics']
+        # Existing .ny candidates still win before a new .matrix alternative.
+        workspace_dep.write_text(dependency_source)
+        data = workspace([(workspace_primary, entry_source),
+                          (workspace_dep.with_suffix('.matrix'), 'invalid but unselected')])
+        assert not data['diagnostics'], data
+        earlier = workspace_root / 'earlier'
+        later = workspace_root / 'later'
+        earlier.mkdir()
+        (earlier / 'ordered.ny').write_text(dependency_source.replace('dependency', 'ordered'))
+        data = workspace([(workspace_primary, entry_source.replace('dependency', 'ordered')),
+                          (later / 'ordered.ny', 'invalid but later in search order')],
+                         extra=('-I', str(earlier), '-I', str(later)))
+        assert not data['diagnostics'], data
+        (earlier / 'ordered.ny').unlink()
+        (earlier / 'ordered.ny').symlink_to('ordered.ny')
+        data = workspace([(workspace_primary, entry_source.replace('dependency', 'ordered')),
+                          (later / 'ordered.ny', dependency_source.replace('dependency', 'ordered'))],
+                         extra=('-I', str(earlier), '-I', str(later)))
+        assert not data['diagnostics'], data
+        # Source candidates remain ahead of binary candidates. Binary-only
+        # modules remain available and synthetic identities cannot be overlaid.
+        library_dir = workspace_root / 'libraries'
+        library_dir.mkdir()
+        library_source = workspace_root / 'library_source.ny'
+        library_source.write_text(dependency_source.replace('dependency', 'binary_dependency'))
+        library = library_dir / 'binary_dependency.nil'
+        compiled = subprocess.run([args.compiler, '--no-stdlib', '--no-bundle', '--emit-binary-nil',
+                                   '--emit-library', '-q', '-o', str(library), str(library_source)],
+                                  text=True, capture_output=True, timeout=20, cwd=root)
+        assert compiled.returncode == 0, compiled.stderr
+        library_entry = entry_source.replace('dependency', 'binary_dependency')
+        assert not workspace([(workspace_primary, library_entry)], extra=('-I', str(library_dir)))['diagnostics']
+        overlay_library_source = dependency_source.replace('dependency', 'binary_dependency').replace('return 42', 'return "bad"')
+        data = workspace([(workspace_primary, library_entry),
+                          (library_dir / 'binary_dependency.ny', overlay_library_source)],
+                         extra=('-I', str(library_dir)), status=1)
+        assert any(d['path'] == str(library_dir / 'binary_dependency.ny') for d in data['diagnostics']), data
+        large_library_source = workspace_root / 'large_library_source.ny'
+        large_library_source.write_text('#' + 'x' * (2 * 1024 * 1024) + '\n' +
+                                        dependency_source.replace('dependency', 'large_binary'))
+        compiled = subprocess.run([args.compiler, '--no-stdlib', '--no-bundle', '--emit-binary-nil',
+                                   '--emit-library', '-q', '-o', str(library_dir / 'large_binary.nil'),
+                                   str(large_library_source)], text=True, capture_output=True, timeout=20, cwd=root)
+        assert compiled.returncode == 0, compiled.stderr
+        workspace([(workspace_primary, entry_source.replace('dependency', 'large_binary'))],
+                  extra=('-I', str(library_dir)), status=2, error='2 MiB')
+        # Linked parent directories and primary-file aliases retain the
+        # invocation identity while imports use one canonical snapshot.
+        alias_dir = root / 'workspace alias'
+        alias_dir.symlink_to(workspace_root, target_is_directory=True)
+        alias_primary = alias_dir / 'entry.ny'
+        assert not workspace([(alias_primary, entry_source), (alias_dir / 'dependency.ny', dependency_source)],
+                             path=alias_primary)['diagnostics']
+        fresh_alias = alias_dir / 'another' / 'package.ny'
+        data = workspace([(alias_primary, entry_source.replace('dependency', 'another')),
+                          (fresh_alias, dependency_source.replace('dependency', 'another'))], path=alias_primary)
+        assert not data['diagnostics'] and not fresh_alias.exists()
+        workspace(buffers + [(alias_dir / 'dependency.ny', dependency_source)], status=2,
+                  error='duplicate canonical')
+        # Active textual includes use the same authoritative source provider,
+        # including new/nested files. Their flattened positions remain unmapped.
+        include_file = workspace_root / 'included.ny'
+        nested_file = workspace_root / 'nested.ny'
+        include_file.write_text('invalid include on disk')
+        include_entry = '@include "included.ny"\nfn main() -> i32\n return included()\nend fn\n'
+        included = 'fn included() -> i32\n return 1\n println("dead")\nend fn\n'
+        data = workspace([(workspace_primary, include_entry), (include_file, '@include "nested.ny"\n'),
+                          (nested_file, included)])
+        assert [d['code'] for d in data['diagnostics']] == ['NIL2001'], data
+        assert all(d['start'] is None and d['length'] is None and d['fix'] is None for d in data['diagnostics'])
+        assert not nested_file.exists() and include_file.read_text() == 'invalid include on disk'
+        # Oversized/nonregular include targets cannot hang or allocate through
+        # the ordinary preprocessor disk reader.
+        include_file.write_bytes(b'#' + b'x' * (2 * 1024 * 1024))
+        workspace([(workspace_primary, include_entry)], status=2, error='cannot read analysis source')
+        if hasattr(os, 'mkfifo'):
+            fifo = workspace_root / 'pipe.ny'
+            os.mkfifo(fifo)
+            data = workspace([(workspace_primary, include_entry.replace('included.ny', 'pipe.ny'))], status=1)
+            assert any('Included file not found' in d['message'] for d in data['diagnostics'])
+        depth_buffers = [(workspace_primary, '@include "depth0.ny"\n')]
+        depth_buffers.extend((workspace_root / f'depth{i}.ny', f'@include "depth{i + 1}.ny"\n') for i in range(33))
+        depth_buffers.append((workspace_root / 'depth33.ny', '\n'))
+        workspace(depth_buffers, status=2, error='include levels')
+        empty_include = workspace_root / 'empty.ny'
+        workspace([(workspace_primary, '@include "empty.ny"\n' * 1025), (empty_include, '')],
+                  status=2, error='include visits')
+        large_comment = '#' + 'x' * (2 * 1024 * 1024 - 2) + '\n'
+        workspace([(workspace_primary, '@include "included.ny"\n' * 5), (include_file, large_comment)],
+                  status=2, error='preprocessor expansion')
+        workspace([(workspace_primary, '@define BIG ' + 'x' * (1024 * 1024) + '\n' + 'BIG ' * 9 + '\n')],
+                  status=2, error='macro expansion')
+        workspace([(workspace_primary, '@define DUP(x) ' + 'x ' * 10 + '\nDUP(' + 'y' * (1024 * 1024) + ')\n')],
+                  status=2, error='macro expansion')
+        aggregate_entry = ''
+        for index in range(9):
+            name = f'budget{index}.ny'
+            (workspace_root / name).write_text('#' + 'x' * (1024 * 1024 - 2) + '\n')
+            aggregate_entry += f'@include "{name}"\n'
+        workspace([(workspace_primary, aggregate_entry)], status=2, error='source reads exceed 8 MiB')
+
+        # Request validation is fail-closed and never writes response JSON or
+        # files for malformed input, contradictory options, or aliases.
+        minimal = {'schema': 'nil.analysis.workspace.v1', 'sources': [{'path': str(workspace_primary), 'text': good}]}
+        malformed = [b'{', b'[]', b'{"schema":"nil.analysis.workspace.v1","schema":"nil.analysis.workspace.v1","sources":[]}',
+                     b'{"schema":"nil.analysis.workspace.v1","sources":[],"extra":true}',
+                     json.dumps({**minimal, 'schema': 'nil.analysis.workspace.v2'}).encode(),
+                     json.dumps({**minimal, 'sources': []}).encode(),
+                     json.dumps({**minimal, 'sources': [{'path': str(workspace_primary), 'text': good, 'extra': 1}]}).encode(),
+                     json.dumps({**minimal, 'sources': [{'path': str(workspace_primary), 'text': 1}]}).encode(),
+                     json.dumps({**minimal, 'sources': [{'path': str(workspace_primary), 'text': '\ud800'}]}).encode(),
+                     json.dumps(minimal).encode() + b'\xff',
+                     b' ' * (8 * 1024 * 1024 + 1)]
+        for raw in malformed:
+            workspace([], raw=raw, status=2)
+        for invalid_path in ('relative.ny', 'nillib://module/source.ny', str(workspace_root / 'module.nil'),
+                             str(workspace_root / ('x' * 4096 + '.ny')), str(workspace_root / 'nul\0.ny')):
+            workspace([(invalid_path, good)], status=2)
+        workspace([(workspace_dep, dependency_source)], status=2, error='primary source')
+        workspace(buffers + [buffers[0]], status=2, error='duplicate canonical')
+        workspace([(workspace_primary, '\0')], status=2, error='NUL byte')
+        workspace([(workspace_primary, 'x' * (2 * 1024 * 1024 + 1))], status=2, error='2 MiB')
+        workspace([(workspace_root / f'file{i}.ny', '') for i in range(257)], status=2, error='256 sources')
+        directory_source = workspace_root / 'directory.ny'
+        directory_source.mkdir()
+        workspace([(directory_source, good)], path=directory_source, status=2, error='regular file')
+        workspace(buffers, extra=('--source-stdin',), status=2, error='mutually exclusive')
+        workspace(buffers + [(unused, 'ignored')], extra=('--emit-reflection', str(unused)), status=2,
+                  error='overwrite an analyzed source')
+        assert not unused.exists()
+    print('analysis protocol, workspace snapshots, default rules, policies, reflection and no-execution checks passed')
 
 
 if __name__ == '__main__':

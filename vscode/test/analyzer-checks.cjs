@@ -108,11 +108,12 @@ exports.run = async ({ check: runCheck, workspace }) => {
     const log = path.join(workspace, "analysis-probe.jsonl");
     await fs.writeFile(fake, `#!/usr/bin/env node
 const fs = require('node:fs');
-const source = process.argv[process.argv.indexOf('--source-stdin') + 1];
-let text = '';
+const source = process.argv[process.argv.indexOf('--workspace-stdin') + 1];
+let input = '';
 process.stdin.setEncoding('utf8');
-process.stdin.on('data', chunk => text += chunk);
+process.stdin.on('data', chunk => input += chunk);
 process.stdin.on('end', () => {
+  const text = JSON.parse(input).sources.find(item => item.path === source).text;
   fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({pid: process.pid, source, text}) + '\\n');
   const finding = (code, extra = {}) => ({code, severity:'warning', message:code, path:source, start:0, length:1, hint:'', fix:null, ...extra});
   setTimeout(() => process.stdout.write(JSON.stringify({schema:'nil.analysis.v1',source,language:'matrix',success:true,reflection:{},diagnostics:[

@@ -376,7 +376,7 @@
           "type": "boolean",
           "default": true,
           "scope": "resource",
-          "description": "Check current Ny and Matrix editor contents with nilcompiler, including unsaved changes. Requires a trusted workspace and a compiler supporting nil.analysis.v1."
+          "description": "Check current Ny and Matrix sources and unsaved imports with nilcompiler. Requires a trusted workspace and a current SDK supporting --workspace-stdin (nil.analysis.workspace.v1 requests and nil.analysis.v1 results)."
         },
         "ny.analysis.includePaths": {
           "type": "array",

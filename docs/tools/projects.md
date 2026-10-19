@@ -136,12 +136,14 @@ commands, and uses the same SDK, import roots and analyzer policy for live
 checks. Editing the manifest updates that context. JSON completion and
 validation describe the project fields.
 
-Compiler errors in imported files appear in Problems when their analyzed source
-snapshot still matches the file on disk. A dirty imported editor buffer is not
-treated as the source used by the compiler. The primary buffer is analyzed
-without saving; unsaved imported-buffer overlays remain future work. Imported
-diagnostics without a matching bounded snapshot remain in the analysis output.
-Quick fixes remain limited to the unchanged primary document version.
+Live analysis checks the primary buffer together with open source dependencies,
+including unsaved edits. Compiler errors in imported files appear in Problems
+when their analyzed source snapshot still matches the captured editor buffer
+or current disk text for unopened files. Input changes invalidate pending
+results. Imported diagnostics without a matching bounded snapshot remain in
+the analysis output. Quick fixes remain limited to the unchanged primary
+document version. Project tasks use saved files; save source changes before
+building or running.
 
 This establishes project-aware checking and build tasks. Completion, hover and
 local navigation still use the language server's tolerant document index. Full

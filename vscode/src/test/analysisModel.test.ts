@@ -6,7 +6,8 @@ import {
   analysisInvocation,
   byteRangeToOffsets,
   createByteRangeMapper,
-  parseAnalysisOutput
+  parseAnalysisOutput,
+  serializeAnalysisWorkspace
 } from "../analysisModel";
 
 const workRoot = path.join(path.parse(process.cwd()).root, "work");
@@ -261,7 +262,7 @@ test("analysis invocation includes the source parent before SDK and configured r
   assert.deepEqual(analysisInvocation("nilcompiler", source, sdk, true, roots), {
     command: "nilcompiler",
     args: [
-      "--analyze", "--source-stdin", source, "--no-stdlib",
+      "--analyze", "--workspace-stdin", source, "--no-stdlib",
       "-I", workRoot, "-I", sdk, "-I", imports
     ]
   });
@@ -271,7 +272,7 @@ test("analysis invocation includes the source parent before SDK and configured r
 test("analysis invocation omits unconfigured options while retaining local imports", () => {
   assert.deepEqual(analysisInvocation("nilcompiler", source, undefined, false, []), {
     command: "nilcompiler",
-    args: ["--analyze", "--source-stdin", source, "-I", workRoot]
+    args: ["--analyze", "--workspace-stdin", source, "-I", workRoot]
   });
 });
 
@@ -281,7 +282,7 @@ test("analysis invocation preserves spaces and shell characters as literal argum
   const imports = path.join(workRoot, "imports & 'quoted'");
   assert.deepEqual(analysisInvocation(compiler, shellSource, undefined, false, [imports]), {
     command: compiler,
-    args: ["--analyze", "--source-stdin", shellSource, "-I", workRoot, "-I", imports]
+    args: ["--analyze", "--workspace-stdin", shellSource, "-I", workRoot, "-I", imports]
   });
 });
 
@@ -299,7 +300,7 @@ test("analysis source snapshots are optional, bounded, absolute and unique", () 
 test("analysis invocation carries the same rule policy as project checks", () => {
   assert.deepEqual(analysisInvocation("nilcompiler", source, undefined, false, [], {
     disabledRules: ["NIL1001", "NIL2002"], warningsAsErrors: true
-  }).args, ["--analyze", "--source-stdin", source, "--disable-rule", "NIL1001", "--disable-rule", "NIL2002",
+  }).args, ["--analyze", "--workspace-stdin", source, "--disable-rule", "NIL1001", "--disable-rule", "NIL2002",
     "--warnings-as-errors", "-I", workRoot]);
 });
 
@@ -309,5 +310,31 @@ test("project analysis preserves driver import precedence over the entry directo
   const sdk = path.join(workRoot, "sdk");
   const library = path.join(workRoot, "lib");
   assert.deepEqual(analysisInvocation("nilcompiler", entry, sdk, false, [workRoot, library], undefined, false).args,
-    ["--analyze", "--source-stdin", entry, "-I", sdk, "-I", workRoot, "-I", library]);
+    ["--analyze", "--workspace-stdin", entry, "-I", sdk, "-I", workRoot, "-I", library]);
+});
+
+test("workspace requests preserve exact mixed-language buffers and Unicode", () => {
+  const sources = [{ path: source, text: "book é😀\r\n" }, { path: path.join(workRoot, "dep.ny"), text: 'module dep\n# "quoted"\\text\n' }];
+  assert.deepEqual(JSON.parse(serializeAnalysisWorkspace(sources)), { schema: "nil.analysis.workspace.v1", sources });
+  assert.equal(serializeAnalysisWorkspace([{ path: source, text: "x".repeat(2 * 1024 * 1024) }]).length > 2 * 1024 * 1024, true);
+});
+
+test("workspace requests reject unsupported, duplicate, invalid Unicode and oversized sources", () => {
+  const candidates = [
+    [], [{ path: "relative.ny", text: "" }], [{ path: path.join(workRoot, "dep.cpp"), text: "" }],
+    [{ path: source + "\0.ny", text: "" }], [{ path: path.join(workRoot, "\ud800.ny"), text: "" }],
+    [{ path: source, text: "NUL\0" }], [{ path: source, text: "\ud800" }], [{ path: source, text: "\udc00" }],
+    [{ path: source, text: "" }, { path: `${workRoot}${path.sep}.${path.sep}page.matrix`, text: "" }],
+    [{ path: source, text: "x".repeat(2 * 1024 * 1024 + 1) }],
+    [{ path: path.join(workRoot, "x".repeat(4096) + ".ny"), text: "" }],
+    Array.from({ length: 257 }, (_, index) => ({ path: path.join(workRoot, `${index}.ny`), text: "" }))
+  ];
+  for (const sources of candidates) assert.throws(() => serializeAnalysisWorkspace(sources));
+  assert.doesNotThrow(() => serializeAnalysisWorkspace(Array.from({ length: 256 }, (_, index) => ({ path: path.join(workRoot, `${index}.ny`), text: "" }))));
+});
+
+test("workspace request budget includes JSON escaping and all open sources", () => {
+  const sources = Array.from({ length: 3 }, (_, index) => ({ path: path.join(workRoot, `${index}.ny`), text: "\n".repeat(2 * 1024 * 1024) }));
+  assert.throws(() => serializeAnalysisWorkspace(sources), /8 MiB/);
+  assert.throws(() => serializeAnalysisWorkspace(Array.from({ length: 5 }, (_, index) => ({ path: path.join(workRoot, `${index}.ny`), text: "x".repeat(2 * 1024 * 1024) }))), /8 MiB/);
 });

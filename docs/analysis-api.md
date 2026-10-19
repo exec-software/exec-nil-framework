@@ -13,10 +13,72 @@ sdk/nilcompiler --analyze -I sdk/nilstd application.matrix \
 
 The source path selects the frontend (`.ny`, `.matrix`, or `.mat`, case
 insensitive). With `--source-stdin`, it is the logical editor filename; the file
-need not exist. The buffer replaces that file only; imports are read from disk.
+need not exist. The raw buffer replaces that file only; imports are read from
+disk. For multiple unsaved source buffers, use the workspace request below.
 The source's directory participates in import lookup. `-I`, `--sdk`,
 `--sdk-path`, and `--no-stdlib` retain their compiler meanings. Execution,
 code-generation, output, and type-check bypass flags are rejected.
+
+## Workspace source requests
+
+`--workspace-stdin` reads a versioned JSON request instead of raw source. It is
+mutually exclusive with `--source-stdin`; the command-line source remains the
+primary file being checked.
+
+```sh
+sdk/nilcompiler --analyze --workspace-stdin -I /project \
+  /project/main.matrix < workspace.json
+```
+
+```json
+{
+  "schema": "nil.analysis.workspace.v1",
+  "sources": [
+    {
+      "path": "/project/main.matrix",
+      "text": "book sample\nread everything from helper\nmain returns override integer begin paragraph\n    give (answer with nothing)\nend paragraph\n"
+    },
+    {
+      "path": "/project/helper.ny",
+      "text": "module helper\npub fn answer() -> i32\n return 0\nend fn\n"
+    }
+  ]
+}
+```
+
+Each path is absolute and ends in `.ny`, `.matrix` or `.mat`. The request must
+include the primary source. Existing paths and symlinked parent directories
+resolve to canonical identities; duplicate identities are errors, including
+two spellings of the same file. The primary diagnostic identity still preserves
+the caller's logical filename. Files need not exist on disk.
+
+The request is strict UTF-8 JSON: duplicate keys, unknown fields, invalid types
+and NUL bytes are rejected. Limits are 256 sources, 2 MiB per source, 8 MiB for
+the encoded request and decoded source aggregate, and 4,096 UTF-8 bytes per path.
+Oversized or ambiguous requests fail with status 2 rather than silently dropping
+buffers. Failed requests do not write reflection output; successful reflection
+export cannot overwrite a supplied source, even an unused one.
+
+Workspace analysis also bounds consumed source inputs, including disk imports,
+textual includes and embedded library sources, to 256 sources and 8 MiB in
+total, with 2 MiB per source. Textual preprocessing allows 32 include levels,
+1,024 visits per source unit and 8 MiB of expanded text; macro substitution is
+bounded during expansion.
+These limits apply to workspace analysis, leaving ordinary compilation and the
+legacy raw-stdin analysis interface unchanged.
+
+Overlays participate at each normal source candidate, preserving import-root,
+extension and source-before-binary search order. Only reachable files are
+parsed; providing an unrelated buffer does not add its declarations to the
+program. Ny textual includes use the same source provider, while their expanded
+locations remain unavailable until an include source map exists. Synthetic
+binary-library source identities cannot be replaced by workspace buffers.
+
+Results still use `nil.analysis.v1`. This is one immutable input snapshot for a
+check, not a persistent compiler server or a symbol/reference index. Sources
+without overlays continue to come from disk. CLI project builds use saved files.
+An open buffer remains authoritative if its file is deleted on disk. Removing
+that buffer from the request restores normal missing-file resolution.
 
 ## Diagnostic protocol
 
@@ -160,18 +222,33 @@ arbitrary plugin loading.
 
 The extension runs the built-in analyzer for saved and unsaved Ny/Matrix buffers
 in trusted workspaces. `ny.analysis.enabled` defaults to true. Results have their
-own Problems collection. Imported diagnostics appear in Problems only when
-their bounded source snapshot matches the current file and the imported editor
-buffer is not dirty; remaining imported/unlocated records go to the analysis
-output channel. It cancels superseded work, debounces edits, limits
-process time/output, validates byte boundaries, and applies fixes only to the
-same document version that produced them. Compiler `extraArgs` are deliberately
+own Problems collection. Live checks capture the primary buffer, all dirty named
+source buffers and clean sources with open text or diff tabs in one workspace
+request. Clean cached documents whose tabs have closed are excluded. Imported
+diagnostics appear in Problems only when their bounded source snapshot matches
+the captured editor buffer or, for unopened files, current disk text; remaining
+imported/unlocated records go to the analysis
+output channel. Any input change invalidates the check, including dependency
+edits, document open/close events and changes to source tabs. It cancels superseded
+work, debounces edits, limits process time/output, validates byte boundaries,
+and applies fixes only to the same document version that produced them.
+Compiler `extraArgs` are deliberately
 not forwarded to analysis. Existing structural LSP diagnostics remain separate.
 
 Within a `nil.project.json` project, live checks inherit project import roots,
-SDK location and rule policy. Project build/run tasks use `nilbuild`. The
-primary unsaved buffer is still the only overlay; unsaved imports and a shared
-semantic workspace index remain follow-up work.
+SDK location and rule policy. Project build/run tasks use `nilbuild` and saved
+files. The current-file command keeps the active file as its primary source;
+other open source buffers supply dependencies. A shared semantic symbol/reference
+index remains follow-up work.
+
+An untitled buffer with an explicit absolute source filename can participate
+as an unsaved import. An unnamed untitled buffer has no import identity and is
+included only when it is the primary file. Conflicting open aliases and input
+limits produce an analysis error rather than selecting one buffer silently.
+Only supported Ny/Matrix source filenames participate in overlays and automatic
+source watching. Other textual include extensions remain disk inputs; their
+edits require another check. Tracking arbitrary include dependencies is part
+of the future semantic workspace graph.
 
 Use a current SDK/compiler. The extension prefers the repository's `sdk` tools;
 a stale SDK can otherwise mask a newer build-tree compiler.

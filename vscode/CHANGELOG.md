@@ -4,6 +4,13 @@ All notable changes to the NIL Framework VS Code extension are documented here.
 
 ## 1.0.0-rc.1
 
+- Check unsaved imported Ny and Matrix buffers through bounded compiler workspace
+  input, including new named untitled modules and their nested project settings.
+- Cancel checks when any captured buffer or workspace context changes; publish
+  imported Problems only against matching current buffers or verified disk text.
+- Preserve compiler import precedence and guard conflicting aliases of one source.
+- Exclude clean cached models after editor tabs close while retaining every dirty
+  named buffer, so closed aliases cannot block unsaved source checks.
 - Add `nil.project.json` validation and `nilbuild` project check/build/run commands
   and tasks for VM and native targets; reuse project imports, SDK, and analyzer
   policy in current-document checks.

@@ -4,6 +4,48 @@ import { ToolInvocation } from "./taskModel";
 export const maxAnalysisSnapshotBytes = 1024 * 1024;
 
 export const maxAnalysisOutputBytes = 8 * 1024 * 1024;
+export const maxAnalysisSourceBytes = 2 * 1024 * 1024;
+export const maxAnalysisWorkspaceBytes = 8 * 1024 * 1024;
+export const maxAnalysisWorkspaceSources = 256;
+
+export interface AnalysisSourceSnapshot { path: string; text: string; }
+
+/** Never silently drop a dirty buffer when a workspace request reaches a limit. */
+export function serializeAnalysisWorkspace(sources: readonly AnalysisSourceSnapshot[]): string {
+  if (!sources.length || sources.length > maxAnalysisWorkspaceSources) {
+    throw new Error("Analysis requires between 1 and 256 open source buffers. Close unused source documents and retry.");
+  }
+  const paths = new Set<string>();
+  let decodedBytes = 0;
+  let encodedBytes = Buffer.byteLength('{"schema":"nil.analysis.workspace.v1","sources":[]}', "utf8");
+  const validUnicode = (text: string): boolean => {
+    for (let i = 0; i < text.length; i++) {
+      const unit = text.charCodeAt(i);
+      if (unit >= 0xd800 && unit <= 0xdbff) {
+        const trailing = text.charCodeAt(++i);
+        if (!(trailing >= 0xdc00 && trailing <= 0xdfff)) return false;
+      } else if (unit >= 0xdc00 && unit <= 0xdfff) return false;
+    }
+    return true;
+  };
+  for (const source of sources) {
+    if (!path.isAbsolute(source.path) || !/\.(ny|matrix|mat)$/i.test(source.path) ||
+        source.path.includes("\0") || !validUnicode(source.path) || Buffer.byteLength(source.path, "utf8") > 4096) {
+      throw new Error("Analysis requires absolute Ny or Matrix source paths of at most 4096 UTF-8 bytes.");
+    }
+    if (paths.has(path.normalize(source.path))) throw new Error("Analysis source paths must be unique.");
+    paths.add(path.normalize(source.path));
+    if (source.text.includes("\0") || !validUnicode(source.text)) throw new Error(`Analysis source contains NUL or an unpaired Unicode surrogate: ${source.path}`);
+    const bytes = Buffer.byteLength(source.text, "utf8");
+    if (bytes > maxAnalysisSourceBytes) throw new Error(`Analysis source exceeds the 2 MiB buffer limit: ${source.path}`);
+    decodedBytes += bytes;
+    encodedBytes += Buffer.byteLength(JSON.stringify(source), "utf8") + (paths.size > 1 ? 1 : 0);
+    if (decodedBytes > maxAnalysisWorkspaceBytes || encodedBytes > maxAnalysisWorkspaceBytes) {
+      throw new Error("Analysis workspace exceeds the 8 MiB request limit. Close unused source documents and retry.");
+    }
+  }
+  return JSON.stringify({ schema: "nil.analysis.workspace.v1", sources });
+}
 
 export interface AnalysisFix {
   start: number;
@@ -119,7 +161,7 @@ export function analysisInvocation(
   policy: { disabledRules: readonly string[]; warningsAsErrors: boolean } = { disabledRules: [], warningsAsErrors: false },
   sourceDirectoryFirst = true
 ): ToolInvocation {
-  const args = ["--analyze", "--source-stdin", source];
+  const args = ["--analyze", "--workspace-stdin", source];
   if (noStdlib) args.push("--no-stdlib");
   for (const code of policy.disabledRules) args.push("--disable-rule", code);
   if (policy.warningsAsErrors) args.push("--warnings-as-errors");

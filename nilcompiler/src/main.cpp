@@ -378,7 +378,7 @@ static void print_usage(std::ostream &out = std::cerr) {
   out << "Usage:\n"
       << "  nilcompiler [options] -o <output> <input1.ny> [<input2.ny> ...]\n"
       << "  nilcompiler [options] <input1.ny> [<input2.ny> ...] out.nil\n"
-      << "  nilcompiler --analyze [--source-stdin] [-I <root>] <input.ny|matrix>\n"
+      << "  nilcompiler --analyze [--source-stdin | --workspace-stdin] [-I <root>] <input.ny|matrix>\n"
       << "              [--emit-reflection <analysis_snapshot.ny>]\n"
       << "              [--disable-rule <code>] [--warnings-as-errors]\n"
       << "  nilcompiler --list-analysis-rules  List built-in analyzer rules as JSON\n"
@@ -1351,6 +1351,10 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     for (const auto &dir : search_dirs) {
       for (const auto &cand : candidates) {
         std::filesystem::path p = dir / cand;
+        if (analysis && analysis->workspace_stdin && analysis->workspace_source_exists(p.string())) {
+          resolved_import_paths.insert(import_path);
+          return ny::analysis_source_identity(p.string());
+        }
         std::error_code status_error;
         if (std::filesystem::is_regular_file(p, status_error)) {
           std::error_code ec;
@@ -1451,7 +1455,15 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     parsed_paths.insert(p);
 
     std::string src;
-    if (analysis && analysis->source_stdin && p == analysis->primary_path) {
+    if (analysis && analysis->workspace_stdin && embedded == embedded_sources.end()) {
+      p = ny::analysis_source_identity(p);
+      const auto source = analysis->read_workspace_source(p);
+      if (!source) {
+        std::cerr << "Error: cannot open input file: " << p << "\n";
+        return 1;
+      }
+      src = *source;
+    } else if (analysis && analysis->source_stdin && p == analysis->primary_path) {
       src = analysis->stdin_source;
     } else if (embedded != embedded_sources.end()) {
       src = embedded->second;
@@ -1489,6 +1501,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     if (analysis) {
       ny::validate_analysis_utf8(src);
       if (units.size() >= 256) throw std::runtime_error("analysis exceeds 256 source units");
+      if (analysis->workspace_stdin) analysis->record_workspace_source(p, src);
       analysis->sources[p] = src;
     }
 
@@ -1526,6 +1539,19 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     } else {
       ny::parser_options parse_options;
       parse_options.filename = diagnostic_path;
+      if (analysis && analysis->workspace_stdin) {
+        parse_options.preproc_options.resolve_source = [analysis](const std::filesystem::path &path)
+            -> std::optional<std::filesystem::path> {
+          if (!analysis->workspace_source_exists(path.string())) return std::nullopt;
+          return ny::analysis_source_identity(path.string());
+        };
+        parse_options.preproc_options.read_source = [analysis](const std::filesystem::path &path) {
+          return analysis->read_workspace_source(path.string());
+        };
+        parse_options.preproc_options.max_output_bytes = 8 * 1024 * 1024;
+        parse_options.preproc_options.max_include_depth = 32;
+        parse_options.preproc_options.max_include_visits = 1024;
+      }
       ny::parser parser(src, parse_options);
       prog = parser.parse_program();
       if (parser.has_errors()) {

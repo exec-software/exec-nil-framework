@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import * as path from "node:path";
 import test from "node:test";
 
 import {
+  analysisSourcePath,
   compilerProblemMatchers,
   debugProgramKind,
   languageDocumentSelector,
@@ -42,6 +44,17 @@ test("commands require saved source in the frontend selected by its extension", 
   assert.equal(savedSourcePath(document("/work/main.mat", "matrix", "untitled")), undefined);
   assert.equal(savedSourcePath(document("/work/main.mat", "matrix", "vscode-remote")), undefined);
   assert.equal(savedSourcePath(undefined), undefined);
+});
+
+test("analysis preserves named untitled source identities without treating scratch buffers as imports", () => {
+  const source = path.resolve("new module.matrix");
+  assert.equal(analysisSourcePath(document(source)), source);
+  assert.equal(analysisSourcePath(document(source, "matrix", "untitled")), source);
+  assert.equal(analysisSourcePath(document("Untitled-1", "matrix", "untitled")), undefined);
+  assert.equal(analysisSourcePath(document("new.matrix", "matrix", "untitled")), undefined);
+  assert.equal(analysisSourcePath(document(source, "ny", "untitled")), undefined);
+  assert.equal(analysisSourcePath(document(source, "matrix", "vscode-remote")), undefined);
+  assert.equal(analysisSourcePath(undefined), undefined);
 });
 
 test("task source resolution rejects unrelated active files and preserves explicit sources", () => {

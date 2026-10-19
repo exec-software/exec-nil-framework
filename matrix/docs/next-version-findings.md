@@ -1142,13 +1142,14 @@ and publish staged outputs only after success. Compiler-owned default rules
 add conservative unreachable-statement and discarded-standard-outcome warnings,
 with a discoverable catalog, rule suppression and warnings-as-errors. VS Code
 uses project context for live checks and project tasks, and publishes imported
-Problems only when an exact bounded source snapshot matches current disk text.
+Problems only when an exact bounded source snapshot matches current disk text
+or a captured editor buffer (extended by F39).
 
 **Remaining boundaries:** One executable entrypoint and its import graph;
 complete rebuilds; Linux process execution. Unopened imports are type checked
 but not recursively linted. The analyzer does not inspect lambda bodies inside
-expressions or prove arbitrary control-flow reachability. Unsaved import
-overlays, a shared semantic symbol/reference index, semantic completion,
+expressions or prove arbitrary control-flow reachability. A shared semantic
+symbol/reference index, semantic completion,
 cross-file rename/references, language-authored analyzer hosting, project
 reference graphs and incremental builds remain separate increments. See the
 [developer-tooling plan](../../docs/developer-tooling.md) for acceptance criteria.
@@ -1170,3 +1171,34 @@ markers and search order remain intact. The
 imports through the repository root from an unrelated working directory, plus
 a legacy `share/ny/stdlib/ny/lang` layout without a prelude marker. The new
 repository-root regression reproduces the failure with the previous compiler.
+
+### F39 — Unsaved dependencies were invisible to compiler-backed editor checks
+
+**Status:** Workspace source overlays implemented; semantic indexing remains open.
+
+The original analysis command accepted one unsaved primary buffer. Imports and
+Ny textual includes still came from disk, so editing a dependency could leave
+the caller's checks inconsistent with its visible source. Simply hiding dirty
+import diagnostics did not correct the program being analyzed. The editor also
+guarded results primarily by the active document's version.
+
+**Resolution:** A bounded `nil.analysis.workspace.v1` request supplies exact
+source texts to the compiler's existing import and include resolution. New
+source files can participate without being written to disk. Canonical path
+identities prevent conflicting aliases. The editor captures open local source
+buffers together, invalidates results on input changes and maps imported
+diagnostics only against matching snapshots. Build tasks continue to use saved
+files. See [NIL-0009](../../docs/design/NIL-0009-workspace-analysis.md).
+
+**Boundary:** Overlays and source watching cover `.ny`, `.matrix` and `.mat`.
+Other textual include extensions are still read from disk and require a new
+check after editing; the future dependency graph must track those inputs too.
+
+**Next step:** Retain precise original-source name spans and resolved symbol
+identities through checking. Ny tokens currently retain line information;
+Matrix adds columns, but the shared AST does not yet retain precise declaration
+and reference name spans. Local symbol scopes are discarded after checking.
+Those gaps prevent reliable cross-file references and transactional rename;
+matching names in declaration reflection is insufficient. Textual expansion,
+generated specializations and binary-library sources also need explicit
+non-editable boundaries until a trustworthy source mapping exists.

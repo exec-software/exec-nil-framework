@@ -5,15 +5,23 @@ import { constants as fileConstants, promises as fs } from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 
-import { analysisInvocation, AnalysisResult, createByteRangeMapper, maxAnalysisOutputBytes, parseAnalysisOutput } from "./analysisModel";
+import { analysisInvocation, AnalysisResult, createByteRangeMapper, maxAnalysisOutputBytes, maxAnalysisSourceBytes,
+  parseAnalysisOutput, serializeAnalysisWorkspace } from "./analysisModel";
 import { projectForResource } from "./projectContext";
-import { languageDocumentSelector, savedSourcePath } from "./languages";
+import { analysisSourcePath, languageDocumentSelector, savedSourcePath, sourceLanguage } from "./languages";
 import { expandConfiguredPath } from "./toolchain";
 import { configuredSdkPath, nyConfiguration, resolveConfiguredTool, toolNotFoundMessage } from "./vscodeToolchain";
 
 const debounceMilliseconds = 400;
 const timeoutMilliseconds = 10_000;
-const maxSourceBytes = 2 * 1024 * 1024;
+
+interface AnalysisInput {
+  document: vscode.TextDocument;
+  version: number;
+  text: string;
+  source: string;
+  identity: string;
+}
 
 interface AnalysisJob {
   document: vscode.TextDocument;
@@ -21,6 +29,8 @@ interface AnalysisJob {
   text: string;
   source: string;
   key: string;
+  generation: number;
+  inputs: AnalysisInput[];
   resolve: (applied: boolean) => void;
 }
 
@@ -45,8 +55,18 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
   private readonly reports = new Map<string, string>();
   private active: { job: AnalysisJob; controller: AbortController } | undefined;
   private disposed = false;
+  private generation = 0;
+  private tabSources = new Set<string>();
 
   constructor() {
+    this.tabSources = this.openTabSources();
+    const tabMembershipChanged = () => {
+      const sources = this.openTabSources();
+      if (sources.size !== this.tabSources.size || [...sources].some(source => !this.tabSources.has(source))) {
+        this.tabSources = sources;
+        this.scheduleAll();
+      }
+    };
     const watcher = vscode.workspace.createFileSystemWatcher("**/*.{ny,matrix,mat,json}");
     const changed = (uri: vscode.Uri) => {
       if (/\.(ny|matrix|mat)$/i.test(uri.fsPath) || path.basename(uri.fsPath) === "nil.project.json") this.scheduleAll();
@@ -67,7 +87,9 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
         return false;
       }),
       vscode.commands.registerCommand("ny.showAnalysisOutput", () => this.showOutput()),
-      vscode.workspace.onDidOpenTextDocument(document => this.schedule(document)),
+      vscode.workspace.onDidOpenTextDocument(document => {
+        if (this.supported(document) || path.basename(document.uri.fsPath) === "nil.project.json") this.scheduleAll();
+      }),
       vscode.workspace.onDidChangeTextDocument(event => {
         if (this.supported(event.document) || path.basename(event.document.uri.fsPath) === "nil.project.json") this.scheduleAll();
       }),
@@ -75,7 +97,16 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
       vscode.workspace.onDidSaveTextDocument(document => {
         if (this.supported(document) || path.basename(document.uri.fsPath) === "nil.project.json") this.scheduleAll();
       }),
-      vscode.workspace.onDidCloseTextDocument(document => { this.invalidate(document.uri); this.scheduleAll(); }),
+      vscode.workspace.onDidCloseTextDocument(document => {
+        if (this.supported(document) || path.basename(document.uri.fsPath) === "nil.project.json") {
+          this.invalidate(document.uri); this.scheduleAll();
+        }
+      }),
+      vscode.window.tabGroups.onDidChangeTabs(tabMembershipChanged),
+      vscode.window.tabGroups.onDidChangeTabGroups(tabMembershipChanged),
+      vscode.workspace.onDidChangeWorkspaceFolders(() => this.scheduleAll()),
+      vscode.workspace.onDidRenameFiles(() => this.scheduleAll()),
+      vscode.workspace.onDidDeleteFiles(() => this.scheduleAll()),
       vscode.workspace.onDidGrantWorkspaceTrust(() => this.scheduleAll()),
       vscode.workspace.onDidChangeConfiguration(event => {
         if (["ny.analysis", "ny.compiler.path", "ny.compiler.noStdlib", "ny.sdkPath"].some(key => event.affectsConfiguration(key))) {
@@ -93,19 +124,42 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
 
   private enabled(document: vscode.TextDocument): boolean {
     return !this.disposed && !document.isClosed && vscode.workspace.isTrusted &&
-      this.supported(document) && nyConfiguration(document.uri).get<boolean>("analysis.enabled", true);
+      (document.isDirty || this.tabSources.has(document.uri.toString())) &&
+      this.supported(document) && nyConfiguration(this.contextUri(document)).get<boolean>("analysis.enabled", true);
+  }
+
+  private openTabSources(): Set<string> {
+    const sources = new Set<string>();
+    const add = (uri: vscode.Uri) => {
+      if (uri.scheme === "untitled" || (uri.scheme === "file" && sourceLanguage(uri.fsPath))) sources.add(uri.toString());
+    };
+    for (const group of vscode.window.tabGroups.all) for (const tab of group.tabs) {
+      if (tab.input instanceof vscode.TabInputText) add(tab.input.uri);
+      else if (tab.input instanceof vscode.TabInputTextDiff) {
+        add(tab.input.original);
+        add(tab.input.modified);
+      }
+    }
+    return sources;
   }
 
   private current(job: AnalysisJob): boolean {
-    return this.enabled(job.document) && job.document.version === job.version;
+    return this.enabled(job.document) && job.generation === this.generation && job.document.version === job.version &&
+      job.inputs.every(input => !input.document.isClosed && input.document.version === input.version);
+  }
+
+  private contextUri(document: vscode.TextDocument): vscode.Uri {
+    const source = analysisSourcePath(document);
+    return source ? vscode.Uri.file(source) : document.uri;
   }
 
   private workspaceRoot(document: vscode.TextDocument): string | undefined {
-    return (vscode.workspace.getWorkspaceFolder(document.uri) ?? vscode.workspace.workspaceFolders?.[0])?.uri.fsPath;
+    return (vscode.workspace.getWorkspaceFolder(this.contextUri(document)) ?? vscode.workspace.workspaceFolders?.[0])?.uri.fsPath;
   }
 
   private logicalSource(document: vscode.TextDocument): string {
-    if (document.uri.scheme === "file") return document.uri.fsPath;
+    const named = analysisSourcePath(document);
+    if (named) return named;
     const digest = createHash("sha256").update(document.uri.toString()).digest("hex").slice(0, 20);
     return path.join(this.workspaceRoot(document) ?? os.tmpdir(), `.nil-editor-${digest}.${document.languageId === "matrix" ? "matrix" : "ny"}`);
   }
@@ -125,6 +179,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
   }
 
   private scheduleAll(): void {
+    this.generation++;
     for (const document of vscode.workspace.textDocuments) this.schedule(document);
   }
 
@@ -151,15 +206,62 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
     if (!this.enabled(document)) return Promise.resolve(false);
     const key = document.uri.toString();
     const text = document.getText();
-    if (Buffer.byteLength(text, "utf8") > maxSourceBytes) {
+    if (Buffer.byteLength(text, "utf8") > maxAnalysisSourceBytes) {
       this.report(key, "Analysis skipped: this document exceeds the 2 MiB editor analysis limit.");
       return Promise.resolve(false);
     }
     return new Promise(resolve => {
       this.pending.get(key)?.resolve(false);
-      this.pending.set(key, { document, key, text, version: document.version, source: this.logicalSource(document), resolve });
+      this.pending.set(key, { document, key, text, version: document.version, source: this.logicalSource(document),
+        generation: this.generation, inputs: [], resolve });
       void this.drain();
     });
+  }
+
+  private async sourceIdentity(source: string): Promise<string> {
+    let ancestor = path.resolve(source);
+    const missing: string[] = [];
+    for (;;) {
+      try { return path.normalize(path.join(await fs.realpath(ancestor), ...missing)); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT" || path.dirname(ancestor) === ancestor) return path.normalize(source);
+        missing.unshift(path.basename(ancestor));
+        ancestor = path.dirname(ancestor);
+      }
+    }
+  }
+
+  private async workspaceInput(job: AnalysisJob): Promise<string> {
+    // A clean TextDocument can remain cached long after its tab closes. Only
+    // open tabs and dirty buffers are editor inputs; never omit dirty imports.
+    // Import resolution decides which of these named sources are consumed.
+    job.inputs = [job.document, ...vscode.workspace.textDocuments.filter(document => document !== job.document &&
+      this.supported(document) && analysisSourcePath(document) !== undefined &&
+      (document.isDirty || this.tabSources.has(document.uri.toString())))].map(document => ({
+        document, version: document.version, text: document === job.document ? job.text : document.getText(),
+        source: document === job.document ? job.source : analysisSourcePath(document)!, identity: ""
+      }));
+    await Promise.all(job.inputs.map(async input => { input.identity = await this.sourceIdentity(input.source); }));
+    const unique = new Map<string, AnalysisInput>();
+    for (const input of job.inputs) {
+      const previous = unique.get(input.identity);
+      if (previous && previous.text !== input.text) {
+        throw new Error(`Open aliases of the same source contain different text: ${previous.source} and ${input.source}`);
+      }
+      if (!previous) unique.set(input.identity, input);
+    }
+    return serializeAnalysisWorkspace([...unique.values()].map(input => ({ path: input.source, text: input.text })));
+  }
+
+  private async workingDirectory(preferred: string): Promise<string> {
+    let directory = preferred;
+    for (;;) {
+      try { if ((await fs.stat(directory)).isDirectory()) return directory; }
+      catch (error) { if (!["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error; }
+      const parent = path.dirname(directory);
+      if (parent === directory) throw new Error(`No existing working directory for ${preferred}`);
+      directory = parent;
+    }
   }
 
   // Only one compiler runs at a time, even when a workspace opens many files.
@@ -183,17 +285,18 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
 
   private async check(job: AnalysisJob, signal: AbortSignal): Promise<boolean> {
     if (!this.current(job) || signal.aborted) return false;
-    const project = projectForResource(job.document.uri);
+    const context = this.contextUri(job.document);
+    const project = projectForResource(context);
     if (project && vscode.workspace.textDocuments.some(document => document.uri.scheme === "file" &&
       path.normalize(document.uri.fsPath) === path.normalize(project.projectFile) && document.isDirty)) {
       throw new Error("Save nil.project.json before checking sources with its project settings.");
     }
-    const configuredSdk = configuredSdkPath(job.document.uri);
+    const configuredSdk = configuredSdkPath(context);
     const workspaceRoot = this.workspaceRoot(job.document);
     const sdkRoot = project?.sdkPath ?? (configuredSdk ? path.resolve(workspaceRoot ?? process.cwd(), configuredSdk) : undefined);
-    const tool = resolveConfiguredTool("nilcompiler", job.document.uri, sdkRoot);
+    const tool = resolveConfiguredTool("nilcompiler", context, sdkRoot);
     if (!tool.executable) throw new Error(toolNotFoundMessage("nilcompiler", tool));
-    const configuration = nyConfiguration(job.document.uri);
+    const configuration = nyConfiguration(context);
     const configuredRoots = configuration.get<unknown>("analysis.includePaths", []);
     const roots = [
       ...(project ? project.includePaths : workspaceRoot ? [workspaceRoot] : []),
@@ -203,9 +306,12 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
     this.watchImportRoots([...roots, ...(sdkRoot ? [sdkRoot] : [])]);
     const invocation = analysisInvocation(tool.executable, job.source, sdkRoot,
       !project && configuration.get<boolean>("compiler.noStdlib", false), roots, project?.analysis, !project);
+    const input = await this.workspaceInput(job);
+    const cwd = await this.workingDirectory(project?.directory ?? path.dirname(job.source));
+    if (signal.aborted || !this.current(job)) return false;
     const result = await new Promise<AnalysisResult>((resolve, reject) => {
       const child = execFile(invocation.command, [...invocation.args], {
-        cwd: project?.directory ?? path.dirname(job.source), encoding: "utf8", windowsHide: true,
+        cwd, encoding: "utf8", windowsHide: true,
         timeout: timeoutMilliseconds, maxBuffer: maxAnalysisOutputBytes, killSignal: "SIGKILL", signal
       }, (error, stdout, stderr) => {
         if (signal.aborted) { reject(new Error("Analysis cancelled.")); return; }
@@ -221,7 +327,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
         }
       });
       child.stdin?.on("error", () => { /* A cancelled or failed compiler may close stdin early. */ });
-      child.stdin?.end(job.text, "utf8");
+      child.stdin?.end(input, "utf8");
     });
     if (signal.aborted || !this.current(job)) return false;
     if (result.language !== job.document.languageId) throw new Error("Compiler analyzed the document as a different language.");
@@ -240,12 +346,19 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
   }
 
   private async publish(job: AnalysisJob, result: AnalysisResult, signal: AbortSignal): Promise<boolean> {
-    const imported = new Map<string, { uri: vscode.Uri; text: string; mapRange: ReturnType<typeof createByteRangeMapper> }>();
+    const imported = new Map<string, { uris: vscode.Uri[]; text: string; mapRange: ReturnType<typeof createByteRangeMapper> }>();
     for (const snapshot of result.sources ?? []) {
       // VS Code strips a leading BOM from its document model. Keep these
       // findings in Output until the protocol describes that normalization.
       if (snapshot.text.startsWith("\uFEFF")) continue;
       const normalized = path.normalize(snapshot.path);
+      const inputs = job.inputs.filter(input => input.identity === normalized);
+      if (inputs.length) {
+        if (inputs.every(input => input.text === snapshot.text && !input.document.isClosed && input.document.version === input.version)) {
+          imported.set(normalized, { uris: inputs.map(input => input.document.uri), text: snapshot.text, mapRange: createByteRangeMapper(snapshot.text) });
+        }
+        continue;
+      }
       const editor = vscode.workspace.textDocuments.find(document => document.uri.scheme === "file" && path.normalize(document.uri.fsPath) === normalized);
       if (editor?.isDirty) continue;
       try {
@@ -267,7 +380,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
           disk = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, count));
         } finally { await handle.close(); }
         if (disk !== snapshot.text || (editor && (editor.isDirty || editor.getText() !== snapshot.text))) continue;
-        imported.set(normalized, { uri: vscode.Uri.file(snapshot.path), text: snapshot.text, mapRange: createByteRangeMapper(snapshot.text) });
+        imported.set(normalized, { uris: [vscode.Uri.file(snapshot.path)], text: snapshot.text, mapRange: createByteRangeMapper(snapshot.text) });
       } catch { /* Removed, changed, or unreadable dependencies have no safe location. */ }
     }
     if (signal.aborted || !this.current(job)) return false;
@@ -311,9 +424,10 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider 
         `${finding.message}${finding.hint ? `\n${finding.hint}` : ""}`, severity[finding.severity]);
       diagnostic.source = "nil-analysis";
       diagnostic.code = finding.code;
-      const uri = primary ? job.key : snapshot!.uri.toString();
-      if (!byUri.has(uri)) byUri.set(uri, []);
-      byUri.get(uri)!.push(diagnostic);
+      for (const uri of primary ? [job.key] : snapshot!.uris.map(uri => uri.toString())) {
+        if (!byUri.has(uri)) byUri.set(uri, []);
+        byUri.get(uri)!.push(diagnostic);
+      }
       const fixOffsets = primary && finding.fix ? mapRange(finding.fix.start, finding.fix.length) : undefined;
       const fixRange = editorRange(fixOffsets);
       if (finding.fix && fixRange) this.fixes.set(randomUUID(), {

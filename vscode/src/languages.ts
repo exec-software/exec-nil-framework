@@ -1,3 +1,5 @@
+import * as path from "node:path";
+
 /** Source extensions select the compiler frontend, independently of editor mode. */
 export type SourceLanguage = "ny" | "matrix";
 
@@ -26,6 +28,13 @@ export function sourceLabel(source: string): string {
 
 export function savedSourcePath(document: SourceDocument | undefined): string | undefined {
   if (!document || document.uri.scheme !== "file") return undefined;
+  const language = sourceLanguage(document.uri.fsPath);
+  return language && document.languageId === language ? document.uri.fsPath : undefined;
+}
+
+/** Named untitled files already have an import identity, without a disk write. */
+export function analysisSourcePath(document: SourceDocument | undefined): string | undefined {
+  if (!document || !["file", "untitled"].includes(document.uri.scheme) || !path.isAbsolute(document.uri.fsPath)) return undefined;
   const language = sourceLanguage(document.uri.fsPath);
   return language && document.languageId === language ? document.uri.fsPath : undefined;
 }

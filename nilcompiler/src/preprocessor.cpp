@@ -27,8 +27,31 @@ Notes:
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 
 namespace ny {
+
+// Enforce expansion bounds as bytes are appended, before a repeated include
+// can allocate a large flattened buffer. Ordinary compilation uses limit=0.
+class preprocessor_buffer : public std::streambuf {
+  std::size_t limit_;
+public:
+  std::string text;
+  explicit preprocessor_buffer(std::size_t limit) : limit_(limit) {}
+  std::streamsize xsputn(const char *data, std::streamsize length) override {
+    if (limit_ && static_cast<std::size_t>(length) > limit_ - text.size())
+      throw std::runtime_error("analysis preprocessor expansion exceeds 8 MiB");
+    text.append(data, static_cast<std::size_t>(length));
+    return length;
+  }
+  int_type overflow(int_type value) override {
+    if (!traits_type::eq_int_type(value, traits_type::eof())) {
+      const char character = traits_type::to_char_type(value);
+      xsputn(&character, 1);
+    }
+    return traits_type::not_eof(value);
+  }
+};
 
 // Trim helpers
 static inline std::string ltrim(const std::string &s) {
@@ -62,6 +85,7 @@ static inline std::string canonicalize_path(const std::filesystem::path &p) {
 // Read file content to an optional string
 std::optional<std::string>
 preprocessor::read_file_to_string(const std::filesystem::path &path) {
+  if (options_.read_source) return options_.read_source(path);
   std::ifstream ifs(path, std::ios::binary);
   if (!ifs)
     return std::nullopt;
@@ -81,6 +105,7 @@ void preprocessor::reset() {
   macro_table_.clear();
   include_stack_.clear();
   include_once_set_.clear();
+  include_visits_ = 0;
   diagnostics_.clear();
   pragma_links_.clear();
   // Keep builtin macros but clear other user-defined macros if necessary
@@ -104,6 +129,10 @@ void preprocessor::register_builtin_macros() {
 
 preproc_result
 preprocessor::preprocess_file(const std::filesystem::path &path) {
+  if (options_.max_include_visits && ++include_visits_ > options_.max_include_visits)
+    throw std::runtime_error("analysis preprocessor exceeds 1024 include visits");
+  if (options_.max_include_depth && include_stack_.size() >= options_.max_include_depth)
+    throw std::runtime_error("analysis preprocessor exceeds 32 include levels");
   preproc_result result;
   auto maybe_src = read_file_to_string(path);
   if (!maybe_src.has_value()) {
@@ -174,29 +203,29 @@ preprocessor::preprocess_file(const std::filesystem::path &path) {
 std::optional<std::filesystem::path> preprocessor::resolve_include_path(
     const std::string &include_name,
     const std::filesystem::path &relative_to) const {
+  const auto resolve = [this](const std::filesystem::path &path) -> std::optional<std::filesystem::path> {
+    if (options_.resolve_source) return options_.resolve_source(path);
+    return std::filesystem::exists(path) ? std::optional<std::filesystem::path>(path) : std::nullopt;
+  };
   std::filesystem::path candidate(include_name);
   if (!candidate.is_absolute()) {
     if (!relative_to.empty()) {
       std::filesystem::path p = std::filesystem::path(relative_to) / candidate;
-      if (std::filesystem::exists(p))
-        return p;
+      if (auto resolved = resolve(p)) return resolved;
     }
   } else {
-    if (std::filesystem::exists(candidate))
-      return candidate;
+    if (auto resolved = resolve(candidate)) return resolved;
   }
 
   // Search include_paths if any
   for (const auto &ip : options_.include_paths) {
     std::filesystem::path p = ip / candidate;
-    if (std::filesystem::exists(p))
-      return p;
+    if (auto resolved = resolve(p)) return resolved;
   }
 
   // Last attempt: relative to current working directory
   std::filesystem::path p2 = std::filesystem::absolute(candidate);
-  if (std::filesystem::exists(p2))
-    return p2;
+  if (auto resolved = resolve(p2)) return resolved;
 
   return std::nullopt;
 }
@@ -219,7 +248,9 @@ void preprocessor::record_diagnostic(preproc_diag_kind kind,
 preproc_result preprocessor::preprocess_text(const std::string &source,
                                              const std::string &filename) {
   preproc_result result;
-  std::ostringstream out; // raw output constructed line-by-line
+  preprocessor_buffer output(options_.max_output_bytes);
+  std::ostream out(&output);
+  out.exceptions(std::ios::badbit | std::ios::failbit);
   std::istringstream iss(source);
   std::string line;
   int line_no = 0;
@@ -787,7 +818,7 @@ preproc_result preprocessor::preprocess_text(const std::string &source,
   } // while lines
 
   // Finalize result
-  result.output = out.str();
+  result.output = std::move(output.text);
   result.diagnostics = diagnostics_;
   result.macros = macro_table_;
   // Use the per-file local list as this translation unit's pragma links.
@@ -1123,6 +1154,16 @@ preprocessor::evaluate_condition(const std::string &expr,
 std::string preprocessor::expand_macros(const std::string &text) const {
   std::string out;
   out.reserve(text.size());
+  const auto append = [this](std::string &target, const std::string &value) {
+    if (options_.max_output_bytes && value.size() > options_.max_output_bytes - target.size())
+      throw std::runtime_error("analysis macro expansion exceeds 8 MiB");
+    target += value;
+  };
+  const auto append_character = [this](std::string &target, char value) {
+    if (options_.max_output_bytes && target.size() == options_.max_output_bytes)
+      throw std::runtime_error("analysis macro expansion exceeds 8 MiB");
+    target += value;
+  };
 
   // Protect numeric tokens from identifier/parameter replacement: a macro
   // named e3 or E must not change 1e3 or 1E+2. Respect language token boundaries
@@ -1156,21 +1197,21 @@ std::string preprocessor::expand_macros(const std::string &text) const {
   while (i < text.size()) {
     // Check for string literal and skip it (don't expand macros inside strings)
     if (text[i] == '"') {
-      out += text[i++];
+      append_character(out, text[i++]);
       while (i < text.size() && text[i] != '"') {
         if (text[i] == '\\' && i + 1 < text.size()) {
-          out += text[i++];
+          append_character(out, text[i++]);
         }
-        out += text[i++];
+        append_character(out, text[i++]);
       }
       if (i < text.size())
-        out += text[i++];
+        append_character(out, text[i++]);
       continue;
     }
 
     if (std::isdigit(static_cast<unsigned char>(text[i]))) {
       const auto end = numeric_end(text, i);
-      out.append(text, i, end - i);
+      append(out, text.substr(i, end - i));
       i = end;
       continue;
     }
@@ -1198,7 +1239,7 @@ std::string preprocessor::expand_macros(const std::string &text) const {
           // just output the replacement. Actually, standard requires recursive
           // expansion. Let's assume non-recursive for safety in this step, or
           // simple one-pass.
-          out += md.replacement;
+          append(out, md.replacement);
           continue;
         } else {
           // Function-like: detect '(' following (possibly with whitespace)
@@ -1306,6 +1347,14 @@ std::string preprocessor::expand_macros(const std::string &text) const {
 
             // 2. Process # (stringify)
             // Look for # followed by param (ignoring whitespace)
+            std::size_t token_bytes = replacement.size();
+            const auto replace_token = [&](Token &token, std::string value) {
+              const auto remaining = token_bytes - token.text.size();
+              if (options_.max_output_bytes && value.size() > options_.max_output_bytes - remaining)
+                throw std::runtime_error("analysis macro expansion exceeds 8 MiB");
+              token_bytes = remaining + value.size();
+              token.text = std::move(value);
+            };
             for (size_t i = 0; i < tokens.size(); ++i) {
               if (tokens[i].text == "#") {
                 // Find next non-whitespace
@@ -1331,13 +1380,13 @@ std::string preprocessor::expand_macros(const std::string &text) const {
                     arg = var_args;
                   }
 
-                  tokens[i].text = "\"" + arg + "\"";
+                  replace_token(tokens[i], "\"" + arg + "\"");
                   tokens[i].is_param = false; // It's now a literal string
 
                   // Clear intermediate tokens (including the param that was
                   // stringified)
                   for (size_t k = i + 1; k <= next; ++k) {
-                    tokens[k].text = "";
+                    replace_token(tokens[k], "");
                     tokens[k].is_param = false; // Prevent later substitution
                   }
                   i = next;
@@ -1356,9 +1405,9 @@ std::string preprocessor::expand_macros(const std::string &text) const {
                       var_args += ", ";
                     var_args += args[m];
                   }
-                  tok.text = var_args;
+                  replace_token(tok, std::move(var_args));
                 } else {
-                  tok.text = (idx < (int)args.size()) ? args[idx] : "";
+                  replace_token(tok, (idx < (int)args.size()) ? args[idx] : "");
                 }
               }
             }
@@ -1400,21 +1449,21 @@ std::string preprocessor::expand_macros(const std::string &text) const {
             // 5. Reassemble
             std::string expansion;
             for (const auto &tok : tokens)
-              expansion += tok.text;
+              append(expansion, tok.text);
 
-            out += expansion;
+            append(out, expansion);
             continue;
           }
         }
       }
 
       // Not a macro or not invoked as function-like
-      out += ident;
+      append(out, ident);
       continue;
     }
 
     // Pass through other characters
-    out += text[i++];
+    append_character(out, text[i++]);
   }
   return out;
 }

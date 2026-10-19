@@ -226,11 +226,16 @@ Path settings support `${workspaceFolder}`, `${workspaceFolderBasename}`,
 ## Compiler checks and quick fixes
 
 The extension checks saved and untitled Ny and Matrix documents with
-`nilcompiler --analyze --source-stdin <logical-source-path>`. It sends the current
-buffer over standard input and creates no compiled output. Checks run after a
+`nilcompiler --analyze --workspace-stdin <logical-source-path>`. It sends the current
+buffer, named Ny and Matrix sources in open text/diff tabs, and every dirty named
+source buffer in a `nil.analysis.workspace.v1`
+request over standard input and creates no compiled output. Checks run after a
 400 ms editing pause, one compiler at a time; a new edit cancels the previous
-check. Each check is limited to 10 seconds, 2 MiB of source, and 8 MiB of output.
-An SDK supporting the `nil.analysis.v1` protocol is required. Older compilers and
+check. Each request is limited to 256 source identities, 2 MiB per source, and
+8 MiB in total (including JSON encoding); each check is limited to 10 seconds
+and 8 MiB of output. Requests exceeding these limits are reported without silently
+omitting dirty buffers. An SDK supporting workspace input and the `nil.analysis.v1`
+response protocol is required. Older compilers and
 operational failures are reported in **NIL Framework: Show Analysis Output**.
 
 Compiler errors and default analyzer warnings appear with source `nil-analysis`
@@ -242,19 +247,31 @@ suppress individual rules or promote warnings to errors.
 Its quick fixes only apply to the exact document version that was checked.
 Compiler spans use UTF-8 byte offsets; the extension converts valid boundaries
 to editor positions without guessing locations. Imported findings appear in
-Problems only when an exact compiler snapshot still matches disk and the import
-has no unsaved edits. Import snapshots are limited to 1 MiB of encoded JSON.
+Problems only when an exact compiler snapshot matches the captured editor buffer
+and its version, or matches disk for unopened imports. Unsaved imported changes
+participate in checking dependent documents across both languages. Import
+snapshots are limited to 1 MiB of encoded JSON.
 Missing, changed, or omitted snapshots and unlocated findings remain in the
 analysis output channel. Imported findings never offer automatic edits. Reports
 from multiple entry documents are combined without duplicate Problems; source
-edits, saves, and external file changes invalidate and refresh open documents.
+edits, opens, closes, saves, project/configuration changes, and external file
+changes invalidate and refresh open documents. Results and fixes are discarded
+when any captured buffer changes. An open buffer remains authoritative if its disk
+file is deleted; closing the buffer removes its overlay.
+Clean models cached by VS Code after their tabs close are excluded; dirty named
+buffers remain included even when they have no visible editor.
 
 Checks preserve the source's parent directory and configured SDK root for import
 lookup. Project manifests supply import roots; standalone files additionally use
-the workspace root and `ny.analysis.includePaths`. Untitled buffers use a
-synthetic filename under the workspace root, without writing that file. Relative
-include paths resolve against the owning workspace folder. Unsaved edits in
-other imported buffers are not overlaid; save those files to recheck dependents.
+the workspace root and `ny.analysis.includePaths`. Named untitled files retain
+their absolute source path, so new imported modules can be checked before saving.
+Unnamed untitled buffers use a synthetic filename under the workspace root and
+only participate as the current primary document. Neither case writes a file.
+Relative include paths resolve against the owning workspace folder. Multiple open
+aliases of one source must contain identical text. **Check Current File** still
+checks the selected source; project tasks use the manifest entry and saved files.
+Overlays cover `.ny`, `.matrix`, and `.mat` sources; other `@include` file types
+continue to use saved disk contents.
 `ny.compiler.extraArgs` and `ny.native.extraArgs` apply to current-file build tasks only.
 Editor checks are disabled in untrusted workspaces and can be switched off with
 `ny.analysis.enabled`.

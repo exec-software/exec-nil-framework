@@ -28,11 +28,15 @@ struct reflected_annotation {
 };
 struct analysis_session {
   std::string primary_path, logical_path, language, stdin_source;
-  bool source_stdin = false, semantic_checked = false, truncated = false;
+  bool source_stdin = false, workspace_stdin = false, semantic_checked = false, truncated = false;
   bool warnings_as_errors = false;
   std::set<std::string> disabled_rules;
   std::size_t reflection_bytes = 0;
   std::map<std::string, std::string> sources;
+  // Canonical native source paths only. Binary-library identities never use
+  // this map, and unrelated buffers are not added to the compilation graph.
+  std::map<std::string, std::string> workspace_sources;
+  std::size_t workspace_read_bytes = 0;
   std::vector<analysis_diagnostic> diagnostics;
   std::size_t diagnostic_bytes = 0;
   std::vector<reflected_declaration> declarations;
@@ -44,7 +48,11 @@ struct analysis_session {
   void lint();
   std::string json(bool success) const;
   std::string companion_source() const;
+  bool workspace_source_exists(const std::string &path) const;
+  std::optional<std::string> read_workspace_source(const std::string &path);
+  void record_workspace_source(const std::string &path, const std::string &source);
 };
+std::string analysis_source_identity(const std::string &path);
 void validate_analysis_utf8(const std::string &text);
 using compilation_entry = int (*)(int, char **, analysis_session *);
 int run_analysis_cli(int argc, char **argv, compilation_entry compile);

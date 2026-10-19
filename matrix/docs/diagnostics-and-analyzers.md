@@ -6,6 +6,8 @@
 > The [project driver and default rules](../../docs/tools/projects.md) now share
 > project context and analyzer policy with VS Code, including conservative
 > unreachable-code and discarded-checked-result warnings.
+> Workspace source requests include unsaved dependencies in compiler checks;
+> durable symbol/reference indexing is the next semantic tooling step.
 
 
 Two requirements that turn out to be one design.
