@@ -278,7 +278,7 @@ continue to use saved disk contents.
 Editor checks are disabled in untrusted workspaces and can be switched off with
 `ny.analysis.enabled`.
 
-## Compiler definitions
+## Compiler navigation and local rename
 
 Go to Definition follows the compiler's resolved bindings for source functions,
 variables and parameters, including lexical shadowing, loop and lambda parameters,
@@ -304,7 +304,26 @@ When compiler analysis is enabled, its definition provider takes precedence over
 the language server's document-local guesses. Disabling `ny.analysis.enabled`
 retains the older language-server definition behavior. Completion and hover
 continue to work from the tolerant language-server index while source is incomplete.
-References and rename are not exposed from this partial compiler index.
+Find All References and Rename Symbol are available for local variables and loop
+binders only when the compiler certifies every occurrence in that source. These
+capabilities are separate from the partial index: an unindexed token with the
+same spelling, generated use, inline assembly, or Ny interpolation can withhold
+them. Functions, globals, fields, type names, and function/lambda parameters are
+not eligible. Named parameter labels can occur in callers outside the checked
+import graph and need a broader completeness contract.
+Matrix locals that shadow a paragraph signature can provide references but
+cannot be renamed until named-argument ordering follows the resolved callable.
+
+Rename accepts a new ASCII identifier, with Matrix hyphens supported. The name
+must not be reserved or already occur as an identifier anywhere in the source;
+Matrix comparisons ignore case, hyphens and underscores. The chosen spelling
+replaces every certified occurrence while preserving existing backtick delimiters.
+Before returning an edit, the extension checks the proposed source with the
+compiler, verifies that all retained bindings and source inputs are preserved,
+and revalidates the original buffers and disk inputs. Renaming through multiple
+open aliases of one file is refused. Failed or cancelled checks change no files.
+The existing tolerant completion provider continues to serve incomplete code;
+import-aware semantic completion remains a separate implementation stage.
 
 ## Current language-server limits
 

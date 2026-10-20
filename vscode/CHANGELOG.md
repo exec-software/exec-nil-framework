@@ -4,12 +4,19 @@ All notable changes to the NIL Framework VS Code extension are documented here.
 
 ## 1.0.0-rc.1
 
+- Add complete references and rename for compiler-certified local variables and
+  loop binders in Ny and Matrix. Reject ambiguous coverage, reserved names,
+  capture risks and multiple open aliases; recheck proposed edits and verify
+  preserved bindings before returning a workspace edit.
+- Resolve Matrix paragraph values with the same declared-name folding as direct
+  calls, preserving escaped spelling and lexical shadowing.
+
 - Resolve Go to Definition through checked compiler bindings for source variables,
   parameters and direct/imported functions across Ny and Matrix, including dirty
   and new sources. Preserve exact UTF-8 name spans and lexical binding identities.
 - Validate the complete semantic source snapshot before navigation; suppress stale,
-  unsupported, failed-check and binary-library destinations. Keep references and
-  rename unavailable until their compiler coverage is complete.
+  unsupported, failed-check and binary-library destinations. Gate editing on
+  explicit compiler completeness capabilities.
 - Check unsaved imported Ny and Matrix buffers through bounded compiler workspace
   input, including new named untitled modules and their nested project settings.
 - Cancel checks when any captured buffer or workspace context changes; publish

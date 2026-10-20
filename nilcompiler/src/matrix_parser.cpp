@@ -2566,7 +2566,7 @@ ny::ast_expr_ptr parser::parse_primary() {
       }
       const token &name_token = peek();
       return named(std::make_shared<ny::ast_identifier_expr>(
-                       nil_symbol(advance().lexeme), line), name_token);
+                       resolve_name(advance().lexeme), line), name_token);
     }
     error(peek(), "expected 'length of' or 'paragraph' after 'the'");
     return nullptr;

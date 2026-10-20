@@ -1027,6 +1027,10 @@ if(BUILD_TESTING)
                 --compiler $<TARGET_FILE:nilcompiler>)
         set_tests_properties(parser.source-spans parser.matrix-source-spans nil.semantic-index
             PROPERTIES LABELS "analysis;semantic" TIMEOUT 60)
+        add_test(NAME matrix.function-values
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/function_value_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>)
+        set_tests_properties(matrix.function-values PROPERTIES LABELS "matrix;analysis;interpreter" TIMEOUT 60)
         add_test(NAME nil.reflection-consumer
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/reflection_contract.py"
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>

@@ -3,6 +3,7 @@
 #include "matrix_diagnostics.hpp"
 #include "secure_file_io.hpp"
 #include "matrix_lexer.hpp"
+#include "lexer.hpp"
 #include "../../common/strict_json.hpp"
 #ifdef _WIN32
 #include <fcntl.h>
@@ -469,17 +470,8 @@ std::string analysis_session::semantic_json() const {
     paths.insert(path);
   }
   std::set<std::size_t> ids;
-  std::string symbol_json;
   for (const auto &s : semantics->symbols) {
     if (!valid_span(s.path, s.span, s.name)) continue;
-    const auto entry = "{\"id\":" + std::to_string(s.id) +
-        ",\"kind\":" + quoted(s.kind) + ",\"name\":" + quoted(s.name) +
-        ",\"type\":" + quoted(s.type) + ",\"path\":" + quoted(s.path) +
-        ",\"start\":" + std::to_string(s.span.start) +
-        ",\"length\":" + std::to_string(s.span.length) + '}';
-    if (entry.size() + symbol_json.size() + 1 > limit) return "null";
-    if (!symbol_json.empty()) symbol_json += ',';
-    symbol_json += entry;
     ids.insert(s.id);
     paths.insert(s.path);
   }
@@ -494,6 +486,134 @@ std::string analysis_session::semantic_json() const {
     const auto [it, inserted] = references.emplace(key, &r);
     if (!inserted && it->second->symbol_id != r.symbol_id) ambiguous.insert(key);
   }
+
+  // A partial index cannot certify editing from the references it happens to
+  // contain. For lexical locals, prove coverage against every original name
+  // token as well. Unrepresented type/member/assembly/argument-label tokens
+  // conservatively disqualify that spelling; they never become guessed uses.
+  std::map<occurrence, std::size_t> represented;
+  for (const auto &s : semantics->symbols) {
+    if (!ids.count(s.id)) continue;
+    const auto key = std::make_tuple(s.path, s.span.start, s.span.length);
+    const auto [it, inserted] = represented.emplace(key, s.id);
+    if (!inserted && it->second != s.id) ambiguous.insert(key);
+  }
+  for (const auto &[key, r] : references) {
+    const auto [it, inserted] = represented.emplace(key, r->symbol_id);
+    if (!inserted && it->second != r->symbol_id) ambiguous.insert(key);
+  }
+  struct editing_source {
+    std::string language;
+    std::set<std::string> identifier_keys, reserved_keys, uncovered_keys, signature_keys;
+    std::set<std::pair<std::size_t, std::size_t>> name_tokens;
+    bool available = true;
+  };
+  std::map<std::string, editing_source> editing_sources;
+  for (const auto &s : semantics->symbols)
+    if (ids.count(s.id) && s.lexical_local && s.all_uses_located)
+      editing_sources.try_emplace(s.path);
+  std::size_t identifier_count = 0;
+  for (auto &[path, source] : editing_sources) {
+    const auto &text = sources.at(path);
+    const auto ext = extension(path);
+    source.language = ext == ".ny" ? "ny" : "matrix";
+    const auto record = [&](const std::string &key, std::size_t start, std::size_t length) {
+      if (!source.available) return;
+      if (key.empty()) { source.available = false; return; }
+      if (source.identifier_keys.insert(key).second) ++identifier_count;
+      if (source.identifier_keys.size() > 32768 || identifier_count > 131072 ||
+          source.name_tokens.size() >= 131072) {
+        source.available = false;
+        return;
+      }
+      source.name_tokens.emplace(start, length);
+      const auto position = std::make_tuple(path, start, length);
+      if (!represented.count(position) || ambiguous.count(position))
+        source.uncovered_keys.insert(key);
+    };
+    if (source.language == "matrix") {
+      matrix::lexer scanner(text);
+      for (const auto &token : scanner.scan()) {
+        // Analysis does not enforce the eventual native assembler profile.
+        // Keep arbitrary assembly text outside the closed-local proof.
+        if (token.is(matrix::kw::assembly)) source.available = false;
+        if (token.kind != matrix::token_kind::identifier) continue;
+        const auto trim = token.escaped_identifier ? 1u : 0u;
+        if (token.length <= 2 * trim) { source.available = false; continue; }
+        record(token.key, token.start + trim, token.length - 2 * trim);
+      }
+      if (scanner.has_errors()) source.available = false;
+      for (int k = 0; k < static_cast<int>(matrix::kw::not_a_keyword); ++k)
+        source.reserved_keys.insert(matrix::fold_key(matrix::keyword_name(static_cast<matrix::kw>(k))));
+    } else {
+      lexer scanner(text);
+      for (const auto &token : scanner.scan_tokens()) {
+        if (token.kind == token_kind::identifier)
+          record(token.lexeme, token.offset, token.length);
+        // Interpolation has checker bindings but no editable original spans.
+        // Withhold editing for the whole file, including potentially captured
+        // names absent from the ordinary token stream. Literal braces are an
+        // intentional conservative exclusion until interpolation is mapped.
+        if (token.kind == token_kind::invalid ||
+            (token.kind == token_kind::identifier && token.lexeme == "asm") ||
+            (token.kind == token_kind::string_literal && token.lexeme.find('{') != std::string::npos))
+          source.available = false;
+      }
+      std::istringstream words("function fun let const if else elseif then return println while where for in break continue loop do mut import package module namespace using use pub type as end true false match when struct enum trait impl allocate deallocate ref fn mod class abstract virtual override inherits self attempt fault recover raise assert hotreload not test example property generate asm and or _");
+      for (std::string word; words >> word;) source.reserved_keys.insert(word);
+    }
+    for (const auto *reserved : {"owned", "owned_move", "owned_borrow", "owned_borrow_mut", "parallel_map", "assert", "hotreload"})
+      source.reserved_keys.insert(source.language == "matrix" ? matrix::fold_key(reserved) : reserved);
+  }
+  for (const auto &s : semantics->symbols) {
+    const auto source = editing_sources.find(s.path);
+    if (s.kind == "function" && ids.count(s.id) && source != editing_sources.end() &&
+        source->second.language == "matrix")
+      source->second.signature_keys.insert(matrix::fold_key(sources.at(s.path).substr(s.span.start, s.span.length)));
+  }
+  std::set<std::size_t> unlocated;
+  for (const auto &r : semantics->references) {
+    if (r.symbol_id >= semantics->symbols.size()) continue;
+    const auto &symbol = semantics->symbols[r.symbol_id];
+    const auto source = editing_sources.find(symbol.path);
+    if (source == editing_sources.end()) continue;
+    const auto position = std::make_tuple(r.path, r.span.start, r.span.length);
+    if (r.path != symbol.path || !references.count(position) || ambiguous.count(position) ||
+        !source->second.name_tokens.count({r.span.start, r.span.length}))
+      unlocated.insert(r.symbol_id);
+  }
+  std::set<std::size_t> complete;
+  for (const auto &s : semantics->symbols) {
+    if (!ids.count(s.id) || !s.lexical_local || !s.all_uses_located) continue;
+    const auto &source = editing_sources.at(s.path);
+    const auto name = source.language == "matrix" ? matrix::fold_key(s.name) : s.name;
+    if (!source.available || source.uncovered_keys.count(name) ||
+        !source.name_tokens.count({s.span.start, s.span.length}) ||
+        ambiguous.count(std::make_tuple(s.path, s.span.start, s.span.length))) continue;
+    if (!unlocated.count(s.id)) complete.insert(s.id);
+  }
+  std::string symbol_json;
+  std::set<std::string> policy_paths;
+  for (const auto &s : semantics->symbols) {
+    if (!ids.count(s.id)) continue;
+    // Matrix currently reorders named arguments through a page-wide function
+    // signature table before lexical resolution. Renaming a local that shadows
+    // such a name can change argument order without changing its binding IDs.
+    // Its lexical references are complete, but editing is not yet safe.
+    const bool rename_safe = complete.count(s.id) &&
+        !editing_sources.at(s.path).signature_keys.count(matrix::fold_key(s.name));
+    const auto entry = "{\"id\":" + std::to_string(s.id) +
+        ",\"kind\":" + quoted(s.kind) + ",\"name\":" + quoted(s.name) +
+        ",\"type\":" + quoted(s.type) + ",\"path\":" + quoted(s.path) +
+        ",\"start\":" + std::to_string(s.span.start) +
+        ",\"length\":" + std::to_string(s.span.length) +
+        (complete.count(s.id) ? ",\"references_complete\":true" : "") +
+        (rename_safe ? ",\"rename_safe\":true" : "") + '}';
+    if (entry.size() + symbol_json.size() + 1 > limit) return "null";
+    if (!symbol_json.empty()) symbol_json += ',';
+    symbol_json += entry;
+    if (rename_safe) policy_paths.insert(s.path);
+  }
   std::string reference_json;
   for (const auto &[key, r] : references) {
     if (ambiguous.count(key)) continue;
@@ -506,17 +626,40 @@ std::string analysis_session::semantic_json() const {
     reference_json += entry;
     paths.insert(r->path);
   }
+  const auto keys_json = [&](const std::set<std::string> &keys) {
+    std::string result = "[";
+    for (const auto &key : keys) {
+      if (result.size() > 1) result += ',';
+      result += quoted(key);
+    }
+    return result + ']';
+  };
+  std::string policy_json = "{\"schema\":\"nil.rename.v1\",\"sources\":[";
+  bool first_policy = true;
+  for (const auto &path : policy_paths) {
+    const auto &source = editing_sources.at(path);
+    const auto entry = "{\"path\":" + quoted(path) + ",\"language\":" + quoted(source.language) +
+        ",\"identifier_keys\":" + keys_json(source.identifier_keys) +
+        ",\"reserved_keys\":" + keys_json(source.reserved_keys) + '}';
+    if (entry.size() + policy_json.size() + symbol_json.size() + reference_json.size() + 1 > limit)
+      return "null";
+    if (!first_policy) policy_json += ',';
+    first_policy = false;
+    policy_json += entry;
+  }
+  policy_json += "]}";
   if (paths.size() > 256) return "null";
   std::string source_json;
   for (const auto &path : paths) {
     const auto entry = "{\"path\":" + quoted(path) + ",\"text\":" + quoted(sources.at(path)) + '}';
-    if (entry.size() + source_json.size() + symbol_json.size() + reference_json.size() + 1 > limit)
+    if (entry.size() + source_json.size() + symbol_json.size() + reference_json.size() + policy_json.size() + 1 > limit)
       return "null";
     if (!source_json.empty()) source_json += ',';
     source_json += entry;
   }
   auto result = "{\"schema\":\"nil.semantic.v1\",\"partial\":true,\"sources\":[" + source_json +
-      "],\"symbols\":[" + symbol_json + "],\"references\":[" + reference_json + "]}";
+      "],\"symbols\":[" + symbol_json + "],\"references\":[" + reference_json +
+      "],\"rename_policy\":" + policy_json + '}';
   return result.size() > limit ? "null" : result;
 }
 

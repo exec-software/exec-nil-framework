@@ -11,7 +11,7 @@ import { projectForResource } from "./projectContext";
 import { analysisSourcePath, languageDocumentSelector, savedSourcePath, sourceLanguage } from "./languages";
 import { expandConfiguredPath } from "./toolchain";
 import { configuredSdkPath, nyConfiguration, resolveConfiguredTool, toolNotFoundMessage } from "./vscodeToolchain";
-import { definitionAt, SemanticIndex, SemanticSource } from "./semanticModel";
+import { definitionAt, planRename, referencesAt, renamePreservesBindings, SemanticIndex, SemanticLocation, SemanticSource } from "./semanticModel";
 
 const debounceMilliseconds = 400;
 const timeoutMilliseconds = 10_000;
@@ -44,7 +44,7 @@ interface CachedFix {
 }
 
 /** Compiler analysis is independent of nillsp's deliberately partial parser. */
-export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider, vscode.DefinitionProvider {
+export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider, vscode.DefinitionProvider, vscode.ReferenceProvider, vscode.RenameProvider {
   private readonly diagnostics = vscode.languages.createDiagnosticCollection("nil-analysis");
   private readonly output = vscode.window.createOutputChannel("NIL Framework Analysis");
   private readonly subscriptions: vscode.Disposable[] = [];
@@ -55,6 +55,8 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
   private readonly contributions = new Map<string, Map<string, vscode.Diagnostic[]>>();
   private readonly reports = new Map<string, string>();
   private readonly semantics = new Map<string, { job: AnalysisJob; index: SemanticIndex }>();
+  private compilerQueue: Promise<unknown> = Promise.resolve();
+  private readonly renameChecks = new Set<AbortController>();
   private active: { job: AnalysisJob; controller: AbortController } | undefined;
   private disposed = false;
   private generation = 0;
@@ -78,6 +80,8 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
         providedCodeActionKinds: [vscode.CodeActionKind.QuickFix]
       }),
       vscode.languages.registerDefinitionProvider(languageDocumentSelector, this),
+      vscode.languages.registerReferenceProvider(languageDocumentSelector, this),
+      vscode.languages.registerRenameProvider(languageDocumentSelector, this),
       vscode.commands.registerCommand("ny.applyAnalysisFix", (token: unknown) => this.applyFix(token)),
       vscode.commands.registerCommand("ny.analyzeCurrentFile", async () => {
         const document = vscode.window.activeTextEditor?.document;
@@ -185,6 +189,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
   }
 
   private scheduleAll(): void {
+    for (const controller of this.renameChecks) controller.abort();
     this.generation++;
     for (const document of vscode.workspace.textDocuments) this.schedule(document);
   }
@@ -290,7 +295,19 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
   }
 
   private async check(job: AnalysisJob, signal: AbortSignal): Promise<boolean> {
-    if (!this.current(job) || signal.aborted) return false;
+    const result = await this.analyzeSnapshot(job, signal);
+    return result ? this.publish(job, result, signal) : false;
+  }
+
+  private analyzeSnapshot(job: AnalysisJob, signal: AbortSignal, inputOverride?: string): Promise<AnalysisResult | undefined> {
+    // Speculative rename checks share the same bounded compiler queue as live diagnostics.
+    const task = this.compilerQueue.then(() => this.runAnalysis(job, signal, inputOverride));
+    this.compilerQueue = task.catch(() => undefined);
+    return task;
+  }
+
+  private async runAnalysis(job: AnalysisJob, signal: AbortSignal, inputOverride?: string): Promise<AnalysisResult | undefined> {
+    if (!this.current(job) || signal.aborted) return undefined;
     const context = this.contextUri(job.document);
     const project = projectForResource(context);
     if (project && vscode.workspace.textDocuments.some(document => document.uri.scheme === "file" &&
@@ -312,9 +329,9 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     this.watchImportRoots([...roots, ...(sdkRoot ? [sdkRoot] : [])]);
     const invocation = analysisInvocation(tool.executable, job.source, sdkRoot,
       !project && configuration.get<boolean>("compiler.noStdlib", false), roots, project?.analysis, !project);
-    const input = await this.workspaceInput(job);
+    const input = inputOverride ?? await this.workspaceInput(job);
     const cwd = await this.workingDirectory(project?.directory ?? path.dirname(job.source));
-    if (signal.aborted || !this.current(job)) return false;
+    if (signal.aborted || !this.current(job)) return undefined;
     const result = await new Promise<AnalysisResult>((resolve, reject) => {
       const child = execFile(invocation.command, [...invocation.args], {
         cwd, encoding: "utf8", windowsHide: true,
@@ -335,9 +352,9 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
       child.stdin?.on("error", () => { /* A cancelled or failed compiler may close stdin early. */ });
       child.stdin?.end(input, "utf8");
     });
-    if (signal.aborted || !this.current(job)) return false;
+    if (signal.aborted || !this.current(job)) return undefined;
     if (result.language !== job.document.languageId) throw new Error("Compiler analyzed the document as a different language.");
-    return this.publish(job, result, signal);
+    return result;
   }
 
   private watchImportRoots(roots: readonly string[]): void {
@@ -482,7 +499,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     } catch { return false; }
   }
 
-  async provideDefinition(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): Promise<vscode.LocationLink[] | undefined> {
+  private async semanticContext(document: vscode.TextDocument, token: vscode.CancellationToken, forRename = false): Promise<{ job: AnalysisJob; index: SemanticIndex; primary: AnalysisInput } | undefined> {
     if (!this.enabled(document) || token.isCancellationRequested) return undefined;
     const version = document.version;
     const key = document.uri.toString();
@@ -492,60 +509,141 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
       cached = this.semantics.get(key);
     }
     if (!cached || token.isCancellationRequested || document.version !== version || !this.current(cached.job)) return undefined;
-    const { job, index } = cached;
-    const primary = job.inputs.find(input => input.document === document);
-    if (!primary) return undefined;
-    const match = definitionAt(index, primary.identity, document.offsetAt(position));
-    if (!match) return undefined;
+    const primary = cached.job.inputs.find(input => input.document === document);
+    return primary && await this.validateSemantic(cached.job, cached.index, token, forRename) ? { ...cached, primary } : undefined;
+  }
+
+  private async validateSemantic(job: AnalysisJob, index: SemanticIndex, token: vscode.CancellationToken, forRename = false): Promise<boolean> {
+    const document = job.document;
     // Textual includes can have other extensions and cannot be overlaid yet.
     // Observe their open models too, including aliases and edits during awaits.
     const localDocuments = (): vscode.TextDocument[] => vscode.workspace.textDocuments.filter(item =>
       (item.uri.scheme === "file" || item.uri.scheme === "untitled") && path.isAbsolute(item.uri.fsPath));
     const observed = localDocuments().map(item => ({ document: item, version: item.version, dirty: item.isDirty, identity: "" }));
     await Promise.all(observed.map(async item => { item.identity = await this.sourceIdentity(item.document.uri.fsPath); }));
+    // A WorkspaceEdit addresses editor URIs. Editing one of two aliases would
+    // leave the other model with an obsolete copy of the same source.
+    const primaryIdentity = job.inputs.find(input => input.document === document)?.identity;
+    if (forRename && observed.some(item => item.document !== document && item.identity === primaryIdentity)) return false;
     // Validate the complete exported input set, not only the destination. An
     // unchanged target can resolve differently after another dependency edit.
     for (const input of job.inputs) {
       if (await this.sourceIdentity(input.source) !== input.identity) {
         this.invalidate(document.uri);
-        return undefined;
+        return false;
       }
     }
     for (const source of index.sources) {
-      if (token.isCancellationRequested || !this.current(job) || source.text.startsWith("\uFEFF")) return undefined;
+      if (token.isCancellationRequested || !this.current(job) || source.text.startsWith("\uFEFF")) return false;
       if (await this.sourceIdentity(source.path) !== path.normalize(source.path)) {
         this.invalidate(document.uri);
-        return undefined;
+        return false;
       }
       const inputs = job.inputs.filter(input => input.identity === path.normalize(source.path));
       const models = observed.filter(item => item.identity === path.normalize(source.path));
-      if (!inputs.length && models.some(item => item.document.isDirty || item.document.getText() !== source.text)) return undefined;
+      if (models.some(item => item.dirty && !inputs.some(input => input.document === item.document) && item.document.getText() !== source.text)) return false;
+      if (!inputs.length && models.some(item => item.document.isDirty || item.document.getText() !== source.text)) return false;
       if (inputs.length) {
-        if (inputs.some(input => input.text !== source.text)) return undefined;
+        if (inputs.some(input => input.text !== source.text)) return false;
       } else {
         if (!await this.matchesDiskSnapshot(source)) {
           this.invalidate(document.uri);
-          return undefined;
+          return false;
         }
       }
     }
-    if (token.isCancellationRequested || !this.current(job) || document.version !== version ||
+    if (token.isCancellationRequested || !this.current(job) || document.version !== job.version ||
         localDocuments().length !== observed.length || observed.some(item => item.document.isClosed ||
-          item.document.version !== item.version || item.document.isDirty !== item.dirty)) return undefined;
-    const range = (text: string, start: number, end: number): vscode.Range | undefined => {
-      const point = (offset: number): vscode.Position | undefined => {
-        if (offset > 0 && text[offset - 1] === "\r" && text[offset] === "\n") return undefined;
-        const lines = text.slice(0, offset).split(/\r\n|\r|\n/);
-        return new vscode.Position(lines.length - 1, lines[lines.length - 1]!.length);
-      };
-      const first = point(start), last = point(end);
-      return first && last ? new vscode.Range(first, last) : undefined;
+          item.document.version !== item.version || item.document.isDirty !== item.dirty)) return false;
+    return true;
+  }
+
+  private semanticRange(text: string, start: number, end: number): vscode.Range | undefined {
+    const point = (offset: number): vscode.Position | undefined => {
+      if (offset > 0 && text[offset - 1] === "\r" && text[offset] === "\n") return undefined;
+      const lines = text.slice(0, offset).split(/\r\n|\r|\n/);
+      return new vscode.Position(lines.length - 1, lines[lines.length - 1]!.length);
     };
-    const originSelectionRange = range(job.text, match.origin.start, match.origin.end);
-    const targetRange = range(match.targetText, match.targetOffsets.start, match.targetOffsets.end);
-    if (!originSelectionRange || !targetRange) return undefined;
-    const targetInput = job.inputs.find(input => input.identity === path.normalize(match.target.path));
-    return [{ originSelectionRange, targetUri: targetInput?.document.uri ?? vscode.Uri.file(match.target.path), targetRange, targetSelectionRange: targetRange }];
+    const first = point(start), last = point(end);
+    return first && last ? new vscode.Range(first, last) : undefined;
+  }
+
+  private semanticLocation(job: AnalysisJob, index: SemanticIndex, location: SemanticLocation): vscode.Location | undefined {
+    const source = index.sources.find(item => path.normalize(item.path) === path.normalize(location.path));
+    const offsets = source && createByteRangeMapper(source.text)(location.start, location.length);
+    const range = source && offsets && this.semanticRange(source.text, offsets.start, offsets.end);
+    const input = job.inputs.find(item => item.identity === path.normalize(location.path));
+    return range ? new vscode.Location(input?.document.uri ?? vscode.Uri.file(location.path), range) : undefined;
+  }
+
+  async provideDefinition(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): Promise<vscode.LocationLink[] | undefined> {
+    const context = await this.semanticContext(document, token);
+    if (!context) return undefined;
+    const { job, index, primary } = context;
+    const match = definitionAt(index, primary.identity, document.offsetAt(position));
+    if (!match) return undefined;
+    const originSelectionRange = this.semanticRange(job.text, match.origin.start, match.origin.end);
+    const target = this.semanticLocation(job, index, match.target);
+    return originSelectionRange && target ? [{ originSelectionRange, targetUri: target.uri, targetRange: target.range, targetSelectionRange: target.range }] : undefined;
+  }
+
+  async provideReferences(document: vscode.TextDocument, position: vscode.Position, context: vscode.ReferenceContext, token: vscode.CancellationToken): Promise<vscode.Location[] | undefined> {
+    const snapshot = await this.semanticContext(document, token);
+    if (!snapshot) return undefined;
+    const locations = referencesAt(snapshot.index, snapshot.primary.identity, document.offsetAt(position), context.includeDeclaration);
+    if (!locations) return undefined;
+    const result = locations.map(item => this.semanticLocation(snapshot.job, snapshot.index, item));
+    return result.every((item): item is vscode.Location => item !== undefined) ? result : undefined;
+  }
+
+  async prepareRename(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): Promise<{ range: vscode.Range; placeholder: string }> {
+    const snapshot = await this.semanticContext(document, token, true);
+    const match = snapshot && definitionAt(snapshot.index, snapshot.primary.identity, document.offsetAt(position));
+    if (!snapshot || !match?.target.rename_safe || path.normalize(match.target.path) !== snapshot.primary.identity ||
+        !snapshot.index.rename_policy?.sources.some(item => path.normalize(item.path) === snapshot.primary.identity)) {
+      throw new Error("Rename is available only for local variables with complete compiler references in a successfully checked source.");
+    }
+    const range = this.semanticRange(snapshot.job.text, match.origin.start, match.origin.end);
+    if (!range) throw new Error("The compiler source range cannot be represented in this editor.");
+    return { range, placeholder: document.getText(range) };
+  }
+
+  async provideRenameEdits(document: vscode.TextDocument, position: vscode.Position, newName: string, token: vscode.CancellationToken): Promise<vscode.WorkspaceEdit | undefined> {
+    const snapshot = await this.semanticContext(document, token, true);
+    if (!snapshot) return undefined;
+    const { job, index, primary } = snapshot;
+    const plan = planRename(index, primary.identity, document.offsetAt(position), newName);
+    if (!plan || path.normalize(plan.target.path) !== primary.identity) {
+      throw new Error("Choose a new, unreserved identifier that does not occur elsewhere in this source. Only certified local variables can be renamed.");
+    }
+    const inputs = new Map<string, AnalysisInput>();
+    for (const input of job.inputs) if (!inputs.has(input.identity)) inputs.set(input.identity, input);
+    const request = serializeAnalysisWorkspace([...inputs.values()].map(input => ({ path: input.source, text: input.identity === primary.identity ? plan.text : input.text })));
+    const controller = new AbortController();
+    const cancellation = token.onCancellationRequested(() => controller.abort());
+    this.renameChecks.add(controller);
+    try {
+      if (token.isCancellationRequested) return undefined;
+      const result = await this.analyzeSnapshot(job, controller.signal, request);
+      if (!result || controller.signal.aborted || token.isCancellationRequested) return undefined;
+      if (!result.success || !result.semantic || !renamePreservesBindings(index, result.semantic, plan)) {
+        throw new Error("Rename was rejected because the edited program did not preserve its checked bindings.");
+      }
+      if (!await this.validateSemantic(job, index, token, true)) return undefined;
+      const edit = new vscode.WorkspaceEdit();
+      for (const change of plan.edits) {
+        const range = this.semanticRange(job.text, change.offsets.start, change.offsets.end);
+        if (!range) return undefined;
+        edit.replace(document.uri, range, newName);
+      }
+      return edit;
+    } catch (error) {
+      if (controller.signal.aborted || token.isCancellationRequested) return undefined;
+      throw error;
+    } finally {
+      cancellation.dispose();
+      this.renameChecks.delete(controller);
+    }
   }
 
   private renderDiagnostics(): void {
@@ -601,6 +699,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
   dispose(): void {
     this.disposed = true;
     this.active?.controller.abort();
+    for (const controller of this.renameChecks) controller.abort();
     for (const timer of this.timers.values()) clearTimeout(timer);
     for (const job of this.pending.values()) job.resolve(false);
     this.timers.clear();

@@ -24,10 +24,18 @@ the two frontends, including unsaved imports and lexical shadowing, after
 validating the entire native input set. Textual include snapshots are watched
 and checked even when their extensions cannot participate in overlays.
 
+The compiler now certifies complete occurrence sets for eligible lexical local
+variables and loop binders. VS Code uses those explicit capabilities for Find
+All References and local rename. Rename follows compiler-provided identifier and
+reserved-name policy, then checks the proposed source and verifies every retained
+binding before returning an edit. Named parameters, functions and globals still
+need a graph that includes their external callers. See F42 in the
+[findings](../matrix/docs/next-version-findings.md).
+
 The language server currently has a separate tolerant, document-local index.
 It supplies useful local completion, hover and outline information,
 but it does not have the compiler's resolved import graph or reference bindings.
-Its older definition provider is suppressed while compiler analysis is enabled;
+Its definition, references and rename providers are suppressed while compiler analysis is enabled;
 disabling analysis retains that fallback.
 Declaration snapshots alone are insufficient to implement reliable cross-file
 rename, references or semantic completion.
@@ -54,13 +62,14 @@ Package resolution, lock files and distribution publication are separate from
 the local build driver. Their contracts belong to the package-manager design.
 Native compiler plugins are not a prerequisite for a useful analyzer host.
 
-The near-term priority is expanding the retained binding coverage before
-claiming complete references, rename, or semantic completion. Both frontends
+The near-term priority is expanding retained binding coverage beyond certified
+locals and adding a query model for semantic completion in incomplete code. Both frontends
 now preserve supported original-source name spans, and the checker retains
 local bindings after their scopes are discarded. Type strings and declaration
 names still cannot stand in for a complete symbol/type model. Expanded/generated
 locations remain non-editable until source maps exist. Matrix rename also needs
-explicit rules for hyphen, underscore, case-folded, and escaped surface spellings.
+richer spelling rules beyond the initial explicit replacement of certified local
+occurrences, including cross-language declarations and named argument labels.
 
 Adding editor-only heuristics for references or rename would create a third
 interpretation of the languages and make those features difficult to trust. Each stage should ship

@@ -244,8 +244,7 @@ std::optional<std::size_t> type_checker::semantic_node(
 
 void type_checker::semantic_reference_to(const ast_node &node,
     const std::string &name, const symbol &binding) {
-  if (!collect_semantics_ || !semantics_.available || !node.name_span ||
-      !node.name_span->length) return;
+  if (!collect_semantics_ || !semantics_.available) return;
   auto id = binding.semantic_id;
   if (!id && binding.defining_node) {
     const auto &declaration = *binding.defining_node;
@@ -260,8 +259,15 @@ void type_checker::semantic_reference_to(const ast_node &node,
     }
   }
   if (!id || *id >= semantics_.symbols.size()) return;
+  if (!node.name_span || !node.name_span->length) {
+    semantics_.symbols[*id].all_uses_located = false;
+    return;
+  }
   const auto path = node.source_file.empty() ? diagnostic_source_file_ : node.source_file;
-  if (path.empty()) return;
+  if (path.empty()) {
+    semantics_.symbols[*id].all_uses_located = false;
+    return;
+  }
   const auto key = std::make_tuple(path, node.name_span->start,
                                   node.name_span->length, *id);
   if (semantic_occurrences_.count(key)) return;
@@ -2648,9 +2654,10 @@ void type_checker::visit(ast_variable_decl &p) {
               "Variable '" + p.name + "' already declared in this scope");
   }
   if (auto *binding = symbols_.lookup_mut(var_name);
-      binding && binding->defining_node == &p)
+      binding && binding->defining_node == &p) {
     binding->semantic_id = semantic_node(p, p.name, "variable", var_type_name,
                                          diagnostic_source_file_);
+  }
   last_expr_type_ = type_void;
 }
 
@@ -3162,6 +3169,16 @@ void type_checker::visit(ast_println_stmt &s) {
 void type_checker::visit(ast_decl_stmt &s) {
   if (s.declaration) {
     s.declaration->accept(*this);
+    // Prove lexical provenance from a declaration statement in a body, not
+    // from ambient return-type state while some declaration is being checked.
+    // A global initializer resolved from inside a function must never acquire
+    // a closed-local editing capability.
+    if (collect_semantics_ && semantics_.available && current_function_return_type_ &&
+        s.declaration->kind == ast_node_kind::variable_decl_node) {
+      const auto declaration = semantic_nodes_.find(s.declaration.get());
+      if (declaration != semantic_nodes_.end())
+        semantics_.symbols[declaration->second].lexical_local = true;
+    }
   }
 }
 
@@ -3829,6 +3846,8 @@ void type_checker::visit(ast_for_in_stmt &s) {
                std::nullopt);
     sym.semantic_id = semantic_declaration(var.name, "variable", type_to_register,
                                            diagnostic_source_file_, var.name_span);
+    if (sym.semantic_id)
+      semantics_.symbols[*sym.semantic_id].lexical_local = true;
     if (!symbols_.insert_symbol(sym))
       add_error(var.line, "Loop variable '" + var.name +
                              "' already declared in this scope");

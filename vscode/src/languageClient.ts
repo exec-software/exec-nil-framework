@@ -58,6 +58,12 @@ export class NyLanguageClientManager implements vscode.Disposable {
       middleware: {
         provideDefinition: (document, position, token, next) => this.compilerDefinitionsEnabled(document)
           ? undefined : next(document, position, token),
+        provideReferences: (document, position, context, token, next) => this.compilerDefinitionsEnabled(document)
+          ? undefined : next(document, position, context, token),
+        prepareRename: (document, position, token, next) => this.compilerDefinitionsEnabled(document)
+          ? undefined : next(document, position, token),
+        provideRenameEdits: (document, position, newName, token, next) => this.compilerDefinitionsEnabled(document)
+          ? undefined : next(document, position, newName, token),
         handleDiagnostics: (uri, diagnostics, next) => {
           const enabled = vscode.workspace
             .getConfiguration("ny", uri)

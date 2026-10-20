@@ -175,6 +175,8 @@ not a compiler execution sandbox or time budget.
 The flag works with disk input, `--source-stdin`, and `--workspace-stdin`.
 Without the flag, the member is absent. A successful supported check returns
 `nil.semantic.v1`; an unavailable index is `null`.
+The example shows the navigation fields; additive local-editing fields are
+described below.
 
 ```json
 {
@@ -230,9 +232,8 @@ token remain unlocated. There are no guessed offsets into expanded text.
 `partial: true` is deliberate. Field/member dispatch, type-use strings,
 pattern bindings, full generic/overload occurrence coverage, failed-code
 recovery, and source maps for expansion/generated code remain incomplete.
-An empty reference list does not prove that a symbol is unused. This version
-supports definition navigation for emitted bindings; it is not a complete
-Find All References or rename contract.
+An empty reference list does not prove that a symbol is unused unless that
+individual symbol carries the completeness capability described below.
 
 The index is available only when the full analysis succeeds, including rule
 policy. Parser, import, type, ownership, and warnings-as-errors failures return
@@ -249,6 +250,76 @@ would exceed the full analysis response's 8 MiB bound. Existing input/provider
 limits still produce an analysis error as described above. Source text and
 span validation may omit unsupported individual locations within an otherwise
 valid partial index.
+
+### Certified local references and rename
+
+An eligible symbol additionally has `references_complete: true`; a candidate
+for rename also has `rename_safe: true`. Missing flags mean unsupported; consumers must never
+infer either capability from `kind`, the number of references, or successful
+checking. The whole index remains partial. These flags currently apply only
+to variable declarations inside function/lambda/test bodies and explicit loop
+binders, with all occurrences confined to their declaration's source file.
+Global variables, functions, fields, types, pattern bindings, and all parameters
+remain outside this editing profile. Named function parameter names can be
+used as Matrix argument labels by callers outside the analyzed graph.
+
+The checker retains actual binding IDs and records missing original spans.
+Export then lexes the original source and requires every identifier token with
+the declaration's key to have an unambiguous retained declaration or reference.
+This includes other declarations with the same spelling: their separate IDs
+preserve shadowing. An unsupported field/type/argument-label occurrence with
+that key withholds the capability rather than guessing its role. The supported
+symbol's own references must all be original name tokens in the same file.
+Ny sources containing a string with `{` are excluded because interpolation is
+not mapped; assembly in either language also excludes the source. Preprocessed
+or generated units without original spans cannot qualify.
+
+A Matrix local whose folded name matches a function declaration in the same
+source can have complete references while lacking `rename_safe`. Matrix
+currently reorders named arguments through a page-wide signature table before
+lexical binding; renaming such a local can change argument order even when all
+binding IDs remain equivalent. The compiler withholds rename until this
+lowering behavior is addressed.
+
+The index includes an additive `rename_policy` object with
+`schema: "nil.rename.v1"` and a `sources` array. Each entry contains:
+
+- `path`: the exact canonical source path already present in `sources`.
+- `language`: `"ny"` or `"matrix"`.
+- `identifier_keys`: the unique original identifier keys throughout that file.
+- `reserved_keys`: language keywords and reserved compiler operation names.
+
+Ny keys preserve spelling. Matrix keys fold ASCII case and remove hyphens and
+underscores. Policy entries exist only for sources with a certified rename candidate.
+There are at most 32,768 identifier keys per source, 131,072 in total, and
+131,072 name tokens examined per source for certification. A coverage-budget
+failure withholds that source's editing capabilities while retaining ordinary
+navigation; the complete JSON still shares the 4 MiB semantic-output bound.
+
+`rename_safe` authorizes a candidate for validation, not an arbitrary
+replacement. Clients must require a policy for the source, accept a bare
+identifier in the declared language, and reject empty normalized keys,
+reserved keys, and keys already present anywhere in that source. The current
+VS Code profile accepts ASCII identifiers: letters/underscore followed by
+letters/digits/underscore, with Matrix additionally allowing hyphens followed
+by a letter. Existing backticks stay outside the edit ranges. Every edited
+occurrence receives the same new spelling.
+
+Before offering edits, a client must analyze the proposed replacement against
+the same complete workspace snapshot and require successful analysis with a
+semantic index. Compare the entire indexed binding graph after accounting for
+changed byte offsets and the renamed declaration; preserve all other resolved
+identities. Snapshot-local numeric IDs cannot be compared directly across
+checks. This second check catches contextual grammar changes and unexpected
+rebinding. Revalidate original source versions and canonical identities after
+that asynchronous check, before returning an edit. A failed or unverifiable
+proposal returns no edit. References use the same snapshot validation and may
+include the declaration according to the caller's requested context.
+
+This profile does not add workspace-wide references for exported symbols,
+parameter rename, lexical scope ranges, or semantic completion in incomplete
+code. Older `nil.semantic.v1` producers without the new fields continue to
+support navigation, with local references/rename unavailable.
 
 See [NIL-0010](design/NIL-0010-semantic-source-index.md) for the design decision
 and [developer tooling](developer-tooling.md) for the remaining coverage.

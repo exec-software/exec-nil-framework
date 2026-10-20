@@ -78,7 +78,7 @@ void test_names_and_uses() {
       "public run-check receives café-value as number, `value` as number returns number begin paragraph\r\n"
       "  value local-value is café-value\r\n"
       "  evaluate alpha.beta::remote-call with LOCAL_VALUE\r\n"
-      "  value callback-value is the paragraph run-check\r\n"
+      "  value callback-value is the paragraph `RUN_CHECK`\r\n"
       "  repeat for each loop-value in [1, 2]\r\n"
       "    evaluate loop-value\r\n"
       "  end repeat\r\n"
@@ -107,7 +107,9 @@ void test_names_and_uses() {
           "source use keeps its written case while its NIL identity resolves");
   const auto callback = cast<ny::ast_variable_decl>(
       cast<ny::ast_decl_stmt>(body->statements.at(2))->declaration);
-  check_span(source, callback->initializer->name_span, "the paragraph run-check", "run-check");
+  check_span(source, callback->initializer->name_span, "the paragraph `RUN_CHECK`", "RUN_CHECK");
+  require(cast<ny::ast_identifier_expr>(callback->initializer)->name == "run_check",
+          "paragraph values use declared-name folding and retain exact escaped spans");
   const auto each = cast<ny::ast_for_in_stmt>(body->statements.at(3));
   check_span(source, each->variables.at(0).name_span, "each loop-value", "loop-value");
   check_span(source, cast<ny::ast_expr_stmt>(

@@ -1,8 +1,9 @@
 # NIL-0010: Compiler bindings for source navigation
 
-- **Status:** Implemented initial partial source index and definition navigation
+- **Status:** Implemented partial source index, definition navigation, and certified local editing
 - **Scope:** Shared compiler analysis and editor semantic services
 - **Date:** 2026-10-19
+- **Updated:** 2026-10-20
 
 ## Context
 
@@ -55,6 +56,51 @@ add watchers for all exported native dependencies. While compiler analysis is
 enabled, the older language-server definition provider is suppressed;
 disabling analysis retains its fallback behavior.
 
+The initial editing profile adds per-symbol `references_complete: true` and,
+for eligible rename candidates, `rename_safe: true`, without changing
+`partial: true` or the schema version.
+Only variable declarations proven to occur in a checked body and explicit
+loop binders are candidates. Export verifies their physical name occurrences
+against every original identifier token sharing the declaration's key. Every
+such token must already be a retained declaration or unambiguous actual
+reference; unsupported occurrences disqualify the spelling rather than
+acquiring an inferred role. Each candidate's references must stay within its
+original source and have exact name tokens. Missing-span checker uses also
+disqualify a candidate. Globals, functions, parameters, fields, types, and
+pattern bindings remain unsupported. In particular, named function parameters
+can be used as argument labels by callers beyond the analyzed source graph.
+
+Ny interpolation lacks original name spans, so a Ny string containing `{`
+excludes that entire source from editing. Assembly in either language does the
+same: source checking does not enforce the eventual native assembler profile.
+These conservative exclusions retain definition navigation where available.
+
+Complete references alone do not authorize rename. Matrix's current parser
+uses a page-wide function signature table to reorder named arguments before
+lexical binding. A local shadowing a function name can therefore change
+argument order when renamed while retaining an equivalent indexed binding
+graph. Such Matrix locals keep `references_complete` when proven, but omit
+`rename_safe`. Unrepresented signature names already fail token coverage.
+
+An additive `rename_policy` (`nil.rename.v1`) exports the language and unique
+identifier/reserved keys for each source with a certified local. Matrix keys
+use its ASCII case/separator folding. Coverage is bounded to 32,768 identifier
+keys per source, 131,072 keys in total, and 131,072 name tokens per source.
+Exhausting these coverage bounds withholds editing for the source. The policy
+still counts toward the existing semantic JSON limit; no truncated policy can
+authorize an edit. Older producers lacking capabilities remain usable for
+definition navigation only.
+
+VS Code's local rename requires an ASCII bare identifier, excludes all reserved
+and already-present source keys, preserves existing backtick delimiters, and
+edits only the certified declaration plus references carrying its ID. Before
+returning the edit, it checks the proposed source with the compiler, compares
+the entire indexed binding graph with translated byte locations and the one
+renamed declaration, and revalidates the original workspace snapshot. This
+prevents contextual syntax changes or binding capture from being accepted just
+because the new source type-checks. Numeric IDs belong to a single snapshot
+and are matched through source declaration identities across checks.
+
 ## Consequences
 
 Definition navigation can follow proven bindings across Ny and Matrix source
@@ -66,9 +112,11 @@ The `type` field is display metadata: a variable/parameter type or function
 return type, potentially empty. It is not a stable type graph or complete
 signature. Fields, method dispatch, type-use strings, patterns, complete generic
 and overload coverage, recoverable failed code, and generated-source maps need
-further work. Missing references cannot prove that a declaration is unused.
-Find All References and rename must wait for coverage and explicit completeness
-contracts; Matrix rename also needs surface-spelling rules.
+further work. Missing references cannot prove that a declaration is unused
+without its explicit completeness capability. Local references/rename are now
+available within that narrowly certified profile; workspace-wide exported
+symbol editing, parameter editing, lexical visibility ranges, and semantic
+completion during incomplete-code entry still require broader contracts.
 
 The [analysis API](../analysis-api.md) defines the schema and failure behavior.
 The [developer-tooling plan](../developer-tooling.md) records the remaining

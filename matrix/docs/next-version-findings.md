@@ -1231,14 +1231,89 @@ definition ranges and reject stale/unsupported destinations.
 
 ### F41 — Matrix function-value spelling bypasses normal name folding
 
-**Status:** Confirmed existing parser inconsistency; unchanged by source indexing.
+**Status:** Fixed. Paragraph values now use the same declared-name resolution as
+ordinary identifier expressions and direct calls.
 
 Given a paragraph named `read-count`, a direct call written as
 `evaluate READ_COUNT with 1` resolves its name. A function value written as
-`the paragraph READ_COUNT` instead reports `Undefined identifier 'READ_COUNT'`,
-while `the paragraph read-count` works. The latter parser path uses `nil_symbol`
-directly instead of ordinary `resolve_name` folding. This was reproduced with
-compiler analysis, independent of editor navigation.
+`the paragraph READ_COUNT` previously reported `Undefined identifier 'READ_COUNT'`,
+while `the paragraph read-count` worked. The latter parser path used `nil_symbol`
+directly instead of ordinary `resolve_name` folding. Both now resolve to the
+declared `read-count` symbol; the source index still retains the exact written
+spelling and excludes backtick delimiters from escaped-name ranges.
 
-**Next step:** Apply the same declared-name resolution to function values and
-direct calls, then test case/separator variants, escapes, scopes and imports.
+**Evidence:** `tests/matrix/function_value_contract.py` checks case/separator
+variants, forward declarations, escaped names, lexical shadowing, function-typed
+parameters and Ny/Matrix imports through semantic bindings and both textual and
+binary NIL execution. The parser source-span test covers escaped folded names
+with UTF-8 and CRLF input. External declarations still require their exported NIL
+spelling, as ordinary references do: another page's declarations are unavailable
+to the parser's local folding table. Native indirect calls remain unsupported.
+
+
+### F42 — A partial source index cannot establish complete references
+
+**Status:** Certified local references and rename implemented; broader semantic editing remains open.
+
+A list of known bindings does not prove that it contains every use. Renaming a
+variable through a missing interpolation, assembly operand, generated token or
+named argument can leave a program inconsistent. Named function parameters can
+also be referenced by callers outside the checked import graph.
+
+**Resolution:** The compiler certifies eligible body-local variables and loop
+binders only after checking retained uses against original identifier tokens.
+Missing or ambiguous occurrences with the same spelling withhold certification.
+Inline assembly and Ny interpolation conservatively disable local editing for
+the source. Functions, globals and all function/lambda parameters are excluded.
+The additive `references_complete` and `rename_safe` capabilities enable VS Code
+references and local rename without treating the overall index as complete.
+
+Rename uses compiler-provided identifier and reserved-name keys. A new name must
+be an ASCII identifier unused anywhere in the file; Matrix folds case and
+hyphen/underscore separators for collision checks and preserves existing
+backtick delimiters. This intentionally rejects some otherwise legal renames.
+The editor checks a speculative source snapshot, compares the full retained
+binding graph, then validates the original input set again before returning an
+edit. Multiple open aliases of the same file are refused to avoid divergent
+buffers. Cancellation or a failed check returns no edit.
+
+**Evidence:** Compiler contracts cover lexical shadowing, assignments, loops,
+unused locals, global/parameter exclusions, generated uses and spelling rules.
+Editor tests exercise exact references, rename and undo, Unicode/CRLF, Matrix
+folding and escaping, collisions, dirty imports, untitled files and file aliases.
+
+**Follow-up:** Add a complete caller/project graph for public symbols and named
+parameters, original maps for generated and embedded code, and a scope/query
+model that supports semantic completion while source is incomplete. Tolerant
+language-server completion remains active until that model is available.
+
+
+### F43 — Matrix named-argument order can depend on a shadowed paragraph name
+
+**Status:** Confirmed parser limitation; affected local renames are withheld.
+
+A function-valued local named `operation` can shadow a declared paragraph with
+that name. In `operation with second-part being 2, first-part being 1`, the
+parser uses the paragraph signature to reorder arguments before the checker
+resolves the local callable. Renaming the local to an otherwise unused name
+removes that signature lookup and can change the argument order. Both programs
+can type-check with identical retained symbol/reference graphs.
+
+**Reproduction:** Declare `operation(first-part, second-part)` and
+`alternate(first-part, second-part)`, each computing `first-part * 100 +
+second-part`. Inside `main`, bind local `operation` to `the paragraph alternate`
+and invoke it with the reversed named arguments above. The original prints
+`102`; changing the local and call spelling to `updated-operation` prints `201`.
+This was reproduced through the interpreter independently of VS Code.
+
+**Containment:** Local reference completeness remains valid, but the compiler
+withholds `rename_safe` for Matrix locals whose folded name matches a retained
+function declaration in the same source. Unindexed signature names already
+fail the original-token coverage check. New rename names cannot collide with
+other source identifiers. A compiler regression and real editor test preserve
+this exclusion.
+
+**Follow-up:** Resolve named arguments from the callable's checked signature,
+including function values and imports, rather than a parser name table. A
+successful type check and unchanged reference graph alone do not prove that a
+refactoring preserves all expression semantics.
