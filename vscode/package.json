@@ -376,7 +376,7 @@
           "type": "boolean",
           "default": true,
           "scope": "resource",
-          "description": "Check Ny and Matrix sources and unsaved imports, and provide compiler-resolved definitions, certified local references and rename. Requires a trusted workspace and a current SDK supporting --workspace-stdin, --semantic-index, and nil.analysis.v1 results."
+          "description": "Check Ny and Matrix sources and unsaved imports, and provide compiler-resolved definitions, identifier completion, certified local references and rename. Requires a trusted workspace and a current SDK supporting --workspace-stdin, --semantic-index, --completion-at and nil.analysis.v1 results."
         },
         "ny.analysis.includePaths": {
           "type": "array",

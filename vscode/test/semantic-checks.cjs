@@ -474,7 +474,7 @@ exports.run = async ({ check, workspace }) => {
     return { identicalAliases: true, untouchedBuffers: 2 };
   });
 
-  await check("Matrix callable locals shadowing paragraph signatures allow references but refuse rename", async () => {
+  await check("Matrix callable locals shadowing paragraphs preserve checked rename and undo", async () => {
     const text = 'book semantic.callable\n'
       + 'operation receives first-part as number, second-part as number returns number begin paragraph\n'
       + ' give first-part times 100 plus second-part\nend paragraph\n'
@@ -487,8 +487,12 @@ exports.run = async ({ check, workspace }) => {
     await expectReferences(document, "say operation", "operation", [
       [document, "value operation", "operation"], [document, "say operation", "operation"]
     ]);
-    await expectNoRename(document, "say operation", "operation", "updated-operation");
-    assert.equal(document.getText(), text);
-    return { references: 2, renameSafe: false, namedArgumentOrder: "preserved" };
+    const edit = await expectRename(document, "say operation", "operation", "updated-operation", [
+      [document, "value operation", "operation"], [document, "say operation", "operation"]
+    ]);
+    await applyAndUndo(document, edit, text.replace("value operation", "value updated-operation")
+      .replace("say operation", "say updated-operation"));
+    assert.equal(await fs.readFile(document.uri.fsPath, "utf8"), text);
+    return { references: 2, renameSafe: true, undo: true, namedArgumentOrder: "preserved" };
   });
 };

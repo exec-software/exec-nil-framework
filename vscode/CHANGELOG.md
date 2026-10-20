@@ -4,6 +4,14 @@ All notable changes to the NIL Framework VS Code extension are documented here.
 
 ## 1.0.0-rc.1
 
+- Add compiler-backed identifier completion for visible locals, parameters and
+  imported functions in Ny and Matrix, including unresolved typed prefixes.
+  Validate complete source snapshots and replace whole tokens; retain tolerant
+  completion for unsupported contexts and older SDKs.
+- Resolve Matrix named arguments against the checked callable, including imported
+  functions and proven immutable callbacks, preserving argument order under local
+  rename. Require positional arguments when callback labels cannot be proven.
+
 - Add complete references and rename for compiler-certified local variables and
   loop binders in Ny and Matrix. Reject ambiguous coverage, reserved names,
   capture risks and multiple open aliases; recheck proposed edits and verify

@@ -24,7 +24,9 @@ the compiler-backed source debugger.
 - Snippets for modules, functions, data types, control flow, faults, tests,
   interop, documentation, and `@ai_context` metadata.
 - A `nillsp` client using standard LSP `Content-Length` framing over stdio.
-- Completion, hover, and document outline for Matrix declarations,
+- Compiler-backed completion for visible locals, parameters and imported functions
+  at supported Ny and Matrix identifier expressions, including unresolved prefixes.
+- Tolerant completion, hover, and document outline for Matrix declarations,
   paragraph parameters, local bindings, and known receiver members.
 - Compiler-resolved Go to Definition for variables, parameters and direct/imported
   functions across Ny and Matrix source files, including unsaved imports.
@@ -302,8 +304,8 @@ its absence does not suppress otherwise valid diagnostics.
 
 When compiler analysis is enabled, its definition provider takes precedence over
 the language server's document-local guesses. Disabling `ny.analysis.enabled`
-retains the older language-server definition behavior. Completion and hover
-continue to work from the tolerant language-server index while source is incomplete.
+retains the older language-server definition behavior. Hover continues to use
+the tolerant language-server index.
 Find All References and Rename Symbol are available for local variables and loop
 binders only when the compiler certifies every occurrence in that source. These
 capabilities are separate from the partial index: an unindexed token with the
@@ -311,8 +313,8 @@ same spelling, generated use, inline assembly, or Ny interpolation can withhold
 them. Functions, globals, fields, type names, and function/lambda parameters are
 not eligible. Named parameter labels can occur in callers outside the checked
 import graph and need a broader completeness contract.
-Matrix locals that shadow a paragraph signature can provide references but
-cannot be renamed until named-argument ordering follows the resolved callable.
+Matrix locals that shadow a paragraph name are eligible because named arguments
+now follow the resolved callable’s parameter-name contract.
 
 Rename accepts a new ASCII identifier, with Matrix hyphens supported. The name
 must not be reserved or already occur as an identifier anywhere in the source;
@@ -322,8 +324,28 @@ Before returning an edit, the extension checks the proposed source with the
 compiler, verifies that all retained bindings and source inputs are preserved,
 and revalidates the original buffers and disk inputs. Renaming through multiple
 open aliases of one file is refused. Failed or cancelled checks change no files.
-The existing tolerant completion provider continues to serve incomplete code;
-import-aware semantic completion remains a separate implementation stage.
+
+## Compiler completion
+
+With compiler analysis enabled, completion at a nonempty unqualified identifier
+expression uses the checker’s visible bindings, declaration order and resolved
+imports. This includes partially typed names that produce an unresolved-name
+diagnostic. Candidates preserve Matrix folding and escaped names; accepting one
+replaces the full original token, including any suffix after the cursor.
+
+Completion uses a separate `--completion-at` query and does not publish diagnostics.
+The extension validates every consumed source against the current buffers or disk,
+rejects stale responses and watches dependencies. The query is bounded to 256
+sources, 4,096 candidates and 4 MiB of JSON. Function type details describe return
+types, not full signatures, and candidates are not filtered by an expected type.
+
+Blank positions, member/type contexts, parse or import failures, earlier checker
+failures, ambiguous repeated generic occurrences and binary dependencies retain
+the tolerant language-server fallback. When compiler candidates are available,
+its value bindings take precedence while language keywords and snippets remain.
+An older SDK without the query also retains fallback completion. This is an initial
+identifier-completion profile; signature help and general incomplete-code recovery
+remain future work.
 
 ## Current language-server limits
 

@@ -12,6 +12,7 @@ import { analysisSourcePath, languageDocumentSelector, savedSourcePath, sourceLa
 import { expandConfiguredPath } from "./toolchain";
 import { configuredSdkPath, nyConfiguration, resolveConfiguredTool, toolNotFoundMessage } from "./vscodeToolchain";
 import { definitionAt, planRename, referencesAt, renamePreservesBindings, SemanticIndex, SemanticLocation, SemanticSource } from "./semanticModel";
+import { CompilerCompletion, completionByteOffset } from "./completionModel";
 
 const debounceMilliseconds = 400;
 const timeoutMilliseconds = 10_000;
@@ -43,8 +44,15 @@ interface CachedFix {
   description: string;
 }
 
+interface CompletionQuery {
+  job: AnalysisJob;
+  byteOffset: number;
+  controller: AbortController;
+  result: Promise<CompilerCompletion | undefined>;
+}
+
 /** Compiler analysis is independent of nillsp's deliberately partial parser. */
-export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider, vscode.DefinitionProvider, vscode.ReferenceProvider, vscode.RenameProvider {
+export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider, vscode.DefinitionProvider, vscode.ReferenceProvider, vscode.RenameProvider, vscode.CompletionItemProvider {
   private readonly diagnostics = vscode.languages.createDiagnosticCollection("nil-analysis");
   private readonly output = vscode.window.createOutputChannel("NIL Framework Analysis");
   private readonly subscriptions: vscode.Disposable[] = [];
@@ -57,6 +65,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
   private readonly semantics = new Map<string, { job: AnalysisJob; index: SemanticIndex }>();
   private compilerQueue: Promise<unknown> = Promise.resolve();
   private readonly renameChecks = new Set<AbortController>();
+  private readonly completionQueries = new Map<string, CompletionQuery>();
   private active: { job: AnalysisJob; controller: AbortController } | undefined;
   private disposed = false;
   private generation = 0;
@@ -82,6 +91,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
       vscode.languages.registerDefinitionProvider(languageDocumentSelector, this),
       vscode.languages.registerReferenceProvider(languageDocumentSelector, this),
       vscode.languages.registerRenameProvider(languageDocumentSelector, this),
+      vscode.languages.registerCompletionItemProvider(languageDocumentSelector, this),
       vscode.commands.registerCommand("ny.applyAnalysisFix", (token: unknown) => this.applyFix(token)),
       vscode.commands.registerCommand("ny.analyzeCurrentFile", async () => {
         const document = vscode.window.activeTextEditor?.document;
@@ -175,6 +185,8 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
 
   private invalidate(uri: vscode.Uri): void {
     const key = uri.toString();
+    this.completionQueries.get(key)?.controller.abort();
+    this.completionQueries.delete(key);
     this.semantics.delete(key);
     const timer = this.timers.get(key);
     if (timer) clearTimeout(timer);
@@ -299,14 +311,14 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     return result ? this.publish(job, result, signal) : false;
   }
 
-  private analyzeSnapshot(job: AnalysisJob, signal: AbortSignal, inputOverride?: string): Promise<AnalysisResult | undefined> {
+  private analyzeSnapshot(job: AnalysisJob, signal: AbortSignal, inputOverride?: string, completionAt?: number): Promise<AnalysisResult | undefined> {
     // Speculative rename checks share the same bounded compiler queue as live diagnostics.
-    const task = this.compilerQueue.then(() => this.runAnalysis(job, signal, inputOverride));
+    const task = this.compilerQueue.then(() => this.runAnalysis(job, signal, inputOverride, completionAt));
     this.compilerQueue = task.catch(() => undefined);
     return task;
   }
 
-  private async runAnalysis(job: AnalysisJob, signal: AbortSignal, inputOverride?: string): Promise<AnalysisResult | undefined> {
+  private async runAnalysis(job: AnalysisJob, signal: AbortSignal, inputOverride?: string, completionAt?: number): Promise<AnalysisResult | undefined> {
     if (!this.current(job) || signal.aborted) return undefined;
     const context = this.contextUri(job.document);
     const project = projectForResource(context);
@@ -329,11 +341,13 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     this.watchImportRoots([...roots, ...(sdkRoot ? [sdkRoot] : [])]);
     const invocation = analysisInvocation(tool.executable, job.source, sdkRoot,
       !project && configuration.get<boolean>("compiler.noStdlib", false), roots, project?.analysis, !project);
+    const arguments_ = completionAt === undefined ? invocation.args :
+      [...invocation.args.filter(argument => argument !== "--semantic-index"), "--completion-at", String(completionAt)];
     const input = inputOverride ?? await this.workspaceInput(job);
     const cwd = await this.workingDirectory(project?.directory ?? path.dirname(job.source));
     if (signal.aborted || !this.current(job)) return undefined;
     const result = await new Promise<AnalysisResult>((resolve, reject) => {
-      const child = execFile(invocation.command, [...invocation.args], {
+      const child = execFile(invocation.command, [...arguments_], {
         cwd, encoding: "utf8", windowsHide: true,
         timeout: timeoutMilliseconds, maxBuffer: maxAnalysisOutputBytes, killSignal: "SIGKILL", signal
       }, (error, stdout, stderr) => {
@@ -368,7 +382,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     }
   }
 
-  private watchSemanticSources(index: SemanticIndex): void {
+  private watchSemanticSources(index: Pick<SemanticIndex, "sources">): void {
     for (const source of index.sources) {
       const key = `source:${source.path}`;
       if (this.importWatchers.has(key)) continue;
@@ -513,7 +527,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     return primary && await this.validateSemantic(cached.job, cached.index, token, forRename) ? { ...cached, primary } : undefined;
   }
 
-  private async validateSemantic(job: AnalysisJob, index: SemanticIndex, token: vscode.CancellationToken, forRename = false): Promise<boolean> {
+  private async validateSemantic(job: AnalysisJob, index: Pick<SemanticIndex, "sources">, token: vscode.CancellationToken, forRename = false): Promise<boolean> {
     const document = job.document;
     // Textual includes can have other extensions and cannot be overlaid yet.
     // Observe their open models too, including aliases and edits during awaits.
@@ -585,6 +599,51 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     const originSelectionRange = this.semanticRange(job.text, match.origin.start, match.origin.end);
     const target = this.semanticLocation(job, index, match.target);
     return originSelectionRange && target ? [{ originSelectionRange, targetUri: target.uri, targetRange: target.range, targetSelectionRange: target.range }] : undefined;
+  }
+
+  async provideCompletionItems(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): Promise<vscode.CompletionList | undefined> {
+    if (!this.enabled(document) || token.isCancellationRequested) return undefined;
+    const offset = document.offsetAt(position);
+    const source = document.getText();
+    // Member/qualified/empty insertion contexts retain the tolerant provider.
+    if (!offset || /[\s.:]/.test(source[offset - 1]!)) return undefined;
+    const byteOffset = completionByteOffset(source, offset);
+    if (byteOffset === undefined || Buffer.byteLength(source, "utf8") > maxAnalysisSourceBytes) return undefined;
+    const key = document.uri.toString();
+    let query = this.completionQueries.get(key);
+    if (!query || query.byteOffset !== byteOffset || !this.current(query.job)) {
+      query?.controller.abort();
+      const job: AnalysisJob = { document, key, text: source, version: document.version, source: this.logicalSource(document),
+        generation: this.generation, inputs: [], resolve: () => {} };
+      const controller = new AbortController();
+      const result = this.analyzeSnapshot(job, controller.signal, undefined, byteOffset)
+        .then(result => result?.completion ?? undefined)
+        .catch(() => undefined); // An older SDK or unavailable query keeps tolerant completion working.
+      query = { job, byteOffset, controller, result };
+      this.completionQueries.set(key, query);
+    }
+    const completion = await query.result;
+    // An unavailable tool or failed query can recover without a source edit.
+    // Keep concurrent consumers coalesced, but do not cache absence indefinitely.
+    if (!completion && this.completionQueries.get(key) === query) this.completionQueries.delete(key);
+    if (!completion || query.controller.signal.aborted || token.isCancellationRequested || !this.current(query.job)) return undefined;
+    const primary = query.job.inputs.find(input => input.document === document);
+    if (!primary || completion.cursor !== byteOffset || path.normalize(completion.path) !== primary.identity ||
+        !await this.validateSemantic(query.job, completion, token)) return undefined;
+    const offsets = createByteRangeMapper(query.job.text)(completion.start, completion.length);
+    const range = offsets && this.semanticRange(query.job.text, offsets.start, offsets.end);
+    if (!range || !range.contains(position)) return undefined;
+    this.watchSemanticSources(completion);
+    const items = completion.items.map(candidate => {
+      const item = new vscode.CompletionItem(candidate.name, candidate.kind === "function" ? vscode.CompletionItemKind.Function : vscode.CompletionItemKind.Variable);
+      item.insertText = candidate.insert_text;
+      item.range = range;
+      item.detail = `${candidate.kind}${candidate.type ? `: ${candidate.type}` : ""}`;
+      // The compiler has already matched Matrix's case/separator folding.
+      item.filterText = document.getText(new vscode.Range(range.start, position));
+      return item;
+    });
+    return new vscode.CompletionList(items, true);
   }
 
   async provideReferences(document: vscode.TextDocument, position: vscode.Position, context: vscode.ReferenceContext, token: vscode.CancellationToken): Promise<vscode.Location[] | undefined> {
@@ -700,6 +759,8 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     this.disposed = true;
     this.active?.controller.abort();
     for (const controller of this.renameChecks) controller.abort();
+    for (const query of this.completionQueries.values()) query.controller.abort();
+    this.completionQueries.clear();
     for (const timer of this.timers.values()) clearTimeout(timer);
     for (const job of this.pending.values()) job.resolve(false);
     this.timers.clear();

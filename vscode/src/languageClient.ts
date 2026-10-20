@@ -10,7 +10,10 @@ import { resolveConfiguredTool, toolNotFoundMessage } from "./vscodeToolchain";
 import { languageDocumentSelector } from "./languages";
 
 export class NyLanguageClientManager implements vscode.Disposable {
-  constructor(private readonly compilerDefinitionsEnabled: (document: vscode.TextDocument) => boolean = () => false) {}
+  constructor(
+    private readonly compilerDefinitionsEnabled: (document: vscode.TextDocument) => boolean = () => false,
+    private readonly compilerCompletions: (document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken) => Promise<vscode.CompletionList | undefined> = async () => undefined
+  ) {}
   private client: LanguageClient | undefined;
   private readonly outputChannel = vscode.window.createOutputChannel(
     "NIL Framework Language Server",
@@ -56,6 +59,18 @@ export class NyLanguageClientManager implements vscode.Disposable {
       outputChannel: this.outputChannel,
       revealOutputChannelOn: RevealOutputChannelOn.Error,
       middleware: {
+        provideCompletionItem: async (document, position, context, token, next) => {
+          const [compiler, fallback] = await Promise.all([
+            this.compilerCompletions(document, position, token), next(document, position, context, token)
+          ]);
+          if (token.isCancellationRequested) return undefined;
+          if (!compiler || !fallback) return fallback;
+          const names = new Set(compiler.items.map(item => typeof item.label === "string" ? item.label : item.label.label));
+          const items = (Array.isArray(fallback) ? fallback : fallback.items).filter(item =>
+            (item.kind === vscode.CompletionItemKind.Keyword || item.kind === vscode.CompletionItemKind.Snippet || item.detail === "Matrix language") &&
+            !names.has(typeof item.label === "string" ? item.label : item.label.label));
+          return new vscode.CompletionList(items, true);
+        },
         provideDefinition: (document, position, token, next) => this.compilerDefinitionsEnabled(document)
           ? undefined : next(document, position, token),
         provideReferences: (document, position, context, token, next) => this.compilerDefinitionsEnabled(document)
