@@ -1283,37 +1283,109 @@ Editor tests exercise exact references, rename and undo, Unicode/CRLF, Matrix
 folding and escaping, collisions, dirty imports, untitled files and file aliases.
 
 **Follow-up:** Add a complete caller/project graph for public symbols and named
-parameters, original maps for generated and embedded code, and a scope/query
-model that supports semantic completion while source is incomplete. Tolerant
-language-server completion remains active until that model is available.
+parameters and original maps for generated and embedded code. F44 adds an
+initial scope query for identifier completion; general incomplete-code recovery
+and member/type completion still need broader contracts.
 
 
 ### F43 — Matrix named-argument order can depend on a shadowed paragraph name
 
-**Status:** Confirmed parser limitation; affected local renames are withheld.
+**Status:** Fixed through checked callable parameter-name contracts.
 
-A function-valued local named `operation` can shadow a declared paragraph with
-that name. In `operation with second-part being 2, first-part being 1`, the
-parser uses the paragraph signature to reorder arguments before the checker
-resolves the local callable. Renaming the local to an otherwise unused name
-removes that signature lookup and can change the argument order. Both programs
-can type-check with identical retained symbol/reference graphs.
+A function-valued local named `operation` could shadow a declared paragraph
+with that name. In `operation with second-part being 2, first-part being 1`,
+the parser used a page-wide paragraph signature to reorder arguments before
+lexical resolution. Renaming the local could remove that lookup and change
+`102` to `201` while preserving the retained reference graph.
 
-**Reproduction:** Declare `operation(first-part, second-part)` and
-`alternate(first-part, second-part)`, each computing `first-part * 100 +
-second-part`. Inside `main`, bind local `operation` to `the paragraph alternate`
-and invoke it with the reversed named arguments above. The original prints
-`102`; changing the local and call spelling to `updated-operation` prints `201`.
-This was reproduced through the interpreter independently of VS Code.
+**Resolution:** Matrix now retains raw argument labels on the shared call AST.
+The checker orders arguments and their inferred types only after selecting the
+actual lexical, imported, generic or member callable. Labels fold ASCII case
+and separators against that callable's parameters. Unknown, duplicate and
+missing labels fail checking; a named fixed-argument list can precede a `more`
+tail only for a variadic declaration. Runtime argument evaluation follows the
+resulting parameter order.
 
-**Containment:** Local reference completeness remains valid, but the compiler
-withholds `rename_safe` for Matrix locals whose folded name matches a retained
-function declaration in the same source. Unindexed signature names already
-fail the original-token coverage check. New rename names cannot collide with
-other source identifiers. A compiler regression and real editor test preserve
-this exclusion.
+Immutable body-local paragraph values retain parameter-name provenance from a
+declared paragraph, anonymous paragraph or another proven immutable local.
+Mutable callbacks, function-typed parameters and other values without this
+contract require positional calls. Structural `fn(...)` types still carry
+parameter types without labels. Named variadic callback calls are rejected
+because indirect-call lowering does not pack their trailing arguments; callers
+can invoke the declared variadic paragraph directly.
 
-**Follow-up:** Resolve named arguments from the callable's checked signature,
-including function values and imports, rather than a parser name table. A
-successful type check and unchanged reference graph alone do not prove that a
-refactoring preserves all expression semantics.
+**Evidence:** `tests/matrix/named_argument_contract.py` executes the original
+shadowing case and its renamed form with deliberately different callback and
+shadowed-declaration parameter orders. It covers nested scopes, immutable
+copies, anonymous paragraphs, forward declarations, escaped/folded labels,
+variadics, Ny/Matrix imports, generic inference and explicit type arguments,
+record/class methods and rejected labels/contracts. Checking the real analyzer
+example also caught an invalid `index` label for the generated `declaration(id)`
+API; its call now uses the declared label. Direct calls run through
+native compilation and both textual and binary NIL; callback cases run through
+both NIL encodings. The tests establish equivalent runtime results across the
+rename, beyond an unchanged reference graph.
+
+**Follow-up:** A labelled function-type contract would allow named calls
+through parameters, mutable callback values and returned functions. Variadic
+indirect calls need a checked packing convention before they can be supported.
+
+
+### F44 — Unresolved identifiers need a completion query independent of successful analysis
+
+**Status:** Initial compiler-backed value-identifier completion implemented.
+
+A successful semantic index cannot answer a typical completion request: a typed
+prefix such as `sam` is usually unresolved. A declaration list also cannot prove
+which local or imported binding is visible at that position.
+
+**Resolution:** `--completion-at` captures visible bindings immediately before
+the checker resolves the selected unqualified identifier expression. An unresolved
+prefix can therefore return candidates while ordinary analysis still fails.
+The result includes every consumed native source, exact UTF-8 replacement offsets,
+source-backed candidate kinds/types and insertion spellings. Matrix folding and
+escaping follow the frontend resolver. VS Code validates snapshots, rejects stale
+requests and replaces the complete token, including a suffix after the cursor.
+
+**Evidence:** Compiler contracts exercise scope exits, nearest shadowing, declaration
+order, mixed-language imports, privacy, Unicode/CRLF, escaped names, query budgets
+and all analysis input routes. Editor tests cover real completion results, source
+changes, imports and exact token edits.
+
+**Follow-up:** The initial query requires parseable syntax and no earlier checker
+error. Blank, member/type and qualified-name positions, generated spans, binary
+libraries and repeated generic occurrences use tolerant editor fallback. Add
+parser recovery, stable generic identities, member/signature queries and expected-type
+filtering. Function details currently expose return types rather than complete
+signatures. Large standard-library graphs may exceed the bounded query budget;
+a persistent source/symbol protocol would avoid retransmitting full snapshots.
+
+
+### F45 — A source without a module inherited the last imported module's context
+
+**Status:** Fixed in merged source-unit boundaries and verified across checking and execution.
+
+A standalone Ny source can omit `module`, but merging its dependencies into one
+AST left the preceding dependency's module active. A root source importing
+`helper.*` could therefore call a private `helper` function as though it belonged
+to `helper`. Adding `module entry` to that same source correctly rejected the
+call. Root globals could also collide with dependency globals because checking
+and lowering qualified them under the inherited module. Completion made this
+visible by exposing imported private candidates in a normal standalone file.
+
+**Resolution:** The merge records an explicit root-context boundary before each
+source unit. Every checker module-tracking pass treats the empty marker as a
+reset and creates no empty module symbol; existing code generation applies the
+same reset. Explicit module/book declarations then establish their own context
+normally. Original source ASTs and reflected declarations do not acquire the
+synthetic boundary markers. This changes ordinary compilation as well as
+analysis, rather than hiding the problem only in completion.
+
+**Evidence:** `tests/tools/module_context_contract.py` checks source-backed
+public imports and distinct consumer/dependency globals through native output,
+textual NIL and binary NIL. Both analysis and ordinary compilation reject a
+private imported call in Ny with and without an explicit module, and in Matrix
+with its required book declaration. `tests/tools/completion_contract.py` keeps
+a module-less Ny consumer in its mixed-language import and selective-import
+privacy cases. The targeted run passed 14 module-context checks and 46 completion
+checks, plus the source-span regression for repeated query occurrences.

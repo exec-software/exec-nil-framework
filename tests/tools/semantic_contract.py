@@ -240,9 +240,8 @@ def main():
         assert not binding(result, 'assembly.ny', 'return other', 'other').get('rename_safe')
         assert result['semantic']['rename_policy']['sources'] == []
 
-        # Matrix named arguments are currently reordered by a page-wide
-        # paragraph signature before lexical resolution. Shadowing preserves
-        # complete references, but renaming can silently change argument order.
+        # Matrix named arguments follow the checked callable, so certified
+        # callback locals may be renamed even when shadowing paragraph names.
         signature_shadow = ('book order-check\n'
             'operation receives first-part as number, second-part as number returns number begin paragraph\n'
             ' give first-part times 100 plus second-part\nend paragraph\n'
@@ -253,8 +252,8 @@ def main():
         result = analyze({'signature_shadow.matrix': signature_shadow}, 'signature_shadow.matrix')
         target = binding(result, 'signature_shadow.matrix', 'say operation', 'operation')
         assert target['kind'] == 'variable' and target['references_complete']
-        assert not target.get('rename_safe')
-        assert result['semantic']['rename_policy']['sources'] == []
+        assert target['rename_safe']
+        assert len(result['semantic']['rename_policy']['sources']) == 1
 
         # Unindexed field/type tokens sharing a spelling cannot be mistaken
         # for a complete local reference set, even when ordinary reads work.

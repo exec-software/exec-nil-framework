@@ -78,6 +78,12 @@ public:
   }
   bool has_errors() const { return !diagnostics_.empty(); }
 
+  // Editor suggestions must pass the same page-wide declaration folding as
+  // a newly inserted identifier; expose resolution without parsing a new AST.
+  std::string resolve_completion_name(const std::string &written) const {
+    return resolve_name(written);
+  }
+
 private:
   std::vector<token> tokens_;
   std::unordered_map<size_t, std::shared_ptr<ny::ast_number_literal>>
@@ -86,10 +92,6 @@ private:
   std::vector<ny::diagnostic> diagnostics_;
   std::vector<matrix::diagnostic> rich_;
   std::string filename_;
-
-  // Parameter names per paragraph, so a 'with a being 1' call can be
-  // reordered into positional arguments. Keyed by folded paragraph name.
-  std::unordered_map<std::string, std::vector<std::string>> signatures_;
 
   // Folded lookup key -> the NIL symbol fixed by the DECLARATION site.
   // References fold against this, which is what makes 'READ-SENSOR',
@@ -268,10 +270,10 @@ private:
   std::optional<std::string> parse_type();
   std::string parse_dotted_name();
   std::vector<ny::ast_param> parse_parameters(std::vector<std::string> &names);
-  // A 'with' clause: named arguments reordered against `param_names`, a
-  // 'more' variadic tail, or 'nothing'.
+  // Retain named labels for checked callable resolution; parsing does not
+  // know which lexical/imported declaration a callee will select.
   std::vector<ny::ast_expr_ptr>
-  parse_with_arguments(const std::vector<std::string> *param_names, int line);
+  parse_with_arguments(std::vector<std::string> &argument_names);
 };
 
 } // namespace matrix

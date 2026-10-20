@@ -1025,12 +1025,26 @@ if(BUILD_TESTING)
         add_test(NAME nil.semantic-index
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/semantic_contract.py"
                 --compiler $<TARGET_FILE:nilcompiler>)
+        add_test(NAME nil.completion
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/completion_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler>)
+        set_tests_properties(nil.completion PROPERTIES LABELS "analysis;semantic" TIMEOUT 90)
+        add_test(NAME nil.module-context
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/module_context_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.module-context PROPERTIES LABELS "analysis;typecheck;routes" TIMEOUT 120)
         set_tests_properties(parser.source-spans parser.matrix-source-spans nil.semantic-index
             PROPERTIES LABELS "analysis;semantic" TIMEOUT 60)
         add_test(NAME matrix.function-values
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/function_value_contract.py"
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>)
         set_tests_properties(matrix.function-values PROPERTIES LABELS "matrix;analysis;interpreter" TIMEOUT 60)
+        add_test(NAME matrix.named-arguments
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/named_argument_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src" --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(matrix.named-arguments PROPERTIES LABELS "matrix;analysis;routes" TIMEOUT 120)
         add_test(NAME nil.reflection-consumer
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/reflection_contract.py"
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>

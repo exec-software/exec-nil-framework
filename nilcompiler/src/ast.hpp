@@ -325,6 +325,13 @@ enum class visibility_kind {
 };
 
 // Base classes for expression / statement / declaration
+// Parameter labels are not part of structural fn(...) type identity. Retain
+// them only when checking proves the callable value's immutable provenance.
+struct callable_parameter_contract {
+  std::vector<std::string> names;
+  bool variadic = false;
+};
+
 struct ast_expr : public ast_node {
   // Allow expressions to optionally carry annotations though typically these
   // are attached to declarations/statements; this provides a flexible surface
@@ -341,6 +348,7 @@ struct ast_expr : public ast_node {
   bool checked_reference_handle = false;
   // Affine ownership proof. This is erased when any semantic check fails.
   bool checked_ownership = false;
+  std::optional<callable_parameter_contract> checked_callable_parameters;
 
   explicit ast_expr(ast_node_kind k, int l = 0,
                     std::vector<ast_annotation> ann = {})
@@ -1045,6 +1053,10 @@ struct ast_call_expr : public ast_expr {
   std::string parallel_output_type;
   ast_expr_ptr callee;
   std::vector<ast_expr_ptr> args;
+  // Matrix named arguments retain source labels until the checker resolves
+  // the actual callable. Empty entries represent a positional variadic tail.
+  // An empty vector means an ordinary positional call.
+  std::vector<std::string> argument_names;
   std::vector<std::string> type_args; // Explicit type arguments for generics
   // Checked associated call on a bounded type parameter (for example
   // T.default()). The receiver is a type, never a runtime argument.
@@ -1233,6 +1245,7 @@ struct symbol {
 
   std::vector<ast_generic_param> generic_params; // Generic parameters if any
   std::vector<ast_param> params;                 // Function parameters if any
+  std::optional<callable_parameter_contract> checked_callable_parameters;
   std::vector<std::string> bounds; // Trait bounds if any (for generic params)
   std::unordered_map<std::string, symbol>
       members; // Members of the symbol (e.g. methods of a struct/enum)
@@ -1404,6 +1417,17 @@ public:
       return nullptr;
     const auto found = scopes.back().find(name);
     return found == scopes.back().end() ? nullptr : &found->second;
+  }
+
+  // Snapshot the nearest binding of each spelling without extending the
+  // lifetime of a lexical scope. Used only by bounded editor queries.
+  std::vector<const symbol *> visible_symbols() const {
+    std::set<std::string> seen;
+    std::vector<const symbol *> result;
+    for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope)
+      for (const auto &[name, value] : *scope)
+        if (seen.insert(name).second) result.push_back(&value);
+    return result;
   }
 
   // Function parameters, pattern bindings and lexical locals live outside

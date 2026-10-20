@@ -1,5 +1,6 @@
 #include "lexer.hpp"
 #include "parser.hpp"
+#include "type_checker.hpp"
 
 #include <iostream>
 #include <memory>
@@ -167,6 +168,32 @@ void test_lexer_source_ranges() {
   const ny::token synthesized{ny::token_kind::identifier, "generated", 1};
   require(synthesized.length == 0, "synthesized token must have no source range");
 }
+
+void test_repeated_completion_occurrence_is_unavailable() {
+  const std::string source = "fn compute(sample_input: i32) -> i32\nprintln(sample_input)\nreturn sample_input\nend fn\n";
+  ny::parser_options options;
+  options.filename = "/completion-occurrence.ny";
+  ny::parser parser(source, options);
+  const auto program = parser.parse_program();
+  require(program && !parser.has_errors(), "completion fixture must parse");
+  const auto function = node<ny::ast_function_decl>(program->declarations.at(0));
+  const auto body = node<ny::ast_block_stmt>(function->body);
+  const auto print = node<ny::ast_println_stmt>(body->statements.at(0));
+  const auto result = node<ny::ast_return_stmt>(body->statements.at(1));
+  const ny::completion_request request{options.filename, source.find("println(sample_input)") + 11};
+  ny::type_checker ordinary(true, request);
+  require(ordinary.check(*program), "ordinary completion fixture must check");
+  require(ordinary.get_completion() && ordinary.get_completion()->available,
+          "one original occurrence must retain completion");
+  // Model a lowering that revisits the same physical source expression. Its
+  // second inferred context must not silently inherit the first query result.
+  result->value = print->args.at(0);
+  ny::type_checker repeated(true, request);
+  require(repeated.check(*program), "repeated completion fixture must check");
+  require(repeated.get_completion() && !repeated.get_completion()->available &&
+          repeated.get_completion()->candidates.empty(),
+          "repeated physical source occurrences must withhold completion");
+}
 } // namespace
 
 int main() {
@@ -179,6 +206,7 @@ int main() {
     test_methods_and_fields();
     test_mapping_preserves_preprocessed_literal_semantics();
     test_interpolated_identifier_is_not_guessed();
+    test_repeated_completion_occurrence_is_unavailable();
     std::cout << "source span tests passed\n";
     return 0;
   } catch (const std::exception &error) {

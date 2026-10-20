@@ -884,7 +884,6 @@ parser::parse_paragraph(bool is_public, int line, const std::string &name,
                            mutable_receiver, line, std::nullopt);
     params.insert(params.begin(), receiver);
   }
-  signatures_[fold_key(name)] = param_names;
 
   const bool body_forbidden = context == paragraph_context::contract_member;
   const bool body_optional = body_forbidden || is_abstract;
@@ -1750,7 +1749,6 @@ parser::finish_intrinsic(bool is_public, int line, const std::string &name,
   if (match(kw::receives)) params = parse_parameters(param_names);
   std::optional<std::string> return_type = std::string("void");
   if (match(kw::returns)) return_type = parse_type();
-  signatures_[fold_key(name)] = param_names;
   skip_terminators();
   auto decl = std::make_shared<ny::ast_function_decl>(
       resolve_name(name), params, return_type, nullptr,
@@ -2266,30 +2264,23 @@ ny::ast_expr_ptr parser::parse_unary() {
   return parse_postfix();
 }
 
-// Named arguments are reordered against the declaration, which is the whole
-// point: a model cannot mis-order them. They lower to positional NIL
-// arguments. Because Ny has no overload resolution, names are checked against
-// the single declaration and never select between candidates.
+// Keep labels and expressions in source order until the checker has selected
+// the callable. A parser name table cannot distinguish imports or shadowing.
 std::vector<ny::ast_expr_ptr>
-parser::parse_with_arguments(const std::vector<std::string> *param_names,
-                             int line) {
+parser::parse_with_arguments(std::vector<std::string> &argument_names) {
   std::vector<ny::ast_expr_ptr> args;
-
   if (match(kw::nothing)) return args;
-
   if (match(kw::more)) {
     do {
       args.push_back(parse_expression());
     } while (match(matrix::token_kind::comma));
     return args;
   }
-
-  // Named form: '<name> being <expr>', possibly with a trailing 'more' tail.
   if (peek().is_name() && peek(1).is(kw::being)) {
-    std::vector<std::pair<std::string, ny::ast_expr_ptr>> named;
     for (;;) {
       if (match(kw::more)) {
         do {
+          argument_names.emplace_back();
           args.push_back(parse_expression());
         } while (match(matrix::token_kind::comma));
         break;
@@ -2298,74 +2289,15 @@ parser::parse_with_arguments(const std::vector<std::string> *param_names,
         expected_name("before 'being'");
         break;
       }
-      const std::string name = resolve_name(advance().lexeme);
+      // Labels name the resolved callable's parameters, not local variables.
+      const std::string name = advance().lexeme;
       if (!expect(kw::being, "after an argument name")) break;
-      named.emplace_back(name, parse_expression());
+      argument_names.push_back(name);
+      args.push_back(parse_expression());
       if (!match(matrix::token_kind::comma)) break;
     }
-
-    if (param_names == nullptr) {
-      // The callee is not a paragraph declared on this page, so there is no
-      // signature to order against. Keep source order and let the type
-      // checker reject a mismatch.
-      for (auto &entry : named) args.push_back(entry.second);
-      return args;
-    }
-
-    std::vector<ny::ast_expr_ptr> ordered(param_names->size());
-    std::vector<bool> filled(param_names->size(), false);
-    for (auto &entry : named) {
-      size_t index = param_names->size();
-      for (size_t i = 0; i < param_names->size(); ++i) {
-        if (fold_key((*param_names)[i]) == fold_key(entry.first)) {
-          index = i;
-          break;
-        }
-      }
-      if (index == param_names->size()) {
-        ny::diagnostic d;
-        d.line = line;
-        d.message = "no parameter named '" + entry.first + "'";
-        std::string known;
-        for (size_t i = 0; i < param_names->size(); ++i) {
-          if (i) known += ", ";
-          known += (*param_names)[i];
-        }
-        d.hint = known.empty() ? "this paragraph takes no arguments"
-                               : "the parameters are " + known;
-        diagnostics_.push_back(std::move(d));
-        continue;
-      }
-      if (filled[index]) {
-        ny::diagnostic d;
-        d.line = line;
-        d.message = "argument '" + entry.first + "' given more than once";
-        diagnostics_.push_back(std::move(d));
-        continue;
-      }
-      ordered[index] = entry.second;
-      filled[index] = true;
-    }
-    std::vector<ny::ast_expr_ptr> result;
-    for (size_t i = 0; i < ordered.size(); ++i) {
-      if (!filled[i]) {
-        ny::diagnostic d;
-        d.line = line;
-        d.message = "missing argument '" + (*param_names)[i] + "'";
-        d.hint = "Ny rejects omitted arguments, so every parameter must be "
-                 "passed";
-        diagnostics_.push_back(std::move(d));
-        continue;
-      }
-      result.push_back(ordered[i]);
-    }
-    // Append any variadic tail collected above.
-    for (auto &extra : args) result.push_back(extra);
-    return result;
+    return args;
   }
-
-  // Positional fallback: 'with 1, 2'. Accepted because a builtin receiver
-  // member has no declared parameter names to bind against.
   do {
     args.push_back(parse_expression());
   } while (match(matrix::token_kind::comma));
@@ -2447,27 +2379,23 @@ ny::ast_expr_ptr parser::parse_postfix() {
       } while (match(matrix::token_kind::comma));
       // Carry the arguments on a call node; a bare application with no 'with'
       // clause is still a call with no arguments.
-      const std::vector<std::string> *params = nullptr;
-      const auto *id = static_cast<const ny::ast_identifier_expr *>(expr.get());
-      const auto it = signatures_.find(fold_key(id->name));
-      if (it != signatures_.end()) params = &it->second;
+      std::vector<std::string> argument_names;
       std::vector<ny::ast_expr_ptr> args;
-      if (match(kw::with)) args = parse_with_arguments(params, line);
-      expr = std::make_shared<ny::ast_call_expr>(expr, std::move(args),
-                                                 std::move(type_args), line);
+      if (match(kw::with)) args = parse_with_arguments(argument_names);
+      auto call = std::make_shared<ny::ast_call_expr>(expr, std::move(args),
+                                                     std::move(type_args), line);
+      call->argument_names = std::move(argument_names);
+      expr = std::move(call);
       continue;
     }
 
     if (match(kw::with)) {
-      const std::vector<std::string> *params = nullptr;
-      if (expr->kind == ny::ast_node_kind::identifier_expr_node) {
-        const auto *id = static_cast<const ny::ast_identifier_expr *>(expr.get());
-        const auto it = signatures_.find(fold_key(id->name));
-        if (it != signatures_.end()) params = &it->second;
-      }
-      auto args = parse_with_arguments(params, line);
-      expr = std::make_shared<ny::ast_call_expr>(
+      std::vector<std::string> argument_names;
+      auto args = parse_with_arguments(argument_names);
+      auto call = std::make_shared<ny::ast_call_expr>(
           expr, std::move(args), std::vector<std::string>{}, line);
+      call->argument_names = std::move(argument_names);
+      expr = std::move(call);
       continue;
     }
 

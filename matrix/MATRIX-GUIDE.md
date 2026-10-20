@@ -240,6 +240,18 @@ say answer with nothing                      !!! zero arguments
 say total-of with more 1, 2, 3, 4            !!! variadic tail
 ```
 
+Labels match the parameters of the callable selected by the checker, including
+imported Ny and Matrix paragraphs and methods. They fold ASCII case and ignore
+hyphens and underscores. Unknown, duplicate and missing labels are errors.
+Argument expressions are lowered in parameter order; a `more` tail follows
+the fixed parameters of a variadic paragraph.
+
+An immutable local paragraph value retains parameter names from its declared
+paragraph, anonymous paragraph or immutable local initializer. Function-typed
+parameters, mutable callbacks and other values without a checked name contract
+require positional calls such as `worker with 1, 2`. Named variadic callback
+calls are unsupported; call the declared variadic paragraph directly.
+
 A zero-argument call still says `with nothing`, so a call is never confusable
 with a name. Chaining needs parentheses:
 

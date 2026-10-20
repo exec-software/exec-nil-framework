@@ -142,7 +142,10 @@ The [VS Code extension](vscode/README.md) supports both languages with syntax
 highlighting, completion, compiler diagnostics, quick fixes, build tasks, and
 source debugging. Follow its installation instructions, then set `ny.sdkPath`
 to the SDK directory. The extension also discovers `sdk/` when working in this
-repository.
+repository. Compiler-backed completion includes visible locals and imported
+functions at supported identifier expressions. Definition navigation follows
+checked bindings across both languages; references and rename are available for
+locals whose complete occurrence sets the compiler can certify.
 
 For projects with multiple source modules, add a
 [`nil.project.json`](docs/tools/projects.md) manifest. Project check, build and

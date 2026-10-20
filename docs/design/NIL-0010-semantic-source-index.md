@@ -75,12 +75,12 @@ excludes that entire source from editing. Assembly in either language does the
 same: source checking does not enforce the eventual native assembler profile.
 These conservative exclusions retain definition navigation where available.
 
-Complete references alone do not authorize rename. Matrix's current parser
-uses a page-wide function signature table to reorder named arguments before
-lexical binding. A local shadowing a function name can therefore change
-argument order when renamed while retaining an equivalent indexed binding
-graph. Such Matrix locals keep `references_complete` when proven, but omit
-`rename_safe`. Unrepresented signature names already fail token coverage.
+Complete references alone do not authorize rename. Matrix formerly reordered
+named arguments through a parser-wide signature table before lexical resolution,
+so renaming a shadowing local could change argument order. Named arguments now
+follow the checked callable, including proven immutable function values. Runtime
+regressions establish equivalent results before and after rename, and the prior
+exclusion for shadowing locals is removed. See F43 in the findings document.
 
 An additive `rename_policy` (`nil.rename.v1`) exports the language and unique
 identifier/reserved keys for each source with a certified local. Matrix keys
@@ -115,8 +115,9 @@ and overload coverage, recoverable failed code, and generated-source maps need
 further work. Missing references cannot prove that a declaration is unused
 without its explicit completeness capability. Local references/rename are now
 available within that narrowly certified profile; workspace-wide exported
-symbol editing, parameter editing, lexical visibility ranges, and semantic
-completion during incomplete-code entry still require broader contracts.
+symbol editing, parameter editing and lexical visibility ranges still require
+broader contracts. [NIL-0011](NIL-0011-completion-queries.md) supplies a separate
+initial identifier-completion query, including unresolved prefixes.
 
 The [analysis API](../analysis-api.md) defines the schema and failure behavior.
 The [developer-tooling plan](../developer-tooling.md) records the remaining

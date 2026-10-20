@@ -23,4 +23,18 @@ struct semantic_index {
   std::vector<semantic_symbol> symbols;
   std::vector<semantic_reference> references;
 };
+struct completion_request {
+  std::string path;
+  std::size_t cursor;
+};
+struct completion_candidate {
+  std::string name, kind, type, path;
+  source_span span;
+};
+struct completion_result {
+  bool available = true;
+  std::string path, name;
+  source_span span;
+  std::vector<completion_candidate> candidates;
+};
 } // namespace ny

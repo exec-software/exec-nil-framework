@@ -104,11 +104,13 @@ transformation into an existing AST node; none of them invents behaviour.
 | `X begin test` | `test X` |
 | `assembly for x86_64 is "..." using i giving o` | `asm "x86_64", "..." (i) -> o end asm` |
 
-One row deserves attention. Named-argument reordering happens in the parser,
-which means the emitted NIL has no trace of argument names. That is correct:
-argument names are a Matrix surface affordance for the agent writing the call,
-not a calling convention. It also means Matrix cannot later use names to
-select an overload, which is consistent with Ny having no overload resolution.
+Named-argument labels remain on the shared AST until the checker selects the
+actual lexical, imported or member callable. The checker then orders arguments
+against that declaration's parameters; emitted NIL remains positional. Labels
+do not select overloads. Immutable local paragraph values can retain a proven
+parameter-name contract from a declaration, anonymous paragraph or another such
+local. Function types themselves currently contain types without parameter
+names, so callbacks without this provenance require positional arguments.
 
 ## Cross-language consumption
 

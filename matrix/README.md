@@ -104,7 +104,9 @@ records, choices, classes, contracts, implementations and tests.
 
 **7. Named arguments, lowered to positional.** Models mis-order positional
 arguments. `with left being 1, right being 2` cannot be mis-ordered. It lowers
-to an ordinary positional NIL call.
+to an ordinary positional NIL call after the checker resolves the callable's
+parameter names. Calls through function values without a checked parameter-name
+contract use positional arguments; see [the guide](MATRIX-GUIDE.md#6-expressions).
 
 **8. The surface must not out-promise NIL.** This is the hard rule. Ny's
 documentation is scrupulous about the difference between syntax the parser

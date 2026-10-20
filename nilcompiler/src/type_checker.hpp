@@ -25,8 +25,10 @@ struct type_info {
 
 class type_checker : public ast_node::ast_visitor {
 public:
-  explicit type_checker(bool collect_semantics = false);
+  explicit type_checker(bool collect_semantics = false,
+                        std::optional<completion_request> completion = std::nullopt);
   const semantic_index &get_semantic_index() const { return semantics_; }
+  const std::optional<completion_result> &get_completion() const { return completion_; }
 
   // Entry point
   bool check(ast_program &program);
@@ -146,6 +148,9 @@ private:
   symbol_table symbols_;
   std::vector<diagnostic> diagnostics_;
   bool collect_semantics_ = false;
+  std::optional<completion_request> completion_request_;
+  std::optional<completion_result> completion_;
+  void capture_completion(const ast_identifier_expr &expression);
   semantic_index semantics_;
   std::size_t semantic_bytes_ = 0;
   std::map<const ast_node *, std::size_t> semantic_nodes_;

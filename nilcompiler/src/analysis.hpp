@@ -33,6 +33,8 @@ struct analysis_session {
   bool semantic_requested = false;
   bool semantic_binary_dependencies = false;
   std::optional<semantic_index> semantics;
+  std::optional<std::size_t> completion_cursor;
+  std::optional<completion_result> completion;
   bool warnings_as_errors = false;
   std::set<std::string> disabled_rules;
   std::size_t reflection_bytes = 0;
@@ -52,6 +54,7 @@ struct analysis_session {
   void lint();
   std::string json(bool success) const;
   std::string semantic_json() const;
+  std::string completion_json() const;
   std::string companion_source() const;
   bool workspace_source_exists(const std::string &path) const;
   std::optional<std::string> read_workspace_source(const std::string &path);

@@ -19,6 +19,12 @@
 
 namespace ny {
 
+// Empty module markers are source-unit boundaries in a merged AST. They
+// restore the root context without creating a module named "" or "::name".
+static std::optional<std::string> module_context(const std::string &name) {
+  return name.empty() ? std::nullopt : std::optional<std::string>(name);
+}
+
 // Conditional expressions use the same symmetric scalar promotion as
 // arithmetic; branch order must never choose the result's physical width.
 static std::optional<std::string> promoted_scalar_join(const std::string &left,
@@ -33,8 +39,9 @@ static std::optional<std::string> promoted_scalar_join(const std::string &left,
          left == "i32" || right == "i32" ? "i32" : "u8";
 }
 
-type_checker::type_checker(bool collect_semantics)
-    : collect_semantics_(collect_semantics) {
+type_checker::type_checker(bool collect_semantics,
+                           std::optional<completion_request> completion)
+    : collect_semantics_(collect_semantics), completion_request_(std::move(completion)) {
   for (const auto *name : {"owned", "borrow", "borrow_mut"})
     symbols_.insert_symbol_with_context(name, symbol_kind::type_symbol, nullptr,
         std::nullopt, false, visibility_kind::visibility_public, std::nullopt);
@@ -201,6 +208,91 @@ type_checker::type_checker(bool collect_semantics)
       visibility_kind::visibility_public, std::nullopt);
 }
 
+void type_checker::capture_completion(const ast_identifier_expr &expression) {
+  if (!completion_request_ || !expression.name_span ||
+      expression.name.find("::") != std::string::npos) return;
+  const auto &request = *completion_request_;
+  const auto span = *expression.name_span;
+  const auto &path = expression.source_file.empty() ? diagnostic_source_file_ : expression.source_file;
+  if (path != request.path || !span.length || request.cursor <= span.start ||
+      request.cursor - span.start > span.length) return;
+  if (completion_) {
+    // Generic instantiation or another lowering may revisit the same physical
+    // token under a different inferred scope. No single visit is authoritative.
+    completion_->available = false;
+    completion_->candidates.clear();
+    return;
+  }
+  completion_ = completion_result{true, path, expression.name, span, {}};
+  auto &result = *completion_;
+  // Scope state after an earlier error is not a completion contract. The
+  // identifier being queried may itself be unfinished and fail immediately
+  // after this snapshot; that failure does not invalidate the scope before it.
+  if (!diagnostics_.empty() || !semantics_.available) {
+    result.available = false;
+    return;
+  }
+  std::set<std::string> names;
+  for (const auto *value : symbols_.visible_symbols()) {
+    const auto split = value->name.rfind("::");
+    names.insert(split == std::string::npos ? value->name : value->name.substr(split + 2));
+    if (names.size() > 32768) { result.available = false; return; }
+  }
+  if (const auto imports = imports_.find(current_module_.value_or("<global>"));
+      imports != imports_.end())
+    for (const auto &[name, entry] : imports->second)
+      if (!entry.target_path.empty() && entry.target_path != "*") {
+        names.insert(name);
+        if (names.size() > 32768) { result.available = false; return; }
+      }
+  std::size_t bytes = 0;
+  for (const auto &name : names) {
+    const symbol *binding = nullptr;
+    // Match identifier lookup, including ambiguous imported globals, without
+    // retaining speculative diagnostics or performing expression/type checks.
+    if (!symbols_.lookup_non_global(name)) {
+      const auto before = diagnostics_.size();
+      const auto global = resolve_source_global(name, expression.line);
+      const bool ambiguous = diagnostics_.size() != before;
+      diagnostics_.resize(before);
+      if (ambiguous) continue;
+      if (global) {
+        binding = symbols_.lookup(*global);
+        if (!binding || !binding->type_name) continue;
+      }
+    }
+    if (!binding) {
+      binding = symbols_.lookup(name);
+      if (binding && current_module_ && binding->module &&
+          *binding->module != *current_module_) binding = nullptr;
+      if (!binding && current_module_) binding = symbols_.lookup(*current_module_ + "::" + name);
+      if (!binding)
+        if (const auto imported = resolve_imported_symbol(name)) binding = symbols_.lookup(*imported);
+    }
+    if (!binding || binding->kind == symbol_kind::type_symbol ||
+        !is_symbol_visible(binding, current_module_.value_or(""))) continue;
+    auto id = binding->semantic_id;
+    if (!id && binding->defining_node) {
+      const auto &node = *binding->defining_node;
+      if (node.kind == ast_node_kind::function_decl_node) {
+        const auto &function = static_cast<const ast_function_decl &>(node);
+        id = semantic_node(node, function.name, "function", function.return_type.value_or("void"));
+      } else if (node.kind == ast_node_kind::variable_decl_node) {
+        const auto &variable = static_cast<const ast_variable_decl &>(node);
+        id = semantic_node(node, variable.name, "variable", binding->type_name.value_or(""));
+      }
+    }
+    if (!id || *id >= semantics_.symbols.size()) continue;
+    const auto &declaration = semantics_.symbols[*id];
+    bytes += name.size() + declaration.kind.size() + declaration.type.size() + declaration.path.size();
+    if (bytes > 4 * 1024 * 1024 || result.candidates.size() >= 32768) {
+      result.available = false; result.candidates.clear(); return;
+    }
+    result.candidates.push_back({name, declaration.kind, binding->type_name.value_or(declaration.type),
+                                declaration.path, declaration.span});
+  }
+}
+
 void type_checker::disable_semantics() {
   semantics_.available = false;
   semantics_.symbols.clear();
@@ -284,7 +376,7 @@ void type_checker::semantic_reference_to(const ast_node &node,
 bool type_checker::check(ast_program &program) {
   // Every check is a fresh semantic session. In particular, AST addresses
   // must never be remembered process-wide or across reused checker instances.
-  *this = type_checker(collect_semantics_);
+  *this = type_checker(collect_semantics_, completion_request_);
   program.accept(*this);
   auto ownership = check_ownership(program);
   for (const auto &diagnostic : ownership.diagnostics)
@@ -2069,7 +2161,8 @@ void type_checker::visit(ast_program &p) {
     diagnostic_source_scope source_scope(diagnostic_source_file_, decl ? decl->source_file : std::string());
     if (decl && decl->kind == ast_node_kind::module_decl_node) {
       auto &mod = static_cast<ast_module_decl &>(*decl);
-      module_ctx = mod.name;
+      module_ctx = module_context(mod.name);
+      if (!module_ctx) continue;
       // Also register the module symbol for static dispatch
       symbol mod_sym(mod.name, symbol_kind::type_symbol, &mod, std::nullopt,
                      false, visibility_kind::visibility_public, std::nullopt);
@@ -2269,7 +2362,7 @@ void type_checker::visit(ast_program &p) {
     if (!decl)
       continue;
     if (decl->kind == ast_node_kind::module_decl_node) {
-      current_module_ = static_cast<ast_module_decl &>(*decl).name;
+      current_module_ = module_context(static_cast<ast_module_decl &>(*decl).name);
     } else if (decl->kind == ast_node_kind::function_decl_node) {
       auto &function = static_cast<ast_function_decl &>(*decl);
       normalize_signature(function, {});
@@ -2309,7 +2402,7 @@ void type_checker::visit(ast_program &p) {
     if (!decl)
       continue;
     if (decl->kind == ast_node_kind::module_decl_node) {
-      module_ctx = static_cast<ast_module_decl &>(*decl).name;
+      module_ctx = module_context(static_cast<ast_module_decl &>(*decl).name);
       continue;
     }
     if (decl->kind != ast_node_kind::impl_decl_node)
@@ -2347,7 +2440,7 @@ void type_checker::visit(ast_program &p) {
     if (!decl)
       continue;
     if (decl->kind == ast_node_kind::module_decl_node)
-      current_module_ = static_cast<ast_module_decl &>(*decl).name;
+      current_module_ = module_context(static_cast<ast_module_decl &>(*decl).name);
     else if (decl->kind == ast_node_kind::impl_decl_node)
       register_trait_implementation(static_cast<ast_impl_decl &>(*decl));
   }
@@ -2655,6 +2748,12 @@ void type_checker::visit(ast_variable_decl &p) {
   }
   if (auto *binding = symbols_.lookup_mut(var_name);
       binding && binding->defining_node == &p) {
+    binding->checked_callable_parameters.reset();
+    // Structural function types do not declare labels. An immutable local
+    // may retain its initializer's proven names; mutable or externally
+    // supplied values need a future explicit labelled function-type contract.
+    if (!p.is_mut && current_function_return_type_ && p.initializer)
+      binding->checked_callable_parameters = p.initializer->checked_callable_parameters;
     binding->semantic_id = semantic_node(p, p.name, "variable", var_type_name,
                                          diagnostic_source_file_);
   }
@@ -2664,7 +2763,8 @@ void type_checker::visit(ast_variable_decl &p) {
 void type_checker::visit(ast_module_decl &p) {
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
   // Set the current module context
-  current_module_ = p.name;
+  current_module_ = module_context(p.name);
+  if (!current_module_) return;
 
   // Register the module as a type_symbol to enable static dispatch for
   // module-level functions. This allows `module::function()` syntax to work
@@ -4097,7 +4197,25 @@ bool type_checker::check_runtime_primitive(ast_call_expr &e) {
   return true;
 }
 
+static callable_parameter_contract callable_parameters(
+    const std::vector<ast_param> &parameters, std::size_t offset = 0) {
+  callable_parameter_contract result;
+  for (std::size_t index = offset; index < parameters.size(); ++index)
+    result.names.push_back(parameters[index].name);
+  result.variadic = parameters.size() > offset && parameters.back().is_variadic;
+  return result;
+}
+
 void type_checker::visit(ast_call_expr &e) {
+  bool named_arguments_handled = e.argument_names.empty();
+  struct named_argument_guard {
+    std::function<void()> check;
+    ~named_argument_guard() { check(); }
+  } named_guard{[&] {
+    if (!named_arguments_handled)
+      add_error(e.line, "Named arguments require a resolved parameter-name contract; "
+                        "use positional arguments for this callable");
+  }};
   if (check_runtime_primitive(e)) return;
   /* std::cerr << "[type_checker] visit(call_expr) line " << e.line << "
    * callee_kind=" << (int)e.callee->kind << " expected=" <<
@@ -4142,6 +4260,81 @@ void type_checker::visit(ast_call_expr &e) {
       arg_types.push_back(type_unknown);
     }
   }
+
+  // Argument labels select positions only after lexical/imported/member
+  // resolution has selected the callable. Reorder inferred types with the
+  // expressions so generic inference and call-boundary checks see one order.
+  const auto order_named_arguments = [&](const callable_parameter_contract &contract) {
+    if (e.argument_names.empty()) return true;
+    named_arguments_handled = true;
+    if (e.argument_names.size() != e.args.size()) {
+      add_error(e.line, "Invalid named argument metadata");
+      return false;
+    }
+    const auto folded = [](const std::string &name) {
+      std::string key;
+      for (unsigned char c : name) {
+        if (c == '-' || c == '_') continue;
+        key += static_cast<char>(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
+      }
+      return key;
+    };
+    const auto fixed = contract.names.size() - (contract.variadic ? 1U : 0U);
+    std::vector<std::optional<std::size_t>> positions(fixed);
+    std::vector<std::size_t> tail;
+    bool valid = true;
+    for (std::size_t index = 0; index < e.argument_names.size(); ++index) {
+      const auto &name = e.argument_names[index];
+      if (name.empty()) {
+        tail.push_back(index);
+        continue;
+      }
+      std::optional<std::size_t> selected;
+      for (std::size_t parameter = 0; parameter < fixed; ++parameter) {
+        if (folded(contract.names[parameter]) == folded(name)) {
+          if (selected) {
+            add_error(e.line, "Ambiguous parameter name '" + name + "'");
+            valid = false;
+            break;
+          }
+          selected = parameter;
+        }
+      }
+      if (!selected) {
+        add_error(e.line, "No parameter named '" + name + "'");
+        valid = false;
+      } else if (positions[*selected]) {
+        add_error(e.line, "Argument '" + name + "' given more than once");
+        valid = false;
+      } else {
+        positions[*selected] = index;
+      }
+    }
+    for (std::size_t index = 0; index < fixed; ++index)
+      if (!positions[index]) {
+        add_error(e.line, "Missing argument '" + contract.names[index] + "'");
+        valid = false;
+      }
+    if (!tail.empty() && !contract.variadic) {
+      add_error(e.line, "A 'more' argument tail requires a variadic callable");
+      valid = false;
+    }
+    if (!valid) return false;
+    std::vector<ast_expr_ptr> ordered;
+    std::vector<type_info> ordered_types;
+    std::vector<std::string> ordered_names;
+    const auto append = [&](std::size_t index) {
+      ordered.push_back(e.args[index]);
+      ordered_types.push_back(arg_types[index]);
+      ordered_names.push_back(e.argument_names[index]);
+    };
+    for (const auto position : positions) append(*position);
+    for (const auto index : tail) append(index);
+    e.args = std::move(ordered);
+    arg_types = std::move(ordered_types);
+    e.argument_names = std::move(ordered_names);
+    return true;
+  };
 
   const auto unannotated_return_type = [&](const symbol &callee) {
     // An omitted return annotation on an actual Ny declaration is void,
@@ -4286,6 +4479,7 @@ void type_checker::visit(ast_call_expr &e) {
         symbol callable(method.name, symbol_kind::function_symbol,
             const_cast<ast_function_decl *>(&method), method.return_type, false,
             method.get_visibility(), selected.owner->module, method.generic_params, method.params);
+        if (!order_named_arguments(callable_parameters(method.params, 1))) return;
         validate_call_arity(callable, e.args.size() + 1, receiver->name + "." + method.name);
         apply_argument_array_context(callable, substitutions, 1);
         if (!method.params.empty()) {
@@ -4373,6 +4567,7 @@ void type_checker::visit(ast_call_expr &e) {
                          const_cast<ast_function_decl *>(selected), selected->return_type,
                          false, selected->get_visibility(), selected_module,
                          selected->generic_params, selected->params);
+    if (!order_named_arguments(callable_parameters(selected->params))) return;
     validate_call_arity(method_symbol, e.args.size(), bounded_receiver->name + "." + selected->name);
     apply_argument_array_context(method_symbol, selected_substitutions);
     const auto caller_module = current_module_;
@@ -4455,6 +4650,7 @@ void type_checker::visit(ast_call_expr &e) {
                 symbols_.lookup(canonical_type + "__" + ma->member_name);
 
           if (method_sym && method_sym->kind == symbol_kind::function_symbol) {
+            if (!order_named_arguments(callable_parameters(method_sym->params))) return;
             validate_call_arity(*method_sym, e.args.size(),
                                 type_id->name + "." + ma->member_name);
             apply_argument_array_context(*method_sym, {});
@@ -4539,6 +4735,7 @@ void type_checker::visit(ast_call_expr &e) {
         }
 
         if (method_sym && method_sym->kind == symbol_kind::function_symbol) {
+          if (!order_named_arguments(callable_parameters(method_sym->params))) return;
           validate_call_arity(*method_sym, e.args.size(),
                               type_id->name + "." + ma->member_name);
           validate_generic_args(type_sym->generic_params, e.type_args, e.line);
@@ -4649,6 +4846,7 @@ void type_checker::visit(ast_call_expr &e) {
       semantic_reference_to(*id, id->name, *s);
       // Check if it's a direct function symbol
       if (s->kind == symbol_kind::function_symbol) {
+        if (!order_named_arguments(callable_parameters(s->params))) return;
         validate_call_arity(*s, e.args.size(), id->name);
         std::map<std::string, std::string> substitutions;
 
@@ -4861,6 +5059,15 @@ void type_checker::visit(ast_call_expr &e) {
         }
       } else {
         // It's a variable or parameter with function type
+        if (!e.argument_names.empty() && s->checked_callable_parameters &&
+            s->checked_callable_parameters->variadic) {
+          named_arguments_handled = true;
+          add_error(e.line, "Named variadic callback calls are not supported; "
+                            "call the declared variadic paragraph directly");
+          return;
+        }
+        if (s->checked_callable_parameters &&
+            !order_named_arguments(*s->checked_callable_parameters)) return;
         if (s->type_name && s->type_name->rfind("fn", 0) == 0) {
           // Parse function type string "fn(T) -> U"
           // For now, simple return type extraction
@@ -4904,6 +5111,14 @@ void type_checker::visit(ast_call_expr &e) {
       // produce runtime stores with the wrong physical element type.
       const auto builtin_receiver =
           parse_generic_type_string(resolve_type(type_name).name);
+      // This runtime member has no source declaration, but its label contract
+      // is public in nil.std.text and reflection's Matrix implementation.
+      // Preserve that contract without pretending arbitrary heuristic members
+      // have parameter names or falling back to source-order arguments.
+      if ((builtin_receiver.base_name == "String" ||
+           builtin_receiver.base_name == "text") && method_name == "substr") {
+        if (!order_named_arguments({{"start", "length"}, false})) return;
+      }
       if (builtin_receiver.base_name == "array" && method_name == "push") {
         if (e.args.size() != 1) {
           add_error(e.line, "Array.push expects 1 argument, got " +
@@ -5018,6 +5233,8 @@ void type_checker::visit(ast_call_expr &e) {
       if (s && s->kind == symbol_kind::function_symbol) {
         const bool has_receiver_parameter =
             !s->params.empty() && s->params.front().name == "self";
+        if (!order_named_arguments(callable_parameters(
+                s->params, has_receiver_parameter ? 1U : 0U))) return;
         validate_call_arity(*s,
                             e.args.size() + (has_receiver_parameter ? 1U : 0U),
                             type_name + "." + method_name);
@@ -5607,7 +5824,9 @@ void type_checker::visit(ast_assignment_expr &e) {
 }
 
 void type_checker::visit(ast_identifier_expr &e) {
+  capture_completion(e);
   e.resolved_global_name.reset();
+  e.checked_callable_parameters.reset();
   const auto *fault_binding = symbols_.lookup_non_global(e.name);
   if (fault_binding && fault_binding->defining_node &&
       fault_binding->defining_node->kind == ast_node_kind::fault_handler_node &&
@@ -5650,12 +5869,14 @@ void type_checker::visit(ast_identifier_expr &e) {
   }
   const auto value_type = [&](const symbol &value,
                               const std::map<std::string, std::string> &substitutions) {
+    e.checked_callable_parameters = value.checked_callable_parameters;
     const auto specialized = [&](const std::string &type) {
       return resolve_type(instantiate_generic_type(type, substitutions)).name;
     };
     if (value.kind == symbol_kind::function_symbol &&
         (!value.defining_node ||
          value.defining_node->kind == ast_node_kind::function_decl_node)) {
+      e.checked_callable_parameters = callable_parameters(value.params);
       // Function references are structural values even when found through a
       // type alias or a copied module-member symbol. Their return type alone
       // is never the type of the reference itself.
@@ -8014,6 +8235,7 @@ void type_checker::visit(ast_ref_expr &e) {
 }
 
 void type_checker::visit(ast_lambda_expr &e) {
+  e.checked_callable_parameters = callable_parameters(e.params);
   // Build function type: fn(T1, T2, ...) -> R
   std::string fn_type = "fn(";
   for (size_t i = 0; i < e.params.size(); ++i) {
