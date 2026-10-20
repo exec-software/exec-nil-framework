@@ -242,9 +242,16 @@ process.stdin.on('end', () => {
       // that same cursor must recover without editing either document.
       const versions = [entry.version, dependency.version];
       await fs.writeFile(unavailable, "fail the next completion request");
-      const failed = await completions(entry, "probe_waiting", "probe_waiting", "probe_");
-      assert.equal(failed.items.some(compilerItem), false);
-      await assert.rejects(fs.stat(unavailable), { code: "ENOENT" });
+      await eventually(async () => {
+        const failed = await completions(entry, "probe_waiting", "probe_waiting", "probe_");
+        assert.equal(failed.items.some(compilerItem), false,
+          "The failing query must not return a cached or speculative compiler candidate.");
+        // A source/configuration invalidation can cancel before process start.
+        // Retry only that absence; once the fake consumes the flag, the failed
+        // process has actually run and the next same-cursor request must recover.
+        try { await fs.stat(unavailable); return false; }
+        catch (error) { if (error.code === "ENOENT") return true; throw error; }
+      }, "unavailable completion query actually executes");
       const retried = await checkedCompletions(entry, "probe_waiting", "probe_waiting", "probe_");
       expectCandidate(retried, "probe_current", "variable: i32");
       assert.deepEqual([entry.version, dependency.version], versions,
