@@ -80,6 +80,9 @@ The framework includes:
 - **Program analysis and debugging.** Structured diagnostics, declaration
   metadata, and source debugging provide a common basis for editor support
   and analyzers written in Ny or Matrix.
+- **Aperture — unified analysis suite.** Code exploration, memory profiling,
+  and performance tracing in a single tool designed for both human developers
+  and AI agents. See [aperture/README.md](aperture/README.md).
 
 See the [standard-library reference](docs/standard-library/index.md),
 [analysis API](docs/analysis-api.md), and [tool reference](docs/tools/index.md)

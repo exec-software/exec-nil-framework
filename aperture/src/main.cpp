@@ -79,19 +79,19 @@ int main(int argc, char* argv[]) {
     
     // Dispatch to the appropriate engine
     if (subcommand == "explore") {
-        ExploreEngine engine;
+        aperture::ExploreEngine engine;
         return engine.run(target, json) ? 0 : 1;
     }
     else if (subcommand == "memory") {
-        MemoryEngine engine;
+        aperture::MemoryEngine engine;
         return engine.run(target, json) ? 0 : 1;
     }
     else if (subcommand == "trace") {
-        TraceEngine engine;
+        aperture::TraceEngine engine;
         return engine.run(target, json) ? 0 : 1;
     }
     else if (subcommand == "agent") {
-        AgentInterface agent;
+        aperture::AgentInterface agent;
         return agent.interact(target, json) ? 0 : 1;
     }
     else {

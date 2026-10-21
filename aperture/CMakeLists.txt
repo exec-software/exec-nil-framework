@@ -25,7 +25,7 @@ add_executable(aperture ${APERTURE_SOURCES} ${APERTURE_HEADERS})
 target_include_directories(aperture PRIVATE src)
 
 # Link against NIL core libraries
-target_link_libraries(aperture PRIVATE nilcompiler nilinterpreter)
+target_link_libraries(aperture PRIVATE nilcompiler_core nilruntime)
 
 # C++17 required
 target_compile_features(aperture PRIVATE cxx_std_17)

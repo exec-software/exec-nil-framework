@@ -2,6 +2,13 @@
 
 book matrix.welcome
 
+scene-center-x returns array of floating begin paragraph
+    variable x as floating is 0.0
+    variable y as floating is minus 1.6
+    variable z as floating is y plus 1.6
+    give (x, y, z)
+end paragraph
+
 main returns nothing begin paragraph
-    say "Hello, World! I am alive!"
+    say scene-center-x
 end paragraph
