@@ -508,6 +508,27 @@ void parser::recover_to_declaration() {
 std::optional<std::string> parser::parse_type() {
   const token &start = peek();
 
+  if (match(kw::tuple)) {
+    if (!expect(kw::of, "after 'tuple'") ||
+        !expect(matrix::token_kind::left_paren, "'('", "before tuple element types"))
+      return std::nullopt;
+    std::string type = "tuple<";
+    size_t count = 0;
+    while (!check(matrix::token_kind::right_paren) && !at_end()) {
+      auto element = parse_type();
+      if (!element) return std::nullopt;
+      if (count++) type += ", ";
+      type += *element;
+      if (!match(matrix::token_kind::comma)) break;
+    }
+    expect(matrix::token_kind::right_paren, "')'", "after tuple element types");
+    if (!count) {
+      error(start, "a tuple requires at least one element type");
+      return std::nullopt;
+    }
+    return type + ">";
+  }
+
   if (match(kw::override)) {
     const token &machine = peek();
     if (const char *reason = rejected_machine_reason(machine.word)) {
@@ -813,7 +834,9 @@ parser::parse_parameters(std::vector<std::string> &names) {
       // Deliberately restricted to a literal atom: an arbitrary expression
       // here would make 'and' ambiguous between another parameter and a
       // boolean operand. Ny rejects omitted arguments anyway.
-      default_value = parse_primary();
+      default_value = (check(kw::negative) || check(kw::minus) ||
+                       check(matrix::token_kind::numeric_sign))
+          ? parse_unary() : parse_primary();
     }
 
     params.emplace_back(name, type, mutable_binding, line, default_value,
@@ -1797,6 +1820,32 @@ std::shared_ptr<ny::ast_stmt> parser::parse_binding_statement() {
   const bool constant_binding = peek().is(kw::constant);
   advance();
 
+  if (match(matrix::token_kind::left_paren)) {
+    auto declaration = std::make_shared<ny::ast_variable_decl>("", nullptr,
+        std::nullopt, mutable_binding, false, line);
+    declaration->is_const = constant_binding;
+    do {
+      if (check(matrix::token_kind::right_paren)) break;
+      if (!peek().is_name()) {
+        expected_name("in tuple destructuring");
+        return nullptr;
+      }
+      const token binding = advance();
+      auto child = std::make_shared<ny::ast_variable_decl>(nil_symbol(binding.lexeme),
+          nullptr, std::nullopt, mutable_binding, false, binding.line);
+      child->name_span = name_span(binding);
+      child->is_const = constant_binding;
+      declaration->tuple_bindings.push_back(std::move(child));
+    } while (match(matrix::token_kind::comma));
+    expect(matrix::token_kind::right_paren, "')'", "after tuple bindings");
+    if (declaration->tuple_bindings.empty())
+      error(previous(), "tuple destructuring requires at least one binding");
+    if (!expect(kw::is, "before the tuple value")) return nullptr;
+    declaration->initializer = parse_expression();
+    skip_terminators();
+    return std::make_shared<ny::ast_decl_stmt>(declaration, line);
+  }
+
   if (!peek().is_name()) {
     expected_name("after the binding keyword");
     return nullptr;
@@ -1960,6 +2009,24 @@ std::shared_ptr<ny::ast_stmt> parser::parse_repeat() {
 
   if (match(kw::for_)) {
     const bool each = match_word("each");
+    if (each && match(matrix::token_kind::left_paren)) {
+      std::vector<ny::ast_param> bindings;
+      do {
+        if (check(matrix::token_kind::right_paren)) break;
+        if (!peek().is_name()) { expected_name("in tuple loop bindings"); return nullptr; }
+        const auto binding = advance();
+        bindings.emplace_back(nil_symbol(binding.lexeme), std::nullopt, false, binding.line, std::nullopt);
+        bindings.back().name_span = name_span(binding);
+      } while (match(matrix::token_kind::comma));
+      expect(matrix::token_kind::right_paren, "')'", "after tuple loop bindings");
+      if (bindings.empty()) error(previous(), "tuple loop binding requires at least one name");
+      if (!expect(kw::in_, "after tuple loop bindings")) return nullptr;
+      auto iterable = parse_expression();
+      auto body = parse_block(kw::repeat);
+      auto loop = std::make_shared<ny::ast_for_in_stmt>(bindings, iterable, body, line);
+      loop->tuple_pattern = true;
+      return loop;
+    }
     if (!peek().is_name()) {
       expected_name("as the loop variable");
       return nullptr;
@@ -2247,8 +2314,10 @@ ny::ast_expr_ptr parser::parse_multiplicative() {
 
 ny::ast_expr_ptr parser::parse_unary() {
   const int line = peek().line;
-  // Prefix 'minus' is negation, as in English ("minus five").
-  if (match(kw::minus)) {
+  // 'negative' is unary only; 'minus' remains the compatibility spelling.
+  // The lexer emits numeric_sign only when '-' touches the following digits.
+  if (match(kw::negative) || match(kw::minus) ||
+      match(matrix::token_kind::numeric_sign)) {
     auto operand = parse_unary();
     if (operand && operand->kind == ny::ast_node_kind::number_literal_node) {
       auto &number = static_cast<ny::ast_number_literal &>(*operand);
@@ -2344,7 +2413,8 @@ ny::ast_expr_ptr parser::parse_postfix() {
     // receiver type; it is recorded in matrix/docs/front-end-plan.md rather
     // than papered over here.
     if (check(matrix::token_kind::dot) &&
-        (peek(1).is_name() || peek(1).kind == matrix::token_kind::keyword)) {
+        (peek(1).is_name() || peek(1).kind == matrix::token_kind::keyword ||
+         peek(1).kind == matrix::token_kind::number_literal)) {
       advance();
       const token &member_token = peek();
       const std::string member = nil_symbol(advance().lexeme);
@@ -2485,6 +2555,38 @@ ny::ast_expr_ptr parser::parse_primary() {
     return number;
   }
 
+  if (match(matrix::token_kind::formatted_string_begin)) {
+    std::vector<ny::interpolated_part> parts;
+    while (!check(matrix::token_kind::formatted_string_end) && !at_end()) {
+      if (match(matrix::token_kind::formatted_text)) {
+        parts.push_back({true, previous().lexeme, nullptr});
+        continue;
+      }
+      if (!match(matrix::token_kind::interpolation_begin)) {
+        error(peek(), "expected a text segment or interpolation");
+        advance();
+        continue;
+      }
+      if (check(matrix::token_kind::interpolation_end)) {
+        error(peek(), "interpolation requires an expression");
+        advance();
+        continue;
+      }
+      auto expression = parse_expression();
+      if (!check(matrix::token_kind::interpolation_end)) {
+        error(peek(), "expected '}' after the interpolation expression");
+        while (!check(matrix::token_kind::interpolation_end) &&
+               !check(matrix::token_kind::formatted_string_end) && !at_end()) advance();
+      }
+      expect(matrix::token_kind::interpolation_end, "'}'", "after interpolation");
+      if (expression) parts.push_back({false, "", std::move(expression)});
+    }
+    expect(matrix::token_kind::formatted_string_end, "a closing quote", "after formatted text");
+    if (parts.empty()) parts.push_back({true, "", nullptr});
+    auto result = std::make_shared<ny::ast_interpolated_string_expr>(std::move(parts), line);
+    result->explicit_syntax = true;
+    return result;
+  }
   if (check(matrix::token_kind::string_literal))
     return std::make_shared<ny::ast_string_literal>(advance().lexeme, line);
 
@@ -2499,8 +2601,21 @@ ny::ast_expr_ptr parser::parse_primary() {
 
   if (match(matrix::token_kind::left_paren)) {
     auto inner = parse_expression();
-    expect(matrix::token_kind::right_paren, "')'", "to close a group");
-    return inner;
+    if (!match(matrix::token_kind::comma)) {
+      expect(matrix::token_kind::right_paren, "')'", "to close a group");
+      return inner;
+    }
+    std::vector<std::pair<std::string, ny::ast_expr_ptr>> elements;
+    elements.emplace_back("0", std::move(inner));
+    while (!check(matrix::token_kind::right_paren) && !at_end()) {
+      elements.emplace_back(std::to_string(elements.size()), parse_expression());
+      if (!match(matrix::token_kind::comma)) break;
+    }
+    expect(matrix::token_kind::right_paren, "')'", "after tuple elements");
+    auto tuple = std::make_shared<ny::ast_struct_literal_expr>("tuple",
+        std::move(elements), std::vector<std::string>{}, line);
+    tuple->tuple_literal = true;
+    return tuple;
   }
 
   if (match(matrix::token_kind::left_bracket)) {
@@ -2842,8 +2957,25 @@ ny::ast_expr_ptr parser::parse_build() {
 // A literal, '_', a bare binding, or 'Type.Variant [holding binding]'.
 ny::ast_pattern parser::parse_pattern() {
   ny::ast_pattern pattern;
+  if (match(matrix::token_kind::left_paren)) {
+    pattern.kind = ny::ast_pattern_kind::constructor_pattern;
+    do {
+      if (check(matrix::token_kind::right_paren)) break;
+      pattern.subpatterns.push_back(parse_pattern());
+    } while (match(matrix::token_kind::comma));
+    expect(matrix::token_kind::right_paren, "')'", "after tuple pattern");
+    return pattern;
+  }
 
-  const bool negative_number = check(kw::minus) &&
+  if (peek().is_name() && peek().lexeme == "_") {
+    advance();
+    pattern.kind = ny::ast_pattern_kind::wildcard_pattern;
+    pattern.name = "_";
+    return pattern;
+  }
+
+  const bool negative_number = (check(kw::minus) || check(kw::negative) ||
+      check(matrix::token_kind::numeric_sign)) &&
       peek(1).kind == matrix::token_kind::number_literal;
   if (negative_number) advance();
   if (check(matrix::token_kind::number_literal)) {
@@ -2999,10 +3131,22 @@ ny::ast_expr_ptr parser::parse_consider_expression() {
       // identifier is NOT that shape and would be emitted as a variable load.
       const int arm_line = peek().line;
 
+      if (check(matrix::token_kind::left_paren)) {
+        pattern_expr = parse_primary();
+        if (match(kw::provided)) guard = parse_expression();
+        match(kw::then);
+        if (!expect(kw::give, "before the value of a 'consider' arm")) break;
+        auto value = parse_expression();
+        cases.emplace_back(pattern_expr, guard,
+            std::make_shared<ny::ast_expr_stmt>(value, value->line));
+        continue;
+      }
       // A literal arm compares the target against a value, which is an
       // ordinary expression pattern.
       if (check(matrix::token_kind::number_literal) ||
-          (check(kw::minus) && peek(1).kind == matrix::token_kind::number_literal)) {
+          ((check(kw::minus) || check(kw::negative) ||
+            check(matrix::token_kind::numeric_sign)) &&
+           peek(1).kind == matrix::token_kind::number_literal)) {
         pattern_expr = parse_unary();
         if (match(kw::provided)) guard = parse_expression();
         match(kw::then); // optional, for symmetry with the statement form

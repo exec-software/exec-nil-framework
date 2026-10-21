@@ -573,6 +573,7 @@ void test_instruction_shapes_are_rejected_before_execution() {
            ny::nil_instruction{"CALL", {"main"}, 1},
            ny::nil_instruction{"CAST", {}, 1},
            ny::nil_instruction{"CAST", {"i32", "i64"}, 1},
+           ny::nil_instruction{"TO_STRING", {"i32", "i64"}, 1},
            ny::nil_instruction{"NEW_ARRAY", {"-1"}, 1},
            ny::nil_instruction{"NEW_ARRAY_LITERAL", {"1000001"}, 1},
        }) {
@@ -591,6 +592,7 @@ void test_instruction_shapes_are_rejected_before_execution() {
            std::string("function main:\n  CALL main\nend function\n"),
            std::string("function main:\n  CAST\nend function\n"),
            std::string("function main:\n  CAST i32 i64\nend function\n"),
+           std::string("function main:\n  TO_STRING i32 i64\nend function\n"),
            std::string("function main:\n  NEW_ARRAY -1\nend function\n"),
        }) {
     bool rejected = false;
@@ -1451,6 +1453,43 @@ void test_vm_scalar_arithmetic_widths() {
   }
 }
 
+void test_scalar_text_contract() {
+  for (const auto &item : std::vector<std::vector<std::string>>{
+           {"0", "bool", "false"}, {"-1", "bool", "true"},
+           {"-9223372036854775808", "i64", "-9223372036854775808"},
+           {"-0.0", "f64", "-0"}, {"1.2345678901234567", "f64", "1.2345678901234567"},
+           {"1.6", "", "1.6"}}) {
+    ny::nil_module module;
+    module.functions.push_back(make_function("main", "text",
+        {{"PUSH_CONST", {item[0]}, 1},
+         {"TO_STRING", item[1].empty() ? std::vector<std::string>{} : std::vector<std::string>{item[1]}, 2},
+         {"RET", {}, 3}}));
+    for (const bool binary : {false, true}) {
+      std::unordered_map<std::string, ny::Value> constants;
+      ny::VM vm;
+      vm.loadProgram(parse_module(module, binary, constants), constants);
+      vm.execute();
+      check(vm.getStack().size() == 1 &&
+            std::holds_alternative<std::string>(vm.getStack().back()) &&
+            std::get<std::string>(vm.getStack().back()) == item[2],
+            "scalar text metadata and formatting survive text/binary NIL");
+    }
+  }
+  for (const auto *type : {"array<i32>", "ptr<i32>", "f32", "u64"}) {
+    ny::nil_module module;
+    module.functions.push_back(make_function("main", "text",
+        {{"PUSH_CONST", {"1"}, 1}, {"TO_STRING", {type}, 2}, {"RET", {}, 3}}));
+    for (const bool binary : {false, true}) {
+      bool rejected = false;
+      try {
+        std::unordered_map<std::string, ny::Value> constants;
+        (void)parse_module(module, binary, constants);
+      } catch (const std::runtime_error &) { rejected = true; }
+      check(rejected, "unsupported TO_STRING source metadata rejected");
+    }
+  }
+}
+
 void test_vm_scalar_cast_boundaries() {
   const std::vector<double> invalid_floats = {
       9223372036854775808.0, -9223372036854777856.0,
@@ -1899,6 +1938,7 @@ void test_binary_type_annotations_round_trip() {
 }
 
 int main() {
+  test_scalar_text_contract();
   test_binary_function_boundaries_and_debug_lines();
   test_textual_function_declaration_lines();
   test_textual_function_annotations_are_lossless();

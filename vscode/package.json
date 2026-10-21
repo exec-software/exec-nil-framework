@@ -196,12 +196,24 @@
       {
         "language": "ny",
         "scopeName": "source.ny",
-        "path": "./syntaxes/ny.tmLanguage.json"
+        "path": "./syntaxes/ny.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.expression.ny": "ny"
+        },
+        "tokenTypes": {
+          "meta.embedded.expression.ny": "other"
+        }
       },
       {
         "language": "matrix",
         "scopeName": "source.matrix",
-        "path": "./syntaxes/matrix.tmLanguage.json"
+        "path": "./syntaxes/matrix.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.expression.matrix": "matrix"
+        },
+        "tokenTypes": {
+          "meta.embedded.expression.matrix": "other"
+        }
       }
     ],
     "snippets": [

@@ -61,6 +61,16 @@ def main():
             # Matrix quoted text is raw, so this is an actual NUL source byte.
             path.write_text(source)
             sources.append((path, 'contains an embedded NUL byte'))
+        # Explicit formatted text retains the same native text boundary after
+        # literal decoding and before concatenation; no truncated output runs.
+        for language, source in (
+            ('ny', 'fn main() -> i32\nprintln($"visible\\0hidden {1}")\nreturn 0\nend fn\n'),
+            ('matrix', 'book tests.formatted-nul\nmain returns override integer begin paragraph\n'
+                       'say formatted "visible\0hidden {1}"\ngive 0\nend paragraph\n'),
+        ):
+            path = root / f'formatted-embedded-nul.{language}'
+            path.write_text(source)
+            sources.append((path, 'contains an embedded NUL byte'))
         for path, message in sources:
             for flags in (('--native',), ('--native', '--jit')):
                 output = root / 'protected-output'

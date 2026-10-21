@@ -24,6 +24,7 @@ set(NILLSP_SOURCES
     ny_parser.cpp
     matrix_parser.hpp
     matrix_parser.cpp
+    interpolated_text.hpp
 )
 
 if(NIL_BUILD_LSP)

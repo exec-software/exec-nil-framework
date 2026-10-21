@@ -10,6 +10,9 @@
       "include": "#text-blocks"
     },
     {
+      "include": "#formatted-strings"
+    },
+    {
       "include": "#strings"
     },
     {
@@ -341,7 +344,7 @@
           "name": "keyword.control.verb.matrix"
         },
         {
-          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[rR][eE][mM][aA][iI][nN][dD][eE][rR]|[bB][eE][cC][oO][mM][eE][sS]|[bB][iI][tT][wW][iI][sS][eE]|[sS][hH][iI][fF][tT][eE][dD]|[eE][qQ][uU][aA][lL][sS]|[mM][iI][nN][uU][sS]|[tT][iI][mM][eE][sS]|[pP][lL][uU][sS]|[oO][vV][eE][rR]|[aA][nN][dD]|[nN][oO][tT]|[xX][oO][rR]|[oO][rR]|[aA][tT]|[iI][sS]|[dD][oO][eE][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[rR][eE][mM][aA][iI][nN][dD][eE][rR]|[bB][eE][cC][oO][mM][eE][sS]|[bB][iI][tT][wW][iI][sS][eE]|[sS][hH][iI][fF][tT][eE][dD]|[eE][qQ][uU][aA][lL][sS]|[nN][eE][gG][aA][tT][iI][vV][eE]|[mM][iI][nN][uU][sS]|[tT][iI][mM][eE][sS]|[pP][lL][uU][sS]|[oO][vV][eE][rR]|[aA][nN][dD]|[nN][oO][tT]|[xX][oO][rR]|[oO][rR]|[aA][tT]|[iI][sS]|[dD][oO][eE][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
           "name": "keyword.operator.word.matrix"
         },
         {
@@ -373,7 +376,7 @@
     "types": {
       "patterns": [
         {
-          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[nN][uU][mM][bB][eE][rR]|[fF][lL][oO][aA][tT][iI][nN][gG]|[bB][oO][oO][lL][eE][aA][nN]|[tT][eE][xX][tT]|[nN][oO][tT][hH][iI][nN][gG]|[iI][nN][tT][eE][gG][eE][rR]|[lL][oO][nN][gG]|[bB][yY][tT][eE]|[dD][oO][uU][bB][lL][eE]|[pP][oO][iI][nN][tT][eE][rR]|[aA][rR][rR][aA][yY]|[oO][wW][nN][eE][dD]|[sS][hH][aA][rR][eE][dD]|[eE][xX][cC][lL][uU][sS][iI][vV][eE]|[vV][iI][eE][wW]|[rR][eE][fF][eE][rR][eE][nN][cC][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[nN][uU][mM][bB][eE][rR]|[fF][lL][oO][aA][tT][iI][nN][gG]|[bB][oO][oO][lL][eE][aA][nN]|[tT][eE][xX][tT]|[nN][oO][tT][hH][iI][nN][gG]|[iI][nN][tT][eE][gG][eE][rR]|[lL][oO][nN][gG]|[bB][yY][tT][eE]|[dD][oO][uU][bB][lL][eE]|[pP][oO][iI][nN][tT][eE][rR]|[tT][uU][pP][lL][eE]|[aA][rR][rR][aA][yY]|[oO][wW][nN][eE][dD]|[sS][hH][aA][rR][eE][dD]|[eE][xX][cC][lL][uU][sS][iI][vV][eE]|[vV][iI][eE][wW]|[rR][eE][fF][eE][rR][eE][nN][cC][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
           "name": "storage.type.builtin.matrix"
         },
         {
@@ -402,11 +405,11 @@
       "patterns": [
         {
           "name": "constant.numeric.hex.matrix",
-          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])0[xX][0-9A-Fa-f]+(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])"
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])-?0[xX][0-9A-Fa-f]+(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])"
         },
         {
           "name": "constant.numeric.decimal.matrix",
-          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])"
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])-?[0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])"
         }
       ]
     },
@@ -453,7 +456,60 @@
           "name": "variable.other.readwrite.matrix"
         }
       ]
+    },
+    "formatted-strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.interpolated.matrix",
+          "begin": "((?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[fF][oO][rR][mM][aA][tT][tT][eE][dD](?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+(\")",
+          "beginCaptures": {
+            "1": {
+              "name": "keyword.other.formatted.matrix"
+            },
+            "2": {
+              "name": "punctuation.definition.string.begin.matrix"
+            }
+          },
+          "end": "\"|$",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.matrix"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.brace.matrix",
+              "match": "\\{\\{|\\}\\}"
+            },
+            {
+              "begin": "\\{",
+              "end": "\\}",
+              "name": "meta.interpolation.matrix",
+              "contentName": "meta.embedded.expression.matrix",
+              "beginCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.begin.matrix"
+                }
+              },
+              "endCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.end.matrix"
+                }
+              },
+              "patterns": [
+                {
+                  "include": "$self"
+                }
+              ]
+            },
+            {
+              "name": "invalid.illegal.unmatched-brace.matrix",
+              "match": "\\}"
+            }
+          ]
+        }
+      ]
     }
   },
-  "comment": "Follows matrix_lexer.cpp: ASCII-only keyword folding, separator-aware names, raw single-line quotes, and standalone end text terminators. Explicit letter pairs deliberately avoid Unicode case folding."
+  "comment": "Follows matrix_lexer.cpp: ASCII-only keyword folding, separator-aware names, raw single-line quotes, and standalone end text terminators. Explicit letter pairs deliberately avoid Unicode case folding. Explicit formatted quotes embed expressions; doubled braces remain literal."
 }

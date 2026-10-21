@@ -1,4 +1,5 @@
 #include "matrix_lexer.hpp"
+#include "formatted_text.hpp"
 #include "numeric_literal.hpp"
 
 #include <algorithm>
@@ -108,6 +109,7 @@ const keyword_entry keyword_table[] = {
   {"context", kw::context, "context"},
   {"and", kw::and_, "and"}, {"or", kw::or_, "or"}, {"not", kw::not_, "not"},
   {"plus", kw::plus, "plus"}, {"minus", kw::minus, "minus"},
+  {"negative", kw::negative, "negative"},
   {"times", kw::times, "times"}, {"over", kw::over, "over"},
   {"remainder", kw::remainder, "remainder"}, {"at", kw::at, "at"},
   {"bitwise", kw::bitwise, "bitwise"}, {"shifted", kw::shifted, "shifted"},
@@ -121,6 +123,7 @@ const keyword_entry keyword_table[] = {
   {"quote", kw::quote, "quote"}, {"newline", kw::newline, "newline"},
   {"tab", kw::tab, "tab"},
   {"pointer", kw::pointer, "pointer"}, {"array", kw::array, "array"},
+  {"tuple", kw::tuple, "tuple"},
   {"owned", kw::owned, "owned"}, {"shared", kw::shared, "shared"},
   {"exclusive", kw::exclusive, "exclusive"}, {"view", kw::view, "view"},
   // Ergonomic types.
@@ -310,10 +313,10 @@ token lexer::scan_backtick_identifier() {
   return t;
 }
 
-token lexer::scan_number() {
+token lexer::scan_number(bool tuple_position) {
   const int line = line_, col = col_;
   std::string spelling;
-  if (peek() == '0' && (peek(1) == 'x' || peek(1) == 'X')) {
+  if (!tuple_position && peek() == '0' && (peek(1) == 'x' || peek(1) == 'X')) {
     spelling.push_back(advance());
     spelling.push_back(advance());
     if (!std::isxdigit(static_cast<unsigned char>(peek()))) {
@@ -329,12 +332,12 @@ token lexer::scan_number() {
   }
   while (ascii_digit(static_cast<unsigned char>(peek())))
     spelling.push_back(advance());
-  if (peek() == '.' && ascii_digit(static_cast<unsigned char>(peek(1)))) {
+  if (!tuple_position && peek() == '.' && ascii_digit(static_cast<unsigned char>(peek(1)))) {
     spelling.push_back(advance());
     while (ascii_digit(static_cast<unsigned char>(peek())))
       spelling.push_back(advance());
   }
-  if (peek() == 'e' || peek() == 'E') {
+  if (!tuple_position && (peek() == 'e' || peek() == 'E')) {
     spelling.push_back(advance());
     if (peek() == '+' || peek() == '-') spelling.push_back(advance());
     while (ascii_digit(static_cast<unsigned char>(peek())))
@@ -373,6 +376,58 @@ token lexer::scan_string() {
   token t = make(token_kind::string_literal, contents, line, col);
   t.key = contents;
   return t;
+}
+
+void lexer::scan_formatted_string(std::vector<token> &tokens,
+                                  const token &word, std::size_t quote) {
+  const auto scanned = ny::scan_formatted_text(src_, quote, true, interpolation_depth_);
+  const ny::formatted_source_positions positions(src_, word.start, scanned.end,
+                                                 word.line, word.column);
+  const auto emit = [&](token_kind kind, std::string value, std::size_t offset,
+                        std::size_t length) {
+    token result;
+    result.kind = kind;
+    result.lexeme = std::move(value);
+    result.key = result.lexeme;
+    result.line = positions.line(offset);
+    result.column = positions.column(offset);
+    result.start = offset;
+    result.length = length;
+    tokens.push_back(std::move(result));
+  };
+  if (!scanned.error.empty()) {
+    error(positions.line(scanned.error_offset), positions.column(scanned.error_offset),
+          scanned.error);
+    emit(token_kind::invalid, scanned.error, scanned.error_offset, 1);
+  } else {
+    emit(token_kind::formatted_string_begin, "formatted \"", word.start,
+         quote + 1 - word.start);
+    for (const auto &piece : scanned.pieces) {
+      if (!piece.expression) {
+        emit(token_kind::formatted_text, piece.text, piece.start, piece.length);
+        continue;
+      }
+      emit(token_kind::interpolation_begin, "{", piece.start - 1, 1);
+      lexer expression(piece.text, interpolation_depth_ + 1);
+      for (auto value : expression.scan()) {
+        if (value.kind == token_kind::end_of_file) continue;
+        if (value.line == 1) value.column += positions.column(piece.start) - 1;
+        value.line += positions.line(piece.start) - 1;
+        value.start += piece.start;
+        tokens.push_back(std::move(value));
+      }
+      for (const auto &failure : expression.errors()) {
+        const auto column = failure.column + (failure.line == 1 ? positions.column(piece.start) - 1 : 0);
+        error(failure.line + positions.line(piece.start) - 1, column,
+              failure.message, failure.hint);
+      }
+      emit(token_kind::interpolation_end, "}", piece.start + piece.length, 1);
+    }
+    emit(token_kind::formatted_string_end, "\"", scanned.end - 1, 1);
+  }
+  pos_ = scanned.end;
+  line_ = positions.line(pos_);
+  col_ = positions.column(pos_);
 }
 
 // 'begin text' at end of line opens a raw block literal.
@@ -455,6 +510,14 @@ std::vector<token> lexer::scan() {
 
     if (name_start(c)) {
       token word = scan_identifier();
+      if (word.key == "formatted" && word.lexeme.find_first_of("-_") == std::string::npos) {
+        auto quote = pos_;
+        while (quote < src_.size() && (src_[quote] == ' ' || src_[quote] == '\t')) ++quote;
+        if (quote < src_.size() && src_[quote] == '"') {
+          scan_formatted_string(tokens, word, quote);
+          continue;
+        }
+      }
       // 'begin text' at end of line opens a raw block literal rather than a
       // block of declarations.
       if (word.is(kw::begin) && text_block_follows()) {
@@ -464,7 +527,12 @@ std::vector<token> lexer::scan() {
       tokens.push_back(word);
       continue;
     }
-    if (ascii_digit(c)) { tokens.push_back(scan_number()); continue; }
+    if (ascii_digit(c)) { tokens.push_back(scan_number(!tokens.empty() && tokens.back().kind == token_kind::dot)); continue; }
+    if (c == '-' && ascii_digit(static_cast<unsigned char>(peek(1)))) {
+      advance();
+      tokens.push_back(make(token_kind::numeric_sign, "-", line, col));
+      continue;
+    }
     if (c == '"') { tokens.push_back(scan_string()); continue; }
     if (c == '`') { tokens.push_back(scan_backtick_identifier()); continue; }
 
@@ -483,7 +551,8 @@ std::vector<token> lexer::scan() {
       advance();
       // A period between names is member access; a period that ends a
       // sentence is a statement terminator.
-      if (name_start(static_cast<unsigned char>(peek())) || peek() == '`') {
+      if (name_start(static_cast<unsigned char>(peek())) || peek() == '`' ||
+          (peek() >= '0' && peek() <= '9')) {
         tokens.push_back(make(token_kind::dot, ".", line, col));
       } else {
         tokens.push_back(make(token_kind::statement_end, ".", line, col));
@@ -534,9 +603,9 @@ std::vector<token> lexer::scan() {
     }
     if (c == '-') {
       error(line, col,
-            "'-' is not an operator in Matrix; it joins the words of one name",
-            "write 'minus' for subtraction and negation, and 'frame-kind' for "
-            "a hyphenated name");
+            "'-' is not an operator in Matrix; a numeric sign must touch its digits",
+            "write '-1.6' for a signed literal, 'negative value' for negation, "
+            "'minus' for subtraction, and 'frame-kind' for a hyphenated name");
     } else if (c == '=') {
       error(line, col, "'=' is not used in Matrix",
             "a binding is written 'value x as integer is 1'; an assignment is "

@@ -71,6 +71,39 @@ void test_lexer_source_ranges() {
           "EOF is an empty range at the source end");
 }
 
+void test_formatted_text_source_spans() {
+  const std::string source =
+      "!!! λ 🧭\r\nbook formatted-spans\r\nmessage receives sample-value as number returns number begin paragraph\r\n"
+      "value rendered is formatted \"\\n{{literal}} {sample-value plus 1} {helper with sample-value}\"\r\n"
+      "give sample-value\r\nend paragraph\r\n";
+  const auto program = parse(source);
+  const auto body = cast<ny::ast_block_stmt>(cast<ny::ast_function_decl>(program->declarations.at(1))->body);
+  const auto declaration = cast<ny::ast_variable_decl>(cast<ny::ast_decl_stmt>(body->statements.at(0))->declaration);
+  const auto text = cast<ny::ast_interpolated_string_expr>(declaration->initializer);
+  require(text->explicit_syntax && text->parts.size() == 4, "formatted text retains ordered expressions");
+  require(text->parts.at(0).literal_value == "\\n{literal} ", "Matrix formatted literal keeps raw backslashes");
+  const auto addition = cast<ny::ast_binary_expr>(text->parts.at(1).expression);
+  check_span(source, addition->left->name_span, "{sample-value plus", "sample-value");
+  const auto call = cast<ny::ast_call_expr>(text->parts.at(3).expression);
+  check_span(source, call->callee->name_span, "{helper with", "helper");
+  check_span(source, call->args.at(0)->name_span, "with sample-value}", "sample-value");
+  const auto result = cast<ny::ast_return_stmt>(body->statements.at(1));
+  check_span(source, result->value->name_span, "give sample-value", "sample-value");
+  matrix::lexer lexer(source);
+  bool found = false;
+  for (const auto &token : lexer.scan())
+    if (token.kind == matrix::token_kind::identifier && token.start == source.find("{sample-value") + 1)
+      found = token.length == 12 && token.line == 4 && token.column == 45;
+  require(found && !lexer.has_errors(), "formatted hole token keeps original byte position and column");
+  parse("book nested-format\nmessage receives input as number begin paragraph\n"
+        "say formatted \"outer {formatted \"inner {input}\"}\"\nend paragraph\n");
+  for (const auto *literal : {"formatted \"{}\"", "formatted \"{1, 2}\"", "formatted \"{1\"", "formatted \"bad }\"", "formatted \"unfinished", "formatted \"one\ntwo\"", "formatted \"{1\nplus 2}\""}) {
+    matrix::parser broken(std::string("book invalid-format\nbroken begin paragraph\nsay ") + literal + "\nend paragraph\n");
+    broken.parse_program();
+    require(broken.has_errors(), "malformed Matrix interpolation must be diagnosed");
+  }
+}
+
 void test_names_and_uses() {
   const std::string source =
       "book span-check\r\n"
@@ -228,6 +261,7 @@ void test_lowered_bindings() {
 int main() {
   try {
     test_lexer_source_ranges();
+    test_formatted_text_source_spans();
     test_names_and_uses();
     test_members_and_types();
     test_lowered_bindings();

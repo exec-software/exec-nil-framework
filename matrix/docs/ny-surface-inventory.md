@@ -136,7 +136,7 @@ about whether a value changed representation.
 | `*alias` on `ref<T>` | no spelling | rejected in Ny |
 | `owned<T>` | `owned array of <type>` | executed for `integer`, `long`, `byte` |
 | `borrow<T>` / `borrow_mut<T>` | `shared view of <type>` / `exclusive view of <type>` | executed |
-| tuples | **no spelling** | no such Ny type, no NIL schema |
+| `(T, U)`, `(a, b)`, `let (a,b) = value` | `tuple of (T, U)`, `(a, b)`, `value (a,b) is result` | shared typed immutable tuple slots; native aggregate-array limits remain |
 
 Out-of-range typed array reads yield the element's zero value and out-of-range
 writes are a no-op. Matrix keeps that, because changing it would change NIL
@@ -502,7 +502,7 @@ Collected for review. Each is syntax Matrix could plausibly have and must not,
 because NIL cannot execute it. The correct time to add each spelling is when
 its route evidence lands.
 
-Tuples · field default initialisers · overload sets · arrow-body functions ·
+Field default initialisers · overload sets · arrow-body functions ·
 capturing closures · native indirect calls · dynamic trait objects · generic
 class execution · generic method execution · first-class bound methods ·
 downcasts · reference and container covariance · automatic destructors ·

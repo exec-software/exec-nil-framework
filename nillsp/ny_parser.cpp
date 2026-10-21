@@ -1,4 +1,5 @@
 #include "ny_parser.hpp"
+#include "interpolated_text.hpp"
 #include "matrix_parser.hpp"
 
 #include <algorithm>
@@ -81,6 +82,9 @@ std::vector<Token> lex(const std::string& text, ParseResult& out) {
             const auto end = text.find('\n', i);
             i = end == std::string::npos ? text.size() : end;
             out.excluded.push_back({start, i, false});
+        } else if (text.compare(i, 2, "$\"") == 0) {
+            i = editor_formatted_text(text, start, start + 1, false, out, lex);
+            tokens.push_back({"<literal>", start, i});
         } else if (text[i] == '"' || text[i] == '\'') {
             const auto quote = text[i++];
             bool closed = false;
@@ -249,6 +253,28 @@ class Indexer {
         const bool constant = at("const");
         ++cursor;
         if (at("mut")) ++cursor;
+        if (at("(")) {
+            std::vector<Token> names;
+            ++cursor;
+            while (cursor < tokens.size() && name_start(tokens[cursor].text.front())) {
+                names.push_back(tokens[cursor++]);
+                if (!at(",")) break;
+                ++cursor;
+            }
+            if (!at(")")) return;
+            ++cursor;
+            if (!at("=")) return;
+            const auto end = line_end(++cursor);
+            const auto finish_at = end > cursor ? tokens[end - 1].end : tokens[cursor - 1].end;
+            for (const auto& name : names) {
+                if (name.text == "_") continue;
+                const auto id = add(name, constant ? symbol_kind::Constant : symbol_kind::Variable,
+                                    scope, parent, declaration_start, finish_at);
+                out.symbols[id].visible_after = finish_at;
+            }
+            cursor = end;
+            return;
+        }
         if (cursor >= tokens.size() || !name_start(tokens[cursor].text.front())) return;
         const auto name = tokens[cursor++];
         std::string declared;

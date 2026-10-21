@@ -77,6 +77,28 @@ def completion(source: str, marker: str = "|", *, extra: list[dict] | None = Non
 
 
 class SemanticProtocol(unittest.TestCase):
+    def test_formatted_text_holes_and_nested_literals(self) -> None:
+        prefix = 'fn main()\n let height: f64 = -1.6\n'
+        for value in ('$"height: {hei|ght}"', '$"{height|}"',
+                      '$"{describe("nested")} {hei|ght}"',
+                      '$"{$"nested {hei|ght}"}"'):
+            with self.subTest(value=value):
+                result, notes = completion(prefix + ' println(' + value + ')\nend fn\n')
+                self.assertEqual(set(result), {'height'})
+                self.assertFalse([note for note in notes if note['params']['diagnostics']])
+        for value in ('$"hei|ght {height}"', '$"{{hei|ght}} {height}"',
+                      '$"{describe("hei|ght")}"'):
+            with self.subTest(value=value):
+                result, _ = completion(prefix + ' println(' + value + ')\nend fn\n')
+                self.assertEqual(result, {})
+
+    def test_destructured_local_bindings(self) -> None:
+        result, _ = completion('fn main()\n let (width, height, _) = (1, 2, 3)\n |\nend fn\n')
+        self.assertTrue({'width', 'height'} <= set(result))
+        self.assertNotIn('_', result)
+        result, _ = completion('fn main()\n let (width, height) = (wi|, 2)\nend fn\n')
+        self.assertNotIn('width', result)
+
     def test_typed_fault_guard_members(self) -> None:
         source = """struct Problem
     code: i32

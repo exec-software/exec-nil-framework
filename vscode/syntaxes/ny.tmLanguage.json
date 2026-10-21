@@ -83,6 +83,59 @@
     "strings": {
       "patterns": [
         {
+          "name": "string.quoted.double.interpolated.ny",
+          "begin": "\\$\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.ny"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.ny"
+            }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.ny",
+              "match": "\\\\(?:[\"\\\\ntr0]|.)"
+            },
+            {
+              "name": "constant.character.escape.brace.ny",
+              "match": "\\{\\{|\\}\\}"
+            },
+            {
+              "begin": "\\{",
+              "end": "\\}",
+              "name": "meta.interpolation.ny",
+              "contentName": "meta.embedded.expression.ny",
+              "beginCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.begin.ny"
+                }
+              },
+              "endCaptures": {
+                "0": {
+                  "name": "punctuation.section.interpolation.end.ny"
+                }
+              },
+              "patterns": [
+                {
+                  "include": "#interpolation-braces"
+                },
+                {
+                  "include": "$self"
+                }
+              ]
+            },
+            {
+              "name": "invalid.illegal.unmatched-brace.ny",
+              "match": "\\}"
+            }
+          ]
+        },
+        {
           "name": "string.quoted.double.ny",
           "begin": "\"",
           "beginCaptures": {
@@ -323,6 +376,18 @@
         {
           "name": "punctuation.section.group.end.ny",
           "match": "\\)|\\}|\\]"
+        }
+      ]
+    },
+    "interpolation-braces": {
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [
+        {
+          "include": "#interpolation-braces"
+        },
+        {
+          "include": "$self"
         }
       ]
     }

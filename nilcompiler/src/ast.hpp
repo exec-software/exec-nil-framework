@@ -206,6 +206,9 @@ struct ast_node {
   // Used by codegen for generic instantiation and other type-dependent
   // operations.
   std::optional<std::string> inferred_type;
+  // A failed tuple shape/immutability check must not become executable when
+  // --no-typecheck suppresses semantic diagnostics.
+  std::optional<std::string> rejected_tuple_operation;
 
   explicit ast_node(ast_node_kind kind_in, int line_in = 0,
                     std::vector<ast_annotation> ann = {})
@@ -540,6 +543,8 @@ struct ast_variable_decl : public ast_decl {
   ast_expr_ptr initializer; // optional
   bool is_mut = false;      // variable declared as `mut`
   bool is_const = false;    // variable declared as `const` (NY-050)
+  // Tuple destructuring keeps one initializer and distinct source bindings.
+  std::vector<std::shared_ptr<ast_variable_decl>> tuple_bindings;
 
   ast_variable_decl(const std::string &n, ast_expr_ptr init = nullptr,
                     std::optional<std::string> type_in = std::nullopt,
@@ -764,6 +769,7 @@ struct ast_for_in_stmt : public ast_stmt {
   // Tuple-unpacking support: if `variables` is non-empty, the loop
   // is a tuple unpack: `for (a, b) in zip(...)` etc.
   std::vector<ast_param> variables;
+  bool tuple_pattern = false; // Distinguishes `(x,)` from a single loop binding.
 
   ast_expr_ptr iterable;
   std::shared_ptr<ast_stmt> body;
@@ -1112,6 +1118,7 @@ struct ast_struct_literal_expr : public ast_expr {
   std::string type_name;
   std::vector<std::pair<std::string, ast_expr_ptr>> fields;
   std::vector<std::string> type_args; // Generic type arguments: Type<T> { ... }
+  bool tuple_literal = false; // Structural immutable tuple, fields ordered 0..N-1.
 
   ast_struct_literal_expr(std::string name,
                           std::vector<std::pair<std::string, ast_expr_ptr>> f,
@@ -1245,6 +1252,7 @@ struct symbol {
       module; // Optional module path owning this symbol (e.g., "std::io")
   bool is_mut = false; // Indicates when a variable symbol is mutable
   bool is_pub = false; // Backwards-compatible boolean visibility flag
+  bool is_generic_parameter = false;
   visibility_kind visibility =
       visibility_kind::visibility_private; // New enum-based visibility
 
@@ -1846,6 +1854,9 @@ struct interpolated_part {
 // Interpolated string: "Hello {name}, you have {count} messages"
 struct ast_interpolated_string_expr : public ast_expr {
   std::vector<interpolated_part> parts;
+  // Explicit formatted strings carry ordinary expression tokens with exact
+  // original spans; legacy Ny identifier interpolation remains compatible.
+  bool explicit_syntax = false;
 
   ast_interpolated_string_expr(std::vector<interpolated_part> p, int l = 0)
       : ast_expr(ast_node_kind::interpolated_string_expr_node, l),

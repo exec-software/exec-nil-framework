@@ -9,6 +9,7 @@
 #include "diagnostics.hpp"
 #include "nil_contract.hpp"
 #include "numeric_literal.hpp"
+#include "scalar_text.hpp"
 #include "ownership_check.hpp"
 #include "concurrency_contract.hpp"
 #include "owned_contract.hpp"
@@ -888,6 +889,27 @@ std::string codegen::materialize_struct_schema(const std::string &raw_type,
                                                bool require_concrete) {
   const std::string type = canonical_nil_type_name(raw_type);
   const auto parsed = parse_generic_type_name(type);
+  if (parsed && parsed->base_name == "tuple") {
+    if (depth >= 64 || parsed->type_args.empty()) {
+      reject_codegen_construct(line, "invalid or excessively nested tuple shape", "use a finite nonempty tuple");
+      return type;
+    }
+    nil_struct_def definition;
+    definition.name = type;
+    definition.annotations.push_back("@nil_tuple");
+    for (size_t index = 0; index < parsed->type_args.size(); ++index)
+      definition.fields.emplace_back(std::to_string(index), parsed->type_args[index]);
+    for (const auto &existing : module.structs) {
+      if (canonical_nil_type_name(existing.name) != type) continue;
+      if (existing.fields != definition.fields)
+        reject_codegen_construct(line, "conflicting tuple shape '" + type + "'", "preserve ordered tuple element types");
+      return type;
+    }
+    module.structs.push_back(definition);
+    for (const auto &field : definition.fields)
+      materialize_struct_schema(field.second, module, line, depth + 1, require_concrete);
+    return type;
+  }
   const auto *declaration =
       lookup_struct_decl(parsed ? parsed->base_name : type);
   if (!declaration || declaration->generic_params.empty()) {
@@ -1390,6 +1412,11 @@ public:
                                                const std::string &field_name) {
     const auto type = substitute_nil_type_name(raw_type, substitutions);
     const auto generic = parse_generic_type_name(type);
+    if (generic && generic->base_name == "tuple") {
+      for (size_t index = 0; index < generic->type_args.size(); ++index)
+        if (field_name == std::to_string(index)) return generic->type_args[index];
+      return std::nullopt;
+    }
     const auto *declaration = cg_.lookup_struct_decl(
         generic ? generic->base_name : type);
     if (!declaration) {
@@ -1523,6 +1550,27 @@ public:
           ds.declaration->kind == ast_node_kind::variable_decl_node) {
         const auto &vd =
             static_cast<const ast_variable_decl &>(*ds.declaration);
+        if (!vd.tuple_bindings.empty()) {
+          if (!vd.initializer || !vd.type_name) {
+            cg_.reject_codegen_construct(ds.line, "tuple destructuring requires checked tuple types", "enable type checking");
+            break;
+          }
+          const auto tuple_type = substitute_nil_type_name(*vd.type_name, substitutions);
+          cg_.materialize_struct_schema(tuple_type, mod_, ds.line);
+          emit_expr(*vd.initializer, tuple_type);
+          const auto temporary = new_temp("tuple");
+          declare_local(temporary, tuple_type);
+          push_instr("STORE_LOCAL", {temporary}, ds.line);
+          for (size_t index = 0; index < vd.tuple_bindings.size(); ++index) {
+            const auto &binding = vd.tuple_bindings[index];
+            if (binding->name == "_") continue;
+            push_instr("LOAD_LOCAL", {temporary}, ds.line);
+            push_instr("GET_FIELD", {std::to_string(index)}, ds.line);
+            declare_local(binding->name, substitute_nil_type_name(binding->type_name.value_or("any"), substitutions));
+            push_instr("STORE_LOCAL", {binding->name}, ds.line);
+          }
+          break;
+        }
         const auto fallback_type = vd.initializer
             ? unambiguous_expression_type(*vd.initializer) : std::string{};
         const auto local_type = vd.type_name.value_or(
@@ -1706,33 +1754,20 @@ public:
     }
     case ast_node_kind::for_in_stmt_node: {
       const auto &for_s = static_cast<const ast_for_in_stmt &>(s);
+      if (for_s.iterable && for_s.iterable->rejected_tuple_operation) {
+        cg_.reject_codegen_construct(for_s.line, *for_s.iterable->rejected_tuple_operation,
+            "match the number of bindings to the tuple element's arity");
+        break;
+      }
       lexical_scope scope(*this);
 
       // Helper: extract tuple inner non-nested parts from textual "tuple<T1,
       // T2>" used by some heuristics in tuple unpacking cases. This is
       // intentionally simple and only splits at top-level commas.
       auto extract_tuple_parts = [&](const std::string &tuple_type) {
-        std::vector<std::string> parts;
-        size_t pos = tuple_type.find("tuple<");
-        if (pos == std::string::npos)
-          return parts;
-        size_t start = pos + strlen("tuple<");
-        size_t end = tuple_type.rfind('>');
-        if (end == std::string::npos || end <= start)
-          return parts;
-        std::string inner = tuple_type.substr(start, end - start);
-        std::istringstream iss(inner);
-        std::string p;
-        while (std::getline(iss, p, ',')) {
-          // Trim whitespace
-          size_t b = p.find_first_not_of(" \t\r\n");
-          size_t e = p.find_last_not_of(" \t\r\n");
-          if (b == std::string::npos || e == std::string::npos)
-            parts.push_back(std::string());
-          else
-            parts.push_back(p.substr(b, e - b + 1));
-        }
-        return parts;
+        const auto parsed = parse_generic_type_name(tuple_type);
+        return parsed && parsed->base_name == "tuple" ? parsed->type_args
+                                                     : std::vector<std::string>{};
       };
       // Desugaring for a `range(N)` call specially, else fallback to
       // iterator-based approach.
@@ -1838,7 +1873,7 @@ public:
             // If the loop targets a single variable, store directly; otherwise,
             // treat the index result as a 'value' and attempt to unpack it into
             // tuple elements.
-            if (for_s.variables.size() == 1) {
+            if (for_s.variables.size() == 1 && !for_s.tuple_pattern) {
               emit_scalar_boundary(std::string("i32"), for_s.line);
               declare_local(for_s.variables[0].name);
               push_instr("STORE_LOCAL", {for_s.variables[0].name}, for_s.line);
@@ -1926,28 +1961,15 @@ public:
           std::optional<std::string> elem_type;
           std::optional<std::string> known_len;
 
-          // Parse array<Elem, N> (fixed-size array)
-          size_t pos_array = var_type.find("array<");
-          if (pos_array != std::string::npos) {
-            size_t start = pos_array + strlen("array<");
-            size_t end = var_type.rfind('>');
-            if (end != std::string::npos && end > start) {
-              std::string inner = var_type.substr(start, end - start);
-              // inner may be "i32, 10" or "i32"
-              auto comma = inner.find(',');
-              std::string elem =
-                  (comma != std::string::npos) ? inner.substr(0, comma) : inner;
-              elem = trim_local(elem);
-              if (!elem.empty())
-                elem_type = elem;
-              if (comma != std::string::npos) {
-                std::string len_str = trim_local(inner.substr(comma + 1));
-                if (!len_str.empty() && is_digits(len_str)) {
-                  known_len = len_str;
-                }
-              }
-              do_index_loop = true;
-            }
+          // Parse nested element shapes before interpreting a fixed-size tail.
+          const auto container = parse_generic_type_name(var_type);
+          const size_t pos_array = container && container->base_name == "array"
+              ? 0 : std::string::npos;
+          if (pos_array != std::string::npos && !container->type_args.empty()) {
+            elem_type = container->type_args.front();
+            if (container->type_args.size() == 2 && is_digits(container->type_args[1]))
+              known_len = container->type_args[1];
+            do_index_loop = true;
           }
 
           // vec<Elem> / vector<Elem> / slice<Elem>
@@ -2035,7 +2057,7 @@ public:
 
             // If single loop variable store element directly; else store tuple
             // and unpack into variables.
-            if (for_s.variables.size() == 1) {
+            if (for_s.variables.size() == 1 && !for_s.tuple_pattern) {
               declare_local(for_s.variables[0].name);
               push_instr("STORE_LOCAL", {for_s.variables[0].name}, for_s.line);
               // Reflect element type for loop variable locally
@@ -2046,9 +2068,13 @@ public:
               for (size_t ii = 0; ii < for_s.variables.size(); ++ii) {
                 const auto &pv = for_s.variables[ii];
                 push_instr("LOAD_LOCAL", {tmp_val}, for_s.line);
-                push_instr("PUSH_CONST", {std::to_string(static_cast<int>(ii))},
-                           for_s.line);
-                push_instr("CALL", {"__ritual_tuple_get", "2"}, for_s.line);
+                if (elem_type && !extract_tuple_parts(*elem_type).empty()) {
+                  cg_.materialize_struct_schema(substitute_nil_type_name(*elem_type, substitutions), mod_, for_s.line);
+                  push_instr("GET_FIELD", {std::to_string(ii)}, for_s.line);
+                } else {
+                  push_instr("PUSH_CONST", {std::to_string(ii)}, for_s.line);
+                  push_instr("CALL", {"__ritual_tuple_get", "2"}, for_s.line);
+                }
                 declare_local(pv.name);
                 push_instr("STORE_LOCAL", {pv.name}, for_s.line);
                 // If we can determine the element tuple type for the container
@@ -2136,7 +2162,7 @@ public:
         // If the loop uses a single target variable, store the result into it.
         // Otherwise, store the returned value into a temp and unpack tuple
         // elements by index.
-        if (for_s.variables.size() == 1) {
+        if (for_s.variables.size() == 1 && !for_s.tuple_pattern) {
           declare_local(for_s.variables[0].name);
           push_instr("STORE_LOCAL", {for_s.variables[0].name}, for_s.line);
           // Try to derive a usable element type for the variable:
@@ -2222,10 +2248,18 @@ public:
           for (size_t ii = 0; ii < for_s.variables.size(); ++ii) {
             const auto &pv = for_s.variables[ii];
             push_instr("LOAD_LOCAL", {tmp_val}, for_s.line);
-            push_instr("PUSH_CONST", {std::to_string(static_cast<int>(ii))},
-                       for_s.line);
-            push_instr("CALL", {"__ritual_tuple_get", "2"}, for_s.line);
-            declare_local(pv.name);
+            const auto container = parse_generic_type_name(
+                substitute_nil_type_name(for_s.iterable->inferred_type.value_or(""), substitutions));
+            const auto element = container && container->base_name == "array" && !container->type_args.empty()
+                ? parse_generic_type_name(container->type_args.front()) : std::nullopt;
+            if (element && element->base_name == "tuple") {
+              cg_.materialize_struct_schema(container->type_args.front(), mod_, for_s.line);
+              push_instr("GET_FIELD", {std::to_string(ii)}, for_s.line);
+            } else {
+              push_instr("PUSH_CONST", {std::to_string(ii)}, for_s.line);
+              push_instr("CALL", {"__ritual_tuple_get", "2"}, for_s.line);
+            }
+            declare_local(pv.name, substitute_nil_type_name(pv.type_name.value_or("any"), substitutions));
             push_instr("STORE_LOCAL", {pv.name}, for_s.line);
 
             // try to deduce tuple element parts from a zip(...) or known
@@ -2274,7 +2308,7 @@ public:
                 }
               }
             }
-            local_var_types[pv.name] = deduced;
+            local_var_types[pv.name] = pv.type_name.value_or(deduced);
           }
         }
 
@@ -2340,7 +2374,7 @@ public:
                                      ? new_label("L_match_case")
                                      : label_end;
 
-        if (arm.pattern.kind == ast_pattern_kind::constructor_pattern) {
+        if (arm.pattern.kind == ast_pattern_kind::constructor_pattern && !arm.pattern.name.empty()) {
           const bool is_qualified =
               arm.pattern.name.find("::") != std::string::npos ||
               arm.pattern.name.find('.') != std::string::npos;
@@ -2416,6 +2450,11 @@ public:
             break;
           }
           case ast_pattern_kind::constructor_pattern: {
+            if (arm.pattern.name.empty()) {
+              emit_tuple_pattern(arm.pattern, tmp_target,
+                  match_s.target->inferred_type.value_or(""), label_next, match_s.line);
+              break;
+            }
             // Enum variant check
             std::string variant_fqn =
                 canonicalize_variant_name(arm.pattern.name);
@@ -2707,6 +2746,11 @@ public:
   void
   emit_expr(const ast_expr &e,
             const std::optional<std::string> &contextual_type = std::nullopt) {
+    if (e.rejected_tuple_operation) {
+      cg_.reject_codegen_construct(e.line, *e.rejected_tuple_operation,
+          "correct the tuple's shape and preserve immutable positions");
+      return;
+    }
     if (contains_ownership_type(e.inferred_type.value_or("")) &&
         (!ownership_checked || !e.checked_ownership)) {
       cg_.reject_codegen_construct(e.line, "owned value access requires a checked affine lifetime proof",
@@ -4337,6 +4381,15 @@ public:
             push_instr("LABEL", {label_next}, match_e.line);
         };
 
+        if (case_item.pattern->kind == ast_node_kind::struct_literal_expr_node &&
+            static_cast<const ast_struct_literal_expr &>(*case_item.pattern).tuple_literal) {
+          const auto pattern = tuple_expression_pattern(*case_item.pattern);
+          emit_tuple_pattern(pattern, tmp_target,
+              match_e.target->inferred_type.value_or(""), label_next, match_e.line);
+          emit_arm_value();
+          continue;
+        }
+
         // Handle enum variant patterns (e.g., Option::Some(v))
         if (ny::is_debug_enabled()) {
           ny::diag_debug(
@@ -4503,6 +4556,10 @@ public:
     }
     case ast_node_kind::struct_literal_expr_node: {
       const auto &sl = static_cast<const ast_struct_literal_expr &>(e);
+      if (sl.tuple_literal && (!sl.inferred_type || sl.inferred_type->rfind("tuple<", 0) != 0)) {
+        cg_.reject_codegen_construct(sl.line, "tuple construction requires checked element types", "enable type checking");
+        break;
+      }
       std::string struct_name = sl.type_name;
       // Handle generic struct instantiation - build name in Type<Args> format
       // to match AST
@@ -4643,7 +4700,7 @@ public:
     }
     case ast_node_kind::interpolated_string_expr_node: {
       const auto &ie = static_cast<const ast_interpolated_string_expr &>(e);
-      // For MVP: concat all parts as strings
+      // Emit each expression exactly once, in source order.
       bool first = true;
       for (const auto &part : ie.parts) {
         if (part.is_literal) {
@@ -4652,18 +4709,22 @@ public:
           push_instr("PUSH_CONST_STR", {const_name}, ie.line);
         } else if (part.expression) {
           emit_expr(*part.expression);
-          // Only convert to string if NOT already a string type
-          std::string expr_type = part.expression->inferred_type.value_or("");
-          if (expr_type != "String" && expr_type != "text" &&
-              expr_type.find("text") == std::string::npos) {
-            push_instr("TO_STRING", {}, ie.line);
-          }
+          const auto expr_type = scalar_text_type(substitute_nil_type_name(
+              part.expression->inferred_type.value_or(""), substitutions));
+          if (!supports_scalar_text(expr_type))
+            cg_.reject_codegen_construct(part.expression->line,
+                "interpolation requires a checked scalar or text expression",
+                "enable type checking and call an explicit formatter for other types");
+          if (expr_type != "text")
+            push_instr("TO_STRING", {expr_type}, part.expression->line);
         }
         if (!first) {
           push_instr("STR_CONCAT", {}, ie.line);
         }
         first = false;
       }
+      if (first)
+        push_instr("PUSH_CONST_STR", {get_or_add_const_string_name("")}, ie.line);
       break;
     }
     case ast_node_kind::allocate_expr_node: {
@@ -4797,6 +4858,89 @@ private:
       return std::nullopt;
     }
     return cg_.lookup_global_name(id.name, current_module_);
+  }
+
+  ast_pattern tuple_expression_pattern(const ast_expr &expression) {
+    ast_pattern pattern;
+    if (expression.kind == ast_node_kind::struct_literal_expr_node &&
+        static_cast<const ast_struct_literal_expr &>(expression).tuple_literal) {
+      pattern.kind = ast_pattern_kind::constructor_pattern;
+      for (const auto &field : static_cast<const ast_struct_literal_expr &>(expression).fields)
+        pattern.subpatterns.push_back(tuple_expression_pattern(*field.second));
+    } else if (expression.kind == ast_node_kind::identifier_expr_node) {
+      pattern.name = static_cast<const ast_identifier_expr &>(expression).name;
+      pattern.kind = pattern.name == "_" ? ast_pattern_kind::wildcard_pattern
+                                          : ast_pattern_kind::variable_pattern;
+    } else if (expression.kind == ast_node_kind::number_literal_node) {
+      pattern.kind = ast_pattern_kind::literal_pattern;
+      pattern.literal_value = static_cast<const ast_number_literal &>(expression).value;
+    } else if (expression.kind == ast_node_kind::string_literal_node) {
+      pattern.kind = ast_pattern_kind::literal_pattern;
+      pattern.literal_kind = expression.kind;
+      pattern.literal_value = static_cast<const ast_string_literal &>(expression).value;
+    } else if (expression.kind == ast_node_kind::boolean_literal_node) {
+      pattern.kind = ast_pattern_kind::literal_pattern;
+      pattern.literal_kind = expression.kind;
+      pattern.literal_value = static_cast<const ast_boolean_literal &>(expression).value ? "true" : "false";
+    } else if (expression.kind == ast_node_kind::char_literal_node) {
+      pattern.kind = ast_pattern_kind::literal_pattern;
+      pattern.literal_kind = expression.kind;
+      pattern.literal_value = static_cast<const ast_char_literal &>(expression).value;
+    } else if (expression.kind == ast_node_kind::unary_expr_node &&
+               static_cast<const ast_unary_expr &>(expression).op == token_kind::minus &&
+               static_cast<const ast_unary_expr &>(expression).operand->kind == ast_node_kind::number_literal_node) {
+      pattern.kind = ast_pattern_kind::literal_pattern;
+      pattern.literal_value = "-" + static_cast<const ast_number_literal &>(
+          *static_cast<const ast_unary_expr &>(expression).operand).value;
+    } else {
+      cg_.reject_codegen_construct(expression.line, "unsupported tuple pattern element",
+          "use a binding, wildcard, scalar literal, or nested tuple pattern");
+    }
+    return pattern;
+  }
+
+  void emit_tuple_pattern(const ast_pattern &pattern, const std::string &temporary,
+                          const std::string &raw_type, const std::string &next, int line) {
+    const auto type = substitute_nil_type_name(raw_type, substitutions);
+    if (pattern.kind == ast_pattern_kind::constructor_pattern) {
+      const auto tuple = parse_generic_type_name(type);
+      if (!pattern.name.empty() || !tuple || tuple->base_name != "tuple" ||
+          tuple->type_args.size() != pattern.subpatterns.size()) {
+        cg_.reject_codegen_construct(line, "tuple pattern does not match a checked tuple shape",
+            "match each position with a binding, wildcard, scalar literal, or nested tuple");
+        return;
+      }
+      cg_.materialize_struct_schema(type, mod_, line);
+      for (size_t index = 0; index < pattern.subpatterns.size(); ++index) {
+        const auto field = new_temp("tuple_pattern");
+        declare_local(field, tuple->type_args[index]);
+        push_instr("LOAD_LOCAL", {temporary}, line);
+        push_instr("GET_FIELD", {std::to_string(index)}, line);
+        push_instr("STORE_LOCAL", {field}, line);
+        emit_tuple_pattern(pattern.subpatterns[index], field, tuple->type_args[index], next, line);
+      }
+    } else if (pattern.kind == ast_pattern_kind::variable_pattern) {
+      if (pattern.name == "_") return;
+      push_instr("LOAD_LOCAL", {temporary}, line);
+      declare_local(pattern.name, type);
+      push_instr("STORE_LOCAL", {pattern.name}, line);
+    } else if (pattern.kind == ast_pattern_kind::literal_pattern) {
+      push_instr("LOAD_LOCAL", {temporary}, line);
+      if (pattern.literal_kind == ast_node_kind::string_literal_node)
+        push_instr("PUSH_CONST_STR", {get_or_add_const_string_name(pattern.literal_value)}, line);
+      else if (pattern.literal_kind == ast_node_kind::char_literal_node) {
+        ast_char_literal character(pattern.literal_value, line);
+        emit_expr(character);
+      } else if (pattern.literal_kind == ast_node_kind::boolean_literal_node)
+        push_instr("PUSH_CONST", {pattern.literal_value == "true" ? "1" : "0"}, line);
+      else {
+        ast_number_literal number(pattern.literal_value, line);
+        emit_expr(number);
+      }
+      emit_scalar_boundary(type, line);
+      push_instr("CMP_EQ", {}, line);
+      push_instr("JMP_IF_NOT", {next}, line);
+    }
   }
 
   void declare_local(const std::string &name,
@@ -5445,6 +5589,9 @@ codegen::assemble_module(const ast_program &program,
         // full_name.c_str());
       }
     }
+    if (decl && decl->kind == ast_node_kind::type_alias_decl_node &&
+        static_cast<const ast_type_alias_decl &>(*decl).name == "tuple")
+      reject_codegen_construct(decl->line, "Type name 'tuple' is reserved for structural tuples", "choose a different alias name");
     if (decl && decl->kind == ast_node_kind::class_decl_node) {
       auto &class_decl = static_cast<const ast_class_decl &>(*decl);
       if (!class_decl.checked_name) {
@@ -5459,6 +5606,10 @@ codegen::assemble_module(const ast_program &program,
     }
     if (decl && decl->kind == ast_node_kind::struct_decl_node) {
       auto &struct_decl = static_cast<const ast_struct_decl &>(*decl);
+      if (struct_decl.name == "tuple") {
+        reject_codegen_construct(struct_decl.line, "Type name 'tuple' is reserved for structural tuples", "choose a nominal record name");
+        continue;
+      }
       if (struct_decl.concrete_generic_type)
         continue;
       struct_qualified_names_[&struct_decl] = current_module.empty()
@@ -5471,6 +5622,10 @@ codegen::assemble_module(const ast_program &program,
     // Collect module-level variable declarations (global let)
     if (decl && decl->kind == ast_node_kind::variable_decl_node) {
       auto &var_decl = static_cast<const ast_variable_decl &>(*decl);
+      if (!var_decl.tuple_bindings.empty()) {
+        reject_codegen_construct(var_decl.line, "Tuple destructuring is only supported for local bindings", "move destructuring into a function");
+        continue;
+      }
       const auto storage = current_module.empty() ? var_decl.name
                                                   : current_module + "::" + var_decl.name;
       if (global_var_decls_.count(storage)) {

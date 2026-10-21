@@ -167,6 +167,47 @@ void test_mapping_preserves_preprocessed_literal_semantics() {
   expect_span(source, result->value->name_span, source.find("return value") + 7, "value");
 }
 
+void test_explicit_interpolation_source_spans() {
+  for (const bool preprocess : {false, true}) {
+    const std::string source =
+        "# λ 🧭\r\n\r\nfn message(input: i32) -> i32\r\n"
+        "let rendered = $\"\\n{{literal}} {input + 1} {helper(input)}\"\r\n"
+        "return input\r\nend fn\r\n";
+    ny::parser_options options;
+    options.enable_preprocessor = preprocess;
+    ny::parser parser(source, options);
+    const auto program = parser.parse_program();
+    require(program && !parser.has_errors(), "explicit interpolation must parse");
+    const auto body = node<ny::ast_block_stmt>(node<ny::ast_function_decl>(program->declarations.at(0))->body);
+    const auto text = node<ny::ast_interpolated_string_expr>(variable(body->statements.at(0))->initializer);
+    require(text->explicit_syntax && text->parts.size() == 4, "explicit interpolation keeps ordered parts");
+    require(text->parts.at(0).literal_value == "\n{literal} ", "formatted literal decoding");
+    const auto addition = node<ny::ast_binary_expr>(text->parts.at(1).expression);
+    expect_span(source, addition->left->name_span, source.find("{input") + 1, "input");
+    const auto call = node<ny::ast_call_expr>(text->parts.at(3).expression);
+    expect_span(source, call->callee->name_span, source.find("helper(input)"), "helper");
+    expect_span(source, call->args.at(0)->name_span, source.find("helper(input)") + 7, "input");
+    require(call->argument_span && call->argument_span->start == source.find("helper(input)") + 7,
+            "call signature region retains original interpolation coordinates");
+    const auto result = node<ny::ast_return_stmt>(body->statements.at(1));
+    expect_span(source, result->value->name_span, source.find("return input") + 7, "input");
+    ny::lexer lexer(source);
+    bool found = false;
+    for (const auto &token : lexer.scan_tokens())
+      if (token.kind == ny::token_kind::identifier && token.offset == source.find("{input") + 1) {
+        found = token.lexeme == "input" && token.length == 5 && token.line == 4;
+      }
+    require(found, "formatted hole exposes an ordinary exact-range identifier token");
+  }
+  ny::parser nested("fn nested(input: i32)\nprintln($\"outer {$\"inner {input}\"}\")\nend fn\n");
+  require(nested.parse_program() && !nested.has_errors(), "nested formatted expressions parse without escaping their quotes");
+  for (const auto *literal : {"$\"{}\"", "$\"{1, 2}\"", "$\"{1\"", "$\"bad }\"", "$\"unfinished", "$\"one\ntwo\"", "$\"{1\n+ 2}\"", "$\"{\"a\\\nb\"}\""}) {
+    ny::parser broken(std::string("fn broken()\nprintln(") + literal + ")\nend fn\n");
+    broken.parse_program();
+    require(broken.has_errors(), "malformed interpolation must be diagnosed");
+  }
+}
+
 void test_interpolated_identifier_is_not_guessed() {
   ny::parser parser("fn message(value: i32) { println(\"\\n{value}\") }\n");
   const auto program = parser.parse_program();
@@ -241,6 +282,7 @@ int main() {
     test_methods_and_fields();
     test_mapping_preserves_preprocessed_literal_semantics();
     test_interpolated_identifier_is_not_guessed();
+    test_explicit_interpolation_source_spans();
     test_repeated_completion_occurrence_is_unavailable();
     std::cout << "source span tests passed\n";
     return 0;

@@ -71,6 +71,9 @@ The framework includes:
 - **Systems programming facilities.** Typed scalar and bitwise operations,
   raw pointers, managed values, checked local ownership of scalar buffers,
   typed faults, and bounded parallel execution.
+- **Shared language features.** Structural tuples provide typed multiple
+  results and local destructuring. Explicit string interpolation supports
+  expressions with consistent scalar formatting across execution routes.
 - **A shared standard library.** `nil.std.*` provides collections, text,
   mathematics, binary I/O, diagnostics, and reflection, alongside SQLite and
   PostgreSQL access. Existing `ny.lang.*` imports remain compatible aliases.

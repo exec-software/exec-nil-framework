@@ -37,7 +37,7 @@ merely a bytecode. The consequences are worth stating plainly:
   spans and a Matrix message catalogue has to exist, or error quality becomes
   the reason nobody uses the language.
 - Matrix's surface *restrictions* (ownership operations as statements, no
-  tuple type, no field defaults) are enforced in the parser, so they are parse
+  field defaults) are enforced in the parser, so they are parse
   errors with precise locations rather than semantic errors discovered later.
 
 ## Where the code goes

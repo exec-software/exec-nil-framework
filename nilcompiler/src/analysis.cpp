@@ -731,7 +731,9 @@ std::string analysis_session::semantic_json() const {
       for (const auto &token : scanner.scan_tokens()) {
         if (token.kind == token_kind::identifier)
           record(token.lexeme, token.offset, token.length);
-        // Interpolation has checker bindings but no editable original spans.
+        // Legacy implicit interpolation has no editable original spans.
+        // Explicit formatted text emits normal expression tokens, so those
+        // bindings participate in the same coverage proof as surrounding code.
         // Withhold editing for the whole file, including potentially captured
         // names absent from the ordinary token stream. Literal braces are an
         // intentional conservative exclusion until interpolation is mapped.

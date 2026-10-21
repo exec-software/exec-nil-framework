@@ -58,6 +58,11 @@ enum class token_kind {
   identifier,
   number_literal,
   string_literal,
+  formatted_string_begin,
+  formatted_text,
+  interpolation_begin,
+  interpolation_end,
+  formatted_string_end,
   char_literal,
   annotation, // '@' followed by identifier (e.g., @inline, parsed by
               // lexer/parser)
@@ -149,8 +154,9 @@ struct token {
 
 class lexer {
 public:
-  explicit lexer(const std::string &source)
-      : src(source), start(0), current(0), line(1) {}
+  explicit lexer(const std::string &source, unsigned interpolation_depth = 0)
+      : src(source), start(0), current(0), line(1),
+        interpolation_depth_(interpolation_depth) {}
 
   // Produce all tokens until EOF.
   std::vector<token> scan_tokens();
@@ -159,6 +165,7 @@ private:
   const std::string &src;
   size_t start, current;
   int line;
+  unsigned interpolation_depth_ = 0;
 
   bool is_at_end() const { return current >= src.size(); }
   char advance() { return src[current++]; }
@@ -175,8 +182,9 @@ private:
 
   void skip_whitespace();
   token identifier();
-  token number();
+  token number(bool tuple_position = false);
   token string();
+  void formatted_string(std::vector<token> &tokens);
   token character(); // Lex a character literal 'c'
   token
   annotation(); // Lex an annotation token starting with '@' (e.g., @inline)

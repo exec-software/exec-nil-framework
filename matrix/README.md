@@ -82,9 +82,10 @@ ASCII case and separators, so `frame-kind`, `FRAME-KIND` and `frame_kind`
 resolve to that page's declared spelling. Emitted NIL symbols preserve the
 declaration's case and replace `-` with `_`. Qualified names, imported names
 not declared on the page, and member names preserve their written case; use
-the declaration's spelling for these references. The hyphen is available
-because arithmetic uses words: `minus` means subtraction and negation, so
-`-` is never an operator.
+the declaration's spelling for these references. Subtraction uses `minus`.
+Negation reads `negative offset`, with `minus offset` retained as an alias.
+An adjacent sign is also accepted on numeric literals: `-1.6`, `-1.6e-3`,
+and `-42`. The sign must touch the digits; `total - 1` is not subtraction.
 
 **5. Every block closes with its own name.** `begin function` closes with
 `end function`; `begin record` closes with `end record`. Mis-nesting is a
@@ -111,7 +112,7 @@ contract use positional arguments; see [the guide](MATRIX-GUIDE.md#6-expressions
 **8. The surface must not out-promise NIL.** This is the hard rule. Ny's
 documentation is scrupulous about the difference between syntax the parser
 accepts and behaviour a route actually executes. Matrix inherits that rule:
-Matrix does not get surface syntax for tuples, closures with captures, dynamic
+Matrix does not get surface syntax for closures with captures, dynamic
 trait objects, generic classes, postfix `?` or overload sets, because NIL
 cannot execute them today. Matrix gains those spellings when the runtime gains
 the capability, not before.
@@ -178,7 +179,7 @@ stated reason:
 
 | Draft | Matrix | Reason |
 | --- | --- | --- |
-| `receives tuple of int and int` | `receives count as integer, label as text` | **Ny has no tuple type and NIL has no tuple schema.** A surface tuple would be a promise the runtime cannot keep. Parameter lists are parameter lists. |
+| `receives tuple of int and int` | `receives values as tuple of (number, number)` | Tuples are explicit structural values. Commas delimit their element types; parameter lists remain distinct from tuples. |
 | `int`, `integer` both used | `integer` only | One canonical spelling (principle 2). `int` is not an accepted alias. |
 | `and` separating list items everywhere | `,` separates list items; `and` is boolean conjunction. `and` is additionally permitted between **parameter declarations** only | `and` as both a list separator and a boolean operator is ambiguous wherever a list item can be an arbitrary expression. In a parameter header each item has the fixed shape `<name> as <type>`, which keeps `and` safe there, so the draft's reading survives in the place it reads best. |
 | `returns nothing` after `and` | `returns` terminates the parameter list with no `and` | Removes the ambiguity between "another parameter follows" and "the return type follows". |

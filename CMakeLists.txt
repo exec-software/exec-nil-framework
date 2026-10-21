@@ -2350,6 +2350,8 @@ if(BUILD_TESTING)
         set_tests_properties(ny.qualified-enum-contract PROPERTIES
             LABELS "typecheck;analysis;rc" TIMEOUT 120)
         foreach(parity_fixture IN ITEMS scientific-literals scientific-literals-matrix
+                                        formatted-text formatted-text-matrix
+                                        signed-numbers-matrix
                                         integer-literal-widths integer-literal-widths-matrix
                                         checked-text-spans checked-text-spans-matrix
                                         checked-i64-conversion checked-i64-conversion-matrix
@@ -2386,6 +2388,26 @@ if(BUILD_TESTING)
                     LABELS "tools;native;rc" SKIP_RETURN_CODE 77 TIMEOUT 240)
             endif()
         endforeach()
+        add_test(NAME nil.formatted-text-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/formatted_text_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.formatted-text-contract PROPERTIES
+            LABELS "ny;matrix;analysis;interpolation" TIMEOUT 120)
+        if(TARGET nilassembler AND TARGET nillinker)
+            add_test(NAME nil.formatted-nil-contract
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/formatted_nil_contract.py"
+                    --interpreter $<TARGET_FILE:nilinterpreter> --assembler $<TARGET_FILE:nilassembler>
+                    --linker $<TARGET_FILE:nillinker> --runtime $<TARGET_FILE:nilruntime>
+                    --llvm "${NIL_ENABLE_LLVM}")
+            set_tests_properties(nil.formatted-nil-contract PROPERTIES
+                LABELS "nil;native;interpreter;interpolation" TIMEOUT 120)
+        endif()
+        add_test(NAME nil.tuple-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/tuple_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.tuple-contract PROPERTIES
+            LABELS "ny;matrix;analysis;tuples;routes" TIMEOUT 180)
         add_test(
             NAME ny.scientific-literals-contract
             COMMAND "${Python3_EXECUTABLE}"
@@ -2395,6 +2417,15 @@ if(BUILD_TESTING)
         )
         set_tests_properties(ny.scientific-literals-contract PROPERTIES
             LABELS "typecheck;analysis;rc" TIMEOUT 120)
+        add_test(
+            NAME matrix.signed-numbers-contract
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/matrix_signed_numbers_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --llvm "${NIL_ENABLE_LLVM}"
+        )
+        set_tests_properties(matrix.signed-numbers-contract PROPERTIES
+            LABELS "matrix;typecheck;analysis;rc" TIMEOUT 120)
         add_test(
             NAME ny.integer-literals-contract
             COMMAND "${Python3_EXECUTABLE}"

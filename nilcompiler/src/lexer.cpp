@@ -1,4 +1,6 @@
 #include "lexer.hpp"
+#include "formatted_text.hpp"
+#include <algorithm>
 #include <cstdlib> // for getenv
 #include <iostream>
 
@@ -42,6 +44,13 @@ std::vector<token> lexer::scan_tokens() {
     const size_t emitted_before = tokens.size();
 
     switch (c) {
+    case '$':
+      if (peek() == '"') {
+        formatted_string(tokens);
+        continue; // Every emitted token already has its original range.
+      }
+      tokens.push_back(make_token(token_kind::invalid, "$", line));
+      break;
     case '(':
       tokens.push_back(make_token(token_kind::left_paren, "(", line));
       if (lex_dump) std::cerr << "TOKEN " << line << " left_paren (" << "(" << ")\n";
@@ -215,7 +224,7 @@ std::vector<token> lexer::scan_tokens() {
         if (lex_dump) std::cerr << "TOKEN " << t.line << " " << static_cast<int>(t.kind) << " " << t.lexeme << "\n";
       } else if (std::isdigit(static_cast<unsigned char>(c))) {
         --current; // rewind for number parser
-        token t = number();
+        token t = number(!tokens.empty() && tokens.back().kind == token_kind::dot);
         tokens.push_back(t);
         if (lex_dump) std::cerr << "TOKEN " << t.line << " number_literal " << t.lexeme << "\n";
       } else {
@@ -443,9 +452,9 @@ token lexer::identifier() {
   return token{kind, text, line};
 }
 
-token lexer::number() {
+token lexer::number(bool tuple_position) {
   // Check for Hex literal 0x...
-  if (peek() == '0' && (peek_next() == 'x' || peek_next() == 'X')) {
+  if (!tuple_position && peek() == '0' && (peek_next() == 'x' || peek_next() == 'X')) {
      advance(); // 0
      advance(); // x
      while (std::isxdigit(static_cast<unsigned char>(peek()))) {
@@ -463,7 +472,7 @@ token lexer::number() {
     advance();
 
   // Optional fractional part
-  if (peek() == '.' && std::isdigit(static_cast<unsigned char>(peek_next()))) {
+  if (!tuple_position && peek() == '.' && std::isdigit(static_cast<unsigned char>(peek_next()))) {
     advance(); // consume '.'
     while (std::isdigit(static_cast<unsigned char>(peek())))
       advance();
@@ -471,7 +480,7 @@ token lexer::number() {
 
   // Keep an incomplete exponent in the number token so the parser can report
   // its actual cause instead of interpreting the e/E as an identifier.
-  if (peek() == 'e' || peek() == 'E') {
+  if (!tuple_position && (peek() == 'e' || peek() == 'E')) {
     advance();
     if (peek() == '+' || peek() == '-') advance();
     while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
@@ -524,6 +533,43 @@ token lexer::string() {
   advance();
 
   return token{token_kind::string_literal, value, line};
+}
+
+void lexer::formatted_string(std::vector<token> &tokens) {
+  const auto quote = current;
+  const int opening_line = line;
+  const auto scanned = scan_formatted_text(src, quote, false, interpolation_depth_);
+  const formatted_source_positions positions(src, quote, scanned.end, opening_line);
+  const auto line_at = [&](std::size_t offset) {
+    return positions.line(offset);
+  };
+  const auto emit = [&](token_kind kind, std::string value, std::size_t offset,
+                        std::size_t length) {
+    tokens.push_back(token{kind, std::move(value), line_at(offset), offset, length});
+  };
+  if (!scanned.error.empty()) {
+    emit(token_kind::invalid, scanned.error, scanned.error_offset, 1);
+  } else {
+    tokens.push_back(token{token_kind::formatted_string_begin, "$\"", opening_line, start, 2});
+    for (const auto &piece : scanned.pieces) {
+      if (!piece.expression) {
+        emit(token_kind::formatted_text, piece.text, piece.start, piece.length);
+        continue;
+      }
+      emit(token_kind::interpolation_begin, "{", piece.start - 1, 1);
+      lexer expression(piece.text, interpolation_depth_ + 1);
+      for (auto value : expression.scan_tokens()) {
+        if (value.kind == token_kind::eof) continue;
+        value.offset += piece.start;
+        value.line += line_at(piece.start) - 1;
+        tokens.push_back(std::move(value));
+      }
+      emit(token_kind::interpolation_end, "}", piece.start + piece.length, 1);
+    }
+    emit(token_kind::formatted_string_end, "\"", scanned.end - 1, 1);
+  }
+  line = line_at(scanned.end);
+  current = scanned.end;
 }
 
 token lexer::annotation() {

@@ -174,6 +174,15 @@ def main():
         query('@define SAMPLE 7\nfn main() -> i32\nlet sample = SAMPLE\nreturn sam|\nend fn\n', name='macro.ny', available=False)
         query('fn main() -> i32\nreturn 0|\nend fn\n', name='optional.ny', status=0, enabled=False)
 
+        # Explicit formatting exposes real expression tokens, while literal
+        # text remains outside completion even when it contains doubled braces.
+        formatted_ny = '# é😀\r\nfn main() -> i32\r\nlet sample_value = 7\r\nprintln($"\\n{{literal}} {sam|}")\r\nreturn 0\r\nend fn\r\n'
+        assert set(items(query(formatted_ny, name='formatted.ny'))) == {'sample_value'}
+        formatted_matrix = '!!! é😀\r\nbook formatted-completion\r\nmain returns number begin paragraph\r\nvalue sample-value is 7\r\nsay formatted "\\n{{literal}} {sam|}"\r\ngive 0\r\nend paragraph\r\n'
+        assert set(items(query(formatted_matrix, name='formatted.matrix'))) == {'sample-value'}
+        query(formatted_ny.replace('{sam|}', '{{sam|}}'), name='formatted_literal.ny', available=False, status=0)
+        query(formatted_matrix.replace('{sam|}', '{{sam|}}'), name='formatted_literal.matrix', available=False, status=0)
+
         # Independent result budgets withhold the optional query rather than
         # return truncated candidates or omit contributing source snapshots.
         large = '# ' + 'x' * (1500 * 1024) + '\n'

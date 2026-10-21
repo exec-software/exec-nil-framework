@@ -19,7 +19,10 @@ the compiler-backed source debugger.
 - TextMate syntax highlighting for canonical Ny syntax and accepted legacy
   spellings.
 - Matrix highlighting for case-insensitive keywords, hyphenated and backtick
-  names, subject-first declarations, word operators, and multiline text.
+  names, subject-first declarations, word operators, signed numbers and multiline text.
+- Interpolated expression highlighting for Ny `$"..."` and Matrix
+  `formatted "..."`, including nested strings and literal doubled braces.
+  Tuple bindings, destructuring and formatted text have matching snippets.
 - Bracket, quote, comment, indentation, and folding configuration.
 - Snippets for modules, functions, data types, control flow, faults, tests,
   interop, documentation, and `@ai_context` metadata.
@@ -311,7 +314,7 @@ the tolerant language-server index.
 Find All References and Rename Symbol are available for local variables and loop
 binders only when the compiler certifies every occurrence in that source. These
 capabilities are separate from the partial index: an unindexed token with the
-same spelling, generated use, inline assembly, or Ny interpolation can withhold
+same spelling, generated use, inline assembly, or legacy implicit Ny interpolation can withhold
 them. Functions, globals, fields, type names, and function/lambda parameters are
 not eligible. Named parameter labels can occur in callers outside the checked
 import graph and need a broader completeness contract.

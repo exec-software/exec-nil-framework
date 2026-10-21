@@ -54,6 +54,20 @@ test("grammar compiles and scopes canonical declarations", async () => {
   assert.ok(scopesForFragment(grammar, "type UserId = i64", "UserId").includes("entity.name.type.ny"));
 });
 
+test("Ny explicit interpolation scopes expressions, nested strings, and literal braces", async () => {
+  const grammar = await loadNyGrammar();
+  assert.ok(grammar);
+  const line = 'let label = $"{{raw}} {describe("text")} {height + 1.6}"';
+  assert.ok(scopesForFragment(grammar, line, '{{').includes('constant.character.escape.brace.ny'));
+  assert.ok(scopesForFragment(grammar, line, 'describe').includes('support.function.any-method.ny'));
+  assert.ok(scopesForFragment(grammar, line, 'text').includes('string.quoted.double.ny'));
+  assert.ok(scopesForFragment(grammar, line, 'height').includes('meta.embedded.expression.ny'));
+  assert.ok(scopesForFragment(grammar, line, '1.6').includes('constant.numeric.decimal.ny'));
+  const nested = 'let value = $"{match kind { 1 -> "one"; _ -> "other"; }} done"';
+  assert.ok(scopesForFragment(grammar, nested, 'done').includes('string.quoted.double.interpolated.ny'));
+  assert.equal(scopesForFragment(grammar, nested, 'done').includes('meta.interpolation.ny'), false);
+});
+
 test("grammar scopes annotations, literals, operators, and both line comments", async () => {
   const grammar = await loadNyGrammar();
   assert.ok(grammar);

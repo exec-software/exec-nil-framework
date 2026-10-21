@@ -4,6 +4,12 @@ All notable changes to the NIL Framework VS Code extension are documented here.
 
 ## 1.0.0-rc.1
 
+- Highlight explicit Ny and Matrix interpolation, tuple types and Matrix numeric
+  signs; add tuple/destructuring/formatted-text snippets. The tolerant language
+  service indexes flat tuple bindings and preserves completion inside supported
+  interpolation expressions while excluding their literal text.
+- Offer Matrix `negative`, `tuple of` and `formatted` in keyword completion.
+
 - Extend compiler completion to supported receiver fields and methods, including
   imported declarations, generic substitutions and accessibility checks.
 - Add compiler-backed signature help with original argument slots, Matrix named

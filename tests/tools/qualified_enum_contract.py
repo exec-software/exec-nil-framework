@@ -90,7 +90,7 @@ def main():
             ('scalar-target', 'Option::Some', 'i32', '7', 'override integer', '7',
              "does not match target type"),
             ('tuple-target', 'Option::Some', 'tuple<i32,i32>', '',
-             'tuple of override integer, override integer', '',
+             'tuple of (override integer, override integer)', '',
              "does not match target type"),
             ('same-leaf-owner', 'right::Choice::Some', 'left::Choice<i32>', 'left::Choice::Some(7)',
              'left.Choice of override integer', 'left::Choice.Some holding 7',

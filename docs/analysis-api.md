@@ -273,9 +273,12 @@ This includes other declarations with the same spelling: their separate IDs
 preserve shadowing. An unsupported field/type/argument-label occurrence with
 that key withholds the capability rather than guessing its role. The supported
 symbol's own references must all be original name tokens in the same file.
-Ny sources containing a string with `{` are excluded because interpolation is
-not mapped; assembly in either language also excludes the source. Preprocessed
-or generated units without original spans cannot qualify.
+Ny sources containing an ordinary string with `{` are excluded because legacy
+implicit interpolation is not mapped. Explicit `$"..."` and Matrix
+`formatted "..."` expressions retain original name tokens and participate in
+the normal coverage proof, even after decoded literal prefixes. Assembly in
+either language also excludes the source. Preprocessed or generated units
+without original spans cannot qualify.
 
 Matrix named arguments now follow the checked callable's parameter-name contract.
 A certified local may therefore be renamed even when it shadows a paragraph name;

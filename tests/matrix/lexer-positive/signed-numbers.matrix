@@ -1,0 +1,7 @@
+book tests.signed-numbers
+main returns number begin paragraph
+    value frame-kind is -42
+    say -1.6e-3 plus negative 1.6 plus minus 1.6
+    say -0x8000000000000000
+    give 0
+end paragraph

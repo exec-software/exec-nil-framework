@@ -232,6 +232,24 @@ private:
   std::vector<ast_call_expr *> checked_parallel_calls_;
   bool check_runtime_primitive(ast_call_expr &call);
 
+  // A template that formats T requires scalar/text at every instantiation.
+  // Retain resolved call edges until forward declarations and wrappers have
+  // all been checked; never revisit expression nodes to infer this contract.
+  struct scalar_text_call {
+    const ast_function_decl *caller = nullptr;
+    const ast_function_decl *callee = nullptr;
+    std::map<std::string, std::string> substitutions;
+    std::set<std::string> open_types;
+    int line = 0;
+    std::string source_file;
+  };
+  const ast_function_decl *scalar_text_function_ = nullptr;
+  std::map<const ast_function_decl *, std::set<std::string>> scalar_text_requirements_;
+  std::vector<scalar_text_call> scalar_text_calls_;
+  void record_scalar_text_call(const ast_call_expr &call, const symbol &callee,
+                              const std::map<std::string, std::string> &substitutions);
+  void validate_scalar_text_calls();
+
   // Current state
   std::optional<type_info> current_function_return_type_;
   std::optional<std::string> current_class_name_;

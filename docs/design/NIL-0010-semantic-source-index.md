@@ -74,10 +74,13 @@ disqualify a candidate. Globals, functions, parameters, fields, types, and
 pattern bindings remain unsupported. In particular, named function parameters
 can be used as argument labels by callers beyond the analyzed source graph.
 
-Ny interpolation lacks original name spans, so a Ny string containing `{`
-excludes that entire source from editing. Assembly in either language does the
-same: source checking does not enforce the eventual native assembler profile.
-These conservative exclusions retain definition navigation where available.
+Legacy implicit Ny interpolation lacks original name spans, so an ordinary Ny
+string containing `{` excludes that entire source from editing. Explicit Ny
+`$"..."` and Matrix `formatted "..."` expose their embedded expressions as
+ordinary lexer tokens with original byte positions; those uses participate in
+the existing coverage proof. Assembly in either language still excludes the
+source: checking does not enforce the eventual native assembler profile. These
+conservative exclusions retain definition navigation where available.
 
 Complete references alone do not authorize rename. Matrix formerly reordered
 named arguments through a parser-wide signature table before lexical resolution,

@@ -1,0 +1,16 @@
+position=-1.6; next=-1.1
+bool=true/false; byte=255
+min=-9223372036854775808; max=9223372036854775807
+zero=0/-0; small=0.0016
+precise=1.2345678901234567
+{literal} and {11}
+1:2:3
+3
+quoted and nested 7
+1
+ordinary text
+42
+value=17
+value=1.25
+value=text
+legacy=-1.6

@@ -3,6 +3,7 @@
 #include "concurrency_contract.hpp"
 #include "owned_contract.hpp"
 #include "numeric_literal.hpp"
+#include "scalar_text.hpp"
 #include "vm.hpp"
 #include <algorithm>
 #include <array>
@@ -237,6 +238,8 @@ argument_range opcode_argument_range(Opcode opcode) {
     return {0, 1};
   case Opcode::CAST:
     return {1, 1};
+  case Opcode::TO_STRING:
+    return {0, 1}; // Legacy dynamic conversion or an explicit scalar source type.
   case Opcode::ADD:
   case Opcode::SUB:
   case Opcode::MUL:
@@ -274,7 +277,6 @@ argument_range opcode_argument_range(Opcode opcode) {
   case Opcode::SET_INDEX:
   case Opcode::LEN:
   case Opcode::STR_CONCAT:
-  case Opcode::TO_STRING:
   case Opcode::STRLEN:
   case Opcode::MATH_SIN:
   case Opcode::MATH_COS:
@@ -361,6 +363,9 @@ void validate_instruction(Opcode opcode, const std::string &name,
                           const std::vector<std::string> &arguments,
                           const std::string &context) {
   validate_instruction_arity(opcode, name, arguments.size(), context);
+  if (opcode == Opcode::TO_STRING && !arguments.empty() &&
+      !supports_scalar_text(arguments[0]))
+    throw std::runtime_error("NIL TO_STRING requires a supported scalar source type" + context);
   if (opcode == Opcode::OWN_ALLOC && arguments[0] != "i32" && arguments[0] != "i64" && arguments[0] != "u8")
     throw std::runtime_error("NIL OWN_ALLOC requires i32, i64 or u8 elements" + context);
 

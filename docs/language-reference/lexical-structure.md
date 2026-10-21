@@ -96,6 +96,11 @@ string_literal = '"' { character } '"'
 
 Examples: `"Hello, World!"`, `""`
 
+Explicit formatted text starts with `$"` and ends with a matching quote on the
+same source line. Braces contain Ny expressions; doubled braces are literal
+text. See [formatted text](expressions.md#formatted-text) for evaluation,
+conversion and escaping rules.
+
 #### Characters
 
 ```

@@ -599,7 +599,7 @@ backend discrepancy. Scratch evidence is in
 `build/text-ordering-work/friction-probes/report.json`.
 
 Matrix quoted literals deliberately have
-[no escape syntax](types-and-text.md#text-has-no-escape-syntax); `\n` remains
+[no escape syntax](types-and-text.md#ordinary-text-has-no-escape-syntax); `\n` remains
 two bytes there, while named `newline` and `tab` produce control characters.
 That documented difference is not a Matrix decoder defect.
 
@@ -1543,3 +1543,113 @@ these queries against a fresh copied SDK after sealing the corrected compiler.
 **Follow-up:** Add a full preprocessor source map before exposing locations from
 includes, macro expansion or conditional rewriting. Metadata directives with
 arguments or comments remain outside this deliberately narrow mapping contract.
+
+### F49 — Numeric signs should read as values, while subtraction stays explicit
+
+**Observation:** Prefix `minus 1.6` was the only Matrix spelling for a negative
+floating value, even though the operation describes the value's sign. The
+punctuation rule also rejected the familiar `-1.6` notation. Hyphenated names
+make a general symbolic subtraction operator ambiguous with existing source.
+
+**Resolution:** `negative` is now a unary alias for `minus`; `minus` retains its
+infix subtraction meaning. A `-` immediately followed by a digit is accepted as
+a numeric sign, including hexadecimal integers and scientific notation. Thus
+`negative offset`, `-1.6` and `-1.6e-3` are valid, while `left negative right`,
+`left - right`, `- offset` and `-.5` are rejected. Write `-0.5` instead of `-.5`.
+Hyphenated names and their separator-folding behavior are unchanged.
+
+The forms share existing integer-boundary validation and unary lowering, rather
+than introducing signed literal tokens with a different range or arithmetic
+contract. They apply in ordinary expressions, numeric match patterns and
+parameter defaults. `negative` and `tuple` also enter the compiler's reserved
+rename keys, so editor renames cannot introduce newly reserved names silently.
+
+**Coverage:** The signed-number route fixture exercises the 32-bit and 64-bit
+minima, hexadecimal minima, subexpressions, arrays, calls, scientific exponents,
+statement/expression patterns and signed zero distinguished through `atan2`.
+The rejection contract covers malformed and overflowing literals across compile
+modes and editor analysis, checking that existing output artifacts are retained.
+Syntax grammar and language-service tests cover the new keyword, signed number
+spans, scientific type inference and preservation of hyphenated identifiers.
+The focused run passed 480 signed-number rejection/analysis checks, 42 language-service
+protocol tests, 100 extension unit tests and 8 actual VS Code host checks covering
+interpolation and tuple editing alongside the new literal forms.
+
+
+### F50 — Tuples need one structural type and representation across both languages
+
+**Status:** Implemented for nonempty typed tuple values and local destructuring.
+
+The old checker and interpreter contained tuple-like `zip` and array-unpacking
+heuristics, while the surface documentation correctly withheld general tuples.
+Exposing that scaffolding as a language feature would have allowed native and
+interpreter values to disagree. Ny `(T, U)` and Matrix `tuple of (T, U)` now
+share canonical ordered NIL record schemas with immutable numeric slots. Both
+frontends construct `(a, b)`, destructure local bindings, and support nested
+projection and tuple match patterns. Constructors evaluate once in written
+order, and contained record/reference handles preserve their identity.
+
+**Friction addressed:** `(value)` remains grouping, `(value,)` is a singleton,
+and `.0.1` is tokenized as nested positions rather than a decimal. Huge or
+out-of-range positions diagnose without throwing from host integer parsing.
+Tuple literals can convert elements at construction boundaries; existing
+tuples cannot silently change their storage layout.
+
+**Qualification:** The tuple contract covers both frontends, executable text
+and binary NIL, bundles, native routes, and cross-language consumers using
+source and binary libraries with the original source files removed. It also
+checks failure before replacing output.
+
+**Follow-up:** Native arrays of tuple handles need their own storage contract;
+the interpreter can already unpack such arrays. Nested declaration patterns,
+named elements, unit values, user-defined tuple formatting and C ABI mapping
+remain explicit future work. See [NIL-0015](../../docs/design/NIL-0015-structural-tuples.md).
+
+### F51 — Interpolation needs typed conversion and original expression spans
+
+**Observation:** Ny already recognized implicit identifier substitutions in
+ordinary strings, but the implementation treated arithmetic as literal text,
+misdecoded some doubled braces and emitted a `TO_STRING` operation unsupported
+by native compilation. Its identifiers were synthesized from decoded string
+contents without original source positions, which forced the editor to withhold
+local rename for any Ny file containing a brace in an ordinary string. Matrix
+quoted strings and raw text blocks deliberately had no interpolation.
+
+**Resolution:** Explicit Ny `$"..."` and Matrix `formatted "..."` accept ordinary
+expressions inside braces. Both frontends emit the same interpolation AST.
+Their lexers retain original byte positions for every expression token instead
+of parsing decoded literal text, so escaped prefixes, Unicode, CRLF and nested
+quoted arguments cannot shift definitions, signature regions or rename edits.
+The checker and runtime use a typed scalar/text conversion shared by native and
+interpreted execution. Each expression is evaluated once, from left to right.
+Legacy implicit Ny floating interpolation consequently changes from fixed six
+fractional digits to the same shortest round-trip representation. Native text
+retains its NUL-free restriction, including formatted literal segments.
+Generic interpolation records a scalar/text requirement on its declaration.
+Resolved call substitutions propagate that requirement through generic wrappers
+and receiver methods, so editor analysis can reject unsupported concrete
+record, array or tuple arguments at the callsite before code generation.
+
+Doubled braces insert literal braces in explicit formatted text. Ordinary
+Matrix quoted strings and `begin text` blocks remain raw; legacy Ny identifier
+interpolation stays available for compatibility. `formatted` is contextual
+before a quote and remains an ordinary Matrix name elsewhere. Explicit strings
+and their expressions currently occupy one physical source line. Empty holes,
+trailing tokens, unmatched braces and unterminated strings are errors; the
+parser does not silently convert malformed expressions back into text.
+
+**Coverage:** Source-span tests include decoded Ny prefixes, raw Matrix
+backslashes, nested formatted strings, quoted expression arguments, UTF-8,
+CRLF, exact locations after the string and malformed input. Compiler query
+contracts exercise completion and signature help inside holes. The semantic
+contract checks local references and applies an actual rename, proving that
+matching words inside doubled-brace literal text remain unchanged. Execution
+contracts cover the shared scalar conversion and evaluation order.
+
+**Follow-up:** Add multiline formatted text only with an explicit original
+source map through indentation removal. Custom record formatting should use
+the existing `Display` contract once dispatch is qualified on all routes;
+currently callers must explicitly produce a supported scalar or text value.
+Precision and presentation options remain library calls rather than a second
+formatting grammar. The legacy implicit form still lacks original embedded
+name spans and retains its conservative editor exclusion.

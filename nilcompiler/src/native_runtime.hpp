@@ -51,6 +51,10 @@ void nyrt_context_end() noexcept;
 // Its result uses context-owned storage and participates in managed roots.
 const char *nyrt_text_substr(const char *text, std::int64_t start,
                            std::int64_t count) noexcept;
+// Compiler formatting helpers return context-owned, locale-independent text.
+const char *nyrt_text_i64(std::int64_t value) noexcept;
+const char *nyrt_text_f64(double value) noexcept;
+const char *nyrt_text_bool(std::int64_t value) noexcept;
 [[noreturn]] void nyrt_panic(const char *message) noexcept;
 
 // Context-owned storage backs compiler-created language values (for example,

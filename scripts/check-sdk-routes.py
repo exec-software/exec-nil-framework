@@ -42,6 +42,8 @@ FIXTURES = ("scalar-array-parity", "stl-array-primitives", "native-nested-refere
             "vector-norms", "vector-norms-matrix",
             "qualified-enum-patterns", "qualified-enum-patterns-matrix",
             "scientific-literals", "scientific-literals-matrix",
+            "signed-numbers-matrix", "formatted-text", "formatted-text-matrix",
+            "tuples", "tuples-matrix",
             "integer-literal-widths", "integer-literal-widths-matrix",
             "checked-text-spans", "checked-text-spans-matrix",
             "checked-i64-conversion", "checked-i64-conversion-matrix",

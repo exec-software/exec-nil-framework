@@ -197,7 +197,7 @@ def main():
         policy = result['semantic']['rename_policy']['sources'][0]
         assert policy['language'] == 'matrix' and 'localitem' in policy['identifier_keys']
         assert 'local-item' not in policy['identifier_keys'] and 'LOCALITEM' not in policy['identifier_keys']
-        assert {'value', 'paragraph', 'receives', 'ownedmove'} <= set(policy['reserved_keys'])
+        assert {'value', 'paragraph', 'receives', 'ownedmove', 'negative', 'tuple'} <= set(policy['reserved_keys'])
         rename_local(result, 'folded.matrix', target, 'updated-count')
         escaped = ('book escaped-check\ncompute receives `value` as number returns number begin paragraph\n'
                    ' give `value`\nend paragraph\n')
@@ -295,6 +295,24 @@ def main():
             assert binding(result, name, 'return route_value', 'route_value')['path'] == str(root / 'routehelper.ny')
             if mode == 'stdin':
                 assert (root / name).read_text() == 'this disk source is invalid'
+
+        # Explicit formatting participates in the ordinary source binding and
+        # closed-local rename proof, including Unicode and decoded prefixes.
+        for suffix, formatted in [
+                ('ny', '# é😀\r\nfn message() -> i32\r\nlet local_value = 7\r\n'
+                 'println($"\\n{{local_value}} {local_value + 1}")\r\nreturn local_value\r\nend fn\r\n'),
+                ('matrix', '!!! é😀\r\nbook formatted-editing\r\nmessage returns number begin paragraph\r\nvalue local-value is 7\r\n'
+                 'say formatted "\\n{{local-value}} {local-value plus 1}"\r\ngive local-value\r\nend paragraph\r\n')]:
+            name = 'formatted.' + suffix
+            result = analyze({name: formatted}, name)
+            spelling = 'local_value' if suffix == 'ny' else 'local-value'
+            context = '{' + spelling + (' +' if suffix == 'ny' else ' plus')
+            target = binding(result, name, context, spelling)
+            assert target['rename_safe'] and target['references_complete'], target
+            assert len([use for use in result['semantic']['references'] if use['symbol_id'] == target['id']]) == 2
+            renamed = rename_local(result, name, target, 'renamed_value' if suffix == 'ny' else 'renamed-value')
+            snapshot = next(item['text'] for item in renamed['semantic']['sources'] if item['path'] == str(root / name))
+            assert '{{' + spelling + '}}' in snapshot
 
         interpolation = ('fn message(input: i32) -> i32\nprintln("\\n{input}")\nreturn input\nend fn\n')
         result = analyze({'interpolation.ny': interpolation}, 'interpolation.ny')

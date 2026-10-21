@@ -188,6 +188,14 @@ def main():
         value = query(matrix_method, name='method.matrix', status=0)
         assert len(value['parameters']) == 2 and value['active_parameter'] == 1, value
         assert value['parameters'][0]['name'] == 'first-part'
+        # Quoted arguments inside a hole are ordinary language expressions;
+        # signature ranges remain in the original, undecoded source snapshot.
+        formatted_ny = ny.replace('return combine(7, |"second")', 'println($"\\n{{literal}} {combine(7, |"second")}")\r\nreturn 0')
+        assert query(formatted_ny, name='formatted.ny', status=0)['active_parameter'] == 1
+        formatted_matrix = ('book formatted-signature\r\ncombine receives first as number, second as text returns number begin paragraph\r\ngive first\r\nend paragraph\r\n'
+                            'main returns number begin paragraph\r\nsay formatted "{{literal}} {combine with second being |"value", first being 7}"\r\ngive 0\r\nend paragraph\r\n')
+        assert query(formatted_matrix, name='formatted.matrix', status=0)['active_parameter'] == 1
+
         limit = ', '.join(f'parameter_{index}: i32' for index in range(257))
         query('fn large(' + limit + ') -> i32\nreturn 0\nend fn\nfn main() -> i32\nreturn large(|)\nend fn\n',
               name='parameter-limit.ny', available=False, status=1)

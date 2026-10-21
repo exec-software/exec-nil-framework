@@ -7,6 +7,7 @@
 #include "diagnostics.hpp"
 #include "nil_contract.hpp"
 #include "numeric_literal.hpp"
+#include "scalar_text.hpp"
 #include "ownership_check.hpp"
 #include "standard_namespace.hpp"
 #include <algorithm>
@@ -508,6 +509,7 @@ bool type_checker::check(ast_program &program) {
   // must never be remembered process-wide or across reused checker instances.
   *this = type_checker(collect_semantics_, completion_request_, signature_request_);
   program.accept(*this);
+  validate_scalar_text_calls();
   auto ownership = check_ownership(program);
   for (const auto &diagnostic : ownership.diagnostics)
     add_error(diagnostic.line, diagnostic.message);
@@ -598,6 +600,17 @@ type_info type_checker::resolve_type(const std::string &name) {
       // Recursively resolve the underlying type
       return resolve_type(*self_sym->type_name);
     }
+  }
+
+  const auto structural_tuple = parse_generic_type_string(name);
+  if (structural_tuple.base_name == "tuple") {
+    if (structural_tuple.type_args.empty()) return {"tuple", false};
+    std::string canonical = "tuple<";
+    for (size_t index = 0; index < structural_tuple.type_args.size(); ++index) {
+      if (index) canonical += ", ";
+      canonical += resolve_type(structural_tuple.type_args[index]).name;
+    }
+    return {canonical + ">", false};
   }
 
   // User aliases are declarations, not context-free textual substitutions.
@@ -1039,6 +1052,13 @@ bool type_checker::are_types_compatible(const type_info &t1,
   if (type_contains_class(t1.name) || type_contains_class(t2.name))
     return resolve_type(t1.name).name == resolve_type(t2.name).name;
 
+  // Tuple storage shapes are invariant. Literal construction can convert
+  // individual elements, but an existing handle cannot change its layout.
+  const auto tuple_left = parse_generic_type_string(t1.name);
+  const auto tuple_right = parse_generic_type_string(t2.name);
+  if (tuple_left.base_name == "tuple" || tuple_right.base_name == "tuple")
+    return resolve_type(t1.name).name == resolve_type(t2.name).name;
+
   if (t1.name == "any" || t2.name == "any") {
     if (ny::is_debug_enabled())
       ny::diag_debug("[compat] EARLY any");
@@ -1333,6 +1353,26 @@ bool type_checker::check_assignment_type(const type_info &expected,
   if (value) value->checked_class_upcast.reset();
   const auto target = resolve_type(expected.name).name;
   const auto source = resolve_type(actual.name).name;
+  const auto target_tuple = parse_generic_type_string(target);
+  const auto reject_tuple = [&]() {
+    if (value) value->rejected_tuple_operation = "Tuple storage type mismatch: expected '" + target + "', got '" + source + "'";
+    return false;
+  };
+  if (target_tuple.base_name == "tuple" && value &&
+      value->kind == ast_node_kind::struct_literal_expr_node) {
+    auto &tuple = static_cast<ast_struct_literal_expr &>(*value);
+    if (tuple.tuple_literal) {
+      if (target_tuple.type_args.size() != tuple.fields.size()) return reject_tuple();
+      for (size_t index = 0; index < tuple.fields.size(); ++index) {
+        auto &element = tuple.fields[index].second;
+        if (!element || !check_assignment_type(resolve_type(target_tuple.type_args[index]),
+              resolve_type(element->inferred_type.value_or("<unknown>")), element.get()))
+          return reject_tuple();
+      }
+      value->inferred_type = target;
+      return true;
+    }
+  }
   const bool target_class = resolve_class_symbol(target) != nullptr;
   const bool source_class = resolve_class_symbol(source) != nullptr;
   if (target_class || source_class) {
@@ -1342,7 +1382,10 @@ bool type_checker::check_assignment_type(const type_info &expected,
     checked_class_conversions_.push_back(value);
     return true;
   }
-  return are_types_compatible(expected, actual);
+  const bool compatible = are_types_compatible(expected, actual);
+  if (!compatible && (target_tuple.base_name == "tuple" ||
+      parse_generic_type_string(source).base_name == "tuple")) return reject_tuple();
+  return compatible;
 }
 
 bool type_checker::class_method_is_virtual(const symbol &receiver,
@@ -1763,9 +1806,15 @@ type_checker::resolve_member_type(const type_info &struct_type,
           return std::isdigit(static_cast<unsigned char>(c));
         });
     if (is_digits) {
-      size_t idx = static_cast<size_t>(std::stoul(member_name));
-      if (idx < parts.type_args.size())
-        return parts.type_args[idx];
+      if (member_name.size() > 1 && member_name.front() == '0') return std::nullopt;
+      // Bound the parse by the actual arity; enormous source positions must
+      // produce a diagnostic rather than throw from stoul.
+      size_t idx = 0;
+      for (const char digit : member_name) {
+        if (idx >= parts.type_args.size()) return std::nullopt;
+        idx = idx * 10 + static_cast<size_t>(digit - '0');
+      }
+      if (idx < parts.type_args.size()) return parts.type_args[idx];
       return std::nullopt;
     }
   }
@@ -2036,16 +2085,23 @@ void type_checker::bind_pattern_to_type(ast_pattern &pattern,
     }
     return;
   }
-  case ast_pattern_kind::literal_pattern:
-    // Nothing to bind for literals
+  case ast_pattern_kind::literal_pattern: {
+    const auto literal_type = infer_type_from_pattern(pattern);
+    if (literal_type && !are_types_compatible(inferred_type, *literal_type))
+      add_error(line, "Pattern literal is incompatible with tuple element type '" + inferred_type.name + "'");
     return;
+  }
   case ast_pattern_kind::constructor_pattern: {
     // If the inferred_type is a 'tuple<...>' textual form, attempt to bind
     // subpatterns to element types. Otherwise bind subpatterns using the
     // inferred_type itself (best-effort fallback).
     auto parts = parse_generic_type_string(inferred_type.name);
 
-    if (pattern.name.empty() && parts.base_name == "tuple" && !parts.type_args.empty()) {
+    if (pattern.name.empty()) {
+      if (parts.base_name != "tuple" || parts.type_args.size() != pattern.subpatterns.size()) {
+        add_error(line, "Tuple pattern arity does not match type '" + inferred_type.name + "'");
+        return;
+      }
       for (size_t i = 0; i < pattern.subpatterns.size(); ++i) {
         std::string arg_type =
             (i < parts.type_args.size() ? parts.type_args[i]
@@ -2632,6 +2688,12 @@ void type_checker::visit(ast_program &p) {
 }
 
 void type_checker::visit(ast_function_decl &p) {
+  struct function_scope {
+    const ast_function_decl *&current;
+    const ast_function_decl *previous;
+    ~function_scope() { current = previous; }
+  } format_scope{scalar_text_function_, scalar_text_function_};
+  scalar_text_function_ = &p;
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
   semantic_node(p, p.name, "function", p.return_type.value_or(""), diagnostic_source_file_);
   if (p.name == "owned" || p.name == "owned_move" || p.name == "owned_borrow" ||
@@ -2689,6 +2751,8 @@ void type_checker::visit(ast_function_decl &p) {
         gen_param.name, symbol_kind::type_symbol, nullptr, std::nullopt, false,
         visibility_kind::visibility_private, std::nullopt, {}, {},
         gen_param.bounds);
+    if (auto *parameter = symbols_.lookup_mut(gen_param.name))
+      parameter->is_generic_parameter = true;
 
     // Note: Bounds will be checked when the generic function is instantiated
     // For now, we just ensure the trait names in bounds are valid
@@ -2775,6 +2839,32 @@ void type_checker::visit(ast_function_decl &p) {
 
 void type_checker::visit(ast_variable_decl &p) {
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
+  if (!p.tuple_bindings.empty()) {
+    const auto before = diagnostics_.size();
+    if (!current_function_return_type_)
+      add_error(p.line, "Tuple destructuring is only supported for local bindings");
+    if (p.initializer) p.initializer->accept(*this);
+    const auto type = last_expr_type_.value_or(type_unknown);
+    const auto tuple = parse_generic_type_string(resolve_type(type.name).name);
+    if (tuple.base_name != "tuple" || tuple.type_args.size() != p.tuple_bindings.size()) {
+      add_error(p.line, "Tuple destructuring requires a tuple with exactly " +
+          std::to_string(p.tuple_bindings.size()) + " elements; got '" + type.name + "'");
+      if (p.initializer) p.initializer->rejected_tuple_operation = "Invalid tuple destructuring arity or source type";
+      last_expr_type_ = type_void;
+      return;
+    }
+    p.type_name = resolve_type(type.name).name;
+    for (size_t index = 0; index < p.tuple_bindings.size(); ++index) {
+      auto &binding = p.tuple_bindings[index];
+      binding->type_name = tuple.type_args[index];
+      binding->source_file = p.source_file;
+      if (binding->name != "_") binding->accept(*this);
+    }
+    if (diagnostics_.size() != before && p.initializer)
+      p.initializer->rejected_tuple_operation = "Invalid tuple destructuring binding";
+    last_expr_type_ = type_void;
+    return;
+  }
   if (p.name == "owned" || p.name == "owned_move" || p.name == "owned_borrow" ||
       p.name == "owned_borrow_mut" || p.name == "parallel_map")
     add_error(p.line, "Variable name '" + p.name + "' is reserved for a checked language operation");
@@ -2953,6 +3043,10 @@ void type_checker::visit(ast_import_decl &p) {
 }
 
 void type_checker::visit(ast_class_decl &p) {
+  if (p.name == "tuple") {
+    add_error(p.line, "Type name 'tuple' is reserved for structural tuples");
+    return;
+  }
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
   // Register class name
   std::string name = p.name;
@@ -3009,6 +3103,8 @@ void type_checker::visit(ast_class_decl &p) {
         gen_param.name, symbol_kind::type_symbol, nullptr, std::nullopt, false,
         visibility_kind::visibility_private, std::nullopt, {}, {},
         gen_param.bounds);
+    if (auto *parameter = symbols_.lookup_mut(gen_param.name))
+      parameter->is_generic_parameter = true;
     for (const auto &bound : gen_param.bounds) {
       if (!find_trait(bound))
         add_error(p.line, "Unknown trait '" + bound + "' in generic bound");
@@ -3324,6 +3420,10 @@ void type_checker::visit(ast_class_decl &p) {
 }
 
 void type_checker::visit(ast_type_alias_decl &p) {
+  if (p.name == "tuple") {
+    add_error(p.line, "Type name 'tuple' is reserved for structural tuples");
+    return;
+  }
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
   // Register type alias preserving its visibility
   std::string name = p.name;
@@ -3371,6 +3471,8 @@ void type_checker::visit(ast_type_alias_decl &p) {
     symbols_.insert_symbol_with_context(
         gen_param.name, symbol_kind::type_symbol, nullptr, std::nullopt, false,
         visibility_kind::visibility_private, std::nullopt, {}, {}, gen_param.bounds);
+    if (auto *parameter = symbols_.lookup_mut(gen_param.name))
+      parameter->is_generic_parameter = true;
   }
   for (const auto &gen_param : p.generic_params)
     for (const auto &bound : gen_param.bounds)
@@ -3583,6 +3685,8 @@ void type_checker::visit(ast_member_access_expr &e) {
   // Resolve member type
   auto member_type_name = resolve_member_type(obj_type, e.member_name, e.line);
   if (!member_type_name) {
+    if (parse_generic_type_string(obj_type.name).base_name == "tuple")
+      e.rejected_tuple_operation = "Invalid tuple member '" + e.member_name + "'";
     add_error(e.line, "Type '" + obj_type.name + "' has no member '" +
                           e.member_name + "'");
     last_expr_type_ = type_unknown;
@@ -3593,6 +3697,32 @@ void type_checker::visit(ast_member_access_expr &e) {
 }
 
 void type_checker::visit(ast_struct_literal_expr &e) {
+  if (e.tuple_literal) {
+    const auto before = diagnostics_.size();
+    std::string type = "tuple<";
+    for (size_t index = 0; index < e.fields.size(); ++index) {
+      auto &element = e.fields[index].second;
+      if (element) element->accept(*this);
+      const auto part = last_expr_type_.value_or(type_unknown);
+      if (part.name == "void" || contains_ownership_type(part.name))
+        add_error(e.line, "Tuple elements must be values and cannot contain owned buffers or borrows");
+      if (index) type += ", ";
+      type += resolve_type(part.name).name;
+    }
+    if (e.fields.empty()) add_error(e.line, "A tuple requires at least one element");
+    type += ">";
+    if (diagnostics_.size() != before)
+      e.rejected_tuple_operation = "Invalid tuple element type";
+    e.inferred_type = type;
+    last_expr_type_ = type_info{type, false};
+    return;
+  }
+  if (parse_generic_type_string(e.type_name).base_name == "tuple") {
+    e.rejected_tuple_operation = "Construct structural tuples with '(value, ...)', not record syntax";
+    add_error(e.line, *e.rejected_tuple_operation);
+    last_expr_type_ = type_unknown;
+    return;
+  }
   // Build full type name with generic args
   std::string full_type_name = e.type_name;
   if (!e.type_args.empty()) {
@@ -4037,12 +4167,25 @@ void type_checker::visit(ast_for_in_stmt &s) {
   symbols_.enter_scope();
 
   std::vector<ast_param> vars = s.get_variables();
+  if (elem_type_name && (s.tuple_pattern || vars.size() > 1)) {
+    const auto element = parse_generic_type_string(*elem_type_name);
+    if (element.base_name == "tuple" && element.type_args.size() != vars.size()) {
+      const std::string message = "Tuple loop binding arity does not match its element type";
+      add_error(s.line, message);
+      if (s.iterable) s.iterable->rejected_tuple_operation = message;
+    } else if (element.base_name != "tuple" && element.base_name != "array") {
+      const std::string message = "Tuple loop bindings require tuple or array elements, found '" +
+                                  *elem_type_name + "'";
+      add_error(s.line, message);
+      if (s.iterable) s.iterable->rejected_tuple_operation = message;
+    }
+  }
   for (size_t i = 0; i < vars.size(); ++i) {
     const ast_param &var = vars[i];
     std::optional<std::string> var_type = std::nullopt;
 
     // Tuple-unpack: if elem type is a tuple, attempt to split (rudimentary).
-    if (vars.size() > 1 && elem_type_name.has_value()) {
+    if ((s.tuple_pattern || vars.size() > 1) && elem_type_name.has_value()) {
       const auto element = parse_generic_type_string(*elem_type_name);
       if (element.base_name == "tuple" && i < element.type_args.size())
         var_type = element.type_args[i];
@@ -4144,6 +4287,7 @@ void type_checker::visit(ast_continue_stmt &s) {
 }
 
 void type_checker::visit(ast_match_stmt &s) {
+  const auto tuple_errors_before = diagnostics_.size();
   // Evaluate the match target first; this establishes a type that arms may
   // use for variable bindings when none are explicitly deduced from patterns.
   if (s.target)
@@ -4159,7 +4303,8 @@ void type_checker::visit(ast_match_stmt &s) {
     // If both pattern and target are known types, ensure they are compatible.
     // Skip validation when either type is unknown or `any` to avoid noisy
     // errors cascading from unrelated issues.
-    if (pattern_type.has_value() && target_type.name != "<unknown>") {
+    if (pattern_type.has_value() && target_type.name != "<unknown>" &&
+        !(arm.pattern.kind == ast_pattern_kind::constructor_pattern && arm.pattern.name.empty())) {
       if (!are_types_compatible(*pattern_type, target_type)) {
         int ln = (arm.body ? arm.body->line : s.line);
         add_error(ln, "Pattern type '" + pattern_type->name +
@@ -4202,6 +4347,10 @@ void type_checker::visit(ast_match_stmt &s) {
     // Clean up the local scope for this arm
     symbols_.leave_scope();
   }
+  if (s.target && parse_generic_type_string(target_type.name).base_name == "tuple" &&
+      diagnostics_.size() != tuple_errors_before)
+    s.target->rejected_tuple_operation = "Invalid tuple pattern or tuple match body";
+
 }
 
 bool type_checker::check_runtime_primitive(ast_call_expr &e) {
@@ -4650,6 +4799,7 @@ void type_checker::visit(ast_call_expr &e) {
       [&](const symbol &callee,
           const std::map<std::string, std::string> &substitutions,
           std::size_t parameter_offset = 0) {
+        record_scalar_text_call(e, callee, substitutions);
         for (std::size_t i = 0; i < e.args.size() && i + parameter_offset < callee.params.size(); ++i) {
           const auto &parameter = callee.params[i + parameter_offset];
           if (!parameter.type_name) continue;
@@ -6015,6 +6165,11 @@ void type_checker::visit(ast_assignment_expr &e) {
           return std::nullopt;
         object_type = resolve_type(object_type.name);
         auto parts = parse_generic_type_string(object_type.name);
+        if (parts.base_name == "tuple") {
+          e.rejected_tuple_operation = "Tuple elements are immutable; construct a new tuple to replace a value";
+          add_error(e.line, *e.rejected_tuple_operation);
+          return std::nullopt;
+        }
         if ((parts.base_name == "ptr" || parts.base_name == "ref") &&
             parts.type_args.size() == 1)
           return field_type(resolve_type(parts.type_args[0]), depth + 1);
@@ -6448,6 +6603,7 @@ void type_checker::visit(ast_char_literal &e) {
 }
 
 void type_checker::visit(ast_match_expr &e) {
+  const auto tuple_errors_before = diagnostics_.size();
   // 1. Evaluate target expression
   if (e.target)
     e.target->accept(*this);
@@ -6480,6 +6636,38 @@ void type_checker::visit(ast_match_expr &e) {
     if (!expr)
       return p;
 
+    if (expr->kind == ast_node_kind::struct_literal_expr_node &&
+        static_cast<const ast_struct_literal_expr &>(*expr).tuple_literal) {
+      p.kind = ast_pattern_kind::constructor_pattern;
+      for (const auto &field : static_cast<const ast_struct_literal_expr &>(*expr).fields) {
+        const auto &child = field.second;
+        const bool nested = child && child->kind == ast_node_kind::struct_literal_expr_node &&
+                            static_cast<const ast_struct_literal_expr &>(*child).tuple_literal;
+        const bool signed_number = child && child->kind == ast_node_kind::unary_expr_node &&
+            static_cast<const ast_unary_expr &>(*child).op == token_kind::minus &&
+            static_cast<const ast_unary_expr &>(*child).operand &&
+            static_cast<const ast_unary_expr &>(*child).operand->kind == ast_node_kind::number_literal_node;
+        if (!child || (!nested && !signed_number &&
+            child->kind != ast_node_kind::identifier_expr_node &&
+            child->kind != ast_node_kind::number_literal_node &&
+            child->kind != ast_node_kind::string_literal_node &&
+            child->kind != ast_node_kind::boolean_literal_node &&
+            child->kind != ast_node_kind::char_literal_node))
+          add_error(e.line, "Tuple patterns support bindings, wildcards, scalar literals, and nested tuples");
+        p.subpatterns.push_back(expr_to_pattern(child));
+      }
+      return p;
+    }
+    if (expr->kind == ast_node_kind::unary_expr_node) {
+      const auto &unary = static_cast<const ast_unary_expr &>(*expr);
+      if (unary.op == token_kind::minus && unary.operand &&
+          unary.operand->kind == ast_node_kind::number_literal_node) {
+        p.kind = ast_pattern_kind::literal_pattern;
+        p.literal_kind = ast_node_kind::number_literal_node;
+        p.literal_value = "-" + static_cast<const ast_number_literal &>(*unary.operand).value;
+        return p;
+      }
+    }
     if (expr->kind == ast_node_kind::number_literal_node) {
       p.kind = ast_pattern_kind::literal_pattern;
       p.literal_value = static_cast<ast_number_literal *>(expr.get())->value;
@@ -6548,7 +6736,8 @@ void type_checker::visit(ast_match_expr &e) {
     }
 
     // Check compatibility with target
-    if (pattern_type.has_value() && target_type.name != "<unknown>") {
+    if (pattern_type.has_value() && target_type.name != "<unknown>" &&
+        !(pattern.kind == ast_pattern_kind::constructor_pattern && pattern.name.empty())) {
       if (!are_types_compatible(*pattern_type, target_type)) {
         add_error(e.line, "Pattern type '" + pattern_type->name +
                               "' incompatible with match target type '" +
@@ -6617,6 +6806,10 @@ void type_checker::visit(ast_match_expr &e) {
   }
   last_expr_type_ = common_result_type.value_or(type_unknown);
   e.inferred_type = last_expr_type_->name;
+  if (e.target && parse_generic_type_string(target_type.name).base_name == "tuple" &&
+      diagnostics_.size() != tuple_errors_before)
+    e.target->rejected_tuple_operation = "Invalid tuple pattern or tuple match body";
+
 }
 
 void type_checker::visit(ast_array_literal_expr &e) {
@@ -6707,12 +6900,18 @@ void type_checker::visit(ast_index_expr &e) {
     // Allow indexing and propagate unknown element type.
     last_expr_type_ = type_unknown;
   } else {
+    if (parts.base_name == "tuple")
+      e.rejected_tuple_operation = "Tuple positions require a static .0-style member; tuples cannot be indexed";
     add_error(e.line, "Type '" + obj_type.name + "' cannot be indexed");
     last_expr_type_ = type_unknown;
   }
 }
 
 void type_checker::visit(ast_struct_decl &p) {
+  if (p.name == "tuple") {
+    add_error(p.line, "Type name 'tuple' is reserved for structural tuples");
+    return;
+  }
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
   // Register struct as a type; preserve visibility flag from AST
   std::string struct_name = p.name;
@@ -6748,6 +6947,8 @@ void type_checker::visit(ast_struct_decl &p) {
         gen_param.name, symbol_kind::type_symbol, nullptr, std::nullopt, false,
         visibility_kind::visibility_private, std::nullopt, {}, {},
         gen_param.bounds);
+    if (auto *parameter = symbols_.lookup_mut(gen_param.name))
+      parameter->is_generic_parameter = true;
 
     // Validate that traits in bounds exist
     for (const auto &bound : gen_param.bounds) {
@@ -6893,6 +7094,8 @@ void type_checker::visit(ast_enum_decl &p) {
         gen_param.name, symbol_kind::type_symbol, nullptr, std::nullopt, false,
         visibility_kind::visibility_private, std::nullopt, {}, {},
         gen_param.bounds);
+    if (auto *parameter = symbols_.lookup_mut(gen_param.name))
+      parameter->is_generic_parameter = true;
   }
   for (const auto &gen_param : p.generic_params)
     for (const auto &bound : gen_param.bounds)
@@ -7198,6 +7401,8 @@ void type_checker::visit(ast_trait_decl &p) {
         gen_param.name, symbol_kind::type_symbol, nullptr, std::nullopt, false,
         visibility_kind::visibility_private, std::nullopt, {}, {},
         gen_param.bounds);
+    if (auto *parameter = symbols_.lookup_mut(gen_param.name))
+      parameter->is_generic_parameter = true;
     for (const auto &bound : gen_param.bounds)
       if (!find_trait(bound))
         add_error(p.line, "Unknown trait '" + bound + "' in generic bound");
@@ -7280,6 +7485,8 @@ void type_checker::visit(ast_impl_decl &p) {
         gen_param.name, symbol_kind::type_symbol, nullptr, std::nullopt, false,
         visibility_kind::visibility_private, std::nullopt, {}, {},
         gen_param.bounds);
+    if (auto *parameter = symbols_.lookup_mut(gen_param.name))
+      parameter->is_generic_parameter = true;
     if (!p.trait_name)
       for (const auto &bound : gen_param.bounds)
         if (!find_trait(bound))
@@ -8574,16 +8781,81 @@ void type_checker::visit(ast_lambda_expr &e) {
   last_expr_type_ = type_info{fn_type, true};
 }
 
+void type_checker::record_scalar_text_call(
+    const ast_call_expr &call, const symbol &callee,
+    const std::map<std::string, std::string> &substitutions) {
+  if (!callee.defining_node ||
+      callee.defining_node->kind != ast_node_kind::function_decl_node) return;
+  scalar_text_call edge;
+  edge.caller = scalar_text_function_;
+  edge.callee = static_cast<const ast_function_decl *>(callee.defining_node);
+  edge.line = call.line;
+  edge.source_file = diagnostic_source_file_;
+  for (const auto &[name, argument] : substitutions) {
+    const auto type = resolve_type(argument).name;
+    edge.substitutions[name] = type;
+    const auto *parameter = symbols_.lookup(type);
+    if (parameter && parameter->is_generic_parameter) edge.open_types.insert(type);
+  }
+  scalar_text_calls_.push_back(std::move(edge));
+}
+
+void type_checker::validate_scalar_text_calls() {
+  // Only actual open type parameters propagate. A composite such as array<T>
+  // is already outside the scalar contract for every specialization.
+  std::map<const ast_function_decl *, std::vector<const scalar_text_call *>> callers;
+  for (const auto &edge : scalar_text_calls_) callers[edge.callee].push_back(&edge);
+  std::vector<std::pair<const ast_function_decl *, std::string>> pending;
+  for (const auto &[function, parameters] : scalar_text_requirements_)
+    for (const auto &parameter : parameters) pending.emplace_back(function, parameter);
+  for (std::size_t index = 0; index < pending.size(); ++index) {
+    const auto [function, parameter] = pending[index];
+    for (const auto *edge : callers[function]) {
+      if (!edge->caller) continue;
+      const auto argument = edge->substitutions.find(parameter);
+      if (argument != edge->substitutions.end() && edge->open_types.count(argument->second) &&
+          scalar_text_requirements_[edge->caller].insert(argument->second).second)
+        pending.emplace_back(edge->caller, argument->second);
+    }
+  }
+  std::set<std::tuple<std::string, int, const ast_function_decl *, std::string>> reported;
+  for (const auto &edge : scalar_text_calls_) {
+    const auto required = scalar_text_requirements_.find(edge.callee);
+    if (required == scalar_text_requirements_.end()) continue;
+    for (const auto &parameter : required->second) {
+      const auto argument = edge.substitutions.find(parameter);
+      const std::string type = argument == edge.substitutions.end()
+          ? "<unresolved>" : argument->second;
+      if (supports_scalar_text(type) || (edge.caller && edge.open_types.count(type))) continue;
+      if (!reported.emplace(edge.source_file, edge.line, edge.callee, parameter).second) continue;
+      diagnostic_source_scope source_scope(diagnostic_source_file_, edge.source_file);
+      add_error(edge.line, "Function '" + edge.callee->name +
+          "' interpolates generic type '" + parameter + "', but this call supplies '" +
+          type + "'; expected text, bool, i32, i64, u8 or f64; call an explicit formatter for other types");
+    }
+  }
+}
+
 void type_checker::visit(ast_interpolated_string_expr &e) {
-  // Visit each expression part to type check them
   for (const auto &part : e.parts) {
     if (!part.is_literal && part.expression) {
       part.expression->accept(*this);
+      const auto type = last_expr_type_ ? resolve_type(last_expr_type_->name).name : "unknown";
+      part.expression->inferred_type = type;
+      const auto *symbol = symbols_.lookup(type);
+      // Generic bodies are emitted with concrete substitutions. Codegen
+      // checks this same scalar contract again for every specialization.
+      if (symbol && symbol->is_generic_parameter && scalar_text_function_)
+        scalar_text_requirements_[scalar_text_function_].insert(type);
+      if (!supports_scalar_text(type) && !(symbol && symbol->is_generic_parameter))
+        add_error(part.expression->line,
+            "Cannot interpolate value of type '" + type +
+            "'; expected text, bool, i32, i64, u8 or f64; "
+            "call an explicit formatter for other types");
     }
   }
-  // Result type is always text
-  // Result type is always String (primitive)
   last_expr_type_ = type_string;
+  e.inferred_type = type_string.name;
 }
 
 void type_checker::visit(ast_boolean_literal &e) {

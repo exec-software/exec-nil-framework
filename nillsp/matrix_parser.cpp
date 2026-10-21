@@ -1,4 +1,5 @@
 #include "matrix_parser.hpp"
+#include "interpolated_text.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -72,6 +73,13 @@ std::vector<Token> lex(const std::string& text, ParseResult& out) {
             while (i < text.size() && name_part(text[i])) ++i;
             const auto spelling = text.substr(start, i - start);
             const auto word = lowercase(spelling);
+            auto quote = i;
+            while (quote < text.size() && (text[quote] == ' ' || text[quote] == '\t')) ++quote;
+            if (word == "formatted" && quote > i && quote < text.size() && text[quote] == '"') {
+                i = editor_formatted_text(text, start, quote, true, out, lex);
+                tokens.push_back({text.substr(start, i - start), "<text>", start, i});
+                continue;
+            }
             auto eol = text.find('\n', i);
             if (eol == std::string::npos) eol = text.size();
             if (word == "begin" && normalized_line(text.substr(i, eol - i)) == "text") {
@@ -88,9 +96,24 @@ std::vector<Token> lex(const std::string& text, ParseResult& out) {
                 tokens.push_back({"begin text", "<text>", start, i});
                 if (!closed) diagnostic(start, start + 5, "Unclosed text block; close it with a line containing 'end text'");
             } else tokens.push_back({spelling, word, start, i, true});
-        } else if (text[i] >= '0' && text[i] <= '9') {
-            while (i < text.size() && (std::isalnum(static_cast<unsigned char>(text[i])) ||
-                   (text[i] == '.' && i + 1 < text.size() && std::isdigit(static_cast<unsigned char>(text[i + 1]))))) ++i;
+        } else if ((text[i] >= '0' && text[i] <= '9') ||
+                   (text[i] == '-' && i + 1 < text.size() && text[i + 1] >= '0' && text[i + 1] <= '9')) {
+            if (text[i] == '-') ++i;
+            if (text.compare(i, 2, "0x") == 0 || text.compare(i, 2, "0X") == 0) {
+                i += 2;
+                while (i < text.size() && std::isxdigit(static_cast<unsigned char>(text[i]))) ++i;
+            } else {
+                while (i < text.size() && std::isdigit(static_cast<unsigned char>(text[i]))) ++i;
+                if (i + 1 < text.size() && text[i] == '.' && std::isdigit(static_cast<unsigned char>(text[i + 1]))) {
+                    ++i;
+                    while (i < text.size() && std::isdigit(static_cast<unsigned char>(text[i]))) ++i;
+                }
+                if (i < text.size() && (text[i] == 'e' || text[i] == 'E')) {
+                    ++i;
+                    if (i < text.size() && (text[i] == '+' || text[i] == '-')) ++i;
+                    while (i < text.size() && std::isdigit(static_cast<unsigned char>(text[i]))) ++i;
+                }
+            }
             tokens.push_back({text.substr(start, i - start), "<number>", start, i});
         } else {
             ++i;
@@ -288,6 +311,28 @@ class Indexer {
         const auto start = cursor;
         const auto kind = tokens[cursor++].word;
         if (at("variable")) ++cursor; // own variable
+        if (at("(")) {
+            std::vector<Token> names;
+            ++cursor;
+            while (cursor < tokens.size() && tokens[cursor].name) {
+                names.push_back(tokens[cursor++]);
+                if (!at(",")) break;
+                ++cursor;
+            }
+            if (!at(")")) return;
+            ++cursor;
+            if (!at("is")) return;
+            ++cursor;
+            skip_expression();
+            const auto end = tokens[cursor - 1].end;
+            for (const auto& name : names) {
+                if (name.text == "_") continue;
+                const auto id = add(name, kind == "constant" ? symbol_kind::Constant : symbol_kind::Variable,
+                                    scope, parent, tokens[start].start, end);
+                out.symbols[id].visible_after = end;
+            }
+            return;
+        }
         if (cursor >= tokens.size() || !tokens[cursor].name) return;
         const auto name = tokens[cursor++];
         std::string type;
@@ -506,7 +551,11 @@ class Indexer {
             }
             if (stop == pending.end && (first.word == "<text>" || first.word == "quote" || first.word == "newline" || first.word == "tab")) symbol.type = "text";
             else if (stop == pending.end && (first.word == "true" || first.word == "false")) symbol.type = "boolean";
-            else if (stop == pending.end && first.word == "<number>") symbol.type = first.text.find('.') == std::string::npos ? "number" : "floating";
+            else if (stop == pending.end && first.word == "<number>") {
+                const auto magnitude = first.text.front() == '-' ? first.text.substr(1) : first.text;
+                const bool hex = magnitude.compare(0, 2, "0x") == 0 || magnitude.compare(0, 2, "0X") == 0;
+                symbol.type = !hex && magnitude.find_first_of(".eE") != std::string::npos ? "floating" : "number";
+            }
             else if (first.name) {
                 for (auto scope = symbol.scope; scope >= 0; scope = out.scopes[scope].parent) {
                     bool found = false;
@@ -595,7 +644,7 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
     int kind = 14;
     if (last == "as" || last == "returns" || last == "becomes" || last == "means" ||
         last == "of" || last == "holding" || last == "to") {
-        words = {"number", "floating", "boolean", "text", "nothing", "override", "array of", "pointer to", "reference to", "owned array of", "shared view of", "exclusive view of"};
+        words = {"number", "floating", "boolean", "text", "nothing", "override", "array of", "tuple of", "pointer to", "reference to", "owned array of", "shared view of", "exclusive view of"};
         kind = 25; // TypeParameter: language type vocabulary
     } else if (last == "override") words = {"integer", "long", "byte", "double"};
     else if (last == "begin") words = {"paragraph", "record", "class", "choice", "contract", "implementation", "extension", "test", "text"};
@@ -607,7 +656,7 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
     else if (last == "with") words = {"nothing", "more"};
     else if (last == "value" || last == "variable" || last == "constant" || last == "field" || last == "book") return {};
     else if (last.empty() || last == "\n") words = {"value", "variable", "constant", "set", "say", "give", "evaluate", "when", "otherwise", "repeat", "consider", "attempt", "caught", "always", "raise", "append", "allocate", "release", "own", "borrow", "move", "stop repeating", "continue repeating", "book", "library", "read", "cite", "public", "end"};
-    else words = {"true", "false", "nothing", "build", "my", "the length of", "the paragraph", "anonymous", "quote", "newline", "tab", "plus", "minus", "times", "over", "remainder", "equals", "does not equal", "is less than", "is greater than", "is at least", "is at most", "and", "or", "not", "bitwise", "shifted", "becomes", "with", "receives", "returns", "begin"};
+    else words = {"true", "false", "nothing", "build", "my", "the length of", "the paragraph", "anonymous", "formatted", "quote", "newline", "tab", "negative", "plus", "minus", "times", "over", "remainder", "equals", "does not equal", "is less than", "is greater than", "is at least", "is at most", "and", "or", "not", "bitwise", "shifted", "becomes", "with", "receives", "returns", "begin"};
     std::vector<MatrixKeyword> result;
     const Range edit{NyParser::position_at(text, offsets, begin), NyParser::position_at(text, offsets, end)};
     for (const auto& word : words)

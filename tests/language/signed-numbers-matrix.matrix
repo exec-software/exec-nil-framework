@@ -1,0 +1,47 @@
+book tests.signed-numbers
+read everything from nil.std.math
+
+negate receives input as floating returns floating begin paragraph
+    give negative input
+end paragraph
+
+unused receives input as floating defaulting to -1.6 returns floating begin paragraph
+    give input
+end paragraph
+
+classify receives input as number returns number begin paragraph
+    consider input
+        when -9223372036854775808 then give 1
+        when negative 2147483648 then give 2
+        when minus 3 then give 3
+        otherwise give 0
+    end consider
+    give 0
+end paragraph
+
+main returns override integer begin paragraph
+    value frame-kind as number is -42
+    say frame-kind equals negative 42
+    say -1.6 equals negative 1.6 and minus 1.6 equals -1.6
+    say -1.6e-3 equals negative 0.0016
+    say -1.6E+3 equals minus 1600.0
+    say -0x2A equals negative 42
+    say -2147483648 equals negative 2147483648
+    say -9223372036854775808 equals negative 9223372036854775808
+    say -0x8000000000000000 equals minus 9223372036854775808
+    say negative (1.5 plus 2.5) equals -4.0
+    say negative negative 1.6 equals 1.6
+    say 5 minus -2 equals 7 and 5 minus negative 2 equals 7
+    say (negate with input being -1.6) equals 1.6
+    value items is [-1.6, negative 2.5, minus 3.0]
+    say (items at 0) equals -1.6 and (items at 1) equals -2.5 and (items at 2) equals -3.0
+    say (classify with input being -9223372036854775808) equals 1
+    say (classify with input being negative 2147483648) equals 2
+    say (classify with input being -3) equals 3
+    say consider -1.6 when negative 1.6 give true otherwise give false end consider
+    say consider -9223372036854775808 when -9223372036854775808 give true otherwise give false end consider
+    say (atan2 with y being -0.0, x being -1.0) is less than 0.0
+    say (atan2 with y being negative 0e3, x being -1.0) is less than 0.0
+    say (atan2 with y being minus 0.0, x being -1.0) is less than 0.0
+    give 0
+end paragraph
