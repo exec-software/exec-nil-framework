@@ -357,6 +357,13 @@ applies only where it has been `read` into scope — so the operations a page ca
 reach are visible in its read list, and an extension carries the authority of
 the book that defines it.
 
+Extension and implementation paragraphs follow ordinary book visibility:
+write `public` on each paragraph intended for callers in another book. An
+unmarked paragraph remains private to its declaring book, even when its receiver
+type is public and the extension book is read by the caller. Public operations
+may call private helpers within that book. The grammar has no block-level export
+modifier; put `public` before the paragraph name, not the extension target.
+
 Standard contracts are `Clone`, `Display`, `Debug`, `Default`, `Eq`, `Hash`.
 `IList`, `ISet` and `IDictionary` are independent contracts and not subtraits
 of `ICollection`; Matrix inherits that, including `ISet` insertion returning

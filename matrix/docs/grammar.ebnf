@@ -168,7 +168,10 @@ impl_decl       = type_name [ generic_clause ] [ 'provides' nominal_type ]
  *   - two extensions in scope offering the same name on the same type are
  *     ambiguous and REJECT, rather than being resolved by read order;
  *   - an extension applies only where it has been 'read' into scope, so an
- *     operation cannot be obtained without reading the book that grants it. *)
+ *     operation cannot be obtained without reading the book that grants it.
+ * Paragraph visibility is unchanged: mark an exported paragraph 'public';
+ * unmarked paragraphs remain private to the extending book. The extension
+ * block itself has no export modifier. *)
 extension_decl  = nominal_type [ generic_clause ]
                   'begin' 'extension' { paragraph_decl }
                   'end' 'extension' ;

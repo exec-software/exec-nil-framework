@@ -1433,16 +1433,27 @@ shadowing, generic field/method types, reference/pointer receivers, mixed-langua
 imports, imported private methods, inherited class members, Matrix `my` syntax,
 escaped names, folded-name collisions and Unicode/CRLF replacement ranges. It
 compiles applied candidates and checks ordinary-compilation privacy failures.
-The focused run passed 61 member checks, 46 existing lexical-completion checks,
+The focused run passed 66 member checks, 46 existing lexical-completion checks,
 50 signature checks, and the trait contract's 100 rejected compilations and 12
 accepted controls. Static-call privacy cases cover generic and nongeneric
 receivers, callers with and without a module declaration, public controls,
 analysis and ordinary compilation, and withheld private signature results.
+Clean SDK validation also exposed five cross-book extension operations in the
+Matrix execution fixtures that lacked `public`. The documented visibility rule
+is per paragraph, so those intended exports now say `public` explicitly. A new
+mixed-book Matrix regression accepts a public operation using its own private
+helper, withholds the helper from completion, and rejects an external call in
+both analysis and ordinary compilation. `matrix.execution` passes with privacy
+enforced.
 
 **Follow-up:** Bare dots, type/static receivers, enum members, trait-bound queries,
 generated declarations and builtin heuristic members require further contracts.
 Wrapped reference/pointer receivers currently offer fields only; method receiver
 conversion requires additional coverage.
+The grammar defines no block-level export modifier, but the declaration parser
+currently consumes and ignores `public` before an implementation or extension
+target. Diagnose that unsupported modifier instead of silently accepting it;
+exported paragraphs currently require their own `public` modifier.
 Parser recovery and a persistent source/symbol protocol remain necessary for
 broader incomplete-code support and larger imported graphs. Member case folding
 should be resolved by the checker with receiver-specific ambiguity handling.

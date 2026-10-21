@@ -203,6 +203,34 @@ def main():
         assert items(result)['sample']['type'] == 'override integer', result
         apply(imported_matrix, result, items(result)['sample'], name='client_applied.matrix', dependencies=dependencies)
 
+        # Reading an extension book exposes its public paragraphs, not its
+        # private helpers. Public operations can still use those helpers in
+        # their own declaring book, including when the receiver lives elsewhere.
+        extension_sources = {
+            'shapes.matrix': ('book shapes\npublic shape begin record\nfield held as number\nend record\n'),
+            'extension_helpers.matrix': ('book extension_helpers\nread everything from shapes\n'
+                'shape begin extension\npublic visible returns number begin paragraph\n'
+                'give my secret with nothing\nend paragraph\n'
+                'secret returns number begin paragraph\ngive my held\nend paragraph\nend extension\n')}
+        extension_entry = ('book extension_client\nread everything from shapes\n'
+                           'read everything from extension_helpers\n'
+                           'compute receives subject as shape returns number begin paragraph\n'
+                           'give subject.vis| with nothing\nend paragraph\n')
+        result = query(extension_entry, name='extension_client.matrix', dependencies=extension_sources)
+        assert set(items(result)) == {'visible'}, result
+        apply(extension_entry, result, items(result)['visible'], name='extension_applied.matrix',
+              dependencies=extension_sources)
+        assert not query(extension_entry.replace('vis|', 'sec|'), name='extension_client.matrix',
+                         dependencies=extension_sources)['items']
+        private_path = root / 'extension_private.matrix'
+        private_path.write_text(extension_entry.replace('vis|', 'secret'))
+        analysis = json.loads(run([compiler, '--analyze', '--no-stdlib', '-I', str(root),
+                                   str(private_path)], status=1).stdout)
+        assert any('private to module' in d['message'] for d in analysis['diagnostics']), analysis
+        compiled = run([compiler, '--no-stdlib', '-I', str(root), '--no-bundle',
+                        '-o', str(private_path.with_suffix('.nil')), str(private_path)], status=1)
+        assert 'private to module' in compiled.stderr, compiled.stderr
+
         classes = ('class Parent\nitem: i32\npub fn sample(self) -> i32\nreturn self.item\nend fn\n'
                    'fn secret(self) -> i32\nreturn self.item\nend fn\nend class\n'
                    'class Child inherits Parent\nother: i32\nend class\n')
