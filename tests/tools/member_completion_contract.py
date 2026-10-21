@@ -99,6 +99,14 @@ def main():
         result = query(method)
         assert items(result)['sample']['kind'] == 'method' and items(result)['sample']['type'] == 'i32', result
         apply(method, result, items(result)['sample'], name='generic_method.ny')
+        # Metadata headers emit blank lines without transforming code tokens.
+        # They must retain exact original declaration and query byte positions.
+        for index, header in enumerate(('@pragma once\n', '@schema\n', '@schema\n@pragma once\n')):
+            marked = header + '# é😀\r\n' + method.replace('\n', '\r\n')
+            result = query(marked, name=f'metadata_{index}.ny')
+            assert items(result)['sample']['type'] == 'i32', result
+            apply(marked, result, items(result)['sample'], name=f'metadata_applied_{index}.ny')
+        query('@define UNUSED 7\n' + method, name='transformed_primary.ny', available=False)
         pointer = generic + 'fn inspect(value: ptr<Box<i32>>) -> i32\nreturn value.it|\nend fn\n'
         assert items(query(pointer))['item']['type'] == 'i32'
         assert not query(pointer.replace('value.it|', 'value.sam|()'))['items']
@@ -115,6 +123,16 @@ def main():
         result = query(imported, dependencies=dependencies)
         assert set(items(result)) == {'sample'}, result
         apply(imported, result, items(result)['sample'], name='imported_applied.ny', dependencies=dependencies)
+        metadata_dependency = {'helper.ny': '@schema\n@pragma once\n' + dependency}
+        result = query(imported, name='metadata_imported.ny', dependencies=metadata_dependency)
+        assert set(items(result)) == {'sample'}, result
+        apply(imported, result, items(result)['sample'], name='metadata_imported_applied.ny', dependencies=metadata_dependency)
+        assert items(query('import helper.*\n' + generic_entry, name='metadata_field.ny',
+                           dependencies=metadata_dependency))['item']['type'] == 'i32'
+        # Other preprocessing still lacks a native source map and may not
+        # manufacture an editable declaration span from transformed text.
+        assert not query(imported, name='transformed_dependency.ny',
+                         dependencies={'helper.ny': '@define UNUSED 7\n' + dependency})['items']
         assert not query(imported.replace('sam|', 'sec|'), dependencies=dependencies)['items']
         for caller in (imported.replace('sam|', 'secret'),
                        imported.replace('sam|', 'secret').replace('import helper.*', 'module entry\nimport helper.*'),
@@ -202,6 +220,10 @@ def main():
         result = query(imported_matrix, name='client.matrix', dependencies=dependencies)
         assert items(result)['sample']['type'] == 'override integer', result
         apply(imported_matrix, result, items(result)['sample'], name='client_applied.matrix', dependencies=dependencies)
+        result = query(imported_matrix, name='metadata_client.matrix', dependencies=metadata_dependency)
+        assert items(result)['sample']['type'] == 'override integer', result
+        apply(imported_matrix, result, items(result)['sample'], name='metadata_client_applied.matrix',
+              dependencies=metadata_dependency)
 
         # Reading an extension book exposes its public paragraphs, not its
         # private helpers. Public operations can still use those helpers in

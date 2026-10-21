@@ -33,16 +33,17 @@ std::shared_ptr<ny::ast_variable_decl> variable(const ny::ast_stmt_ptr &statemen
   return node<ny::ast_variable_decl>(node<ny::ast_decl_stmt>(statement)->declaration);
 }
 
-void test_original_source(const std::string &newline, bool preprocess) {
+void test_original_source(const std::string &newline, bool preprocess, bool markers = false) {
   const std::string prefix = "\xef\xbb\xbf// UTF-8: café 🧭" + newline + " \t" + newline;
   std::string source = prefix;
+  if (markers) source += "  @pragma once\t" + newline + "\t@schema " + newline;
   for (const auto *line : {
       "struct Sample", "  value: i32", "end struct", "type Count = i32",
       "fn compute(input: i32) -> i32", "  let local = input",
       "  let object = Sample { value: local }",
       "  for (index, value) in [local]", "    println(index, value)", "  end for",
       "  let closure = fn(arg: i32) -> i32", "    return arg", "  end fn",
-      "  return object.value + pkg.part::read(local)", "end fn"}) {
+      "  return object.value + pkg.part::read(local, input)", "end fn"}) {
     source += line;
     source += newline;
   }
@@ -81,6 +82,10 @@ void test_original_source(const std::string &newline, bool preprocess) {
   expect_span(source, member->object->name_span, source.find("return object") + 7, "object");
   const auto call = node<ny::ast_call_expr>(addition->right);
   expect_span(source, call->callee->name_span, source.find("::read") + 2, "read");
+  const auto arguments = source.find("read(local") + 5;
+  expect_span(source, call->argument_span, arguments, "local, input");
+  require(call->argument_starts == std::vector<std::size_t>{arguments, source.find(", input)") + 1},
+          "call slots must retain original byte positions after delimiters");
 }
 
 void test_transformed_source_is_not_editable() {
@@ -94,6 +99,33 @@ void test_transformed_source_is_not_editable() {
   const auto body = node<ny::ast_block_stmt>(function->body);
   require(!node<ny::ast_return_stmt>(body->statements.at(0))->value->name_span,
           "transformed source must not expose editable identifier ranges");
+}
+
+void test_other_directives_remain_unmapped() {
+  const std::string declaration = "fn compute(input: i32) -> i32 { return input }\n";
+  for (const auto *directive : {"@define UNUSED 1\n", "@pragma once_extra\n",
+                                "@schema extra\n", "@pragma link(\"example\")\n"}) {
+    ny::parser parser(std::string(directive) + declaration);
+    const auto program = parser.parse_program();
+    require(program && !parser.has_errors(), "unsupported directive fixture must parse");
+    const auto function = node<ny::ast_function_decl>(program->declarations.at(0));
+    require(!function->name_span && !function->params.at(0).name_span,
+            "other removed directives must not acquire guessed locations");
+  }
+  ny::parser_options options;
+  options.filename = "/span-include.ny";
+  options.preproc_options.resolve_source = [](const std::filesystem::path &path) {
+    return std::optional<std::filesystem::path>(path);
+  };
+  options.preproc_options.read_source = [](const std::filesystem::path &) {
+    return std::optional<std::string>("fn included() -> i32 { return 1 }\n");
+  };
+  ny::parser parser("@pragma once\n@include \"other.inc\"\n" + declaration, options);
+  const auto program = parser.parse_program();
+  require(program && !parser.has_errors(), "included span fixture must parse");
+  require(program->declarations.size() == 2, "include fixture declaration count");
+  for (const auto &declaration_node : program->declarations)
+    require(!declaration_node->name_span, "includes must not inherit native root locations");
 }
 
 void test_methods_and_fields() {
@@ -202,7 +234,10 @@ int main() {
     for (const auto &newline : {std::string("\n"), std::string("\r\n")})
       for (const bool preprocess : {false, true})
         test_original_source(newline, preprocess);
+    for (const auto &newline : {std::string("\n"), std::string("\r\n")})
+      test_original_source(newline, true, true);
     test_transformed_source_is_not_editable();
+    test_other_directives_remain_unmapped();
     test_methods_and_fields();
     test_mapping_preserves_preprocessed_literal_semantics();
     test_interpolated_identifier_is_not_guessed();

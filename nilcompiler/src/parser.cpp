@@ -377,9 +377,16 @@ static bool unchanged_source_lines(
     const size_t end = original.find('\n', original_pos);
     const size_t length =
         (end == std::string::npos ? original.size() : end) - original_pos;
-    const bool blank =
-        original.find_first_not_of(" \t\r", original_pos) >= original_pos + length;
-    const size_t emitted_length = blank ? 0 : length;
+    const auto line = original.substr(original_pos, length);
+    const auto first = line.find_first_not_of(" \t\r");
+    const auto last = line.find_last_not_of(" \t\r");
+    const bool blank = first == std::string::npos;
+    // These exact no-op markers preserve one blank output line and do not
+    // introduce or rewrite code. All other directives and transformed lines
+    // still require an explicit preprocessor source map before editor use.
+    const auto trimmed = blank ? std::string() : line.substr(first, last - first + 1);
+    const bool marker = trimmed == "@pragma once" || trimmed == "@schema";
+    const size_t emitted_length = blank || marker ? 0 : length;
     if (processed_pos + emitted_length >= processed.size() ||
         processed.compare(processed_pos, emitted_length, original, original_pos,
                           emitted_length) != 0 ||
@@ -437,9 +444,10 @@ parser::parser(const std::string &source, const parser_options &opts)
       diagnostics_.push_back(d);
     }
 
-    // Retain source locations only when every original code line survived
-    // byte-for-byte. Includes, macros and other transformations need an
-    // explicit source map before their names can be used for editor actions.
+    // Retain source locations only when original code lines survive
+    // byte-for-byte, apart from blank lines and exact no-op source markers.
+    // Includes, macros and other transformations need an explicit source map
+    // before their names can be used for editor actions.
     original_spans_available_ = unchanged_source_lines(
         source_, pres_res.output, source_line_offsets_);
     // Use the preprocessed output as the lexer's input

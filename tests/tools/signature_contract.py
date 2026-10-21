@@ -92,6 +92,16 @@ def main():
         query(unicode_text, offset=len(unicode_text.split('|')[0].encode()) - 1, available=False, status=0)
         query(ny, extra=('--semantic-index',), status=0)
 
+        # Exact source-only markers preserve declaration and argument byte
+        # coordinates, including CRLF, BOM/Unicode, and no final newline.
+        markers = '\ufeff# café 😀\r\n  @pragma once\t\r\n\t@schema \r\n'
+        marked_ny = markers + ny.rstrip('\r\n')
+        value = query(marked_ny, name='source-markers.ny', status=0)
+        assert value['label'] == 'combine(first: i32, second: String) -> i32'
+        assert value['active_parameter'] == 1
+        assert query(marked_ny.replace('7, |"second"', '|'), name='empty-markers.ny', status=1)['length'] == 0
+        for directive in ('@define UNUSED 1\n', '@pragma once_extra\n', '@schema extra\n', '@pragma link("example")\n'):
+            query(directive + ny, name='other-directive.ny', available=False, status=0)
         # Nested calls choose the innermost parsed call, including when it is
         # unresolved; an outer callable must not be advertised in its place.
         nested = ('fn inside(item: i32) -> i32\nreturn item\nend fn\n'
@@ -136,6 +146,9 @@ def main():
         private = helper_ny.replace('pub fn', 'fn')
         query(entry, name='private.matrix', dependencies={'helper.ny': private}, available=False, status=1)
 
+        marked_helper = '@schema\r\n@pragma once\r\n' + helper_ny.replace('\n', '\r\n').rstrip('\r\n')
+        value = query(entry, name='marked-import.matrix', dependencies={'helper.ny': marked_helper}, status=0)
+        assert value['parameters'][0]['name'] == 'amount'
         # Callback labels are provenance, not part of fn type identity. Only
         # immutable values whose checker contract is known expose labels.
         callback = ('fn combine(first: i32, second: i32) -> i32\nreturn first\nend fn\n'

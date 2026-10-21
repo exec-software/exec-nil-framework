@@ -1501,3 +1501,45 @@ the same cursor can continue occupying the shared compiler queue until it
 finishes or times out. Source changes and new cursor queries do abort it.
 Measure interactive latency and narrow triggers or add cancellation-aware query
 scheduling before extending recovery to more typing contexts.
+
+
+### F48 — Metadata headers erased native library declaration positions
+
+**Status:** Exact source mapping retained for standalone `@pragma once` and `@schema` lines.
+
+Validation against a copied SDK found an available but empty member query for
+`vec<i32>.leng`, despite the source-backed public `length` method and
+`length_cell` field. A signature query for the real text library's `trim`
+function was also unavailable. The files were native sources with complete
+snapshots; lookup and binary provenance were not the cause.
+
+The Ny preprocessor replaces metadata headers with empty lines, while the parser
+previously accepted original locations only when all nonblank lines survived
+unchanged. One `@pragma once` therefore suppressed every declaration token in
+an otherwise unchanged library file. Small fixtures without library headers
+had hidden the gap.
+
+**Resolution:** The parser recognizes only exact, standalone `@pragma once` and
+`@schema` after horizontal whitespace trimming. Each must emit exactly one empty
+line, and every code line must still survive byte-for-byte. The existing line
+offset map restores original UTF-8 name, call and argument-slot positions across
+the removed header text. It does not report offsets into the shorter processed
+source. Other pragmas, parameterized markers, macros, includes and conditional
+rewriting remain unavailable without a general preprocessor source map.
+
+**Evidence:** Parser and query contracts cover metadata headers in primary files
+and imported dependencies, Unicode/BOM, LF/CRLF, missing final newlines, generic
+fields and methods, Ny/Matrix consumers, signature argument slots and compilation
+of completion insertions. Negative controls retain the previous behavior for
+unsupported transformations. The focused run passed 79 member checks, 46 lexical
+completion checks, 57 signature checks and the source-span unit tests. Six actual
+standard-library queries also pass in both languages: `vec<i32>.leng` exposes
+`length` and `length_cell`, `trim` identifies its first parameter, and
+`try_substring` selects the correct parameter across Ny positional and reversed
+Matrix named arguments. Every native snapshot matches the corresponding source
+bytes across the 30-, 31- and 14-file dependency graphs. SDK qualification repeats
+these queries against a fresh copied SDK after sealing the corrected compiler.
+
+**Follow-up:** Add a full preprocessor source map before exposing locations from
+includes, macro expansion or conditional rewriting. Metadata directives with
+arguments or comments remain outside this deliberately narrow mapping contract.

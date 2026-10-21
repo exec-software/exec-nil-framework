@@ -136,6 +136,28 @@ exports.run = async ({ check, workspace }) => {
     assert.equal(result.items.some(compilerMember), false);
   });
 
+  await check("installed nilstd declarations retain member and signature queries through header directives", async () => {
+    // Exercise the configured SDK's real @pragma once / @schema sources.
+    // Synthetic dependency fixtures alone cannot detect missing spans after
+    // standard-library preprocessing removes these non-executable headers.
+    const sdk = vscode.workspace.getConfiguration("ny").get("sdkPath");
+    assert.ok(typeof sdk === "string" && path.isAbsolute(sdk));
+    const ny = await create(workspace, "standard library queries/member.ny", 'import nil.std.collections\nfn inspect(values: vec<i32>) -> i32\n return values.leng()\nend fn\n');
+    const nyMembers = await checkedMembers(ny, "values.leng()", "leng");
+    expectMember(nyMembers, "length", "method: i32");
+    assert.ok(nyMembers.candidates.some(item => label(item) === "length_cell" && item.detail.startsWith("field:")));
+    const matrix = await create(workspace, "standard library queries/member.matrix", 'book sdk.members\nread everything from nil.std.collections\ninspect receives values as vec of override integer returns override integer begin paragraph\n give values.leng with nothing\nend paragraph\n');
+    const matrixMembers = await checkedMembers(matrix, "values.leng with nothing", "leng");
+    expectMember(matrixMembers, "length", "method: override integer");
+    const text = await create(workspace, "standard library queries/signature.ny", 'import nil.std.text.string_utils\nfn main() -> i32\n println(nil::std::text::trim(" sdk "))\n return 0\nend fn\n');
+    const result = await checkedSignature(text, 'nil::std::text::trim(" sdk ")', 'nil::std::text::trim(', ["s"], 0);
+    assert.equal(result.signatures[0].label, "trim(s: String) -> String");
+    const prose = await create(workspace, "standard library queries/signature.matrix", 'book sdk.signature\nread everything from nil.std.text.string_utils\nmain returns number begin paragraph\n say nil.std.text::trim with s being " sdk "\n give 0\nend paragraph\n');
+    const proseResult = await checkedSignature(prose, 'nil.std.text::trim with s being " sdk "', 'nil.std.text::trim with s being ', ["s"], 0);
+    assert.equal(proseResult.signatures[0].label, "trim receives s as text returns text");
+    return { sdk, members: ["Ny", "Matrix"], signatures: ["Ny trim", "Matrix trim"], originalHeaders: ["@pragma once", "@schema"] };
+  });
+
   await check("Ny signatures select nested calls, empty calls and unresolved argument expressions", async () => {
     const prefix = '# é😀\r\nfn outer(first: i32, second: i32) -> i32\r\n return first + second\r\nend fn\r\nfn inner(value: i32) -> i32\r\n return value\r\nend fn\r\nfn main() -> i32\r\n return ';
     const document = await create(workspace, "signature calls/main.ny", prefix + 'outer(inner(7), 9)\r\nend fn\r\n');

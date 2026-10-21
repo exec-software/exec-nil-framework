@@ -225,7 +225,10 @@ not emit a link. A matching name alone never creates one.
 Both frontends retain original name-token ranges. Matrix's surface spelling
 can differ from its compiler name through identifier folding. Ny retains
 original ranges when preprocessing is unchanged, or differs only by verified
-blank-line/final-newline normalization. Other textual transformations suppress
+blank-line/final-newline normalization or the removal of standalone `@pragma once`
+and `@schema` metadata lines. These directives must become exactly one empty
+line while every code line remains byte-for-byte unchanged; an explicit line
+offset map then restores original UTF-8 positions. Other textual transformations suppress
 the unit's name spans. Generated/interpolated nodes without an original name
 token remain unlocated. There are no guessed offsets into expanded text.
 
@@ -371,6 +374,9 @@ and ambiguous member lookup use the same rules as checking. Type names, static
 member contexts, unlocated intrinsics and unsupported bindings are omitted. `type` is
 display metadata, using Matrix vocabulary for a Matrix query; function entries
 and method entries expose their return type rather than a complete signature.
+Source-backed library declarations behind `@pragma once` and `@schema` headers
+retain those tokens through the verified metadata-line mapping above. Includes,
+macro expansion and conditional rewriting still require a general source map.
 
 The compiler filters by the prefix ending at the requested cursor. Ny matching
 is case-sensitive. Matrix matching uses its ASCII case/separator folding, and

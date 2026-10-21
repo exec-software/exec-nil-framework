@@ -33,8 +33,12 @@ bounded source provider for each route.
 The first profile includes supported function/variable declarations,
 parameters and loop binders, and their resolved reads, assignments, and direct
 calls. It emits only validated original-token locations. Ny may retain spans
-through verified blank-line/final-newline normalization; other textual
-transformations leave the unit unlocated. Matrix preserves written-token spans
+through verified blank-line/final-newline normalization and standalone
+`@pragma once`/`@schema` lines that become exactly one empty line. Every code
+line must remain byte-for-byte unchanged, and the mapper restores its original
+UTF-8 offset rather than reporting an offset into the shortened text. Other
+textual transformations, including includes, macros and conditional rewriting,
+leave the unit unlocated. Matrix preserves written-token spans
 while the checker uses its resolved compiler spelling. Conflicting bindings
 for a repeated physical occurrence are omitted.
 
