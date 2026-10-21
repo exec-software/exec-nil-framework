@@ -133,6 +133,36 @@ def main():
                       '-o', str(root / 'legacy_private.nil'), str(root / 'legacy_private.ny')], status=1)
         assert 'private to module' in result.stderr, result.stderr
 
+        # Static dot dispatch has separate ordinary and generic call paths.
+        # Neither may bypass access checks because its receiver is a type.
+        for is_generic in (False, True):
+            parameters = '<T>' if is_generic else ''
+            field_type = 'T' if is_generic else 'i32'
+            dependency = (f'module static_helper\npub struct Record{parameters}\nitem: {field_type}\nend struct\n'
+                          f'impl{parameters} Record{parameters}\nfn secret() -> i32\nreturn 7\nend fn\n'
+                          'pub fn public_value() -> i32\nreturn 7\nend fn\nend impl\n')
+            (root / 'static_helper.ny').write_text(dependency)
+            receiver = 'Record<i32>' if is_generic else 'Record'
+            for explicit_module in (False, True):
+                for method, status in (('secret', 1), ('public_value', 0)):
+                    source = (('module entry\n' if explicit_module else '') + 'import static_helper.*\n'
+                              f'fn main() -> i32\nreturn {receiver}.{method}()\nend fn\n')
+                    path = root / f'static_{is_generic}_{explicit_module}_{method}.ny'
+                    path.write_text(source)
+                    signature_at = len(source[:source.index(method + '(') + len(method) + 1].encode())
+                    analysis = json.loads(run([compiler, '--analyze', '--no-stdlib', '-I', str(root),
+                        '--signature-at', str(signature_at), str(path)], status=status).stdout)
+                    if status:
+                        assert any('private to module' in d['message'] for d in analysis['diagnostics']), analysis
+                        assert analysis['signature'] is None, analysis
+                    else:
+                        assert analysis['success'], analysis
+                    artifact = path.with_suffix('.nil')
+                    compiled = run([compiler, '--no-stdlib', '-I', str(root), '--no-bundle',
+                                    '-o', str(artifact), str(path)], status=status)
+                    if status:
+                        assert 'private to module' in compiled.stderr and not artifact.exists(), compiled.stderr
+
         # Required methods of an exported trait retain the trait's public
         # contract; an additional inherent helper does not inherit that access.
         contract = ('module contract\npub trait Reading\nfn read(self) -> i32\nend trait\n'

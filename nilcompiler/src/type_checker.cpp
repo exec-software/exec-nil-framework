@@ -4910,6 +4910,12 @@ void type_checker::visit(ast_call_expr &e) {
                 symbols_.lookup(canonical_type + "__" + ma->member_name);
 
           if (method_sym && method_sym->kind == symbol_kind::function_symbol) {
+            if (!is_symbol_visible(method_sym, current_module_.value_or(""))) {
+              add_error(e.line, "Method '" + canonical_type + "." + ma->member_name +
+                  "' is private to module '" + method_sym->module.value_or("<unknown>") + "'");
+              last_expr_type_ = type_unknown;
+              return;
+            }
             capture_signature(e, *method_sym, 0, signature_eligible);
             if (!order_named_arguments(callable_parameters(method_sym->params))) return;
             validate_call_arity(*method_sym, e.args.size(),
@@ -4996,6 +5002,12 @@ void type_checker::visit(ast_call_expr &e) {
         }
 
         if (method_sym && method_sym->kind == symbol_kind::function_symbol) {
+          if (!is_symbol_visible(method_sym, current_module_.value_or(""))) {
+            add_error(e.line, "Method '" + canonical_type + "." + ma->member_name +
+                "' is private to module '" + method_sym->module.value_or("<unknown>") + "'");
+            last_expr_type_ = type_unknown;
+            return;
+          }
           capture_signature(e, *method_sym, 0, signature_eligible);
           if (!order_named_arguments(callable_parameters(method_sym->params))) return;
           validate_call_arity(*method_sym, e.args.size(),
