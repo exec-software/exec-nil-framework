@@ -37,6 +37,11 @@ Extra concrete helper methods are allowed in an implementation. They do not
 become requirements of the trait. Duplicate method names are rejected; Ny
 does not select overloaded trait methods by signature.
 
+After an implementation passes these checks, required methods that omit `pub`
+inherit the trait's visibility. Required methods of an exported trait therefore
+remain callable by consumers. Extra helper methods retain their declared access;
+implementing an exported trait does not make private helpers public.
+
 ## Generic bounds
 
 ```ny

@@ -3047,16 +3047,30 @@ std::shared_ptr<ast_expr> parser::parse_call(std::shared_ptr<ast_expr> callee) {
     bool paren_same_line = check(token_kind::left_paren) &&
                            peek().line == callee->line;
     if (is_callable && paren_same_line && match(token_kind::left_paren)) {
+      const auto opening = span_for_name(tokens_[pos_ - 1]);
       std::vector<ast_expr_ptr> args;
+      std::vector<std::size_t> starts;
+      if (opening) starts.push_back(opening->start + opening->length);
       if (!check(token_kind::right_paren)) {
-        do {
+        for (;;) {
           args.push_back(parse_expression());
-        } while (match(token_kind::comma));
+          if (!match(token_kind::comma)) break;
+          if (const auto comma = span_for_name(tokens_[pos_ - 1]))
+            starts.push_back(comma->start + comma->length);
+        }
       }
       token rp =
           consume(token_kind::right_paren, "Expected ')' after call arguments");
-
-      callee = make_call_expr(callee, args, pending_type_args, rp.line);
+      const auto closing = span_for_name(rp);
+      auto call = std::make_shared<ast_call_expr>(callee, args, pending_type_args, rp.line);
+      call->source_file = filename_;
+      if (opening && closing && closing->start >= opening->start + opening->length &&
+          starts.size() == std::max<std::size_t>(1, args.size())) {
+        call->argument_span = source_span{opening->start + opening->length,
+                                         closing->start - opening->start - opening->length};
+        call->argument_starts = std::move(starts);
+      }
+      callee = std::move(call);
       pending_type_args.clear(); // Consumed
       continue;
     }

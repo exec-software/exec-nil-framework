@@ -35,6 +35,8 @@ not assigned architecture identifiers.
 | NIL-0009 | [Workspace source snapshots for analysis](NIL-0009-workspace-analysis.md) | Implemented initial source-overlay contract |
 | NIL-0010 | [Compiler bindings for source navigation](NIL-0010-semantic-source-index.md) | Implemented initial partial source index and definition navigation |
 | NIL-0011 | [Completion queries at checked lexical scopes](NIL-0011-completion-queries.md) | Implemented initial value-identifier completion query |
+| NIL-0012 | [Signature queries at resolved calls](NIL-0012-signature-queries.md) | Implemented initial source-backed call signatures |
+| NIL-0013 | [Project-scoped references and transactional rename](NIL-0013-project-semantic-editing.md) | Proposed |
 | NIL-0093 | [Executable context is artifact self-description](NIL-0093-executable-context.md) | Implemented within the documented inspection profile |
 
 ## Retained Ny feature references

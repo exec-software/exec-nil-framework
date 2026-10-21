@@ -334,8 +334,9 @@ sdk/nilcompiler --analyze --workspace-stdin --completion-at 82 \
   -I sdk/nilstd application.matrix < workspace.json
 ```
 
-The initial query accepts a nonempty prefix inside an unqualified value
-identifier, including ordinary direct-call and function-value expressions.
+The query accepts a nonempty prefix inside an unqualified value identifier or
+a supported receiver member name, including direct-call and function-value
+expressions.
 Both frontends must have parsed successfully, imports must resolve, and the
 checker must reach the identifier without an earlier checker diagnostic. At
 that point it snapshots the actual visible bindings before looking up the
@@ -355,7 +356,7 @@ completion: {
   start: replacement_start_byte,
   length: replacement_length_bytes,
   sources: [{ path: canonical_native_path, text: exact_consumed_source }],
-  items: [{ name: display_spelling, kind: "function" | "variable" | "parameter",
+  items: [{ name: display_spelling, kind: "function" | "variable" | "parameter" | "field" | "method",
             type: display_type, insert_text: complete_identifier_spelling }]
 }
 ```
@@ -363,15 +364,19 @@ completion: {
 Items come from lexical lookup and the current module's imports, including
 visibility checks, shadowing and declaration order. Source functions declared
 later in the module remain available according to normal function lookup.
-Candidates require a verified original declaration token. Types, members,
-unlocated intrinsics, and other unsupported bindings are omitted. `type` is
+Candidates require a verified original declaration token. Member queries use
+the checked receiver type to select source-backed fields and instance methods,
+including imports, inheritance and supported generic substitutions. Accessibility
+and ambiguous member lookup use the same rules as checking. Type names, static
+member contexts, unlocated intrinsics and unsupported bindings are omitted. `type` is
 display metadata, using Matrix vocabulary for a Matrix query; function entries
-currently expose their return type rather than a complete signature.
+and method entries expose their return type rather than a complete signature.
 
 The compiler filters by the prefix ending at the requested cursor. Ny matching
 is case-sensitive. Matrix matching uses its ASCII case/separator folding, and
 the insertion is checked against the same page-wide name resolver used by the
-frontend. A spelling redirected to another declaration is omitted. Matrix
+frontend. A spelling redirected to another declaration is omitted. Member queries instead
+validate receiver-directed spelling and do not use the page-wide resolver. Matrix
 declarations retain their written display spelling; Ny declarations retain
 their Ny spelling. An edit replaces the entire current identifier, including
 any suffix after the cursor and existing Matrix backtick delimiters. Required
@@ -379,7 +384,7 @@ backticks are included in `insert_text`.
 
 An empty item array is an available query with no matching supported bindings.
 `completion: null` means the position or snapshot is unavailable. Positions in
-comments, literals, type names, member names, qualified names, and blank input
+comments, literals, type names, unsupported members, qualified names, and blank input
 are not recovered into value queries. Earlier checker errors, parse/import
 failure, preprocessed names without original spans, binary-library dependencies,
 unstable source identities, repeated checker visits to the queried physical
@@ -397,6 +402,60 @@ truncating its candidates or input graph and without displacing diagnostics.
 
 The design rationale is recorded in
 [NIL-0011](design/NIL-0011-completion-queries.md).
+
+## Signature help at a call
+
+`--signature-at <offset>` adds an independent `signature` member to
+`nil.analysis.v1`, using the same original UTF-8 cursor offsets and disk,
+raw-stdin or workspace input routes as completion. The compiler selects the
+innermost parsed call argument region at the cursor and resolves its actual
+callable. An unavailable inner call does not fall back to an unrelated outer
+signature. Parameter information is separate from the semantic reference index
+and does not certify parameters or argument labels for rename.
+
+```text
+signature: {
+  schema: "nil.signature.v1",
+  partial: true,
+  path: canonical_primary_path,
+  cursor: requested_byte_offset,
+  start: argument_region_start_byte,
+  length: argument_region_length_bytes,
+  sources: [{ path: canonical_native_path, text: exact_consumed_source }],
+  label: full_display_signature,
+  parameters: [{ name, type, label: display_parameter, variadic: false }],
+  active_parameter: zero_based_index_or_null,
+  return_type: display_return_type
+}
+```
+
+Argument regions exclude the Ny call parentheses and start after Matrix's
+`with`. A zero-length region is valid for an empty Ny call. Original argument
+slots and named labels survive checker reordering. Matrix's active parameter
+follows the selected callable's label, including folded spellings, rather than
+the written argument index. A variadic tail selects its final parameter.
+Unknown labels or positions without a corresponding parameter use null.
+
+Source-backed direct and imported functions, supported methods, and immutable
+callbacks with a proven parameter-name contract can provide signatures. Instance
+methods omit `self`. Display types describe the selected declaration rather than
+speculatively inferring missing generic arguments. Invalid or unresolved argument
+expressions may still yield useful help; an earlier unrelated checker failure,
+unresolved callee, inaccessible callable or unsupported callback contract does not.
+
+The initial query requires parsed call syntax, with one narrow Matrix exception:
+while querying whitespace immediately after a bare `with` on that line, the parser
+can retain an empty argument region. The original source remains a syntax error,
+ordinary compilation still rejects it, and analysis reports `success: false` with
+no semantic index. This query recovery never alters the consumed source snapshots.
+Missing Ny closing parentheses and other parse errors remain unsupported.
+
+A result is limited to 256 parameters, 256 consumed native sources and 4 MiB of
+JSON within the existing 8 MiB analysis response. Binary dependencies, unverifiable
+source identities/spans, ambiguous repeated call occurrences and exceeded limits
+produce `signature: null`. Omitting the flag omits the field. Clients must validate
+all input snapshots and cursor bounds before displaying the result; queries do not
+publish diagnostics or make edits. See [NIL-0012](design/NIL-0012-signature-queries.md).
 
 ## Reflection from Ny or Matrix
 

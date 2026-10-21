@@ -147,6 +147,24 @@ building or running.
 
 Go to Definition uses the compiler's checked source bindings for supported
 variables, parameters and direct/imported functions, including unsaved sources.
-Completion and hover still use the language server's tolerant document index.
-Member/type navigation, complete cross-file references, rename and signature help are
-tracked in the [developer-tooling plan](../developer-tooling.md).
+Compiler completion supplies visible locals, parameters and imported functions
+at supported identifier expressions, including unresolved prefixes. Nonempty
+member prefixes use the checked receiver type to suggest available source-backed
+fields and methods. Signature help follows supported resolved calls, including
+imports, methods and immutable callbacks, and maps Matrix named arguments to
+the selected callable's parameter order. Both queries validate every consumed
+source snapshot before displaying results. Parse recovery remains limited;
+the language server retains tolerant completion for unsupported contexts and
+supplies hover and outline information.
+
+Find All References and rename are available for compiler-certified lexical
+locals; rename checks the proposed source and its bindings before returning
+edits.
+
+Live source checks use the active document as their analysis root. A manifest
+shares configuration with those checks, but does not turn them into a complete
+index of all callers in the project. Project-scoped references and multi-file
+rename remain proposed in
+[NIL-0013](../design/NIL-0013-project-semantic-editing.md). Further completion
+and navigation coverage is tracked in the
+[developer-tooling plan](../developer-tooling.md).

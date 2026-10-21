@@ -1057,6 +1057,11 @@ struct ast_call_expr : public ast_expr {
   // the actual callable. Empty entries represent a positional variadic tail.
   // An empty vector means an ordinary positional call.
   std::vector<std::string> argument_names;
+  // Native source argument region and source-order slots for signature help.
+  // They remain in written order when checking reorders Matrix named args.
+  std::optional<source_span> argument_span;
+  std::vector<std::size_t> argument_starts;
+  std::vector<std::string> source_argument_names;
   std::vector<std::string> type_args; // Explicit type arguments for generics
   // Checked associated call on a bounded type parameter (for example
   // T.default()). The receiver is a type, never a runtime argument.

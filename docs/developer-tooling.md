@@ -32,11 +32,13 @@ binding before returning an edit. Named parameters, functions and globals still
 need a graph that includes their external callers. See F42 in the
 [findings](../matrix/docs/next-version-findings.md).
 
-The compiler also supplies a bounded completion query for nonempty unqualified
-identifier expressions, including unresolved prefixes. It captures actual visible
-bindings, imports and declaration order before checking the selected expression.
-VS Code verifies the consumed sources before offering these candidates. See
-[NIL-0011](design/NIL-0011-completion-queries.md) for the query contract.
+The compiler also supplies bounded completion queries for nonempty value and
+supported receiver-member prefixes. Candidates follow checked bindings, imports,
+declaration order and receiver types. Signature queries retain original argument
+slots and Matrix labels, then describe the selected callable. VS Code validates
+the consumed source snapshots before displaying either result. See
+[NIL-0011](design/NIL-0011-completion-queries.md) and
+[NIL-0012](design/NIL-0012-signature-queries.md) for their supported profiles.
 
 The language server retains a separate tolerant, document-local index.
 It supplies fallback completion, hover and outline information,
@@ -59,17 +61,21 @@ not complete signatures or a stable type graph. See
 | Stage | Deliverable | Acceptance evidence |
 | --- | --- | --- |
 | Complete semantic coverage | Extend the implemented partial index to fields, methods, type uses, pattern bindings, precise generic/overload identities, and recoverable incomplete code. Add binary dependency identity and generated-source maps. | Mixed Ny/Matrix projects, dirty imports, deletion/rename, shadowing, overloads, generics and incomplete code cannot produce stale or guessed bindings. |
-| Semantic editing | Extend completion to members, blank/type contexts and recoverable parse errors; add signatures, complete cross-file references, and transactional rename on the expanded model. Extend existing compiler-backed definition navigation as coverage grows. | Real extension-host tests exercise edit/undo, Unicode offsets, cancellation and multi-root workspaces against an installed SDK. |
+| Semantic editing | Extend member/signature queries to unsupported contexts and general parser recovery; add explicitly scoped cross-file references and transactional rename. Extend existing compiler-backed definition navigation as coverage grows. | Real extension-host tests exercise edit/undo, Unicode offsets, cancellation and multi-root workspaces against an installed SDK. |
 | Analyzer extensions | Versioned read-only semantic queries and an explicit, bounded host for language-authored analyzers; shared diagnostics, configuration and fix protocol. | Malformed output, limits, analyzer failure and source-version mismatch cannot apply incorrect edits or corrupt compilation. |
 | Project graphs | Explicit local project references, library/executable targets and dependency ordering, followed by a content-based incremental cache. | Cycles, output collisions and changed dependencies fail or rebuild predictably; a failed build cannot run stale artifacts. |
 | Integrated debugging | Project launch profiles, consistent source maps, richer variable inspection and native-debugger integration. | End-to-end stepping and breakpoint tests cover both languages and each claimed execution route. |
+
+[NIL-0013](design/NIL-0013-project-semantic-editing.md) proposes the entrypoint-graph
+scope, source roles and transactional checks required for cross-file editing.
+It does not expand the currently shipped local rename capability.
 
 Package resolution, lock files and distribution publication are separate from
 the local build driver. Their contracts belong to the package-manager design.
 Native compiler plugins are not a prerequisite for a useful analyzer host.
 
 The near-term priority is expanding retained binding coverage beyond certified
-locals and extending completion beyond supported identifier expressions. Both frontends
+locals and extending completion/signature coverage beyond the supported contexts. Both frontends
 now preserve supported original-source name spans, and the checker retains
 local bindings after their scopes are discarded. Type strings and declaration
 names still cannot stand in for a complete symbol/type model. Expanded/generated

@@ -1389,3 +1389,99 @@ with its required book declaration. `tests/tools/completion_contract.py` keeps
 a module-less Ny consumer in its mixed-language import and selective-import
 privacy cases. The targeted run passed 14 module-context checks and 46 completion
 checks, plus the source-span regression for repeated query occurrences.
+
+
+### F46 — Member completion must use the receiver's checked type and member visibility
+
+**Status:** Initial compiler-backed member query implemented; import visibility corrected.
+
+A file-wide member list cannot distinguish two local receivers whose fields have
+identical names but different types, instantiate a generic field or method result,
+or determine which inherited method is accessible. Matrix member names also
+intentionally bypass the parser's page-wide folded-name map: an unrelated
+unqualified declaration must not redirect a field insertion.
+
+**Resolution:** `--completion-at` captures a nonempty member token after its
+receiver has been checked. Candidates are source-backed record fields, methods,
+inherited class members and extensions, with generic substitutions from ordinary
+member lookup. The result preserves full-token offsets and dependency snapshots.
+Matrix prefix matching folds case and separators while the insertion retains the
+receiver's declaration spelling, including required escaping. Ordinary member
+resolution remains case-sensitive.
+The Matrix lexer now recognizes a dot before a backtick as member punctuation;
+previously an escaped member such as `` input.`value` `` was mistaken for the end
+of a sentence and rejected before checking.
+
+The work exposed a visibility defect: checking an implementation replaced its
+member-table entries with symbols that had lost their owning module, and ordinary
+member lookup did not enforce imported implementation-method privacy. The checker
+now retains that ownership and rejects private imported methods. Completion uses
+the same visibility contract rather than merely hiding otherwise callable methods.
+Generated `Type__method` registrations also retain method visibility, so spelling
+the lowered function name does not bypass the source method's access restriction.
+The legacy lookup of manually named `Type__method` functions checks visibility
+as well, covering declarations that have no implementation member table.
+Required methods of a successfully checked trait implementation inherit the
+trait's access when their implementation omits an explicit public modifier.
+Additional helpers retain declared access; correcting privacy does not make
+exported trait contracts unusable.
+
+**Evidence:** `tests/tools/member_completion_contract.py` covers receiver
+shadowing, generic field/method types, reference/pointer receivers, mixed-language
+imports, imported private methods, inherited class members, Matrix `my` syntax,
+escaped names, folded-name collisions and Unicode/CRLF replacement ranges. It
+compiles applied candidates and checks ordinary-compilation privacy failures.
+The focused run passed 45 member checks, 46 existing lexical-completion checks,
+and the trait contract's 100 rejected compilations and 12 accepted controls.
+
+**Follow-up:** Bare dots, type/static receivers, enum members, trait-bound queries,
+generated declarations and builtin heuristic members require further contracts.
+Wrapped reference/pointer receivers currently offer fields only; method receiver
+conversion requires additional coverage.
+Parser recovery and a persistent source/symbol protocol remain necessary for
+broader incomplete-code support and larger imported graphs. Member case folding
+should be resolved by the checker with receiver-specific ambiguity handling.
+
+
+### F47 — Signature help needs original argument slots and the resolved callable
+
+**Status:** Initial compiler-backed signature query implemented.
+
+A list of reflected declarations cannot identify the callable at a call site,
+and a function's semantic display type contains only its return type. Matrix
+also reorders named arguments after resolution, so the checked argument vector
+cannot identify the parameter under the editor cursor in the original source.
+
+**Resolution:** Both parsers retain the original call argument region, slot
+boundaries and Matrix labels separately from the reordered arguments. A bounded
+`--signature-at` query selects the innermost call and records the actual function,
+source method or proven immutable callback contract. Matrix labels select the
+resolved declaration parameter; unknown labels leave the full signature visible
+without guessing a highlight. Instance methods omit `self`.
+
+A narrow query-only Matrix recovery supports whitespace immediately after a bare
+`with`, while preserving the syntax diagnostic, unsuccessful analysis and absence
+of a semantic index. No source text is rewritten, and ordinary compilation still
+rejects that incomplete call. Source snapshots, offsets and dependency versions
+are validated before the editor shows a result. Temporary compiler failures are
+retryable without source edits, and changed inputs cancel pending work.
+
+**Evidence:** `tests/tools/signature_contract.py` passed 50 compiler checks across
+both languages, input routes, nested calls, invalid arguments, imports, callbacks,
+methods, source provenance and query limits. Eleven real VS Code host checks
+exercise member completion and signatures, including unsaved imports, Matrix
+label selection, bare-`with` recovery, transient failure and input cancellation.
+
+**Follow-up:** Add general incomplete-call recovery, stable inferred generic and
+overload identities, documented builtin signatures and function-type parameter
+labels. Immutable callback signatures currently retain canonical parameter names
+rather than original Matrix spelling. Project-wide parameter rename also needs
+argument-label reference roles and complete caller graphs; query metadata does
+not certify those edits. See NIL-0012 and the proposed NIL-0013.
+
+The editor currently requests signatures on spaces in both languages as well as
+call punctuation. A caller's cancellation suppresses its result, but a query at
+the same cursor can continue occupying the shared compiler queue until it
+finishes or times out. Source changes and new cursor queries do abort it.
+Measure interactive latency and narrow triggers or add cancellation-aware query
+scheduling before extending recovery to more typing contexts.

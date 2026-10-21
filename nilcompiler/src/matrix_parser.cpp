@@ -137,7 +137,12 @@ std::string nil_path(const std::string &written) {
 } // namespace
 
 parser::parser(const std::string &source, const parser_options &opts)
-    : filename_(opts.filename) {
+    : filename_(opts.filename), signature_cursor_(opts.signature_cursor) {
+  if (signature_cursor_ && *signature_cursor_ <= source.size()) {
+    auto start = *signature_cursor_;
+    while (start && (source[start - 1] == ' ' || source[start - 1] == '\t')) --start;
+    signature_blank_start_ = start;
+  }
   lexer lex(source);
   tokens_ = lex.scan();
   prescan_declarations();
@@ -2267,13 +2272,23 @@ ny::ast_expr_ptr parser::parse_unary() {
 // Keep labels and expressions in source order until the checker has selected
 // the callable. A parser name table cannot distinguish imports or shadowing.
 std::vector<ny::ast_expr_ptr>
-parser::parse_with_arguments(std::vector<std::string> &argument_names) {
+parser::parse_with_arguments(std::vector<std::string> &argument_names,
+                             std::vector<std::size_t> &argument_starts) {
+  const auto &introducer = tokens_[pos_ - 1];
+  argument_starts.push_back(introducer.start + introducer.length);
+  if (signature_blank_start_ && *signature_blank_start_ == argument_starts.front() &&
+      signature_cursor_ && *signature_cursor_ <= peek().start &&
+      (peek().line > introducer.line || peek().kind == token_kind::end_of_file)) {
+    recovered_signature_call_ = true;
+    return {};
+  }
   std::vector<ny::ast_expr_ptr> args;
   if (match(kw::nothing)) return args;
   if (match(kw::more)) {
     do {
       args.push_back(parse_expression());
-    } while (match(matrix::token_kind::comma));
+    } while (match(matrix::token_kind::comma) &&
+               (argument_starts.push_back(tokens_[pos_ - 1].start + tokens_[pos_ - 1].length), true));
     return args;
   }
   if (peek().is_name() && peek(1).is(kw::being)) {
@@ -2282,7 +2297,8 @@ parser::parse_with_arguments(std::vector<std::string> &argument_names) {
         do {
           argument_names.emplace_back();
           args.push_back(parse_expression());
-        } while (match(matrix::token_kind::comma));
+        } while (match(matrix::token_kind::comma) &&
+               (argument_starts.push_back(tokens_[pos_ - 1].start + tokens_[pos_ - 1].length), true));
         break;
       }
       if (!peek().is_name()) {
@@ -2295,12 +2311,14 @@ parser::parse_with_arguments(std::vector<std::string> &argument_names) {
       argument_names.push_back(name);
       args.push_back(parse_expression());
       if (!match(matrix::token_kind::comma)) break;
+      argument_starts.push_back(tokens_[pos_ - 1].start + tokens_[pos_ - 1].length);
     }
     return args;
   }
   do {
     args.push_back(parse_expression());
-  } while (match(matrix::token_kind::comma));
+  } while (match(matrix::token_kind::comma) &&
+               (argument_starts.push_back(tokens_[pos_ - 1].start + tokens_[pos_ - 1].length), true));
   return args;
 }
 
@@ -2380,10 +2398,20 @@ ny::ast_expr_ptr parser::parse_postfix() {
       // Carry the arguments on a call node; a bare application with no 'with'
       // clause is still a call with no arguments.
       std::vector<std::string> argument_names;
+      std::vector<std::size_t> argument_starts;
       std::vector<ny::ast_expr_ptr> args;
-      if (match(kw::with)) args = parse_with_arguments(argument_names);
+      if (match(kw::with)) args = parse_with_arguments(argument_names, argument_starts);
       auto call = std::make_shared<ny::ast_call_expr>(expr, std::move(args),
                                                      std::move(type_args), line);
+      call->source_file = filename_;
+      if (!argument_starts.empty()) {
+        const auto &last = tokens_[pos_ - 1];
+        const auto end = std::max(last.start + last.length,
+            recovered_signature_call_ && signature_cursor_ ? *signature_cursor_ : std::size_t(0));
+        call->argument_span = ny::source_span{argument_starts.front(), end - argument_starts.front()};
+        call->argument_starts = std::move(argument_starts);
+        call->source_argument_names = argument_names;
+      }
       call->argument_names = std::move(argument_names);
       expr = std::move(call);
       continue;
@@ -2391,9 +2419,19 @@ ny::ast_expr_ptr parser::parse_postfix() {
 
     if (match(kw::with)) {
       std::vector<std::string> argument_names;
-      auto args = parse_with_arguments(argument_names);
+      std::vector<std::size_t> argument_starts;
+      auto args = parse_with_arguments(argument_names, argument_starts);
       auto call = std::make_shared<ny::ast_call_expr>(
           expr, std::move(args), std::vector<std::string>{}, line);
+      call->source_file = filename_;
+      if (!argument_starts.empty()) {
+        const auto &last = tokens_[pos_ - 1];
+        const auto end = std::max(last.start + last.length,
+            recovered_signature_call_ && signature_cursor_ ? *signature_cursor_ : std::size_t(0));
+        call->argument_span = ny::source_span{argument_starts.front(), end - argument_starts.front()};
+        call->argument_starts = std::move(argument_starts);
+        call->source_argument_names = argument_names;
+      }
       call->argument_names = std::move(argument_names);
       expr = std::move(call);
       continue;

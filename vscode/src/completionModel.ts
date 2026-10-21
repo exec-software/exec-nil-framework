@@ -10,7 +10,7 @@ export interface CompilerCompletion {
   start: number;
   length: number;
   sources: SemanticSource[];
-  items: Array<{ name: string; kind: "function" | "variable" | "parameter"; type: string; insert_text: string }>;
+  items: Array<{ name: string; kind: "function" | "variable" | "parameter" | "field" | "method"; type: string; insert_text: string }>;
 }
 
 const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -39,7 +39,7 @@ export function parseCompilerCompletion(value: unknown): CompilerCompletion | un
   const insertions = new Set<string>();
   for (const item of value.items) {
     if (!record(item) || !text(item.name) || !item.name || !text(item.type) || !text(item.insert_text) || !item.insert_text ||
-        (item.kind !== "function" && item.kind !== "variable" && item.kind !== "parameter") ||
+        (item.kind !== "function" && item.kind !== "variable" && item.kind !== "parameter" && item.kind !== "field" && item.kind !== "method") ||
         /[\r\n]/.test(item.name + item.insert_text) || insertions.has(item.insert_text)) return fail();
     insertions.add(item.insert_text);
   }

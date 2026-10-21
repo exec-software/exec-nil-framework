@@ -438,7 +438,8 @@ std::string analysis_session::completion_json() const {
     matrix::lexer scanner(text);
     for (const auto &token : scanner.scan()) {
       const std::size_t trim = token.escaped_identifier ? 1 : 0;
-      if (token.kind == matrix::token_kind::identifier && token.length > 2 * trim &&
+      if ((token.kind == matrix::token_kind::identifier ||
+           (query.member && token.kind == matrix::token_kind::keyword)) && token.length > 2 * trim &&
           token.start + trim == query.span.start && token.length - 2 * trim == query.span.length) {
         replacement = {token.start, token.length};
         escaped = token.escaped_identifier;
@@ -446,9 +447,14 @@ std::string analysis_session::completion_json() const {
       }
     }
     if (scanner.has_errors()) return "null";
-    matrix_names.emplace(text);
-    if (matrix_names->resolve_completion_name(text.substr(query.span.start, query.span.length)) != query.name)
-      return "null";
+    if (query.member) {
+      if (matrix::nil_symbol(text.substr(query.span.start, query.span.length)) != query.name)
+        return "null";
+    } else {
+      matrix_names.emplace(text);
+      if (matrix_names->resolve_completion_name(text.substr(query.span.start, query.span.length)) != query.name)
+        return "null";
+    }
   } else {
     lexer scanner(text);
     for (const auto &token : scanner.scan_tokens())
@@ -488,7 +494,7 @@ std::string analysis_session::completion_json() const {
     if (matrix_language) {
       // A different declaration anywhere on this page can redirect a folded
       // name. Omit such a candidate rather than inserting the wrong binding.
-      if (matrix_names->resolve_completion_name(display) != candidate.name) continue;
+      if (!query.member && matrix_names->resolve_completion_name(display) != candidate.name) continue;
       if (escaped || matrix::keyword_for(matrix::fold_key(display)) != matrix::kw::not_a_keyword)
         insertion = '`' + display + '`';
       matrix::lexer scanner(insertion);
@@ -512,6 +518,80 @@ std::string analysis_session::completion_json() const {
       ",\"cursor\":" + std::to_string(cursor) + ",\"start\":" + std::to_string(replacement.start) +
       ",\"length\":" + std::to_string(replacement.length) + ",\"sources\":[" + snapshot_json +
       "],\"items\":[" + item_json + "]}";
+  return result.size() <= limit ? result : "null";
+}
+
+std::string analysis_session::signature_json() const {
+  constexpr std::size_t limit = 4 * 1024 * 1024;
+  if (!signature_cursor || !signature || !signature->available || semantic_binary_dependencies ||
+      signature->path != primary_path || sources.empty() || sources.size() > workspace_source_limit ||
+      !sources.count(primary_path) || signature->parameters.size() > 256) return "null";
+  const auto &query = *signature;
+  const auto &source = sources.at(primary_path);
+  const auto cursor = *signature_cursor;
+  const auto boundary = [](const std::string &text, std::size_t offset) {
+    return offset <= text.size() && (offset == text.size() ||
+        (static_cast<unsigned char>(text[offset]) & 0xc0) != 0x80);
+  };
+  if (query.span.start > source.size() || query.span.length > source.size() - query.span.start ||
+      cursor < query.span.start || cursor - query.span.start > query.span.length ||
+      !boundary(source, cursor) || !boundary(source, query.span.start) ||
+      !boundary(source, query.span.start + query.span.length)) return "null";
+  const auto declaration = sources.find(query.declaration_path);
+  if (declaration == sources.end() || !query.declaration_span || !query.declaration_span->length ||
+      query.declaration_span->start > declaration->second.size() ||
+      query.declaration_span->length > declaration->second.size() - query.declaration_span->start) return "null";
+  auto extension = std::filesystem::path(query.declaration_path).extension().string();
+  std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  const bool matrix_declaration = extension == ".matrix" || extension == ".mat";
+  if (!matrix_declaration && extension != ".ny") return "null";
+  const auto original = declaration->second.substr(query.declaration_span->start, query.declaration_span->length);
+  if ((matrix_declaration ? matrix::nil_symbol(original) : original) != query.name) return "null";
+  const bool matrix_language = language == "matrix";
+  const auto surface = [&](const std::string &type) {
+    return matrix_language ? matrix::to_surface_vocabulary(type) : type;
+  };
+  std::string label = matrix_language && matrix_declaration ? original : query.name;
+  label += matrix_language ? (query.parameters.empty() ? " receives nothing" : " receives ") : "(";
+  std::string parameters;
+  for (std::size_t index = 0; index < query.parameters.size(); ++index) {
+    const auto &parameter = query.parameters[index];
+    auto name = parameter.name;
+    if (matrix_language && matrix_declaration && parameter.span &&
+        parameter.span->start <= declaration->second.size() &&
+        parameter.span->length <= declaration->second.size() - parameter.span->start) {
+      const auto written = declaration->second.substr(parameter.span->start, parameter.span->length);
+      if (matrix::nil_symbol(written) == name) name = written;
+    }
+    const auto type = surface(parameter.type);
+    const std::string parameter_label = (parameter.variadic ? (matrix_language ? "more " : "..") : "") +
+        name + (matrix_language ? " as " : ": ") + type;
+    if (index) { label += ", "; parameters += ','; }
+    label += parameter_label;
+    parameters += "{\"name\":" + quoted(static_cast<const std::string &>(name)) + ",\"type\":" + quoted(type) +
+        ",\"label\":" + quoted(parameter_label) + ",\"variadic\":" +
+        (parameter.variadic ? "true" : "false") + '}';
+  }
+  const auto return_type = surface(query.return_type);
+  label += (matrix_language ? " returns " : ") -> ") + return_type;
+  std::string snapshots;
+  for (const auto &[path, text] : sources) {
+    try {
+      if (path.empty() || !std::filesystem::path(path).is_absolute() || analysis_source_identity(path) != path)
+        return "null";
+    } catch (const std::exception &) { return "null"; }
+    if (!snapshots.empty()) snapshots += ',';
+    snapshots += "{\"path\":" + quoted(path) + ",\"text\":" + quoted(text) + '}';
+    if (snapshots.size() > limit) return "null";
+  }
+  const auto result = "{\"schema\":\"nil.signature.v1\",\"partial\":true,\"path\":" + quoted(primary_path) +
+      ",\"cursor\":" + std::to_string(cursor) + ",\"start\":" + std::to_string(query.span.start) +
+      ",\"length\":" + std::to_string(query.span.length) + ",\"sources\":[" + snapshots +
+      "],\"label\":" + quoted(static_cast<const std::string &>(label)) + ",\"parameters\":[" + parameters +
+      "],\"active_parameter\":" + (query.active_parameter ? std::to_string(*query.active_parameter) : "null") +
+      ",\"return_type\":" + quoted(return_type) + '}';
   return result.size() <= limit ? result : "null";
 }
 
@@ -826,6 +906,11 @@ std::string analysis_session::json(bool success) const {
     if (static_cast<std::size_t>(out.tellp()) + result.size() + 18 > output_limit) result = "null";
     out << ",\"completion\":" << result;
   }
+  if (signature_cursor) {
+    auto result = signature_json();
+    if (static_cast<std::size_t>(out.tellp()) + result.size() + 18 > output_limit) result = "null";
+    out << ",\"signature\":" << result;
+  }
   out << "}\n";
   return out.str();
 }
@@ -873,6 +958,17 @@ int run_analysis_cli(int argc, char **argv, compilation_entry compile) {
       if (a == "--source-stdin") { session.source_stdin = true; continue; }
       if (a == "--workspace-stdin") { session.workspace_stdin = true; continue; }
       if (a == "--semantic-index") { session.semantic_requested = true; continue; }
+      if (a == "--signature-at") {
+        if (++i >= argc) throw std::runtime_error("missing value after " + a);
+        const std::string offset = argv[i];
+        if (session.signature_cursor || offset.empty() || offset.size() > 7 ||
+            offset.find_first_not_of("0123456789") != std::string::npos)
+          throw std::runtime_error("--signature-at requires one UTF-8 byte offset");
+        const auto parsed = std::stoul(offset);
+        if (parsed > source_limit) throw std::runtime_error("signature offset exceeds source limit");
+        session.signature_cursor = parsed;
+        continue;
+      }
       if (a == "--completion-at") {
         if (++i >= argc) throw std::runtime_error("missing value after " + a);
         const std::string offset = argv[i];

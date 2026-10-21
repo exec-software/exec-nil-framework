@@ -40,8 +40,10 @@ static std::optional<std::string> promoted_scalar_join(const std::string &left,
 }
 
 type_checker::type_checker(bool collect_semantics,
-                           std::optional<completion_request> completion)
-    : collect_semantics_(collect_semantics), completion_request_(std::move(completion)) {
+                           std::optional<completion_request> completion,
+                           std::optional<signature_request> signature)
+    : collect_semantics_(collect_semantics), completion_request_(std::move(completion)),
+      signature_request_(std::move(signature)) {
   for (const auto *name : {"owned", "borrow", "borrow_mut"})
     symbols_.insert_symbol_with_context(name, symbol_kind::type_symbol, nullptr,
         std::nullopt, false, visibility_kind::visibility_public, std::nullopt);
@@ -293,6 +295,134 @@ void type_checker::capture_completion(const ast_identifier_expr &expression) {
   }
 }
 
+void type_checker::capture_member_completion(
+    const ast_member_access_expr &expression, const type_info &receiver) {
+  if (!completion_request_ || !expression.name_span) return;
+  const auto &request = *completion_request_;
+  const auto span = *expression.name_span;
+  const auto &path = expression.source_file.empty() ? diagnostic_source_file_ : expression.source_file;
+  if (path != request.path || !span.length || request.cursor <= span.start ||
+      request.cursor - span.start > span.length) return;
+  if (completion_) {
+    completion_->available = false;
+    completion_->candidates.clear();
+    return;
+  }
+  if (!diagnostics_.empty() || !semantics_.available) return;
+
+  // A type/namespace expression has different callable rules from a value.
+  // Leave those positions to the structural provider until they have their
+  // own query contract; do not mistake a same-named local for the type.
+  if (expression.object->kind == ast_node_kind::identifier_expr_node) {
+    const auto &id = static_cast<const ast_identifier_expr &>(*expression.object);
+    const symbol *binding = symbols_.lookup_non_global(id.name);
+    if (!binding) binding = symbols_.lookup(resolve_type(id.name).name);
+    if (binding && binding->kind == symbol_kind::type_symbol) return;
+  }
+
+  auto parts = parse_generic_type_string(resolve_type(receiver.name).name);
+  const bool wrapped_receiver = parts.base_name == "ref" || parts.base_name == "ptr";
+  for (unsigned depth = 0; depth < 32 &&
+      (parts.base_name == "ref" || parts.base_name == "ptr") && parts.type_args.size() == 1; ++depth)
+    parts = parse_generic_type_string(resolve_type(parts.type_args.front()).name);
+  const symbol *owner = symbols_.lookup(parts.base_name);
+  if (!owner || !owner->defining_node) {
+    if (const auto imported = resolve_type_name_with_imports(parts.base_name)) {
+      const symbol *declared = symbols_.lookup(*imported);
+      if (declared && declared->kind == symbol_kind::type_symbol && declared->defining_node)
+        owner = declared;
+    }
+  }
+  if (!owner || owner->kind != symbol_kind::type_symbol) return;
+  const auto node_kind = owner->defining_node ? owner->defining_node->kind : ast_node_kind::program_node;
+  const bool record = node_kind == ast_node_kind::struct_decl_node;
+  const bool class_type = node_kind == ast_node_kind::class_decl_node;
+  if (!record && !class_type && (owner->defining_node || owner->members.empty())) return;
+  completion_ = completion_result{true, path, expression.member_name, span, {}, true};
+  auto &result = *completion_;
+
+  std::set<std::string> names;
+  for (const auto &[name, binding] : owner->members) names.insert(name);
+  if (record)
+    for (const auto &field : static_cast<const ast_struct_decl &>(*owner->defining_node).fields)
+      names.insert(field.name);
+  if (class_type) {
+    std::set<const ast_node *> visited;
+    std::function<void(const symbol &)> collect = [&](const symbol &type) {
+      if (!visited.insert(type.defining_node).second || names.size() > 32768) return;
+      const auto &decl = static_cast<const ast_class_decl &>(*type.defining_node);
+      for (const auto &field : decl.fields) names.insert(field.name);
+      for (const auto &method : decl.methods) names.insert(method->name);
+      for (const auto &base : decl.base_classes)
+        if (const symbol *parent = resolve_class_symbol(base)) collect(*parent);
+    };
+    collect(*owner);
+  }
+  if (names.size() > 32768) { result.available = false; return; }
+
+  std::size_t bytes = 0;
+  for (const auto &name : names) {
+    const ast_node *declaration = nullptr;
+    std::optional<source_span> declaration_span;
+    std::string kind;
+    if (class_type) {
+      const auto before = diagnostics_.size();
+      const auto selected = resolve_class_member(*owner, name, expression.line);
+      const bool ambiguous = diagnostics_.size() != before;
+      diagnostics_.resize(before);
+      if (ambiguous) continue;
+      if (selected.field) {
+        declaration = selected.owner->defining_node;
+        declaration_span = selected.field->name_span;
+        kind = "field";
+      } else if (selected.method) {
+        if (wrapped_receiver || !selected.method->generic_params.empty() ||
+            !owner->generic_params.empty() ||
+            (!selected.method->is_public() && current_class_name_ != selected.owner->name) ||
+            selected.method->params.empty() || selected.method->params.front().name != "self" ||
+            std::any_of(selected.method->params.begin(), selected.method->params.end(),
+                [](const ast_param &parameter) { return parameter.is_variadic; })) continue;
+        declaration = selected.method;
+        declaration_span = selected.method->name_span;
+        kind = "method";
+      }
+    }
+    if (!declaration) {
+      const auto member = owner->members.find(name);
+      if (member != owner->members.end()) {
+        const auto &binding = member->second;
+        if (wrapped_receiver || binding.kind != symbol_kind::function_symbol ||
+            !is_symbol_visible(&binding, current_module_.value_or("")) ||
+            !binding.defining_node) continue;
+        declaration = binding.defining_node;
+        declaration_span = declaration->name_span;
+        kind = "method";
+      } else if (record) {
+        for (const auto &field : static_cast<const ast_struct_decl &>(*owner->defining_node).fields)
+          if (field.name == name) {
+            declaration = owner->defining_node;
+            declaration_span = field.name_span;
+            kind = "field";
+            break;
+          }
+      }
+    }
+    if (!declaration || !declaration_span) continue;
+    const auto before = diagnostics_.size();
+    const auto type = resolve_member_type(receiver, name, expression.line);
+    const bool invalid = diagnostics_.size() != before;
+    diagnostics_.resize(before);
+    if (!type || invalid) continue;
+    const auto &declaration_path = declaration->source_file;
+    if (declaration_path.empty()) continue;
+    bytes += name.size() + kind.size() + type->size() + declaration_path.size();
+    if (bytes > 4 * 1024 * 1024 || result.candidates.size() >= 32768) {
+      result.available = false; result.candidates.clear(); return;
+    }
+    result.candidates.push_back({name, kind, *type, declaration_path, *declaration_span});
+  }
+}
+
 void type_checker::disable_semantics() {
   semantics_.available = false;
   semantics_.symbols.clear();
@@ -376,7 +506,7 @@ void type_checker::semantic_reference_to(const ast_node &node,
 bool type_checker::check(ast_program &program) {
   // Every check is a fresh semantic session. In particular, AST addresses
   // must never be remembered process-wide or across reused checker instances.
-  *this = type_checker(collect_semantics_, completion_request_);
+  *this = type_checker(collect_semantics_, completion_request_, signature_request_);
   program.accept(*this);
   auto ownership = check_ownership(program);
   for (const auto &diagnostic : ownership.diagnostics)
@@ -1291,7 +1421,7 @@ std::vector<ast_struct_field> type_checker::class_fields(
 // Resolve the type of a member in a generic struct
 std::optional<std::string>
 type_checker::resolve_member_type(const type_info &struct_type,
-                                  const std::string &member_name) {
+                                  const std::string &member_name, int line) {
   // Recursion depth guard to prevent infinite loops
   static thread_local int rmt_depth = 0;
   rmt_depth++;
@@ -1313,7 +1443,7 @@ type_checker::resolve_member_type(const type_info &struct_type,
   // Handle 'Self' type alias in method context
   if (parts.base_name == "Self" && current_class_name_.has_value()) {
     type_info replacement{*current_class_name_, false};
-    return resolve_member_type(replacement, member_name);
+    return resolve_member_type(replacement, member_name, line);
   }
 
   if (ny::is_debug_enabled()) {
@@ -1335,13 +1465,13 @@ type_checker::resolve_member_type(const type_info &struct_type,
     // We assume inner type string is valid; resolve_type usually returns
     // canonical but here we might have raw string. Ideally resolve it first.
     type_info inner_info = resolve_type(parts.type_args[0]);
-    return resolve_member_type(inner_info, member_name);
+    return resolve_member_type(inner_info, member_name, line);
   }
 
   // Auto-dereference for ptr<T>: treat member access on ptr<T> as access on T
   if (parts.base_name == "ptr" && !parts.type_args.empty()) {
     type_info inner_info = resolve_type(parts.type_args[0]);
-    return resolve_member_type(inner_info, member_name);
+    return resolve_member_type(inner_info, member_name, line);
   }
 
   // Impl-level generic parameters are declared on the surrounding impl rather
@@ -1397,6 +1527,11 @@ type_checker::resolve_member_type(const type_info &struct_type,
     if (const symbol *type_sym = symbols_.lookup(base_info.name)) {
       const auto extended = type_sym->members.find(member_name);
       if (extended != type_sym->members.end()) {
+        if (!is_symbol_visible(&extended->second, current_module_.value_or(""))) {
+          add_error(line, "Method '" + base_info.name + "." + member_name + "' is private to module '" +
+                          extended->second.module.value_or("<unknown>") + "'");
+          return std::nullopt;
+        }
         if (extended->second.type_name)
           return instantiate_generic_type(*extended->second.type_name,
                                           {{"Self", class_symbol->name}});
@@ -1496,6 +1631,11 @@ type_checker::resolve_member_type(const type_info &struct_type,
     // fields)
     auto mem_it = struct_sym->members.find(member_name);
     if (mem_it != struct_sym->members.end()) {
+      if (!is_symbol_visible(&mem_it->second, current_module_.value_or(""))) {
+        add_error(line, "Method '" + base_info.name + "." + member_name + "' is private to module '" +
+                        mem_it->second.module.value_or("<unknown>") + "'");
+        return std::nullopt;
+      }
       if (mem_it->second.type_name) {
         // Member tables store declaration signatures, not concrete receiver
         // types. Preserve vec<u8>.get -> Option<u8> (and nested equivalents)
@@ -1707,7 +1847,7 @@ type_checker::resolve_member_type(const type_info &struct_type,
         auto base_parts = parse_generic_type_string(base);
         type_info base_info = {base_parts.base_name, false}; // simplified
 
-        auto res = resolve_member_type(base_info, member_name);
+        auto res = resolve_member_type(base_info, member_name, line);
         if (res.has_value()) {
           return res;
         }
@@ -1719,6 +1859,11 @@ type_checker::resolve_member_type(const type_info &struct_type,
   std::string mangled_method_name = parts.base_name + "__" + member_name;
   const symbol *method_sym = symbols_.lookup(mangled_method_name);
   if (method_sym && method_sym->kind == symbol_kind::function_symbol) {
+    if (!is_symbol_visible(method_sym, current_module_.value_or(""))) {
+      add_error(line, "Method '" + parts.base_name + "." + member_name + "' is private to module '" +
+                      method_sym->module.value_or("<unknown>") + "'");
+      return std::nullopt;
+    }
     // Return the method's return type (or 'any' if unknown)
     if (method_sym->type_name) {
       return *method_sym->type_name;
@@ -2251,7 +2396,7 @@ void type_checker::visit(ast_program &p) {
 
         symbols_.insert_symbol_with_context(
             full_name, symbol_kind::function_symbol, method.get(),
-            method->return_type, false, visibility_kind::visibility_public,
+            method->return_type, false, method->get_visibility(),
             module_ctx, method->generic_params, method->params);
       }
     } else if (decl && decl->kind == ast_node_kind::trait_decl_node) {
@@ -3401,6 +3546,8 @@ void type_checker::visit(ast_member_access_expr &e) {
   }
   type_info obj_type = *last_expr_type_;
 
+  capture_member_completion(e, obj_type);
+
   if (const symbol *class_symbol = resolve_class_symbol(obj_type.name)) {
     const auto member = resolve_class_member(*class_symbol, e.member_name, e.line);
     if (member.method) {
@@ -3434,7 +3581,7 @@ void type_checker::visit(ast_member_access_expr &e) {
   }
 
   // Resolve member type
-  auto member_type_name = resolve_member_type(obj_type, e.member_name);
+  auto member_type_name = resolve_member_type(obj_type, e.member_name, e.line);
   if (!member_type_name) {
     add_error(e.line, "Type '" + obj_type.name + "' has no member '" +
                           e.member_name + "'");
@@ -4197,6 +4344,113 @@ bool type_checker::check_runtime_primitive(ast_call_expr &e) {
   return true;
 }
 
+bool type_checker::select_signature_call(const ast_call_expr &call) {
+  if (!signature_request_ || !call.argument_span) return false;
+  const auto &request = *signature_request_;
+  const auto span = *call.argument_span;
+  if (call.source_file != request.path || request.cursor < span.start ||
+      request.cursor - span.start > span.length) return false;
+  // Enter every matching parsed call, including unresolved calls. Otherwise
+  // an unknown inner callee could incorrectly show its outer call's signature.
+  if (signature_ && signature_->span.length < span.length) return false;
+  const bool first = signature_visits_.emplace(span.start, span.length).second;
+  signature_ = signature_result{};
+  signature_->path = call.source_file;
+  signature_->span = span;
+  return first && diagnostics_.empty();
+}
+
+void type_checker::capture_signature(const ast_call_expr &call, const symbol &binding,
+                                     std::size_t parameter_offset, bool eligible) {
+  if (!eligible || !signature_ || !call.argument_span ||
+      signature_->span.start != call.argument_span->start ||
+      signature_->span.length != call.argument_span->length ||
+      !binding.defining_node || !binding.defining_node->name_span ||
+      !is_symbol_visible(&binding, current_module_.value_or(""))) return;
+  const auto &node = *binding.defining_node;
+  // Only a lexical variable may inherit its current body's source identity.
+  // An imported/generated function without provenance is never attributed to
+  // the caller, even if a coincidental token there has the same spelling.
+  if (node.source_file.empty() && node.kind != ast_node_kind::variable_decl_node) return;
+  auto &result = *signature_;
+  result.declaration_path = node.source_file.empty() ? diagnostic_source_file_ : node.source_file;
+  result.declaration_span = node.name_span;
+  if (node.kind == ast_node_kind::function_decl_node) {
+    const auto &function = static_cast<const ast_function_decl &>(node);
+    if (parameter_offset > binding.params.size() || binding.params.size() - parameter_offset > 256)
+      return;
+    result.name = function.name;
+    result.return_type = binding.type_name.value_or("void");
+    for (std::size_t index = parameter_offset; index < binding.params.size(); ++index) {
+      const auto &parameter = binding.params[index];
+      result.parameters.push_back({parameter.name, parameter.type_name.value_or("any"),
+                                   parameter.is_variadic, parameter.name_span});
+    }
+  } else if (node.kind == ast_node_kind::variable_decl_node && binding.type_name &&
+             binding.checked_callable_parameters && !binding.is_mut) {
+    const auto &contract = *binding.checked_callable_parameters;
+    const auto &type = *binding.type_name;
+    if (type.rfind("fn(", 0) != 0 || contract.names.size() > 256 || contract.variadic) return;
+    std::vector<std::string> types;
+    std::size_t start = 3, close = std::string::npos;
+    unsigned parens = 1, angles = 0;
+    for (std::size_t index = start; index < type.size(); ++index) {
+      const char value = type[index];
+      if (value == '(') ++parens;
+      else if (value == ')' && --parens == 0) {
+        if (index > start) types.push_back(type.substr(start, index - start));
+        close = index;
+        break;
+      } else if (value == '<') ++angles;
+      else if (value == '>' && index && type[index - 1] != '-' && angles) --angles;
+      else if (value == ',' && parens == 1 && angles == 0) {
+        types.push_back(type.substr(start, index - start));
+        start = index + 1;
+      }
+    }
+    if (close == std::string::npos || types.size() != contract.names.size()) return;
+    const auto arrow = type.find("->", close);
+    if (arrow == std::string::npos) return;
+    const auto trim = [](std::string text) {
+      const auto begin = text.find_first_not_of(" \t");
+      if (begin == std::string::npos) return std::string();
+      return text.substr(begin, text.find_last_not_of(" \t") - begin + 1);
+    };
+    result.name = static_cast<const ast_variable_decl &>(node).name;
+    result.return_type = trim(type.substr(arrow + 2));
+    for (std::size_t index = 0; index < types.size(); ++index)
+      result.parameters.push_back({contract.names[index], trim(types[index]), false, std::nullopt});
+  } else return;
+  if (result.return_type.empty() || result.name.empty()) return;
+  std::size_t slot = 0;
+  for (std::size_t index = 0; index < call.argument_starts.size(); ++index)
+    if (call.argument_starts[index] <= signature_request_->cursor) slot = index;
+  const auto folded = [](const std::string &name) {
+    std::string key;
+    for (unsigned char c : name)
+      if (c != '-' && c != '_') key += static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
+    return key;
+  };
+  if (!call.source_argument_names.empty() && slot < call.source_argument_names.size()) {
+    const auto &label = call.source_argument_names[slot];
+    if (!label.empty()) {
+      bool ambiguous = false;
+      for (std::size_t index = 0; index < result.parameters.size(); ++index)
+        if (!result.parameters[index].variadic && folded(result.parameters[index].name) == folded(label)) {
+          if (result.active_parameter) ambiguous = true;
+          result.active_parameter = index;
+        }
+      if (ambiguous) result.active_parameter.reset();
+    } else if (!result.parameters.empty() && result.parameters.back().variadic)
+      result.active_parameter = result.parameters.size() - 1;
+  } else if (slot < result.parameters.size()) result.active_parameter = slot;
+  else if (!result.parameters.empty() && result.parameters.back().variadic)
+    result.active_parameter = result.parameters.size() - 1;
+  std::size_t bytes = result.name.size() + result.return_type.size();
+  for (const auto &parameter : result.parameters) bytes += parameter.name.size() + parameter.type.size();
+  result.available = bytes <= 1024 * 1024;
+}
+
 static callable_parameter_contract callable_parameters(
     const std::vector<ast_param> &parameters, std::size_t offset = 0) {
   callable_parameter_contract result;
@@ -4207,6 +4461,8 @@ static callable_parameter_contract callable_parameters(
 }
 
 void type_checker::visit(ast_call_expr &e) {
+  const bool signature_selected = select_signature_call(e);
+  const auto signature_errors = diagnostics_.size();
   bool named_arguments_handled = e.argument_names.empty();
   struct named_argument_guard {
     std::function<void()> check;
@@ -4249,6 +4505,7 @@ void type_checker::visit(ast_call_expr &e) {
   if (e.callee && !bounded_receiver)
     e.callee->accept(*this);
   checking_class_call_ = saved_class_call;
+  const bool signature_eligible = signature_selected && diagnostics_.size() == signature_errors;
 
   // Visit arguments first to resolve their types for inference
   std::vector<type_info> arg_types;
@@ -4479,6 +4736,8 @@ void type_checker::visit(ast_call_expr &e) {
         symbol callable(method.name, symbol_kind::function_symbol,
             const_cast<ast_function_decl *>(&method), method.return_type, false,
             method.get_visibility(), selected.owner->module, method.generic_params, method.params);
+        capture_signature(e, callable, 1, signature_eligible &&
+                          (method.is_public() || current_class_name_ == selected.owner->name));
         if (!order_named_arguments(callable_parameters(method.params, 1))) return;
         validate_call_arity(callable, e.args.size() + 1, receiver->name + "." + method.name);
         apply_argument_array_context(callable, substitutions, 1);
@@ -4567,6 +4826,7 @@ void type_checker::visit(ast_call_expr &e) {
                          const_cast<ast_function_decl *>(selected), selected->return_type,
                          false, selected->get_visibility(), selected_module,
                          selected->generic_params, selected->params);
+    capture_signature(e, method_symbol, 0, signature_eligible);
     if (!order_named_arguments(callable_parameters(selected->params))) return;
     validate_call_arity(method_symbol, e.args.size(), bounded_receiver->name + "." + selected->name);
     apply_argument_array_context(method_symbol, selected_substitutions);
@@ -4650,6 +4910,7 @@ void type_checker::visit(ast_call_expr &e) {
                 symbols_.lookup(canonical_type + "__" + ma->member_name);
 
           if (method_sym && method_sym->kind == symbol_kind::function_symbol) {
+            capture_signature(e, *method_sym, 0, signature_eligible);
             if (!order_named_arguments(callable_parameters(method_sym->params))) return;
             validate_call_arity(*method_sym, e.args.size(),
                                 type_id->name + "." + ma->member_name);
@@ -4735,6 +4996,7 @@ void type_checker::visit(ast_call_expr &e) {
         }
 
         if (method_sym && method_sym->kind == symbol_kind::function_symbol) {
+          capture_signature(e, *method_sym, 0, signature_eligible);
           if (!order_named_arguments(callable_parameters(method_sym->params))) return;
           validate_call_arity(*method_sym, e.args.size(),
                               type_id->name + "." + ma->member_name);
@@ -4844,6 +5106,7 @@ void type_checker::visit(ast_call_expr &e) {
     if (s && (s->kind == symbol_kind::function_symbol ||
               s->kind == symbol_kind::variable_symbol)) {
       semantic_reference_to(*id, id->name, *s);
+      capture_signature(e, *s, 0, signature_eligible);
       // Check if it's a direct function symbol
       if (s->kind == symbol_kind::function_symbol) {
         if (!order_named_arguments(callable_parameters(s->params))) return;
@@ -5233,6 +5496,7 @@ void type_checker::visit(ast_call_expr &e) {
       if (s && s->kind == symbol_kind::function_symbol) {
         const bool has_receiver_parameter =
             !s->params.empty() && s->params.front().name == "self";
+        capture_signature(e, *s, has_receiver_parameter ? 1U : 0U, signature_eligible);
         if (!order_named_arguments(callable_parameters(
                 s->params, has_receiver_parameter ? 1U : 0U))) return;
         validate_call_arity(*s,
@@ -6869,8 +7133,30 @@ void type_checker::register_trait_implementation(ast_impl_decl &p) {
   for (const auto &existing : trait_impls_)
     if (existing.trait_name == trait_name && existing.target_type == target)
       add_error(p.line, "Duplicate trait implementation for '" + target + "'");
-  if (diagnostics_.size() == initial_errors)
+  if (diagnostics_.size() == initial_errors) {
     trait_impls_.push_back(std::move(implementation));
+    for (const auto &required : trait.methods) {
+      const auto *method = methods.at(required->name);
+      const auto access = method->get_visibility() == visibility_kind::visibility_private
+          ? trait_symbol->visibility : method->get_visibility();
+      trait_method_visibility_[method] = access;
+      const auto update = [&](symbol *binding) {
+        if (binding && binding->defining_node == method) {
+          binding->visibility = access;
+          binding->is_pub = access == visibility_kind::visibility_public;
+        }
+      };
+      // All predeclared entry points must agree with the checked contract.
+      // Do not promote additional helpers merely because they share an impl.
+      update(symbols_.lookup_mut(target_parts.base_name + "__" + method->name));
+      const auto written = parse_generic_type_string(p.target_type).base_name + "__" + method->name;
+      update(symbols_.lookup_mut(impl_module ? *impl_module + "::" + written : written));
+      if (symbol *owner = symbols_.lookup_mut(target_parts.base_name)) {
+        const auto found = owner->members.find(method->name);
+        if (found != owner->members.end()) update(&found->second);
+      }
+    }
+  }
   symbols_.leave_scope();
 }
 
@@ -7012,6 +7298,9 @@ void type_checker::visit(ast_impl_decl &p) {
 
   // Visit methods and register them with mangled names
   for (auto &method : p.methods) {
+    const auto trait_access = trait_method_visibility_.find(method.get());
+    const auto access = trait_access == trait_method_visibility_.end()
+        ? method->get_visibility() : trait_access->second;
     method->accept(*this);
     // Register method as TypeName__methodName for global lookup if needed
     // Use resolved target name (qualified) but strip generics
@@ -7022,8 +7311,8 @@ void type_checker::visit(ast_impl_decl &p) {
      * "'\n"; */
     symbols_.insert_symbol_with_context(
         mangled_name, symbol_kind::function_symbol, method.get(),
-        method->return_type, false, visibility_kind::visibility_public,
-        std::nullopt, method->generic_params, method->params);
+        method->return_type, false, access,
+        current_module_, method->generic_params, method->params);
 
     // Register method in the Type's member map for dot-operator resolution
     // We must handle generic types (e.g. "Box<T>" -> "Box") to find the base
@@ -7045,7 +7334,7 @@ void type_checker::visit(ast_impl_decl &p) {
     if (type_sym && type_sym->kind == symbol_kind::type_symbol) {
       symbol method_sym(method->name, symbol_kind::function_symbol,
                         method.get(), method->return_type, false,
-                        method->get_visibility(), std::nullopt,
+                        access, current_module_,
                         method->generic_params, method->params);
       type_sym->members[method->name] = method_sym;
       /* std::cerr << "[visit_impl] Registered member '" << method->name << "'

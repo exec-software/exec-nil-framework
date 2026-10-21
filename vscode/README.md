@@ -24,8 +24,10 @@ the compiler-backed source debugger.
 - Snippets for modules, functions, data types, control flow, faults, tests,
   interop, documentation, and `@ai_context` metadata.
 - A `nillsp` client using standard LSP `Content-Length` framing over stdio.
-- Compiler-backed completion for visible locals, parameters and imported functions
-  at supported Ny and Matrix identifier expressions, including unresolved prefixes.
+- Compiler-backed completion for visible locals, parameters, imported functions
+  and supported receiver fields/methods, including unresolved prefixes.
+- Compiler-backed signature help for parsed calls, with Matrix named-argument
+  selection and verified imported/callback parameter contracts.
 - Tolerant completion, hover, and document outline for Matrix declarations,
   paragraph parameters, local bindings, and known receiver members.
 - Compiler-resolved Go to Definition for variables, parameters and direct/imported
@@ -333,19 +335,43 @@ imports. This includes partially typed names that produce an unresolved-name
 diagnostic. Candidates preserve Matrix folding and escaped names; accepting one
 replaces the full original token, including any suffix after the cursor.
 
+Member prefixes use the checked receiver type, including supported imported
+records/classes, inheritance and generic substitutions. Field and method icons
+distinguish the suggestions; private or ambiguous members are not advertised.
+Blank member positions and unsupported static/builtin contexts retain fallback.
+
 Completion uses a separate `--completion-at` query and does not publish diagnostics.
 The extension validates every consumed source against the current buffers or disk,
 rejects stale responses and watches dependencies. The query is bounded to 256
 sources, 4,096 candidates and 4 MiB of JSON. Function type details describe return
 types, not full signatures, and candidates are not filtered by an expected type.
 
-Blank positions, member/type contexts, parse or import failures, earlier checker
+Blank positions, unsupported member/type contexts, parse or import failures, earlier checker
 failures, ambiguous repeated generic occurrences and binary dependencies retain
 the tolerant language-server fallback. When compiler candidates are available,
 its value bindings take precedence while language keywords and snippets remain.
 An older SDK without the query also retains fallback completion. This is an initial
-identifier-completion profile; signature help and general incomplete-code recovery
-remain future work.
+identifier-completion profile; general incomplete-code recovery remains future work.
+
+## Compiler signature help
+
+Signature help uses a separate `--signature-at` query at parsed call arguments,
+including empty Ny parentheses and Matrix named arguments. It follows the actual
+selected function or supported method, including imports and proven immutable
+callbacks. Matrix labels select their declaration parameter even when arguments
+are written in a different order. Instance methods omit `self`.
+
+The innermost call takes precedence. Unresolved arguments can still show a resolved
+signature; an unresolved callee cannot inherit an outer signature. Unknown named
+labels retain the full signature text without guessing which parameter to highlight.
+Generic signatures display declaration types, not inferred types for unfinished calls.
+
+The query can also show Matrix help immediately after a bare `with` while retaining
+the source syntax error. Other parse errors, missing Ny closing parentheses, earlier
+checker errors, inaccessible/unsupported callables and binary dependencies produce
+no signature. All source snapshots are validated, stale requests are cancelled, and
+temporary compiler failures can be retried without editing the document. Older SDKs
+without `--signature-at` provide no compiler signature help.
 
 ## Current language-server limits
 

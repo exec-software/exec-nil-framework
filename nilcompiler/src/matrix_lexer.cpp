@@ -483,7 +483,7 @@ std::vector<token> lexer::scan() {
       advance();
       // A period between names is member access; a period that ends a
       // sentence is a statement terminator.
-      if (name_start(static_cast<unsigned char>(peek()))) {
+      if (name_start(static_cast<unsigned char>(peek())) || peek() == '`') {
         tokens.push_back(make(token_kind::dot, ".", line, col));
       } else {
         tokens.push_back(make(token_kind::statement_end, ".", line, col));

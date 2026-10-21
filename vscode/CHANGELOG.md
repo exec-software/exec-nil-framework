@@ -4,6 +4,12 @@ All notable changes to the NIL Framework VS Code extension are documented here.
 
 ## 1.0.0-rc.1
 
+- Extend compiler completion to supported receiver fields and methods, including
+  imported declarations, generic substitutions and accessibility checks.
+- Add compiler-backed signature help with original argument slots, Matrix named
+  parameter selection, nested calls, imported functions and immutable callbacks.
+  Retain syntax diagnostics during narrow bare-`with` query recovery.
+
 - Add compiler-backed identifier completion for visible locals, parameters and
   imported functions in Ny and Matrix, including unresolved typed prefixes.
   Validate complete source snapshots and replace whole tokens; retain tolerant

@@ -35,6 +35,9 @@ struct analysis_session {
   std::optional<semantic_index> semantics;
   std::optional<std::size_t> completion_cursor;
   std::optional<completion_result> completion;
+  std::optional<std::size_t> signature_cursor;
+  std::optional<signature_result> signature;
+  bool signature_recovered = false;
   bool warnings_as_errors = false;
   std::set<std::string> disabled_rules;
   std::size_t reflection_bytes = 0;
@@ -55,6 +58,7 @@ struct analysis_session {
   std::string json(bool success) const;
   std::string semantic_json() const;
   std::string completion_json() const;
+  std::string signature_json() const;
   std::string companion_source() const;
   bool workspace_source_exists(const std::string &path) const;
   std::optional<std::string> read_workspace_source(const std::string &path);

@@ -36,5 +36,25 @@ struct completion_result {
   std::string path, name;
   source_span span;
   std::vector<completion_candidate> candidates;
+  // Member spellings are resolved through the receiver, never the Matrix
+  // parser's page-wide map of unqualified declaration names.
+  bool member = false;
+};
+struct signature_request {
+  std::string path;
+  std::size_t cursor;
+};
+struct signature_parameter {
+  std::string name, type;
+  bool variadic = false;
+  std::optional<source_span> span;
+};
+struct signature_result {
+  bool available = false;
+  std::string path, name, declaration_path, return_type;
+  source_span span;
+  std::optional<source_span> declaration_span;
+  std::vector<signature_parameter> parameters;
+  std::optional<std::size_t> active_parameter;
 };
 } // namespace ny

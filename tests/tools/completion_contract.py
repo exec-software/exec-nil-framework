@@ -66,7 +66,7 @@ def main():
                     assert snapshots[str(root / path)] == contents
             assert len(completion['items']) <= 4096
             assert len({item['insert_text'] for item in completion['items']}) == len(completion['items'])
-            assert all(item['kind'] in ('function', 'variable', 'parameter') for item in completion['items'])
+            assert all(item['kind'] in ('function', 'variable', 'parameter', 'field', 'method') for item in completion['items'])
             return completion
 
         def items(value):
@@ -162,7 +162,7 @@ def main():
         query(unicode_query, name='unicode_boundary.matrix', available=False, offset=cursor)
 
         # Parse/import/earlier-checker failures and unsupported positions must
-        # remain explicit nulls. No heuristic type/member/comment completion.
+        # remain explicit nulls. Member completion requires a checked receiver.
         query('fn main( sam|', name='parse.ny', available=False)
         query('import absent_dependency\nfn main() -> i32\nreturn sam|\nend fn\n', name='import_error.ny', available=False)
         query('fn main() -> i32\nprintln(missing)\nlet sample = 7\nreturn sam|\nend fn\n', name='prior_error.ny', available=False)
@@ -170,7 +170,7 @@ def main():
         query('fn main() -> i32\nprintln("sam|")\nreturn 0\nend fn\n', name='literal.ny', status=0, available=False)
         query('fn main() -> sam|\nreturn 0\nend fn\n', name='type.ny', available=False)
         query('fn main() -> i32\nreturn namespace::sam|()\nend fn\n', name='qualified.ny', available=False)
-        query('struct Sample\nitem: i32\nend struct\nfn main() -> i32\nlet box = Sample { item: 4 }\nreturn box.it|\nend fn\n', name='member.ny', available=False)
+        assert set(items(query('struct Sample\nitem: i32\nend struct\nfn main() -> i32\nlet box = Sample { item: 4 }\nreturn box.it|\nend fn\n', name='member.ny'))) == {'item'}
         query('@define SAMPLE 7\nfn main() -> i32\nlet sample = SAMPLE\nreturn sam|\nend fn\n', name='macro.ny', available=False)
         query('fn main() -> i32\nreturn 0|\nend fn\n', name='optional.ny', status=0, enabled=False)
 

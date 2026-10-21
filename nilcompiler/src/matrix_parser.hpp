@@ -60,6 +60,7 @@ namespace matrix {
 
 struct parser_options {
   std::string filename;
+  std::optional<std::size_t> signature_cursor;
 };
 
 class parser {
@@ -77,6 +78,7 @@ public:
     return rich_;
   }
   bool has_errors() const { return !diagnostics_.empty(); }
+  bool recovered_signature_call() const { return recovered_signature_call_; }
 
   // Editor suggestions must pass the same page-wide declaration folding as
   // a newly inserted identifier; expose resolution without parsing a new AST.
@@ -92,6 +94,8 @@ private:
   std::vector<ny::diagnostic> diagnostics_;
   std::vector<matrix::diagnostic> rich_;
   std::string filename_;
+  std::optional<std::size_t> signature_cursor_, signature_blank_start_;
+  bool recovered_signature_call_ = false;
 
   // Folded lookup key -> the NIL symbol fixed by the DECLARATION site.
   // References fold against this, which is what makes 'READ-SENSOR',
@@ -273,7 +277,8 @@ private:
   // Retain named labels for checked callable resolution; parsing does not
   // know which lexical/imported declaration a callee will select.
   std::vector<ny::ast_expr_ptr>
-  parse_with_arguments(std::vector<std::string> &argument_names);
+  parse_with_arguments(std::vector<std::string> &argument_names,
+                       std::vector<std::size_t> &argument_starts);
 };
 
 } // namespace matrix

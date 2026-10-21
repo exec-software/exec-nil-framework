@@ -43,7 +43,7 @@ test("completion rejects malformed identities, offsets, candidates and duplicate
     (v: any) => v.start = 5,
     (v: any) => v.cursor = 5,
     (v: any) => v.cursor = v.start + v.length + 1,
-    (v: any) => v.items[0].kind = "field",
+    (v: any) => v.items[0].kind = "namespace",
     (v: any) => v.items[0].insert_text = "",
     (v: any) => v.items[0].insert_text = "one\ntwo",
     (v: any) => v.items[0].name = "\0",
@@ -51,6 +51,15 @@ test("completion rejects malformed identities, offsets, candidates and duplicate
   ]) {
     const value = fixture(); mutate(value); assert.throws(() => parseCompilerCompletion(value));
   }
+});
+
+test("completion preserves resolved field and method kinds", () => {
+  const value = fixture();
+  value.items = [
+    { name: "count-value", kind: "field", type: "number", insert_text: "count-value" },
+    { name: "count-items", kind: "method", type: "number", insert_text: "count-items" }
+  ];
+  assert.deepEqual(parseCompilerCompletion(value), value);
 });
 
 test("completion bounds sources, candidates and encoded payload without truncating", () => {

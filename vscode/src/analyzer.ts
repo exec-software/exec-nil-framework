@@ -13,6 +13,7 @@ import { expandConfiguredPath } from "./toolchain";
 import { configuredSdkPath, nyConfiguration, resolveConfiguredTool, toolNotFoundMessage } from "./vscodeToolchain";
 import { definitionAt, planRename, referencesAt, renamePreservesBindings, SemanticIndex, SemanticLocation, SemanticSource } from "./semanticModel";
 import { CompilerCompletion, completionByteOffset } from "./completionModel";
+import { CompilerSignature } from "./signatureModel";
 
 const debounceMilliseconds = 400;
 const timeoutMilliseconds = 10_000;
@@ -51,8 +52,17 @@ interface CompletionQuery {
   result: Promise<CompilerCompletion | undefined>;
 }
 
+interface SignatureQuery {
+  job: AnalysisJob;
+  byteOffset: number;
+  controller: AbortController;
+  result: Promise<CompilerSignature | undefined>;
+}
+
+interface AnalysisQuery { kind: "completion" | "signature"; offset: number; }
+
 /** Compiler analysis is independent of nillsp's deliberately partial parser. */
-export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider, vscode.DefinitionProvider, vscode.ReferenceProvider, vscode.RenameProvider, vscode.CompletionItemProvider {
+export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider, vscode.DefinitionProvider, vscode.ReferenceProvider, vscode.RenameProvider, vscode.CompletionItemProvider, vscode.SignatureHelpProvider {
   private readonly diagnostics = vscode.languages.createDiagnosticCollection("nil-analysis");
   private readonly output = vscode.window.createOutputChannel("NIL Framework Analysis");
   private readonly subscriptions: vscode.Disposable[] = [];
@@ -66,6 +76,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
   private compilerQueue: Promise<unknown> = Promise.resolve();
   private readonly renameChecks = new Set<AbortController>();
   private readonly completionQueries = new Map<string, CompletionQuery>();
+  private readonly signatureQueries = new Map<string, SignatureQuery>();
   private active: { job: AnalysisJob; controller: AbortController } | undefined;
   private disposed = false;
   private generation = 0;
@@ -92,6 +103,9 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
       vscode.languages.registerReferenceProvider(languageDocumentSelector, this),
       vscode.languages.registerRenameProvider(languageDocumentSelector, this),
       vscode.languages.registerCompletionItemProvider(languageDocumentSelector, this),
+      vscode.languages.registerSignatureHelpProvider(languageDocumentSelector, this, {
+        triggerCharacters: ["(", ",", " "], retriggerCharacters: [")"]
+      }),
       vscode.commands.registerCommand("ny.applyAnalysisFix", (token: unknown) => this.applyFix(token)),
       vscode.commands.registerCommand("ny.analyzeCurrentFile", async () => {
         const document = vscode.window.activeTextEditor?.document;
@@ -187,6 +201,8 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     const key = uri.toString();
     this.completionQueries.get(key)?.controller.abort();
     this.completionQueries.delete(key);
+    this.signatureQueries.get(key)?.controller.abort();
+    this.signatureQueries.delete(key);
     this.semantics.delete(key);
     const timer = this.timers.get(key);
     if (timer) clearTimeout(timer);
@@ -311,14 +327,14 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     return result ? this.publish(job, result, signal) : false;
   }
 
-  private analyzeSnapshot(job: AnalysisJob, signal: AbortSignal, inputOverride?: string, completionAt?: number): Promise<AnalysisResult | undefined> {
-    // Speculative rename checks share the same bounded compiler queue as live diagnostics.
-    const task = this.compilerQueue.then(() => this.runAnalysis(job, signal, inputOverride, completionAt));
+  private analyzeSnapshot(job: AnalysisJob, signal: AbortSignal, inputOverride?: string, query?: AnalysisQuery): Promise<AnalysisResult | undefined> {
+    // Editor queries and speculative rename checks share the live-analysis queue.
+    const task = this.compilerQueue.then(() => this.runAnalysis(job, signal, inputOverride, query));
     this.compilerQueue = task.catch(() => undefined);
     return task;
   }
 
-  private async runAnalysis(job: AnalysisJob, signal: AbortSignal, inputOverride?: string, completionAt?: number): Promise<AnalysisResult | undefined> {
+  private async runAnalysis(job: AnalysisJob, signal: AbortSignal, inputOverride?: string, query?: AnalysisQuery): Promise<AnalysisResult | undefined> {
     if (!this.current(job) || signal.aborted) return undefined;
     const context = this.contextUri(job.document);
     const project = projectForResource(context);
@@ -341,8 +357,8 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     this.watchImportRoots([...roots, ...(sdkRoot ? [sdkRoot] : [])]);
     const invocation = analysisInvocation(tool.executable, job.source, sdkRoot,
       !project && configuration.get<boolean>("compiler.noStdlib", false), roots, project?.analysis, !project);
-    const arguments_ = completionAt === undefined ? invocation.args :
-      [...invocation.args.filter(argument => argument !== "--semantic-index"), "--completion-at", String(completionAt)];
+    const arguments_ = query === undefined ? invocation.args :
+      [...invocation.args.filter(argument => argument !== "--semantic-index"), `--${query.kind}-at`, String(query.offset)];
     const input = inputOverride ?? await this.workspaceInput(job);
     const cwd = await this.workingDirectory(project?.directory ?? path.dirname(job.source));
     if (signal.aborted || !this.current(job)) return undefined;
@@ -605,7 +621,8 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     if (!this.enabled(document) || token.isCancellationRequested) return undefined;
     const offset = document.offsetAt(position);
     const source = document.getText();
-    // Member/qualified/empty insertion contexts retain the tolerant provider.
+    // Empty insertion contexts retain the tolerant provider; typed member
+    // prefixes are now resolved by the compiler along with lexical values.
     if (!offset || /[\s.:]/.test(source[offset - 1]!)) return undefined;
     const byteOffset = completionByteOffset(source, offset);
     if (byteOffset === undefined || Buffer.byteLength(source, "utf8") > maxAnalysisSourceBytes) return undefined;
@@ -616,7 +633,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
       const job: AnalysisJob = { document, key, text: source, version: document.version, source: this.logicalSource(document),
         generation: this.generation, inputs: [], resolve: () => {} };
       const controller = new AbortController();
-      const result = this.analyzeSnapshot(job, controller.signal, undefined, byteOffset)
+      const result = this.analyzeSnapshot(job, controller.signal, undefined, { kind: "completion", offset: byteOffset })
         .then(result => result?.completion ?? undefined)
         .catch(() => undefined); // An older SDK or unavailable query keeps tolerant completion working.
       query = { job, byteOffset, controller, result };
@@ -635,7 +652,9 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     if (!range || !range.contains(position)) return undefined;
     this.watchSemanticSources(completion);
     const items = completion.items.map(candidate => {
-      const item = new vscode.CompletionItem(candidate.name, candidate.kind === "function" ? vscode.CompletionItemKind.Function : vscode.CompletionItemKind.Variable);
+      const kinds = { function: vscode.CompletionItemKind.Function, method: vscode.CompletionItemKind.Method,
+        field: vscode.CompletionItemKind.Field, variable: vscode.CompletionItemKind.Variable, parameter: vscode.CompletionItemKind.Variable };
+      const item = new vscode.CompletionItem(candidate.name, kinds[candidate.kind]);
       item.insertText = candidate.insert_text;
       item.range = range;
       item.detail = `${candidate.kind}${candidate.type ? `: ${candidate.type}` : ""}`;
@@ -644,6 +663,46 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
       return item;
     });
     return new vscode.CompletionList(items, true);
+  }
+
+  async provideSignatureHelp(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): Promise<vscode.SignatureHelp | undefined> {
+    if (!this.enabled(document) || token.isCancellationRequested) return undefined;
+    const source = document.getText();
+    const byteOffset = completionByteOffset(source, document.offsetAt(position));
+    if (byteOffset === undefined || Buffer.byteLength(source, "utf8") > maxAnalysisSourceBytes) return undefined;
+    const key = document.uri.toString();
+    let query = this.signatureQueries.get(key);
+    if (!query || query.byteOffset !== byteOffset || !this.current(query.job)) {
+      query?.controller.abort();
+      const job: AnalysisJob = { document, key, text: source, version: document.version, source: this.logicalSource(document),
+        generation: this.generation, inputs: [], resolve: () => {} };
+      const controller = new AbortController();
+      const result = this.analyzeSnapshot(job, controller.signal, undefined, { kind: "signature", offset: byteOffset })
+        .then(result => result?.signature ?? undefined).catch(() => undefined);
+      query = { job, byteOffset, controller, result };
+      this.signatureQueries.set(key, query);
+    }
+    const signature = await query.result;
+    if (!signature && this.signatureQueries.get(key) === query) this.signatureQueries.delete(key);
+    if (!signature || query.controller.signal.aborted || token.isCancellationRequested || !this.current(query.job)) return undefined;
+    const primary = query.job.inputs.find(input => input.document === document);
+    if (!primary || signature.cursor !== byteOffset || path.normalize(signature.path) !== primary.identity ||
+        !await this.validateSemantic(query.job, signature, token)) return undefined;
+    const offsets = createByteRangeMapper(query.job.text)(signature.start, signature.length);
+    const range = offsets && this.semanticRange(query.job.text, offsets.start, offsets.end);
+    if (!range || !range.contains(position)) return undefined;
+    this.watchSemanticSources(signature);
+    const information = new vscode.SignatureInformation(signature.label);
+    // VS Code requires a numeric active parameter. When the compiler cannot
+    // select one (for example an unknown Matrix label), retain the full label
+    // without parameter highlighting instead of guessing parameter zero.
+    information.parameters = signature.active_parameter === null ? [] : signature.parameters.map(parameter =>
+      new vscode.ParameterInformation(parameter.label));
+    const result = new vscode.SignatureHelp();
+    result.signatures = [information];
+    result.activeSignature = 0;
+    result.activeParameter = signature.active_parameter ?? 0;
+    return result;
   }
 
   async provideReferences(document: vscode.TextDocument, position: vscode.Position, context: vscode.ReferenceContext, token: vscode.CancellationToken): Promise<vscode.Location[] | undefined> {
@@ -761,6 +820,8 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     for (const controller of this.renameChecks) controller.abort();
     for (const query of this.completionQueries.values()) query.controller.abort();
     this.completionQueries.clear();
+    for (const query of this.signatureQueries.values()) query.controller.abort();
+    this.signatureQueries.clear();
     for (const timer of this.timers.values()) clearTimeout(timer);
     for (const job of this.pending.values()) job.resolve(false);
     this.timers.clear();

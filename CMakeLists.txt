@@ -1029,6 +1029,14 @@ if(BUILD_TESTING)
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/completion_contract.py"
                 --compiler $<TARGET_FILE:nilcompiler>)
         set_tests_properties(nil.completion PROPERTIES LABELS "analysis;semantic" TIMEOUT 90)
+        add_test(NAME nil.member-completion
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/member_completion_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler>)
+        set_tests_properties(nil.member-completion PROPERTIES LABELS "analysis;semantic" TIMEOUT 120)
+        add_test(NAME nil.signature
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/signature_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler>)
+        set_tests_properties(nil.signature PROPERTIES LABELS "analysis;semantic" TIMEOUT 90)
         add_test(NAME nil.module-context
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/module_context_contract.py"
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
