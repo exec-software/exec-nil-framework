@@ -715,7 +715,10 @@ def validate_binary_nil_bytes(data: bytes) -> Tuple[bool, List[str], Dict[str, A
         (4, 1): ("library", set(range(1, 8))),
         (5, 0): ("executable", {1, 2, 3, 4, 5, 7, 8}),
     }
-    contract = artifact_contracts.get((version, flags))
+    annotates_types = bool(flags & 2)
+    contract = artifact_contracts.get((version, flags & ~2))
+    if annotates_types and version not in (3, 4, 5):
+        contract = None
     if contract is None:
         return (
             False,
@@ -848,6 +851,17 @@ def validate_binary_nil_bytes(data: bytes) -> Tuple[bool, List[str], Dict[str, A
                                 if (not name or "\0" in name or "\0" in value_type
                                         or (kind == "struct" and not value_type)):
                                     raise BinaryReadError("invalid type member")
+                            if annotates_types:
+                                count = _bounded_binary_count(cursor, MAX_PARAMETER_COUNT,
+                                                              kind + " annotation count")
+                                total_members += count
+                                if total_members > MAX_INSTRUCTION_COUNT:
+                                    raise BinaryReadError("total type metadata count exceeds safety limit")
+                                for _ in range(count):
+                                    annotation = cursor.string(kind + " annotation")
+                                    if not annotation.startswith("@") or any(
+                                            ord(c) < 32 or ord(c) == 127 for c in annotation):
+                                        raise BinaryReadError("invalid type annotation")
                 elif cursor.u32() != 0:
                     raise BinaryReadError(
                         "type count is nonzero in a format with no type records"
@@ -973,6 +987,14 @@ def validate_binary_nil_bytes(data: bytes) -> Tuple[bool, List[str], Dict[str, A
                     flags = cursor.u32()
                     if flags > 1:
                         raise BinaryReadError("unsupported class flags")
+                    if annotates_types:
+                        annotations = _bounded_binary_count(cursor, MAX_PARAMETER_COUNT,
+                                                            "class annotation count")
+                        for _ in range(annotations):
+                            annotation = cursor.string("class annotation")
+                            if not annotation.startswith("@") or any(
+                                    ord(c) < 32 or ord(c) == 127 for c in annotation):
+                                raise BinaryReadError("invalid class annotation")
                     base_count = _bounded_binary_count(cursor, MAX_PARAMETER_COUNT, "class base count")
                     bases = [cursor.string("class base") for _ in range(base_count)]
                     method_count = _bounded_binary_count(cursor, MAX_PARAMETER_COUNT, "class method count")

@@ -11,7 +11,7 @@ read everything from analysis_snapshot
 main returns override integer begin paragraph
     variable index as override integer is 0
     repeat while index is less than (analysis_snapshot::count with nothing)
-        value info is analysis_snapshot::declaration with index being index
+        value info is analysis_snapshot::declaration with id being index
         when is-function with info being info then
             when is-public-api with info being info then
                 when (the length of info.name) is at least 5 then

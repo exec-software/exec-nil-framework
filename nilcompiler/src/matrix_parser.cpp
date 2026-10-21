@@ -137,7 +137,12 @@ std::string nil_path(const std::string &written) {
 } // namespace
 
 parser::parser(const std::string &source, const parser_options &opts)
-    : filename_(opts.filename) {
+    : filename_(opts.filename), signature_cursor_(opts.signature_cursor) {
+  if (signature_cursor_ && *signature_cursor_ <= source.size()) {
+    auto start = *signature_cursor_;
+    while (start && (source[start - 1] == ' ' || source[start - 1] == '\t')) --start;
+    signature_blank_start_ = start;
+  }
   lexer lex(source);
   tokens_ = lex.scan();
   prescan_declarations();
@@ -503,6 +508,27 @@ void parser::recover_to_declaration() {
 std::optional<std::string> parser::parse_type() {
   const token &start = peek();
 
+  if (match(kw::tuple)) {
+    if (!expect(kw::of, "after 'tuple'") ||
+        !expect(matrix::token_kind::left_paren, "'('", "before tuple element types"))
+      return std::nullopt;
+    std::string type = "tuple<";
+    size_t count = 0;
+    while (!check(matrix::token_kind::right_paren) && !at_end()) {
+      auto element = parse_type();
+      if (!element) return std::nullopt;
+      if (count++) type += ", ";
+      type += *element;
+      if (!match(matrix::token_kind::comma)) break;
+    }
+    expect(matrix::token_kind::right_paren, "')'", "after tuple element types");
+    if (!count) {
+      error(start, "a tuple requires at least one element type");
+      return std::nullopt;
+    }
+    return type + ">";
+  }
+
   if (match(kw::override)) {
     const token &machine = peek();
     if (const char *reason = rejected_machine_reason(machine.word)) {
@@ -808,7 +834,9 @@ parser::parse_parameters(std::vector<std::string> &names) {
       // Deliberately restricted to a literal atom: an arbitrary expression
       // here would make 'and' ambiguous between another parameter and a
       // boolean operand. Ny rejects omitted arguments anyway.
-      default_value = parse_primary();
+      default_value = (check(kw::negative) || check(kw::minus) ||
+                       check(matrix::token_kind::numeric_sign))
+          ? parse_unary() : parse_primary();
     }
 
     params.emplace_back(name, type, mutable_binding, line, default_value,
@@ -884,7 +912,6 @@ parser::parse_paragraph(bool is_public, int line, const std::string &name,
                            mutable_receiver, line, std::nullopt);
     params.insert(params.begin(), receiver);
   }
-  signatures_[fold_key(name)] = param_names;
 
   const bool body_forbidden = context == paragraph_context::contract_member;
   const bool body_optional = body_forbidden || is_abstract;
@@ -1750,7 +1777,6 @@ parser::finish_intrinsic(bool is_public, int line, const std::string &name,
   if (match(kw::receives)) params = parse_parameters(param_names);
   std::optional<std::string> return_type = std::string("void");
   if (match(kw::returns)) return_type = parse_type();
-  signatures_[fold_key(name)] = param_names;
   skip_terminators();
   auto decl = std::make_shared<ny::ast_function_decl>(
       resolve_name(name), params, return_type, nullptr,
@@ -1793,6 +1819,32 @@ std::shared_ptr<ny::ast_stmt> parser::parse_binding_statement() {
   const bool mutable_binding = peek().is(kw::variable);
   const bool constant_binding = peek().is(kw::constant);
   advance();
+
+  if (match(matrix::token_kind::left_paren)) {
+    auto declaration = std::make_shared<ny::ast_variable_decl>("", nullptr,
+        std::nullopt, mutable_binding, false, line);
+    declaration->is_const = constant_binding;
+    do {
+      if (check(matrix::token_kind::right_paren)) break;
+      if (!peek().is_name()) {
+        expected_name("in tuple destructuring");
+        return nullptr;
+      }
+      const token binding = advance();
+      auto child = std::make_shared<ny::ast_variable_decl>(nil_symbol(binding.lexeme),
+          nullptr, std::nullopt, mutable_binding, false, binding.line);
+      child->name_span = name_span(binding);
+      child->is_const = constant_binding;
+      declaration->tuple_bindings.push_back(std::move(child));
+    } while (match(matrix::token_kind::comma));
+    expect(matrix::token_kind::right_paren, "')'", "after tuple bindings");
+    if (declaration->tuple_bindings.empty())
+      error(previous(), "tuple destructuring requires at least one binding");
+    if (!expect(kw::is, "before the tuple value")) return nullptr;
+    declaration->initializer = parse_expression();
+    skip_terminators();
+    return std::make_shared<ny::ast_decl_stmt>(declaration, line);
+  }
 
   if (!peek().is_name()) {
     expected_name("after the binding keyword");
@@ -1957,6 +2009,24 @@ std::shared_ptr<ny::ast_stmt> parser::parse_repeat() {
 
   if (match(kw::for_)) {
     const bool each = match_word("each");
+    if (each && match(matrix::token_kind::left_paren)) {
+      std::vector<ny::ast_param> bindings;
+      do {
+        if (check(matrix::token_kind::right_paren)) break;
+        if (!peek().is_name()) { expected_name("in tuple loop bindings"); return nullptr; }
+        const auto binding = advance();
+        bindings.emplace_back(nil_symbol(binding.lexeme), std::nullopt, false, binding.line, std::nullopt);
+        bindings.back().name_span = name_span(binding);
+      } while (match(matrix::token_kind::comma));
+      expect(matrix::token_kind::right_paren, "')'", "after tuple loop bindings");
+      if (bindings.empty()) error(previous(), "tuple loop binding requires at least one name");
+      if (!expect(kw::in_, "after tuple loop bindings")) return nullptr;
+      auto iterable = parse_expression();
+      auto body = parse_block(kw::repeat);
+      auto loop = std::make_shared<ny::ast_for_in_stmt>(bindings, iterable, body, line);
+      loop->tuple_pattern = true;
+      return loop;
+    }
     if (!peek().is_name()) {
       expected_name("as the loop variable");
       return nullptr;
@@ -2244,8 +2314,10 @@ ny::ast_expr_ptr parser::parse_multiplicative() {
 
 ny::ast_expr_ptr parser::parse_unary() {
   const int line = peek().line;
-  // Prefix 'minus' is negation, as in English ("minus five").
-  if (match(kw::minus)) {
+  // 'negative' is unary only; 'minus' remains the compatibility spelling.
+  // The lexer emits numeric_sign only when '-' touches the following digits.
+  if (match(kw::negative) || match(kw::minus) ||
+      match(matrix::token_kind::numeric_sign)) {
     auto operand = parse_unary();
     if (operand && operand->kind == ny::ast_node_kind::number_literal_node) {
       auto &number = static_cast<ny::ast_number_literal &>(*operand);
@@ -2266,109 +2338,56 @@ ny::ast_expr_ptr parser::parse_unary() {
   return parse_postfix();
 }
 
-// Named arguments are reordered against the declaration, which is the whole
-// point: a model cannot mis-order them. They lower to positional NIL
-// arguments. Because Ny has no overload resolution, names are checked against
-// the single declaration and never select between candidates.
+// Keep labels and expressions in source order until the checker has selected
+// the callable. A parser name table cannot distinguish imports or shadowing.
 std::vector<ny::ast_expr_ptr>
-parser::parse_with_arguments(const std::vector<std::string> *param_names,
-                             int line) {
+parser::parse_with_arguments(std::vector<std::string> &argument_names,
+                             std::vector<std::size_t> &argument_starts) {
+  const auto &introducer = tokens_[pos_ - 1];
+  argument_starts.push_back(introducer.start + introducer.length);
+  if (signature_blank_start_ && *signature_blank_start_ == argument_starts.front() &&
+      signature_cursor_ && *signature_cursor_ <= peek().start &&
+      (peek().line > introducer.line || peek().kind == token_kind::end_of_file)) {
+    recovered_signature_call_ = true;
+    return {};
+  }
   std::vector<ny::ast_expr_ptr> args;
-
   if (match(kw::nothing)) return args;
-
   if (match(kw::more)) {
     do {
       args.push_back(parse_expression());
-    } while (match(matrix::token_kind::comma));
+    } while (match(matrix::token_kind::comma) &&
+               (argument_starts.push_back(tokens_[pos_ - 1].start + tokens_[pos_ - 1].length), true));
     return args;
   }
-
-  // Named form: '<name> being <expr>', possibly with a trailing 'more' tail.
   if (peek().is_name() && peek(1).is(kw::being)) {
-    std::vector<std::pair<std::string, ny::ast_expr_ptr>> named;
     for (;;) {
       if (match(kw::more)) {
         do {
+          argument_names.emplace_back();
           args.push_back(parse_expression());
-        } while (match(matrix::token_kind::comma));
+        } while (match(matrix::token_kind::comma) &&
+               (argument_starts.push_back(tokens_[pos_ - 1].start + tokens_[pos_ - 1].length), true));
         break;
       }
       if (!peek().is_name()) {
         expected_name("before 'being'");
         break;
       }
-      const std::string name = resolve_name(advance().lexeme);
+      // Labels name the resolved callable's parameters, not local variables.
+      const std::string name = advance().lexeme;
       if (!expect(kw::being, "after an argument name")) break;
-      named.emplace_back(name, parse_expression());
+      argument_names.push_back(name);
+      args.push_back(parse_expression());
       if (!match(matrix::token_kind::comma)) break;
+      argument_starts.push_back(tokens_[pos_ - 1].start + tokens_[pos_ - 1].length);
     }
-
-    if (param_names == nullptr) {
-      // The callee is not a paragraph declared on this page, so there is no
-      // signature to order against. Keep source order and let the type
-      // checker reject a mismatch.
-      for (auto &entry : named) args.push_back(entry.second);
-      return args;
-    }
-
-    std::vector<ny::ast_expr_ptr> ordered(param_names->size());
-    std::vector<bool> filled(param_names->size(), false);
-    for (auto &entry : named) {
-      size_t index = param_names->size();
-      for (size_t i = 0; i < param_names->size(); ++i) {
-        if (fold_key((*param_names)[i]) == fold_key(entry.first)) {
-          index = i;
-          break;
-        }
-      }
-      if (index == param_names->size()) {
-        ny::diagnostic d;
-        d.line = line;
-        d.message = "no parameter named '" + entry.first + "'";
-        std::string known;
-        for (size_t i = 0; i < param_names->size(); ++i) {
-          if (i) known += ", ";
-          known += (*param_names)[i];
-        }
-        d.hint = known.empty() ? "this paragraph takes no arguments"
-                               : "the parameters are " + known;
-        diagnostics_.push_back(std::move(d));
-        continue;
-      }
-      if (filled[index]) {
-        ny::diagnostic d;
-        d.line = line;
-        d.message = "argument '" + entry.first + "' given more than once";
-        diagnostics_.push_back(std::move(d));
-        continue;
-      }
-      ordered[index] = entry.second;
-      filled[index] = true;
-    }
-    std::vector<ny::ast_expr_ptr> result;
-    for (size_t i = 0; i < ordered.size(); ++i) {
-      if (!filled[i]) {
-        ny::diagnostic d;
-        d.line = line;
-        d.message = "missing argument '" + (*param_names)[i] + "'";
-        d.hint = "Ny rejects omitted arguments, so every parameter must be "
-                 "passed";
-        diagnostics_.push_back(std::move(d));
-        continue;
-      }
-      result.push_back(ordered[i]);
-    }
-    // Append any variadic tail collected above.
-    for (auto &extra : args) result.push_back(extra);
-    return result;
+    return args;
   }
-
-  // Positional fallback: 'with 1, 2'. Accepted because a builtin receiver
-  // member has no declared parameter names to bind against.
   do {
     args.push_back(parse_expression());
-  } while (match(matrix::token_kind::comma));
+  } while (match(matrix::token_kind::comma) &&
+               (argument_starts.push_back(tokens_[pos_ - 1].start + tokens_[pos_ - 1].length), true));
   return args;
 }
 
@@ -2394,7 +2413,8 @@ ny::ast_expr_ptr parser::parse_postfix() {
     // receiver type; it is recorded in matrix/docs/front-end-plan.md rather
     // than papered over here.
     if (check(matrix::token_kind::dot) &&
-        (peek(1).is_name() || peek(1).kind == matrix::token_kind::keyword)) {
+        (peek(1).is_name() || peek(1).kind == matrix::token_kind::keyword ||
+         peek(1).kind == matrix::token_kind::number_literal)) {
       advance();
       const token &member_token = peek();
       const std::string member = nil_symbol(advance().lexeme);
@@ -2447,27 +2467,43 @@ ny::ast_expr_ptr parser::parse_postfix() {
       } while (match(matrix::token_kind::comma));
       // Carry the arguments on a call node; a bare application with no 'with'
       // clause is still a call with no arguments.
-      const std::vector<std::string> *params = nullptr;
-      const auto *id = static_cast<const ny::ast_identifier_expr *>(expr.get());
-      const auto it = signatures_.find(fold_key(id->name));
-      if (it != signatures_.end()) params = &it->second;
+      std::vector<std::string> argument_names;
+      std::vector<std::size_t> argument_starts;
       std::vector<ny::ast_expr_ptr> args;
-      if (match(kw::with)) args = parse_with_arguments(params, line);
-      expr = std::make_shared<ny::ast_call_expr>(expr, std::move(args),
-                                                 std::move(type_args), line);
+      if (match(kw::with)) args = parse_with_arguments(argument_names, argument_starts);
+      auto call = std::make_shared<ny::ast_call_expr>(expr, std::move(args),
+                                                     std::move(type_args), line);
+      call->source_file = filename_;
+      if (!argument_starts.empty()) {
+        const auto &last = tokens_[pos_ - 1];
+        const auto end = std::max(last.start + last.length,
+            recovered_signature_call_ && signature_cursor_ ? *signature_cursor_ : std::size_t(0));
+        call->argument_span = ny::source_span{argument_starts.front(), end - argument_starts.front()};
+        call->argument_starts = std::move(argument_starts);
+        call->source_argument_names = argument_names;
+      }
+      call->argument_names = std::move(argument_names);
+      expr = std::move(call);
       continue;
     }
 
     if (match(kw::with)) {
-      const std::vector<std::string> *params = nullptr;
-      if (expr->kind == ny::ast_node_kind::identifier_expr_node) {
-        const auto *id = static_cast<const ny::ast_identifier_expr *>(expr.get());
-        const auto it = signatures_.find(fold_key(id->name));
-        if (it != signatures_.end()) params = &it->second;
-      }
-      auto args = parse_with_arguments(params, line);
-      expr = std::make_shared<ny::ast_call_expr>(
+      std::vector<std::string> argument_names;
+      std::vector<std::size_t> argument_starts;
+      auto args = parse_with_arguments(argument_names, argument_starts);
+      auto call = std::make_shared<ny::ast_call_expr>(
           expr, std::move(args), std::vector<std::string>{}, line);
+      call->source_file = filename_;
+      if (!argument_starts.empty()) {
+        const auto &last = tokens_[pos_ - 1];
+        const auto end = std::max(last.start + last.length,
+            recovered_signature_call_ && signature_cursor_ ? *signature_cursor_ : std::size_t(0));
+        call->argument_span = ny::source_span{argument_starts.front(), end - argument_starts.front()};
+        call->argument_starts = std::move(argument_starts);
+        call->source_argument_names = argument_names;
+      }
+      call->argument_names = std::move(argument_names);
+      expr = std::move(call);
       continue;
     }
 
@@ -2519,6 +2555,38 @@ ny::ast_expr_ptr parser::parse_primary() {
     return number;
   }
 
+  if (match(matrix::token_kind::formatted_string_begin)) {
+    std::vector<ny::interpolated_part> parts;
+    while (!check(matrix::token_kind::formatted_string_end) && !at_end()) {
+      if (match(matrix::token_kind::formatted_text)) {
+        parts.push_back({true, previous().lexeme, nullptr});
+        continue;
+      }
+      if (!match(matrix::token_kind::interpolation_begin)) {
+        error(peek(), "expected a text segment or interpolation");
+        advance();
+        continue;
+      }
+      if (check(matrix::token_kind::interpolation_end)) {
+        error(peek(), "interpolation requires an expression");
+        advance();
+        continue;
+      }
+      auto expression = parse_expression();
+      if (!check(matrix::token_kind::interpolation_end)) {
+        error(peek(), "expected '}' after the interpolation expression");
+        while (!check(matrix::token_kind::interpolation_end) &&
+               !check(matrix::token_kind::formatted_string_end) && !at_end()) advance();
+      }
+      expect(matrix::token_kind::interpolation_end, "'}'", "after interpolation");
+      if (expression) parts.push_back({false, "", std::move(expression)});
+    }
+    expect(matrix::token_kind::formatted_string_end, "a closing quote", "after formatted text");
+    if (parts.empty()) parts.push_back({true, "", nullptr});
+    auto result = std::make_shared<ny::ast_interpolated_string_expr>(std::move(parts), line);
+    result->explicit_syntax = true;
+    return result;
+  }
   if (check(matrix::token_kind::string_literal))
     return std::make_shared<ny::ast_string_literal>(advance().lexeme, line);
 
@@ -2533,8 +2601,21 @@ ny::ast_expr_ptr parser::parse_primary() {
 
   if (match(matrix::token_kind::left_paren)) {
     auto inner = parse_expression();
-    expect(matrix::token_kind::right_paren, "')'", "to close a group");
-    return inner;
+    if (!match(matrix::token_kind::comma)) {
+      expect(matrix::token_kind::right_paren, "')'", "to close a group");
+      return inner;
+    }
+    std::vector<std::pair<std::string, ny::ast_expr_ptr>> elements;
+    elements.emplace_back("0", std::move(inner));
+    while (!check(matrix::token_kind::right_paren) && !at_end()) {
+      elements.emplace_back(std::to_string(elements.size()), parse_expression());
+      if (!match(matrix::token_kind::comma)) break;
+    }
+    expect(matrix::token_kind::right_paren, "')'", "after tuple elements");
+    auto tuple = std::make_shared<ny::ast_struct_literal_expr>("tuple",
+        std::move(elements), std::vector<std::string>{}, line);
+    tuple->tuple_literal = true;
+    return tuple;
   }
 
   if (match(matrix::token_kind::left_bracket)) {
@@ -2566,7 +2647,7 @@ ny::ast_expr_ptr parser::parse_primary() {
       }
       const token &name_token = peek();
       return named(std::make_shared<ny::ast_identifier_expr>(
-                       nil_symbol(advance().lexeme), line), name_token);
+                       resolve_name(advance().lexeme), line), name_token);
     }
     error(peek(), "expected 'length of' or 'paragraph' after 'the'");
     return nullptr;
@@ -2876,8 +2957,25 @@ ny::ast_expr_ptr parser::parse_build() {
 // A literal, '_', a bare binding, or 'Type.Variant [holding binding]'.
 ny::ast_pattern parser::parse_pattern() {
   ny::ast_pattern pattern;
+  if (match(matrix::token_kind::left_paren)) {
+    pattern.kind = ny::ast_pattern_kind::constructor_pattern;
+    do {
+      if (check(matrix::token_kind::right_paren)) break;
+      pattern.subpatterns.push_back(parse_pattern());
+    } while (match(matrix::token_kind::comma));
+    expect(matrix::token_kind::right_paren, "')'", "after tuple pattern");
+    return pattern;
+  }
 
-  const bool negative_number = check(kw::minus) &&
+  if (peek().is_name() && peek().lexeme == "_") {
+    advance();
+    pattern.kind = ny::ast_pattern_kind::wildcard_pattern;
+    pattern.name = "_";
+    return pattern;
+  }
+
+  const bool negative_number = (check(kw::minus) || check(kw::negative) ||
+      check(matrix::token_kind::numeric_sign)) &&
       peek(1).kind == matrix::token_kind::number_literal;
   if (negative_number) advance();
   if (check(matrix::token_kind::number_literal)) {
@@ -3033,10 +3131,22 @@ ny::ast_expr_ptr parser::parse_consider_expression() {
       // identifier is NOT that shape and would be emitted as a variable load.
       const int arm_line = peek().line;
 
+      if (check(matrix::token_kind::left_paren)) {
+        pattern_expr = parse_primary();
+        if (match(kw::provided)) guard = parse_expression();
+        match(kw::then);
+        if (!expect(kw::give, "before the value of a 'consider' arm")) break;
+        auto value = parse_expression();
+        cases.emplace_back(pattern_expr, guard,
+            std::make_shared<ny::ast_expr_stmt>(value, value->line));
+        continue;
+      }
       // A literal arm compares the target against a value, which is an
       // ordinary expression pattern.
       if (check(matrix::token_kind::number_literal) ||
-          (check(kw::minus) && peek(1).kind == matrix::token_kind::number_literal)) {
+          ((check(kw::minus) || check(kw::negative) ||
+            check(matrix::token_kind::numeric_sign)) &&
+           peek(1).kind == matrix::token_kind::number_literal)) {
         pattern_expr = parse_unary();
         if (match(kw::provided)) guard = parse_expression();
         match(kw::then); // optional, for symmetry with the statement form

@@ -309,8 +309,13 @@ static bool scan_type_name(type_argument_lookahead_cursor &cursor,
   }
 
   if (cursor.consume(token_kind::left_paren)) {
-    if (!cursor.consume(token_kind::right_paren))
-      return false;
+    if (cursor.consume(token_kind::right_paren)) return true;
+    if (!scan_type_name(cursor, depth + 1)) return false;
+    while (cursor.consume(token_kind::comma)) {
+      if (cursor.kind() == token_kind::right_paren) break;
+      if (!scan_type_name(cursor, depth + 1)) return false;
+    }
+    return cursor.consume(token_kind::right_paren);
   } else if (!cursor.consume(token_kind::ref_kw) &&
              !cursor.consume(token_kind::identifier)) {
     return false;
@@ -377,9 +382,16 @@ static bool unchanged_source_lines(
     const size_t end = original.find('\n', original_pos);
     const size_t length =
         (end == std::string::npos ? original.size() : end) - original_pos;
-    const bool blank =
-        original.find_first_not_of(" \t\r", original_pos) >= original_pos + length;
-    const size_t emitted_length = blank ? 0 : length;
+    const auto line = original.substr(original_pos, length);
+    const auto first = line.find_first_not_of(" \t\r");
+    const auto last = line.find_last_not_of(" \t\r");
+    const bool blank = first == std::string::npos;
+    // These exact no-op markers preserve one blank output line and do not
+    // introduce or rewrite code. All other directives and transformed lines
+    // still require an explicit preprocessor source map before editor use.
+    const auto trimmed = blank ? std::string() : line.substr(first, last - first + 1);
+    const bool marker = trimmed == "@pragma once" || trimmed == "@schema";
+    const size_t emitted_length = blank || marker ? 0 : length;
     if (processed_pos + emitted_length >= processed.size() ||
         processed.compare(processed_pos, emitted_length, original, original_pos,
                           emitted_length) != 0 ||
@@ -437,9 +449,10 @@ parser::parser(const std::string &source, const parser_options &opts)
       diagnostics_.push_back(d);
     }
 
-    // Retain source locations only when every original code line survived
-    // byte-for-byte. Includes, macros and other transformations need an
-    // explicit source map before their names can be used for editor actions.
+    // Retain source locations only when original code lines survive
+    // byte-for-byte, apart from blank lines and exact no-op source markers.
+    // Includes, macros and other transformations need an explicit source map
+    // before their names can be used for editor actions.
     original_spans_available_ = unchanged_source_lines(
         source_, pres_res.output, source_line_offsets_);
     // Use the preprocessed output as the lexer's input
@@ -452,6 +465,10 @@ parser::parser(const std::string &source, const parser_options &opts)
   // Validate every numeric token, including patterns and unchecked builds.
   // This keeps malformed/range errors visible to --analyze before lowering.
   for (const auto &number : tokens_) {
+    if (number.kind == token_kind::invalid &&
+        (number.lexeme.find("interpolation") != std::string::npos ||
+         number.lexeme.find("formatted text") != std::string::npos))
+      add_error(number, number.lexeme);
     if (number.kind == token_kind::number_literal &&
         is_floating_literal_spelling(number.lexeme)) {
       double value = 0.0;
@@ -649,9 +666,20 @@ std::string parser::parse_type_name() {
     }
     return name;
   } else if (match(token_kind::left_paren)) {
-    // Unit declaration "()" -> "void"
-    consume(token_kind::right_paren, "Expected ')' after '(' for unit type");
-    name = "void";
+    // Parenthesized types group; a comma introduces a structural tuple.
+    if (match(token_kind::right_paren)) return "void";
+    std::string first = parse_type_name();
+    if (!match(token_kind::comma)) {
+      consume(token_kind::right_paren, "Expected ')' after grouped type");
+      return first;
+    }
+    name = "tuple<" + first;
+    while (!check(token_kind::right_paren) && !is_at_end()) {
+      name += ", " + parse_type_name();
+      if (!match(token_kind::comma)) break;
+    }
+    consume(token_kind::right_paren, "Expected ')' after tuple type");
+    return name + ">";
   } else {
     token start = consume(token_kind::identifier, "Expected type name");
     name = start.lexeme;
@@ -1627,6 +1655,28 @@ parser::parse_variable_declaration(visibility_kind visibility) {
     is_mut = true;  // let* implies mutable
   }
 
+  if (!is_pointer && match(token_kind::left_paren)) {
+    const int line = previous().line;
+    auto declaration = std::make_shared<ast_variable_decl>("", nullptr,
+        std::nullopt, is_mut, false, line);
+    do {
+      if (check(token_kind::right_paren)) break;
+      const token binding = consume(token_kind::identifier,
+          "Expected a name in tuple destructuring");
+      auto child = std::make_shared<ast_variable_decl>(binding.lexeme, nullptr,
+          std::nullopt, is_mut, false, binding.line);
+      child->name_span = span_for_name(binding);
+      declaration->tuple_bindings.push_back(std::move(child));
+    } while (match(token_kind::comma));
+    consume(token_kind::right_paren, "Expected ')' after tuple bindings");
+    if (declaration->tuple_bindings.empty())
+      add_error(previous(), "Tuple destructuring requires at least one binding");
+    consume(token_kind::equal, "Expected '=' after tuple bindings");
+    declaration->initializer = parse_expression();
+    match(token_kind::semicolon);
+    return declaration;
+  }
+
   token name_tok;
   if (is_pointer) {
     // For let* x, the variable name comes after the *
@@ -2580,6 +2630,7 @@ std::shared_ptr<ast_stmt> parser::parse_for_statement() {
   // or a single identifier possibly followed by comma-separated identifiers (a,
   // b)
   std::vector<ast_param> loop_vars;
+  const bool tuple_pattern = check(token_kind::left_paren);
   // Single parenthesized form or single/multi variable form:
   //  - for (a, b) in ...
   //  - for a, b in ...
@@ -2614,7 +2665,7 @@ std::shared_ptr<ast_stmt> parser::parse_for_statement() {
         p.line = name_tok.line;
         p.is_mut = var_mut;
         loop_vars.push_back(p);
-      } while (match(token_kind::comma));
+      } while (match(token_kind::comma) && !check(token_kind::right_paren));
     }
     consume(token_kind::right_paren, "Expected ')' after loop variable list");
   } else {
@@ -2743,6 +2794,7 @@ std::shared_ptr<ast_stmt> parser::parse_for_statement() {
   // Create AST node using the tuple-capable constructor
   auto node = std::make_shared<ast_for_in_stmt>(loop_vars, iterable, body_block,
                                                 for_tok.line);
+  node->tuple_pattern = tuple_pattern;
 
   return node;
 }
@@ -3047,16 +3099,30 @@ std::shared_ptr<ast_expr> parser::parse_call(std::shared_ptr<ast_expr> callee) {
     bool paren_same_line = check(token_kind::left_paren) &&
                            peek().line == callee->line;
     if (is_callable && paren_same_line && match(token_kind::left_paren)) {
+      const auto opening = span_for_name(tokens_[pos_ - 1]);
       std::vector<ast_expr_ptr> args;
+      std::vector<std::size_t> starts;
+      if (opening) starts.push_back(opening->start + opening->length);
       if (!check(token_kind::right_paren)) {
-        do {
+        for (;;) {
           args.push_back(parse_expression());
-        } while (match(token_kind::comma));
+          if (!match(token_kind::comma)) break;
+          if (const auto comma = span_for_name(tokens_[pos_ - 1]))
+            starts.push_back(comma->start + comma->length);
+        }
       }
       token rp =
           consume(token_kind::right_paren, "Expected ')' after call arguments");
-
-      callee = make_call_expr(callee, args, pending_type_args, rp.line);
+      const auto closing = span_for_name(rp);
+      auto call = std::make_shared<ast_call_expr>(callee, args, pending_type_args, rp.line);
+      call->source_file = filename_;
+      if (opening && closing && closing->start >= opening->start + opening->length &&
+          starts.size() == std::max<std::size_t>(1, args.size())) {
+        call->argument_span = source_span{opening->start + opening->length,
+                                         closing->start - opening->start - opening->length};
+        call->argument_starts = std::move(starts);
+      }
+      callee = std::move(call);
       pending_type_args.clear(); // Consumed
       continue;
     }
@@ -3129,8 +3195,9 @@ std::shared_ptr<ast_expr> parser::parse_call(std::shared_ptr<ast_expr> callee) {
 
     // 4. Member access: .member
     if (match(token_kind::dot)) {
-      token member_tok =
-          consume(token_kind::identifier, "Expected member name after '.'");
+      token member_tok = check(token_kind::number_literal)
+          ? advance()
+          : consume(token_kind::identifier, "Expected member name or tuple position after '.'");
       callee = std::make_shared<ast_member_access_expr>(
           callee, member_tok.lexeme, member_tok.line);
       callee->name_span = span_for_name(member_tok);
@@ -3372,6 +3439,39 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
       integer_boundaries_.emplace(pos_ - 1, number);
     return number;
   }
+  if (match(token_kind::formatted_string_begin)) {
+    const int line = previous().line;
+    std::vector<interpolated_part> parts;
+    while (!check(token_kind::formatted_string_end) && !is_at_end()) {
+      if (match(token_kind::formatted_text)) {
+        parts.push_back({true, previous().lexeme, nullptr});
+        continue;
+      }
+      if (!match(token_kind::interpolation_begin)) {
+        add_error(peek(), "Expected a text segment or interpolation");
+        advance();
+        continue;
+      }
+      if (check(token_kind::interpolation_end)) {
+        add_error(peek(), "Interpolation requires an expression");
+        advance();
+        continue;
+      }
+      auto expression = parse_expression();
+      if (!check(token_kind::interpolation_end)) {
+        add_error(peek(), "Expected '}' after the interpolation expression");
+        while (!check(token_kind::interpolation_end) &&
+               !check(token_kind::formatted_string_end) && !is_at_end()) advance();
+      }
+      consume(token_kind::interpolation_end, "Expected '}' after interpolation");
+      if (expression) parts.push_back({false, "", std::move(expression)});
+    }
+    consume(token_kind::formatted_string_end, "Expected a closing quote after formatted text");
+    if (parts.empty()) parts.push_back({true, "", nullptr});
+    auto result = std::make_shared<ast_interpolated_string_expr>(std::move(parts), line);
+    result->explicit_syntax = true;
+    return result;
+  }
   if (match(token_kind::string_literal)) {
     auto str_tok = previous();
     debug_peek("matched string_literal");
@@ -3564,10 +3664,23 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
     return identifier;
   }
   if (match(token_kind::left_paren)) {
-    debug_peek("matched left_paren -> parse sub-expression");
+    const int line = previous().line;
     auto expr = parse_expression();
-    consume(token_kind::right_paren, "Expected ')' after expression");
-    return expr;
+    if (!match(token_kind::comma)) {
+      consume(token_kind::right_paren, "Expected ')' after expression");
+      return expr;
+    }
+    std::vector<std::pair<std::string, ast_expr_ptr>> elements;
+    elements.emplace_back("0", std::move(expr));
+    while (!check(token_kind::right_paren) && !is_at_end()) {
+      elements.emplace_back(std::to_string(elements.size()), parse_expression());
+      if (!match(token_kind::comma)) break;
+    }
+    consume(token_kind::right_paren, "Expected ')' after tuple elements");
+    auto tuple = std::make_shared<ast_struct_literal_expr>("tuple",
+        std::move(elements), std::vector<std::string>{}, line);
+    tuple->tuple_literal = true;
+    return tuple;
   }
   if (match(token_kind::left_bracket)) {
     debug_peek("matched left_bracket -> parse array literal");
@@ -3724,7 +3837,7 @@ ast_pattern parser::parse_pattern() {
     if (!check(token_kind::right_paren)) {
       do {
         subs.push_back(parse_pattern());
-      } while (match(token_kind::comma));
+      } while (match(token_kind::comma) && !check(token_kind::right_paren));
     }
     consume(token_kind::right_paren, "Expected ')' after pattern list");
     pat.kind = ast_pattern_kind::constructor_pattern;

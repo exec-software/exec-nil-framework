@@ -71,6 +71,9 @@ The framework includes:
 - **Systems programming facilities.** Typed scalar and bitwise operations,
   raw pointers, managed values, checked local ownership of scalar buffers,
   typed faults, and bounded parallel execution.
+- **Shared language features.** Structural tuples provide typed multiple
+  results and local destructuring. Explicit string interpolation supports
+  expressions with consistent scalar formatting across execution routes.
 - **A shared standard library.** `nil.std.*` provides collections, text,
   mathematics, binary I/O, diagnostics, and reflection, alongside SQLite and
   PostgreSQL access. Existing `ny.lang.*` imports remain compatible aliases.
@@ -85,6 +88,7 @@ The framework includes:
   Live editor analysis includes unsaved source dependencies through a shared
   workspace snapshot. Compiler-resolved source bindings support Go to Definition
   for local variables, parameters and imported functions across both languages.
+  Certified local variables also support references and checked rename.
 
 See the [standard-library reference](docs/standard-library/index.md),
 [analysis API](docs/analysis-api.md), and [tool reference](docs/tools/index.md)
@@ -141,7 +145,11 @@ The [VS Code extension](vscode/README.md) supports both languages with syntax
 highlighting, completion, compiler diagnostics, quick fixes, build tasks, and
 source debugging. Follow its installation instructions, then set `ny.sdkPath`
 to the SDK directory. The extension also discovers `sdk/` when working in this
-repository.
+repository. Compiler-backed completion includes visible locals, imported functions
+and supported receiver members. Signature help follows resolved call parameters,
+including Matrix named arguments. Definition navigation follows
+checked bindings across both languages; references and rename are available for
+locals whose complete occurrence sets the compiler can certify.
 
 For projects with multiple source modules, add a
 [`nil.project.json`](docs/tools/projects.md) manifest. Project check, build and

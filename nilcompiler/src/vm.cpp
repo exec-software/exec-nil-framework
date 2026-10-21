@@ -7,6 +7,7 @@
 #include "matrix_hag_bridge.hpp"
 #include "nil_contract.hpp"
 #include "numeric_literal.hpp"
+#include "scalar_text.hpp"
 #include "integer_conversion.hpp"
 #include "secure_file_io.hpp"
 #include "time_support.hpp"
@@ -5596,13 +5597,23 @@ void VM::executeInstruction(const Instruction &instr) {
   } break;
   case Opcode::TO_STRING: {
     Value a = popStack();
-    if (std::holds_alternative<int64_t>(a)) {
-      pushStack(std::to_string(std::get<int64_t>(a)));
-    } else if (std::holds_alternative<double>(a)) {
-      pushStack(std::to_string(std::get<double>(a)));
-    } else {
-      pushStack(a); // already a string or other
-    }
+    if (instr.args.size() > 1 ||
+        (!instr.args.empty() && !supports_scalar_text(instr.args[0])))
+      throw std::runtime_error("TO_STRING requires a supported scalar source type");
+    const auto type = instr.args.empty() ? "" : scalar_text_type(instr.args[0]);
+    if (const auto *integer = std::get_if<int64_t>(&a);
+        integer && (type.empty() || type == "bool" || type == "i32" ||
+                    type == "i64" || type == "u8")) {
+      pushStack(type == "bool" ? std::string(*integer ? "true" : "false")
+                               : scalar_text(*integer));
+    } else if (const auto *floating = std::get_if<double>(&a);
+               floating && (type.empty() || type == "f64")) {
+      pushStack(scalar_text(*floating));
+    } else if (std::holds_alternative<std::string>(a) &&
+               (type.empty() || type == "text")) {
+      pushStack(a);
+    } else
+      throw std::runtime_error("TO_STRING operand does not match its scalar source type");
   } break;
   case Opcode::CAST: {
     if (instr.args.size() != 1 || instr.args[0].empty())

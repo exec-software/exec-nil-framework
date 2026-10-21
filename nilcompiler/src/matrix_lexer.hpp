@@ -17,8 +17,9 @@
 //     which is a confusable-identifier hazard rather than a convenience.
 //
 //  2. A hyphen joins the words of one name: 'frame-kind' is a single
-//     identifier.  '-' is never an operator, because subtraction and negation
-//     are both spelled 'minus'.  A hyphen must sit between a letter-or-digit
+//     identifier. An adjacent '-' can sign a numeric literal; subtraction is
+//     spelled 'minus', and general negation 'negative' or 'minus'. A name's
+//     hyphen must sit between a letter-or-digit
 //     and a letter, so '-kind', 'kind-', 'frame--kind' and 'total-1' are
 //     diagnosed at the hyphen.
 //
@@ -98,12 +99,12 @@ enum class kw {
   // concurrency, time, assembly, annotations
   apply, across, now, sleep, assembly, using_, giving, note, context,
   // operators that must be reserved to stay unambiguous
-  and_, or_, not_, plus, minus, times, over, remainder, at, bitwise, shifted,
+  and_, or_, not_, plus, minus, negative, times, over, remainder, at, bitwise, shifted,
   equals, does, becomes, xor_,
   // literals and named characters (no backslash escapes exist)
   true_, false_, quote, newline, tab,
   // type constructors
-  pointer, array, owned, shared, exclusive, view,
+  pointer, array, tuple, owned, shared, exclusive, view,
   // ergonomic types: what a program says unless it has a reason not to
   number, floating, boolean, text,
   // the machine-representation escape hatch
@@ -122,7 +123,13 @@ enum class token_kind {
   identifier,     // includes backtick-escaped names
   keyword,
   number_literal,
+  numeric_sign,   // '-' immediately before a numeric literal; never subtraction
   string_literal,
+  formatted_string_begin,
+  formatted_text,
+  interpolation_begin,
+  interpolation_end,
+  formatted_string_end,
   left_paren, right_paren,
   left_bracket, right_bracket,
   comma,
@@ -181,7 +188,8 @@ const char *keyword_name(kw k);
 
 class lexer {
 public:
-  explicit lexer(const std::string &source) : src_(source) {}
+  explicit lexer(const std::string &source, unsigned interpolation_depth = 0)
+      : src_(source), interpolation_depth_(interpolation_depth) {}
 
   std::vector<token> scan();
   const std::vector<lex_error> &errors() const { return errors_; }
@@ -194,6 +202,7 @@ private:
   size_t token_start_ = 0;
   int line_ = 1;
   int col_ = 1;
+  unsigned interpolation_depth_ = 0;
 
   bool at_end() const { return pos_ >= src_.size(); }
   char peek(size_t ahead = 0) const {
@@ -203,8 +212,10 @@ private:
   void skip_trivia();
   token make(token_kind kind, const std::string &lexeme, int line, int col) const;
   token scan_identifier();
-  token scan_number();
+  token scan_number(bool tuple_position = false);
   token scan_string();
+  void scan_formatted_string(std::vector<token> &tokens, const token &word,
+                             std::size_t quote);
   // Raw block literal: consumes lines after 'begin text' until a line whose
   // only content is 'end text', then dedents by the common indentation.
   token scan_text_block(int line, int col);

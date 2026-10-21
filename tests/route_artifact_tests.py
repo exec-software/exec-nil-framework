@@ -135,6 +135,20 @@ end function
         return container([(1, u32(0) * 2), (2, function), (3, u32(0)), (4, u32(0)),
                           (5, string("debug") + u32(0)), (7, u32(0)), (8, debug_payload)], version=5)
 
+    def test_type_annotations_are_checked_with_flag(self):
+        base = records(self.debug_binary())
+        for annotation in ("@nil_tuple", '@intent("position")', "invalid", "@bad\nannotation"):
+            types = (u32(1) + string("tuple<i32>") + u32(1) + string("0") + string("i32") +
+                     u32(1) + string(annotation) + u32(0))
+            sections = [(kind, types if kind == 1 else payload) for kind, payload in base]
+            with self.subTest(annotation=annotation):
+                self.binary(container(sections, version=5, flags=2),
+                            annotation.startswith("@") and "\n" not in annotation)
+                truncated = [(kind, payload[:-1] if kind == 1 else payload)
+                             for kind, payload in sections]
+                self.binary(container(truncated, version=5, flags=2), False)
+                self.binary(container(sections, version=5, flags=6), False)
+
     def test_version_five_source_map(self):
         metadata = self.binary(self.debug_binary(), True)
         self.assertEqual(metadata["debug_source_paths"], ["/source/main.ny"])

@@ -44,8 +44,10 @@ value ratio  as floating         is 0.5         !!! f64
 
 `1e3`, `1.5E-3`, and `5e-324` are `floating` (`f64`) literals. The exponent
 uses `e` or `E`, an optional sign, and one or more digits. A decimal point is
-optional when an exponent is present. Write `minus 1e3` for a negative value;
-the sign inside `1e-3` belongs to the exponent.
+optional when an exponent is present. Write `-1e3` or `negative 1e3` for a
+negative value; `minus 1e3` remains an alias. The symbolic sign must touch the
+digits, while `negative` may negate any numeric expression. Subtraction still
+uses `minus`; the sign inside `1e-3` belongs to the exponent.
 
 Ny and Matrix share locale-independent conversion, including subnormal values.
 Overflow and nonzero literals that round to zero are rejected in compilation
@@ -91,7 +93,7 @@ Matrix writes `main returns number` and the lowering emits `i32` for that one
 function. A process exit status is eight bits in practice, so nothing is lost,
 but it is a wart and it is written down rather than hidden.
 
-## Text has no escape syntax
+## Ordinary text has no escape syntax
 
 Escaping is work an agent should never do. `\"` and `\\` are a reliable source
 of mangled output, and the cost is paid on every string in every file. Matrix
@@ -139,6 +141,39 @@ byte sequence in existence is writable without a single escape.
 **Character literals do not exist.** There is no `letter` scalar, so `'a'` has
 nothing to denote — and removing the form removes another escaping surface.
 A one-letter text value is `"a"`.
+
+### Explicit formatted text
+
+The contextual word `formatted` opts a quoted string into interpolation:
+
+```text
+value count is 3
+value offset is negative 1.6
+value summary is formatted "Count: {count plus 1}; offset: {offset}"
+value two-lines is formatted "First{newline}Second"
+value braces is formatted "{{literal braces}} and {count}"
+```
+
+Each hole is an ordinary Matrix expression, evaluated once in written order.
+Named calls and nested quoted arguments use their normal syntax, for example
+`formatted "Result: {choose with first being "one", second being "two"}"`.
+Scalar values and text have a shared native/interpreter conversion; other types
+require an explicit formatting method or function. There is no precision or
+format-specifier mini-language in the braces.
+Native text keeps its existing NUL-free storage contract; interpolation does
+not make embedded NUL bytes representable by the native text ABI.
+
+Backslashes remain ordinary characters. `{{` and `}}` represent literal braces
+only in this explicitly formatted form. Empty holes, extra tokens, unmatched
+braces and missing quotes are errors. The string and its expressions must stay
+on one physical source line; interpolate `newline` to create a multiline
+result. A raw `begin text` block inside a hole therefore is not supported.
+Ordinary quoted text and `begin text` keep their previous raw behavior.
+
+`formatted` remains available as a name when it is not followed by a quote.
+Expression identifiers keep their original source ranges for editor checking,
+completion, signature help and supported local rename. See the shared
+[formatted text contract](../../docs/language-reference/expressions.md#formatted-text).
 
 ## What the library does instead
 

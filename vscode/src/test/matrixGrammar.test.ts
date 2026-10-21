@@ -179,6 +179,7 @@ test("Matrix editor word selection and block indentation match its lexical spell
   const words = new RegExp(config.wordPattern, "g");
   assert.deepEqual("read-regular-bytes FRAME_KIND café-value 0xFF 3.14".match(words), ["read-regular-bytes", "FRAME_KIND", "café-value", "0xFF", "3.14"]);
   assert.deepEqual("1e3 1.5E-3 2E+2 0x1E3".match(words), ["1e3", "1.5E-3", "2E+2", "0x1E3"]);
+  assert.deepEqual("-1.6 -1.6e-3 -0x2A frame-kind".match(words), ["-1.6", "-1.6e-3", "-0x2A", "frame-kind"]);
   const increase = new RegExp(config.indentationRules.increaseIndentPattern);
   const decrease = new RegExp(config.indentationRules.decreaseIndentPattern);
   for (const line of ["MAIN RETURNS NUMBER BEGIN PARAGRAPH", "when ready then !!! check", "value banner is begin text", "attempt", "repeat for step from 0 to 3", "otherwise", "caught anything as problem"]) assert.ok(increase.test(line), line);
@@ -187,12 +188,45 @@ test("Matrix editor word selection and block indentation match its lexical spell
   assert.equal(decrease.test("end-paragraph"), false);
 });
 
+test("Matrix signed numbers, tuple types, and formatted expressions have distinct scopes", async () => {
+  const grammar = await loadMatrixGrammar();
+  assertScope(grammar, "value offset is negative 1.6", "negative", "keyword.operator.word");
+  assertScope(grammar, "value point as tuple of (floating, text) is (-1.6, \"ready\")", "tuple", "storage.type.builtin");
+  assertScope(grammar, "say -1.6e-3", "-1.6e-3", "constant.numeric.decimal");
+  assertScope(grammar, "say -0x2A", "-0x2A", "constant.numeric.hex");
+  const line = 'say FORMATTED "{{raw}} {negative height plus -1.6} {describe with input being "text"}"';
+  assertScope(grammar, line, "FORMATTED", "keyword.other.formatted");
+  assertScope(grammar, line, "{{", "constant.character.escape.brace");
+  assertScope(grammar, line, "negative", "keyword.operator.word");
+  assertScope(grammar, line, "height", "variable.other.readwrite");
+  assertScope(grammar, line, "-1.6", "constant.numeric.decimal");
+  assertScope(grammar, line, "describe", "entity.name.function.call");
+  assertScope(grammar, line, "text", "string.quoted.double");
+  assert.ok(scopesAt(grammar.tokenizeLine(line, INITIAL), line, "height").includes("meta.embedded.expression.matrix"));
+  for (const ordinary of ['say "{negative height}"', 'say `formatted`', 'say formatted-value', 'say formatted']) {
+    assert.equal(grammar.tokenizeLine(ordinary, INITIAL).tokens.some(token =>
+      token.scopes.includes("meta.interpolation.matrix")), false, ordinary);
+  }
+  const closed = grammar.tokenizeLine('say formatted "{height}"', INITIAL);
+  assertScope(grammar, "value ordinary is 1", "value", "storage.type.variable");
+  assert.equal(grammar.tokenizeLine("value ordinary is 1", closed.ruleStack).tokens.some(token =>
+    token.scopes.includes("string.quoted.double.interpolated.matrix")), false);
+  const continued = grammar.tokenizeLine('say formatted "height: {', INITIAL);
+  const expression = grammar.tokenizeLine('negative height', continued.ruleStack);
+  assert.ok(scopesAt(expression, 'negative height', 'negative').includes("keyword.operator.word.matrix"));
+  assert.ok(scopesAt(expression, 'negative height', 'height').includes("meta.embedded.expression.matrix"));
+  const finished = grammar.tokenizeLine('}"', expression.ruleStack);
+  assert.equal(grammar.tokenizeLine('say height', finished.ruleStack).tokens.some(token =>
+    token.scopes.includes("meta.interpolation.matrix")), false);
+});
+
 test("Matrix snippets use current paragraph, type, text, and extension spellings", () => {
   const snippets = JSON.parse(fs.readFileSync("snippets/matrix.code-snippets", "utf8")) as Record<string, { prefix: string; body: string[] }>;
   const prefixes = new Set(Object.values(snippets).map(s => s.prefix));
-  for (const prefix of ["paragraph", "main", "extension", "begin-text", "means", "call", "override", "extend-text"]) assert.ok(prefixes.has(prefix), prefix);
+  for (const prefix of ["paragraph", "main", "extension", "begin-text", "means", "call", "override", "extend-text", "tuple", "unpack", "formatted"]) assert.ok(prefixes.has(prefix), prefix);
   assert.match(snippets["Contract"]!.body.join("\n"), /returns \$\{3:text\}/);
   assert.match(snippets["Paragraph"]!.body.join("\n"), /give \$\{2:argument\}/);
   assert.match(snippets["Variable binding"]!.body.join("\n"), /is \$\{3:0\}/);
   assert.deepEqual(snippets["Raw text block"]!.body, ["begin text", "    ${0:text}", "end text"]);
+  assert.deepEqual(snippets["Formatted text"]!.body, ['formatted "${1:Height}: {${2:height}}"']);
 });

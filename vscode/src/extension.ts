@@ -118,7 +118,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const provider = new NyTaskProvider();
   const debugIntegration = new NyDebugIntegration();
   const analyzer = new NyAnalyzer();
-  languageClientManager = new NyLanguageClientManager(document => analyzer.usesCompilerDefinitions(document));
+  languageClientManager = new NyLanguageClientManager(document => analyzer.usesCompilerDefinitions(document),
+    (document, position, token) => analyzer.provideCompletionItems(document, position, token));
 
   context.subscriptions.push(
     languageClientManager,

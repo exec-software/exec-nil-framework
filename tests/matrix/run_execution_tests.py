@@ -277,7 +277,7 @@ def check_include_path_resolution(compiler, interpreter, workdir):
         "book geo.point-ext\n\n"
         "read everything from geo.point\n\n"
         "point begin extension\n"
-        "    sum returns number begin paragraph\n"
+        "    public sum returns number begin paragraph\n"
         "        give my x plus my y\n"
         "    end paragraph\n"
         "end extension\n")

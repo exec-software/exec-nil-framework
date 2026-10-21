@@ -10,7 +10,6 @@ original team and the community.
 - Ryan Nierman
 - Elizabeth Young
 - Eli Young
-- Miguel Petersen
 
 ## Community contributors
 

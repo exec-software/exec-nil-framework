@@ -1,0 +1,33 @@
+book formatted_text_contract
+variable tally as number is 0
+
+next returns number begin paragraph
+    set tally to tally plus 1
+    give tally
+end paragraph
+
+render of type T receives input as T returns text begin paragraph
+    give formatted "value={input}"
+end paragraph
+
+main returns override integer begin paragraph
+    value amount as floating is -1.6
+    value items is [7, 11]
+    say formatted "position={amount}; next={amount plus 0.5}"
+    say formatted "bool={true}/{false}; byte={255 becomes override byte}"
+    say formatted "min={-9223372036854775808}; max={9223372036854775807}"
+    say formatted "zero={0.0}/{-0.0}; small={1.6e-3}"
+    say formatted "precise={1.2345678901234567}"
+    say formatted "{{literal}} and {{{items at 1}}}"
+    say formatted "{next with nothing}:{next with nothing}:{next with nothing}"
+    say tally
+    say formatted "{"quoted"} and {formatted "nested {items at 0}"}"
+    say formatted "" equals ""
+    say formatted "ordinary text"
+    say formatted "{when true then give 42 otherwise give 0 end when}"
+    say render of override integer with input being 17
+    say render of floating with input being 1.25
+    say render of text with input being "text"
+    say "raw={amount}"
+    give 0
+end paragraph

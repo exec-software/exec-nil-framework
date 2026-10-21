@@ -49,7 +49,7 @@ Ny text literals decode `\"`, `\\`, `\n`, `\r`, `\t`, `\v` (vertical tab),
 `\f` (form feed), and `\0`. Native text does not support embedded NUL.
 Other escape spellings are unsupported; current diagnostic limitations are
 tracked in [F20](../../matrix/docs/next-version-findings.md#f20--ny-silently-consumes-unsupported-escapes-corrupting-whitespace-helpers).
-Matrix text uses [raw literals and named constants](../../matrix/docs/types-and-text.md#text-has-no-escape-syntax)
+Matrix text uses [raw literals and named constants](../../matrix/docs/types-and-text.md#ordinary-text-has-no-escape-syntax)
 instead of Ny escape syntax.
 
 ### Character Literals
@@ -169,6 +169,55 @@ raw NIL fails explicitly. Statement-form matches have a separate contract.
 
 `do` blocks do not provide expression values. Use an explicitly returning
 function when a computation needs several statements.
+
+## Formatted text
+
+An explicit formatted string evaluates expressions inside braces:
+
+```ny
+let count = 3
+let offset = -1.6
+let message = $"Count: {count + 1}; offset: {offset}"
+let braces = $"{{literal braces}} and {count}"
+```
+
+Each expression uses ordinary Ny syntax, including calls, member access,
+conditionals and nested quoted strings. Expressions are evaluated exactly once,
+from left to right. The result is `text`. A hole must produce `text`, `bool`,
+`i32`, `i64`, `u8` or `f64`; convert other values explicitly with an appropriate
+library function or method. Numeric text is independent of the current locale,
+and the same conversion is used by the interpreter and native compiler.
+Native text retains its existing NUL-free restriction; formatted text does not
+change the text storage ABI or permit embedded NUL constants natively.
+
+`{{` and `}}` insert literal braces. Ny's normal backslash escapes still apply
+to the literal portions, so `\n` inserts a newline in the result. Embedded
+expressions keep their own string delimiters; no extra escaping is needed for
+`$"Result: {choose("first", "second")}"`.
+
+The entire explicit string, including its expressions, must fit on one source
+line. Empty holes, trailing tokens, unmatched braces and missing quotes are
+errors. Formatting flags and precision specifiers are not part of this syntax;
+use an explicit formatting function inside a hole when needed.
+
+Legacy ordinary strings such as `"Hello {name}"` retain identifier-only
+interpolation for compatibility. Use the explicit form for expression
+interpolation and editable source locations inside holes. Existing literal
+`"{count + 1}"` text does not acquire new expression semantics.
+
+Matrix uses the same semantics with a contextual word:
+
+```text
+value count is 3
+value offset is negative 1.6
+value message is formatted "Count: {count plus 1}; offset: {offset}"
+```
+
+Ordinary Matrix quoted strings and `begin text` blocks remain raw. Within
+formatted Matrix text, backslashes remain ordinary characters; use the named
+`newline`, `tab` and `quote` values where needed, such as
+`formatted "First{newline}Second"`. Braces delimit ordinary Matrix expressions,
+including named calls such as `{choose with first being "one"}`.
 
 ## Lambda / Anonymous Functions
 

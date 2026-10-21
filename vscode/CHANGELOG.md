@@ -4,12 +4,39 @@ All notable changes to the NIL Framework VS Code extension are documented here.
 
 ## 1.0.0-rc.1
 
+- Highlight explicit Ny and Matrix interpolation, tuple types and Matrix numeric
+  signs; add tuple/destructuring/formatted-text snippets. The tolerant language
+  service indexes flat tuple bindings and preserves completion inside supported
+  interpolation expressions while excluding their literal text.
+- Offer Matrix `negative`, `tuple of` and `formatted` in keyword completion.
+
+- Extend compiler completion to supported receiver fields and methods, including
+  imported declarations, generic substitutions and accessibility checks.
+- Add compiler-backed signature help with original argument slots, Matrix named
+  parameter selection, nested calls, imported functions and immutable callbacks.
+  Retain syntax diagnostics during narrow bare-`with` query recovery.
+
+- Add compiler-backed identifier completion for visible locals, parameters and
+  imported functions in Ny and Matrix, including unresolved typed prefixes.
+  Validate complete source snapshots and replace whole tokens; retain tolerant
+  completion for unsupported contexts and older SDKs.
+- Resolve Matrix named arguments against the checked callable, including imported
+  functions and proven immutable callbacks, preserving argument order under local
+  rename. Require positional arguments when callback labels cannot be proven.
+
+- Add complete references and rename for compiler-certified local variables and
+  loop binders in Ny and Matrix. Reject ambiguous coverage, reserved names,
+  capture risks and multiple open aliases; recheck proposed edits and verify
+  preserved bindings before returning a workspace edit.
+- Resolve Matrix paragraph values with the same declared-name folding as direct
+  calls, preserving escaped spelling and lexical shadowing.
+
 - Resolve Go to Definition through checked compiler bindings for source variables,
   parameters and direct/imported functions across Ny and Matrix, including dirty
   and new sources. Preserve exact UTF-8 name spans and lexical binding identities.
 - Validate the complete semantic source snapshot before navigation; suppress stale,
-  unsupported, failed-check and binary-library destinations. Keep references and
-  rename unavailable until their compiler coverage is complete.
+  unsupported, failed-check and binary-library destinations. Gate editing on
+  explicit compiler completeness capabilities.
 - Check unsaved imported Ny and Matrix buffers through bounded compiler workspace
   input, including new named untitled modules and their nested project settings.
 - Cancel checks when any captured buffer or workspace context changes; publish

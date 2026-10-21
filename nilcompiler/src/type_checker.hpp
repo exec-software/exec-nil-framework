@@ -25,8 +25,13 @@ struct type_info {
 
 class type_checker : public ast_node::ast_visitor {
 public:
-  explicit type_checker(bool collect_semantics = false);
+  explicit type_checker(bool collect_semantics = false,
+                        std::optional<completion_request> completion = std::nullopt,
+                        std::optional<signature_request> signature = std::nullopt);
   const semantic_index &get_semantic_index() const { return semantics_; }
+  const std::optional<completion_result> &get_completion() const { return completion_; }
+
+  const std::optional<signature_result> &get_signature() const { return signature_; }
 
   // Entry point
   bool check(ast_program &program);
@@ -146,6 +151,17 @@ private:
   symbol_table symbols_;
   std::vector<diagnostic> diagnostics_;
   bool collect_semantics_ = false;
+  std::optional<completion_request> completion_request_;
+  std::optional<completion_result> completion_;
+  void capture_completion(const ast_identifier_expr &expression);
+  void capture_member_completion(const ast_member_access_expr &expression,
+                                 const type_info &receiver);
+  std::optional<signature_request> signature_request_;
+  std::optional<signature_result> signature_;
+  std::set<std::pair<std::size_t, std::size_t>> signature_visits_;
+  bool select_signature_call(const ast_call_expr &call);
+  void capture_signature(const ast_call_expr &call, const symbol &binding,
+                         std::size_t parameter_offset, bool eligible);
   semantic_index semantics_;
   std::size_t semantic_bytes_ = 0;
   std::map<const ast_node *, std::size_t> semantic_nodes_;
@@ -170,6 +186,9 @@ private:
     int line = 0;
   };
   std::vector<trait_implementation> trait_impls_;
+  // Required methods implement the trait's visible contract even when their
+  // implementation omits `pub`; extra helpers retain declared visibility.
+  std::map<const ast_function_decl *, visibility_kind> trait_method_visibility_;
   std::set<const ast_impl_decl *> visited_impls_;
   std::set<const ast_trait_decl *> visited_traits_;
   mutable std::set<std::pair<std::string, std::string>> checking_trait_bounds_;
@@ -213,6 +232,24 @@ private:
   std::vector<ast_call_expr *> checked_parallel_calls_;
   bool check_runtime_primitive(ast_call_expr &call);
 
+  // A template that formats T requires scalar/text at every instantiation.
+  // Retain resolved call edges until forward declarations and wrappers have
+  // all been checked; never revisit expression nodes to infer this contract.
+  struct scalar_text_call {
+    const ast_function_decl *caller = nullptr;
+    const ast_function_decl *callee = nullptr;
+    std::map<std::string, std::string> substitutions;
+    std::set<std::string> open_types;
+    int line = 0;
+    std::string source_file;
+  };
+  const ast_function_decl *scalar_text_function_ = nullptr;
+  std::map<const ast_function_decl *, std::set<std::string>> scalar_text_requirements_;
+  std::vector<scalar_text_call> scalar_text_calls_;
+  void record_scalar_text_call(const ast_call_expr &call, const symbol &callee,
+                              const std::map<std::string, std::string> &substitutions);
+  void validate_scalar_text_calls();
+
   // Current state
   std::optional<type_info> current_function_return_type_;
   std::optional<std::string> current_class_name_;
@@ -245,7 +282,7 @@ private:
   // Generic type helpers (member resolution is private)
   std::optional<std::string>
   resolve_member_type(const type_info &struct_type,
-                      const std::string &member_name);
+                      const std::string &member_name, int line = 0);
 
   // Instantiates a generic struct/enum definition if it doesn't already exist.
   // Creates a new declaration with substituted types and adds it to new_declarations_.

@@ -206,6 +206,9 @@ struct ast_node {
   // Used by codegen for generic instantiation and other type-dependent
   // operations.
   std::optional<std::string> inferred_type;
+  // A failed tuple shape/immutability check must not become executable when
+  // --no-typecheck suppresses semantic diagnostics.
+  std::optional<std::string> rejected_tuple_operation;
 
   explicit ast_node(ast_node_kind kind_in, int line_in = 0,
                     std::vector<ast_annotation> ann = {})
@@ -325,6 +328,13 @@ enum class visibility_kind {
 };
 
 // Base classes for expression / statement / declaration
+// Parameter labels are not part of structural fn(...) type identity. Retain
+// them only when checking proves the callable value's immutable provenance.
+struct callable_parameter_contract {
+  std::vector<std::string> names;
+  bool variadic = false;
+};
+
 struct ast_expr : public ast_node {
   // Allow expressions to optionally carry annotations though typically these
   // are attached to declarations/statements; this provides a flexible surface
@@ -341,6 +351,7 @@ struct ast_expr : public ast_node {
   bool checked_reference_handle = false;
   // Affine ownership proof. This is erased when any semantic check fails.
   bool checked_ownership = false;
+  std::optional<callable_parameter_contract> checked_callable_parameters;
 
   explicit ast_expr(ast_node_kind k, int l = 0,
                     std::vector<ast_annotation> ann = {})
@@ -532,6 +543,8 @@ struct ast_variable_decl : public ast_decl {
   ast_expr_ptr initializer; // optional
   bool is_mut = false;      // variable declared as `mut`
   bool is_const = false;    // variable declared as `const` (NY-050)
+  // Tuple destructuring keeps one initializer and distinct source bindings.
+  std::vector<std::shared_ptr<ast_variable_decl>> tuple_bindings;
 
   ast_variable_decl(const std::string &n, ast_expr_ptr init = nullptr,
                     std::optional<std::string> type_in = std::nullopt,
@@ -756,6 +769,7 @@ struct ast_for_in_stmt : public ast_stmt {
   // Tuple-unpacking support: if `variables` is non-empty, the loop
   // is a tuple unpack: `for (a, b) in zip(...)` etc.
   std::vector<ast_param> variables;
+  bool tuple_pattern = false; // Distinguishes `(x,)` from a single loop binding.
 
   ast_expr_ptr iterable;
   std::shared_ptr<ast_stmt> body;
@@ -1045,6 +1059,15 @@ struct ast_call_expr : public ast_expr {
   std::string parallel_output_type;
   ast_expr_ptr callee;
   std::vector<ast_expr_ptr> args;
+  // Matrix named arguments retain source labels until the checker resolves
+  // the actual callable. Empty entries represent a positional variadic tail.
+  // An empty vector means an ordinary positional call.
+  std::vector<std::string> argument_names;
+  // Native source argument region and source-order slots for signature help.
+  // They remain in written order when checking reorders Matrix named args.
+  std::optional<source_span> argument_span;
+  std::vector<std::size_t> argument_starts;
+  std::vector<std::string> source_argument_names;
   std::vector<std::string> type_args; // Explicit type arguments for generics
   // Checked associated call on a bounded type parameter (for example
   // T.default()). The receiver is a type, never a runtime argument.
@@ -1095,6 +1118,7 @@ struct ast_struct_literal_expr : public ast_expr {
   std::string type_name;
   std::vector<std::pair<std::string, ast_expr_ptr>> fields;
   std::vector<std::string> type_args; // Generic type arguments: Type<T> { ... }
+  bool tuple_literal = false; // Structural immutable tuple, fields ordered 0..N-1.
 
   ast_struct_literal_expr(std::string name,
                           std::vector<std::pair<std::string, ast_expr_ptr>> f,
@@ -1228,11 +1252,13 @@ struct symbol {
       module; // Optional module path owning this symbol (e.g., "std::io")
   bool is_mut = false; // Indicates when a variable symbol is mutable
   bool is_pub = false; // Backwards-compatible boolean visibility flag
+  bool is_generic_parameter = false;
   visibility_kind visibility =
       visibility_kind::visibility_private; // New enum-based visibility
 
   std::vector<ast_generic_param> generic_params; // Generic parameters if any
   std::vector<ast_param> params;                 // Function parameters if any
+  std::optional<callable_parameter_contract> checked_callable_parameters;
   std::vector<std::string> bounds; // Trait bounds if any (for generic params)
   std::unordered_map<std::string, symbol>
       members; // Members of the symbol (e.g. methods of a struct/enum)
@@ -1404,6 +1430,17 @@ public:
       return nullptr;
     const auto found = scopes.back().find(name);
     return found == scopes.back().end() ? nullptr : &found->second;
+  }
+
+  // Snapshot the nearest binding of each spelling without extending the
+  // lifetime of a lexical scope. Used only by bounded editor queries.
+  std::vector<const symbol *> visible_symbols() const {
+    std::set<std::string> seen;
+    std::vector<const symbol *> result;
+    for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope)
+      for (const auto &[name, value] : *scope)
+        if (seen.insert(name).second) result.push_back(&value);
+    return result;
   }
 
   // Function parameters, pattern bindings and lexical locals live outside
@@ -1817,6 +1854,9 @@ struct interpolated_part {
 // Interpolated string: "Hello {name}, you have {count} messages"
 struct ast_interpolated_string_expr : public ast_expr {
   std::vector<interpolated_part> parts;
+  // Explicit formatted strings carry ordinary expression tokens with exact
+  // original spans; legacy Ny identifier interpolation remains compatible.
+  bool explicit_syntax = false;
 
   ast_interpolated_string_expr(std::vector<interpolated_part> p, int l = 0)
       : ast_expr(ast_node_kind::interpolated_string_expr_node, l),

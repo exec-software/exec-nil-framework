@@ -240,5 +240,26 @@
     "body": [
       "value ${1:packed} as override ${2|integer,long,byte,double|} is ${3:0}"
     ]
+  },
+  "Tuple binding": {
+    "prefix": "tuple",
+    "description": "Bind an ordered tuple value",
+    "body": [
+      "value ${1:position} as tuple of (floating, floating) is (${2:1.0}, ${3:-1.6})"
+    ]
+  },
+  "Tuple destructuring": {
+    "prefix": "unpack",
+    "description": "Bind the elements of a tuple",
+    "body": [
+      "value (${1:x}, ${2:y}) is ${3:position}"
+    ]
+  },
+  "Formatted text": {
+    "prefix": "formatted",
+    "description": "Insert expressions into text; double literal braces",
+    "body": [
+      "formatted \"${1:Height}: {${2:height}}\""
+    ]
   }
 }

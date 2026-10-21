@@ -240,6 +240,18 @@ say answer with nothing                      !!! zero arguments
 say total-of with more 1, 2, 3, 4            !!! variadic tail
 ```
 
+Labels match the parameters of the callable selected by the checker, including
+imported Ny and Matrix paragraphs and methods. They fold ASCII case and ignore
+hyphens and underscores. Unknown, duplicate and missing labels are errors.
+Argument expressions are lowered in parameter order; a `more` tail follows
+the fixed parameters of a variadic paragraph.
+
+An immutable local paragraph value retains parameter names from its declared
+paragraph, anonymous paragraph or immutable local initializer. Function-typed
+parameters, mutable callbacks and other values without a checked name contract
+require positional calls such as `worker with 1, 2`. Named variadic callback
+calls are unsupported; call the declared variadic paragraph directly.
+
 A zero-argument call still says `with nothing`, so a call is never confusable
 with a name. Chaining needs parentheses:
 
@@ -624,7 +636,7 @@ per type. An extension on a primitive is global to the program.
 
 ## 17. Not available yet
 
-Deliberately unspelled, because the runtime cannot execute them: tuples, field
+Deliberately unspelled, because the runtime cannot execute them: field
 defaults, overload sets, capturing closures, dynamic contract objects, generic
 class execution, downcasts, automatic destructors, postfix `?`, default
 contract method bodies, supertraits, associated types, `i16`/`u16`/`u32`/`u64`/
@@ -633,7 +645,8 @@ contract method bodies, supertraits, associated types, `i16`/`u16`/`u32`/`u64`/
 Reserved but unimplemented: `chapter` (a third namespace level), `forever` as a
 `static` modifier, and `requires` for declaring a book's authorities.
 
-Native compilation is not a Matrix target yet; the VM is the supported route.
+Matrix and Ny share the interpreter and native routes. Native aggregate-array
+and foreign-call limitations apply to both languages.
 
 ---
 
@@ -658,3 +671,28 @@ ancestry independently of which surface produced them.
 
 Module dependencies must be acyclic: two pages that each use the other is an
 error.
+
+## 19. Tuples
+
+A tuple returns or carries several differently typed values together:
+
+```matrix
+location returns tuple of (floating, floating) begin paragraph
+    give (negative 1.6, 2.4)
+end paragraph
+
+main returns override integer begin paragraph
+    value position is location with nothing
+    value (x, y) is position
+    say position.0
+    give 0
+end paragraph
+```
+
+Positions start at zero. Tuple slots are immutable; contained record and
+reference values retain their existing identities. `(x)` groups an expression;
+`(x,)` is a one-element tuple. Its type is `tuple of (T)`. Use `_` to discard a
+position while destructuring. Names in a declaration are flat; nested tuple
+patterns are available in `consider`. Empty tuples, dynamic positional indexing
+and global destructuring are not supported. See the shared
+[tuple reference](../docs/language-reference/tuples.md) for the exact contract.

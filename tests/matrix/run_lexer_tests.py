@@ -48,7 +48,7 @@ NEGATIVE_EXPECTATIONS = {
 # heavily; this list is the mitigation and is expected to grow.
 SOFT_WORDS = {
     "least", "most", "greater", "less", "than", "equal", "left", "right",
-    "by", "each", "length", "milliseconds", "receiver", "x86_64",
+    "by", "each", "length", "milliseconds", "receiver", "x86_64", "formatted",
 }
 
 # Lowercase markers inside a numeric token are not standalone word terminals.

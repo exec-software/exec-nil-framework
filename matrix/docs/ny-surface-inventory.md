@@ -136,7 +136,7 @@ about whether a value changed representation.
 | `*alias` on `ref<T>` | no spelling | rejected in Ny |
 | `owned<T>` | `owned array of <type>` | executed for `integer`, `long`, `byte` |
 | `borrow<T>` / `borrow_mut<T>` | `shared view of <type>` / `exclusive view of <type>` | executed |
-| tuples | **no spelling** | no such Ny type, no NIL schema |
+| `(T, U)`, `(a, b)`, `let (a,b) = value` | `tuple of (T, U)`, `(a, b)`, `value (a,b) is result` | shared typed immutable tuple slots; native aggregate-array limits remain |
 
 Out-of-range typed array reads yield the element's zero value and out-of-range
 writes are a no-op. Matrix keeps that, because changing it would change NIL
@@ -357,6 +357,13 @@ applies only where it has been `read` into scope — so the operations a page ca
 reach are visible in its read list, and an extension carries the authority of
 the book that defines it.
 
+Extension and implementation paragraphs follow ordinary book visibility:
+write `public` on each paragraph intended for callers in another book. An
+unmarked paragraph remains private to its declaring book, even when its receiver
+type is public and the extension book is read by the caller. Public operations
+may call private helpers within that book. The grammar has no block-level export
+modifier; put `public` before the paragraph name, not the extension target.
+
 Standard contracts are `Clone`, `Display`, `Debug`, `Default`, `Eq`, `Hash`.
 `IList`, `ISet` and `IDictionary` are independent contracts and not subtraits
 of `ICollection`; Matrix inherits that, including `ISet` insertion returning
@@ -495,7 +502,7 @@ Collected for review. Each is syntax Matrix could plausibly have and must not,
 because NIL cannot execute it. The correct time to add each spelling is when
 its route evidence lands.
 
-Tuples · field default initialisers · overload sets · arrow-body functions ·
+Field default initialisers · overload sets · arrow-body functions ·
 capturing closures · native indirect calls · dynamic trait objects · generic
 class execution · generic method execution · first-class bound methods ·
 downcasts · reference and container covariance · automatic destructors ·

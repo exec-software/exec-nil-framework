@@ -1,5 +1,6 @@
 #include "lexer.hpp"
 #include "parser.hpp"
+#include "type_checker.hpp"
 
 #include <iostream>
 #include <memory>
@@ -32,16 +33,17 @@ std::shared_ptr<ny::ast_variable_decl> variable(const ny::ast_stmt_ptr &statemen
   return node<ny::ast_variable_decl>(node<ny::ast_decl_stmt>(statement)->declaration);
 }
 
-void test_original_source(const std::string &newline, bool preprocess) {
+void test_original_source(const std::string &newline, bool preprocess, bool markers = false) {
   const std::string prefix = "\xef\xbb\xbf// UTF-8: café 🧭" + newline + " \t" + newline;
   std::string source = prefix;
+  if (markers) source += "  @pragma once\t" + newline + "\t@schema " + newline;
   for (const auto *line : {
       "struct Sample", "  value: i32", "end struct", "type Count = i32",
       "fn compute(input: i32) -> i32", "  let local = input",
       "  let object = Sample { value: local }",
       "  for (index, value) in [local]", "    println(index, value)", "  end for",
       "  let closure = fn(arg: i32) -> i32", "    return arg", "  end fn",
-      "  return object.value + pkg.part::read(local)", "end fn"}) {
+      "  return object.value + pkg.part::read(local, input)", "end fn"}) {
     source += line;
     source += newline;
   }
@@ -80,6 +82,10 @@ void test_original_source(const std::string &newline, bool preprocess) {
   expect_span(source, member->object->name_span, source.find("return object") + 7, "object");
   const auto call = node<ny::ast_call_expr>(addition->right);
   expect_span(source, call->callee->name_span, source.find("::read") + 2, "read");
+  const auto arguments = source.find("read(local") + 5;
+  expect_span(source, call->argument_span, arguments, "local, input");
+  require(call->argument_starts == std::vector<std::size_t>{arguments, source.find(", input)") + 1},
+          "call slots must retain original byte positions after delimiters");
 }
 
 void test_transformed_source_is_not_editable() {
@@ -93,6 +99,33 @@ void test_transformed_source_is_not_editable() {
   const auto body = node<ny::ast_block_stmt>(function->body);
   require(!node<ny::ast_return_stmt>(body->statements.at(0))->value->name_span,
           "transformed source must not expose editable identifier ranges");
+}
+
+void test_other_directives_remain_unmapped() {
+  const std::string declaration = "fn compute(input: i32) -> i32 { return input }\n";
+  for (const auto *directive : {"@define UNUSED 1\n", "@pragma once_extra\n",
+                                "@schema extra\n", "@pragma link(\"example\")\n"}) {
+    ny::parser parser(std::string(directive) + declaration);
+    const auto program = parser.parse_program();
+    require(program && !parser.has_errors(), "unsupported directive fixture must parse");
+    const auto function = node<ny::ast_function_decl>(program->declarations.at(0));
+    require(!function->name_span && !function->params.at(0).name_span,
+            "other removed directives must not acquire guessed locations");
+  }
+  ny::parser_options options;
+  options.filename = "/span-include.ny";
+  options.preproc_options.resolve_source = [](const std::filesystem::path &path) {
+    return std::optional<std::filesystem::path>(path);
+  };
+  options.preproc_options.read_source = [](const std::filesystem::path &) {
+    return std::optional<std::string>("fn included() -> i32 { return 1 }\n");
+  };
+  ny::parser parser("@pragma once\n@include \"other.inc\"\n" + declaration, options);
+  const auto program = parser.parse_program();
+  require(program && !parser.has_errors(), "included span fixture must parse");
+  require(program->declarations.size() == 2, "include fixture declaration count");
+  for (const auto &declaration_node : program->declarations)
+    require(!declaration_node->name_span, "includes must not inherit native root locations");
 }
 
 void test_methods_and_fields() {
@@ -134,6 +167,47 @@ void test_mapping_preserves_preprocessed_literal_semantics() {
   expect_span(source, result->value->name_span, source.find("return value") + 7, "value");
 }
 
+void test_explicit_interpolation_source_spans() {
+  for (const bool preprocess : {false, true}) {
+    const std::string source =
+        "# λ 🧭\r\n\r\nfn message(input: i32) -> i32\r\n"
+        "let rendered = $\"\\n{{literal}} {input + 1} {helper(input)}\"\r\n"
+        "return input\r\nend fn\r\n";
+    ny::parser_options options;
+    options.enable_preprocessor = preprocess;
+    ny::parser parser(source, options);
+    const auto program = parser.parse_program();
+    require(program && !parser.has_errors(), "explicit interpolation must parse");
+    const auto body = node<ny::ast_block_stmt>(node<ny::ast_function_decl>(program->declarations.at(0))->body);
+    const auto text = node<ny::ast_interpolated_string_expr>(variable(body->statements.at(0))->initializer);
+    require(text->explicit_syntax && text->parts.size() == 4, "explicit interpolation keeps ordered parts");
+    require(text->parts.at(0).literal_value == "\n{literal} ", "formatted literal decoding");
+    const auto addition = node<ny::ast_binary_expr>(text->parts.at(1).expression);
+    expect_span(source, addition->left->name_span, source.find("{input") + 1, "input");
+    const auto call = node<ny::ast_call_expr>(text->parts.at(3).expression);
+    expect_span(source, call->callee->name_span, source.find("helper(input)"), "helper");
+    expect_span(source, call->args.at(0)->name_span, source.find("helper(input)") + 7, "input");
+    require(call->argument_span && call->argument_span->start == source.find("helper(input)") + 7,
+            "call signature region retains original interpolation coordinates");
+    const auto result = node<ny::ast_return_stmt>(body->statements.at(1));
+    expect_span(source, result->value->name_span, source.find("return input") + 7, "input");
+    ny::lexer lexer(source);
+    bool found = false;
+    for (const auto &token : lexer.scan_tokens())
+      if (token.kind == ny::token_kind::identifier && token.offset == source.find("{input") + 1) {
+        found = token.lexeme == "input" && token.length == 5 && token.line == 4;
+      }
+    require(found, "formatted hole exposes an ordinary exact-range identifier token");
+  }
+  ny::parser nested("fn nested(input: i32)\nprintln($\"outer {$\"inner {input}\"}\")\nend fn\n");
+  require(nested.parse_program() && !nested.has_errors(), "nested formatted expressions parse without escaping their quotes");
+  for (const auto *literal : {"$\"{}\"", "$\"{1, 2}\"", "$\"{1\"", "$\"bad }\"", "$\"unfinished", "$\"one\ntwo\"", "$\"{1\n+ 2}\"", "$\"{\"a\\\nb\"}\""}) {
+    ny::parser broken(std::string("fn broken()\nprintln(") + literal + ")\nend fn\n");
+    broken.parse_program();
+    require(broken.has_errors(), "malformed interpolation must be diagnosed");
+  }
+}
+
 void test_interpolated_identifier_is_not_guessed() {
   ny::parser parser("fn message(value: i32) { println(\"\\n{value}\") }\n");
   const auto program = parser.parse_program();
@@ -167,6 +241,32 @@ void test_lexer_source_ranges() {
   const ny::token synthesized{ny::token_kind::identifier, "generated", 1};
   require(synthesized.length == 0, "synthesized token must have no source range");
 }
+
+void test_repeated_completion_occurrence_is_unavailable() {
+  const std::string source = "fn compute(sample_input: i32) -> i32\nprintln(sample_input)\nreturn sample_input\nend fn\n";
+  ny::parser_options options;
+  options.filename = "/completion-occurrence.ny";
+  ny::parser parser(source, options);
+  const auto program = parser.parse_program();
+  require(program && !parser.has_errors(), "completion fixture must parse");
+  const auto function = node<ny::ast_function_decl>(program->declarations.at(0));
+  const auto body = node<ny::ast_block_stmt>(function->body);
+  const auto print = node<ny::ast_println_stmt>(body->statements.at(0));
+  const auto result = node<ny::ast_return_stmt>(body->statements.at(1));
+  const ny::completion_request request{options.filename, source.find("println(sample_input)") + 11};
+  ny::type_checker ordinary(true, request);
+  require(ordinary.check(*program), "ordinary completion fixture must check");
+  require(ordinary.get_completion() && ordinary.get_completion()->available,
+          "one original occurrence must retain completion");
+  // Model a lowering that revisits the same physical source expression. Its
+  // second inferred context must not silently inherit the first query result.
+  result->value = print->args.at(0);
+  ny::type_checker repeated(true, request);
+  require(repeated.check(*program), "repeated completion fixture must check");
+  require(repeated.get_completion() && !repeated.get_completion()->available &&
+          repeated.get_completion()->candidates.empty(),
+          "repeated physical source occurrences must withhold completion");
+}
 } // namespace
 
 int main() {
@@ -175,10 +275,15 @@ int main() {
     for (const auto &newline : {std::string("\n"), std::string("\r\n")})
       for (const bool preprocess : {false, true})
         test_original_source(newline, preprocess);
+    for (const auto &newline : {std::string("\n"), std::string("\r\n")})
+      test_original_source(newline, true, true);
     test_transformed_source_is_not_editable();
+    test_other_directives_remain_unmapped();
     test_methods_and_fields();
     test_mapping_preserves_preprocessed_literal_semantics();
     test_interpolated_identifier_is_not_guessed();
+    test_explicit_interpolation_source_spans();
+    test_repeated_completion_occurrence_is_unavailable();
     std::cout << "source span tests passed\n";
     return 0;
   } catch (const std::exception &error) {

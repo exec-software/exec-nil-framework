@@ -3,6 +3,8 @@
 #include "matrix_diagnostics.hpp"
 #include "secure_file_io.hpp"
 #include "matrix_lexer.hpp"
+#include "matrix_parser.hpp"
+#include "lexer.hpp"
 #include "../../common/strict_json.hpp"
 #ifdef _WIN32
 #include <fcntl.h>
@@ -413,6 +415,186 @@ void analysis_session::lint() {
   }
 }
 
+std::string analysis_session::completion_json() const {
+  constexpr std::size_t limit = 4 * 1024 * 1024;
+  if (!completion_cursor || !completion || !completion->available ||
+      semantic_binary_dependencies || completion->path != primary_path ||
+      sources.empty() || sources.size() > workspace_source_limit || !sources.count(primary_path))
+    return "null";
+  const auto &text = sources.at(primary_path);
+  const auto &query = *completion;
+  const auto cursor = *completion_cursor;
+  if (!query.span.length || query.span.start > text.size() ||
+      query.span.length > text.size() - query.span.start || cursor <= query.span.start ||
+      cursor - query.span.start > query.span.length ||
+      (cursor < text.size() && (static_cast<unsigned char>(text[cursor]) & 0xc0) == 0x80))
+    return "null";
+  const bool matrix_language = language == "matrix";
+  const auto prefix = text.substr(query.span.start, cursor - query.span.start);
+  source_span replacement = query.span;
+  bool escaped = false, token_found = false;
+  std::optional<matrix::parser> matrix_names;
+  if (matrix_language) {
+    matrix::lexer scanner(text);
+    for (const auto &token : scanner.scan()) {
+      const std::size_t trim = token.escaped_identifier ? 1 : 0;
+      if ((token.kind == matrix::token_kind::identifier ||
+           (query.member && token.kind == matrix::token_kind::keyword)) && token.length > 2 * trim &&
+          token.start + trim == query.span.start && token.length - 2 * trim == query.span.length) {
+        replacement = {token.start, token.length};
+        escaped = token.escaped_identifier;
+        token_found = true;
+      }
+    }
+    if (scanner.has_errors()) return "null";
+    if (query.member) {
+      if (matrix::nil_symbol(text.substr(query.span.start, query.span.length)) != query.name)
+        return "null";
+    } else {
+      matrix_names.emplace(text);
+      if (matrix_names->resolve_completion_name(text.substr(query.span.start, query.span.length)) != query.name)
+        return "null";
+    }
+  } else {
+    lexer scanner(text);
+    for (const auto &token : scanner.scan_tokens())
+      if (token.kind == token_kind::identifier && token.offset == query.span.start &&
+          token.length == query.span.length && token.lexeme == query.name) token_found = true;
+  }
+  if (!token_found) return "null";
+  std::string snapshot_json;
+  for (const auto &[path, source] : sources) {
+    try {
+      if (path.empty() || !std::filesystem::path(path).is_absolute() ||
+          analysis_source_identity(path) != path) return "null";
+    } catch (const std::exception &) { return "null"; }
+    if (!snapshot_json.empty()) snapshot_json += ',';
+    snapshot_json += "{\"path\":" + quoted(path) + ",\"text\":" + quoted(source) + '}';
+    if (snapshot_json.size() > limit) return "null";
+  }
+  std::string item_json;
+  std::set<std::string> names;
+  const auto folded_prefix = matrix_language ? matrix::fold_key(prefix) : prefix;
+  for (const auto &candidate : query.candidates) {
+    const auto key = matrix_language ? matrix::fold_key(candidate.name) : candidate.name;
+    if (key.compare(0, folded_prefix.size(), folded_prefix) != 0) continue;
+    const auto source = sources.find(candidate.path);
+    if (source == sources.end() || !candidate.span.length || candidate.span.start > source->second.size() ||
+        candidate.span.length > source->second.size() - candidate.span.start) continue;
+    auto extension = std::filesystem::path(candidate.path).extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+    const bool matrix_declaration = extension == ".matrix" || extension == ".mat";
+    if (!matrix_declaration && extension != ".ny") continue;
+    const auto original = source->second.substr(candidate.span.start, candidate.span.length);
+    if ((matrix_declaration ? matrix::nil_symbol(original) : original) != candidate.name) continue;
+    const std::string display = matrix_language && matrix_declaration ? original : candidate.name;
+    std::string insertion = display;
+    if (matrix_language) {
+      // A different declaration anywhere on this page can redirect a folded
+      // name. Omit such a candidate rather than inserting the wrong binding.
+      if (!query.member && matrix_names->resolve_completion_name(display) != candidate.name) continue;
+      if (escaped || matrix::keyword_for(matrix::fold_key(display)) != matrix::kw::not_a_keyword)
+        insertion = '`' + display + '`';
+      matrix::lexer scanner(insertion);
+      const auto tokens = scanner.scan();
+      if (scanner.has_errors() || tokens.size() != 2 || tokens.front().kind != matrix::token_kind::identifier)
+        continue;
+    } else {
+      lexer scanner(insertion);
+      const auto tokens = scanner.scan_tokens();
+      if (tokens.size() != 2 || tokens.front().kind != token_kind::identifier) continue;
+    }
+    if (!names.insert(insertion).second) continue;
+    if (names.size() > 4096) return "null";
+    if (!item_json.empty()) item_json += ',';
+    item_json += "{\"name\":" + quoted(display) + ",\"kind\":" + quoted(candidate.kind) +
+        ",\"type\":" + quoted(matrix_language ? matrix::to_surface_vocabulary(candidate.type) : candidate.type) +
+        ",\"insert_text\":" + quoted(static_cast<const std::string &>(insertion)) + '}';
+    if (snapshot_json.size() + item_json.size() > limit) return "null";
+  }
+  auto result = "{\"schema\":\"nil.completion.v1\",\"partial\":true,\"path\":" + quoted(primary_path) +
+      ",\"cursor\":" + std::to_string(cursor) + ",\"start\":" + std::to_string(replacement.start) +
+      ",\"length\":" + std::to_string(replacement.length) + ",\"sources\":[" + snapshot_json +
+      "],\"items\":[" + item_json + "]}";
+  return result.size() <= limit ? result : "null";
+}
+
+std::string analysis_session::signature_json() const {
+  constexpr std::size_t limit = 4 * 1024 * 1024;
+  if (!signature_cursor || !signature || !signature->available || semantic_binary_dependencies ||
+      signature->path != primary_path || sources.empty() || sources.size() > workspace_source_limit ||
+      !sources.count(primary_path) || signature->parameters.size() > 256) return "null";
+  const auto &query = *signature;
+  const auto &source = sources.at(primary_path);
+  const auto cursor = *signature_cursor;
+  const auto boundary = [](const std::string &text, std::size_t offset) {
+    return offset <= text.size() && (offset == text.size() ||
+        (static_cast<unsigned char>(text[offset]) & 0xc0) != 0x80);
+  };
+  if (query.span.start > source.size() || query.span.length > source.size() - query.span.start ||
+      cursor < query.span.start || cursor - query.span.start > query.span.length ||
+      !boundary(source, cursor) || !boundary(source, query.span.start) ||
+      !boundary(source, query.span.start + query.span.length)) return "null";
+  const auto declaration = sources.find(query.declaration_path);
+  if (declaration == sources.end() || !query.declaration_span || !query.declaration_span->length ||
+      query.declaration_span->start > declaration->second.size() ||
+      query.declaration_span->length > declaration->second.size() - query.declaration_span->start) return "null";
+  auto extension = std::filesystem::path(query.declaration_path).extension().string();
+  std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  const bool matrix_declaration = extension == ".matrix" || extension == ".mat";
+  if (!matrix_declaration && extension != ".ny") return "null";
+  const auto original = declaration->second.substr(query.declaration_span->start, query.declaration_span->length);
+  if ((matrix_declaration ? matrix::nil_symbol(original) : original) != query.name) return "null";
+  const bool matrix_language = language == "matrix";
+  const auto surface = [&](const std::string &type) {
+    return matrix_language ? matrix::to_surface_vocabulary(type) : type;
+  };
+  std::string label = matrix_language && matrix_declaration ? original : query.name;
+  label += matrix_language ? (query.parameters.empty() ? " receives nothing" : " receives ") : "(";
+  std::string parameters;
+  for (std::size_t index = 0; index < query.parameters.size(); ++index) {
+    const auto &parameter = query.parameters[index];
+    auto name = parameter.name;
+    if (matrix_language && matrix_declaration && parameter.span &&
+        parameter.span->start <= declaration->second.size() &&
+        parameter.span->length <= declaration->second.size() - parameter.span->start) {
+      const auto written = declaration->second.substr(parameter.span->start, parameter.span->length);
+      if (matrix::nil_symbol(written) == name) name = written;
+    }
+    const auto type = surface(parameter.type);
+    const std::string parameter_label = (parameter.variadic ? (matrix_language ? "more " : "..") : "") +
+        name + (matrix_language ? " as " : ": ") + type;
+    if (index) { label += ", "; parameters += ','; }
+    label += parameter_label;
+    parameters += "{\"name\":" + quoted(static_cast<const std::string &>(name)) + ",\"type\":" + quoted(type) +
+        ",\"label\":" + quoted(parameter_label) + ",\"variadic\":" +
+        (parameter.variadic ? "true" : "false") + '}';
+  }
+  const auto return_type = surface(query.return_type);
+  label += (matrix_language ? " returns " : ") -> ") + return_type;
+  std::string snapshots;
+  for (const auto &[path, text] : sources) {
+    try {
+      if (path.empty() || !std::filesystem::path(path).is_absolute() || analysis_source_identity(path) != path)
+        return "null";
+    } catch (const std::exception &) { return "null"; }
+    if (!snapshots.empty()) snapshots += ',';
+    snapshots += "{\"path\":" + quoted(path) + ",\"text\":" + quoted(text) + '}';
+    if (snapshots.size() > limit) return "null";
+  }
+  const auto result = "{\"schema\":\"nil.signature.v1\",\"partial\":true,\"path\":" + quoted(primary_path) +
+      ",\"cursor\":" + std::to_string(cursor) + ",\"start\":" + std::to_string(query.span.start) +
+      ",\"length\":" + std::to_string(query.span.length) + ",\"sources\":[" + snapshots +
+      "],\"label\":" + quoted(static_cast<const std::string &>(label)) + ",\"parameters\":[" + parameters +
+      "],\"active_parameter\":" + (query.active_parameter ? std::to_string(*query.active_parameter) : "null") +
+      ",\"return_type\":" + quoted(return_type) + '}';
+  return result.size() <= limit ? result : "null";
+}
+
 std::string analysis_session::semantic_json() const {
   constexpr std::size_t limit = 4 * 1024 * 1024;
   if (!semantic_checked || semantic_binary_dependencies || !semantics || !semantics->available ||
@@ -469,17 +651,8 @@ std::string analysis_session::semantic_json() const {
     paths.insert(path);
   }
   std::set<std::size_t> ids;
-  std::string symbol_json;
   for (const auto &s : semantics->symbols) {
     if (!valid_span(s.path, s.span, s.name)) continue;
-    const auto entry = "{\"id\":" + std::to_string(s.id) +
-        ",\"kind\":" + quoted(s.kind) + ",\"name\":" + quoted(s.name) +
-        ",\"type\":" + quoted(s.type) + ",\"path\":" + quoted(s.path) +
-        ",\"start\":" + std::to_string(s.span.start) +
-        ",\"length\":" + std::to_string(s.span.length) + '}';
-    if (entry.size() + symbol_json.size() + 1 > limit) return "null";
-    if (!symbol_json.empty()) symbol_json += ',';
-    symbol_json += entry;
     ids.insert(s.id);
     paths.insert(s.path);
   }
@@ -494,6 +667,125 @@ std::string analysis_session::semantic_json() const {
     const auto [it, inserted] = references.emplace(key, &r);
     if (!inserted && it->second->symbol_id != r.symbol_id) ambiguous.insert(key);
   }
+
+  // A partial index cannot certify editing from the references it happens to
+  // contain. For lexical locals, prove coverage against every original name
+  // token as well. Unrepresented type/member/assembly/argument-label tokens
+  // conservatively disqualify that spelling; they never become guessed uses.
+  std::map<occurrence, std::size_t> represented;
+  for (const auto &s : semantics->symbols) {
+    if (!ids.count(s.id)) continue;
+    const auto key = std::make_tuple(s.path, s.span.start, s.span.length);
+    const auto [it, inserted] = represented.emplace(key, s.id);
+    if (!inserted && it->second != s.id) ambiguous.insert(key);
+  }
+  for (const auto &[key, r] : references) {
+    const auto [it, inserted] = represented.emplace(key, r->symbol_id);
+    if (!inserted && it->second != r->symbol_id) ambiguous.insert(key);
+  }
+  struct editing_source {
+    std::string language;
+    std::set<std::string> identifier_keys, reserved_keys, uncovered_keys;
+    std::set<std::pair<std::size_t, std::size_t>> name_tokens;
+    bool available = true;
+  };
+  std::map<std::string, editing_source> editing_sources;
+  for (const auto &s : semantics->symbols)
+    if (ids.count(s.id) && s.lexical_local && s.all_uses_located)
+      editing_sources.try_emplace(s.path);
+  std::size_t identifier_count = 0;
+  for (auto &[path, source] : editing_sources) {
+    const auto &text = sources.at(path);
+    const auto ext = extension(path);
+    source.language = ext == ".ny" ? "ny" : "matrix";
+    const auto record = [&](const std::string &key, std::size_t start, std::size_t length) {
+      if (!source.available) return;
+      if (key.empty()) { source.available = false; return; }
+      if (source.identifier_keys.insert(key).second) ++identifier_count;
+      if (source.identifier_keys.size() > 32768 || identifier_count > 131072 ||
+          source.name_tokens.size() >= 131072) {
+        source.available = false;
+        return;
+      }
+      source.name_tokens.emplace(start, length);
+      const auto position = std::make_tuple(path, start, length);
+      if (!represented.count(position) || ambiguous.count(position))
+        source.uncovered_keys.insert(key);
+    };
+    if (source.language == "matrix") {
+      matrix::lexer scanner(text);
+      for (const auto &token : scanner.scan()) {
+        // Analysis does not enforce the eventual native assembler profile.
+        // Keep arbitrary assembly text outside the closed-local proof.
+        if (token.is(matrix::kw::assembly)) source.available = false;
+        if (token.kind != matrix::token_kind::identifier) continue;
+        const auto trim = token.escaped_identifier ? 1u : 0u;
+        if (token.length <= 2 * trim) { source.available = false; continue; }
+        record(token.key, token.start + trim, token.length - 2 * trim);
+      }
+      if (scanner.has_errors()) source.available = false;
+      for (int k = 0; k < static_cast<int>(matrix::kw::not_a_keyword); ++k)
+        source.reserved_keys.insert(matrix::fold_key(matrix::keyword_name(static_cast<matrix::kw>(k))));
+    } else {
+      lexer scanner(text);
+      for (const auto &token : scanner.scan_tokens()) {
+        if (token.kind == token_kind::identifier)
+          record(token.lexeme, token.offset, token.length);
+        // Legacy implicit interpolation has no editable original spans.
+        // Explicit formatted text emits normal expression tokens, so those
+        // bindings participate in the same coverage proof as surrounding code.
+        // Withhold editing for the whole file, including potentially captured
+        // names absent from the ordinary token stream. Literal braces are an
+        // intentional conservative exclusion until interpolation is mapped.
+        if (token.kind == token_kind::invalid ||
+            (token.kind == token_kind::identifier && token.lexeme == "asm") ||
+            (token.kind == token_kind::string_literal && token.lexeme.find('{') != std::string::npos))
+          source.available = false;
+      }
+      std::istringstream words("function fun let const if else elseif then return println while where for in break continue loop do mut import package module namespace using use pub type as end true false match when struct enum trait impl allocate deallocate ref fn mod class abstract virtual override inherits self attempt fault recover raise assert hotreload not test example property generate asm and or _");
+      for (std::string word; words >> word;) source.reserved_keys.insert(word);
+    }
+    for (const auto *reserved : {"owned", "owned_move", "owned_borrow", "owned_borrow_mut", "parallel_map", "assert", "hotreload"})
+      source.reserved_keys.insert(source.language == "matrix" ? matrix::fold_key(reserved) : reserved);
+  }
+  std::set<std::size_t> unlocated;
+  for (const auto &r : semantics->references) {
+    if (r.symbol_id >= semantics->symbols.size()) continue;
+    const auto &symbol = semantics->symbols[r.symbol_id];
+    const auto source = editing_sources.find(symbol.path);
+    if (source == editing_sources.end()) continue;
+    const auto position = std::make_tuple(r.path, r.span.start, r.span.length);
+    if (r.path != symbol.path || !references.count(position) || ambiguous.count(position) ||
+        !source->second.name_tokens.count({r.span.start, r.span.length}))
+      unlocated.insert(r.symbol_id);
+  }
+  std::set<std::size_t> complete;
+  for (const auto &s : semantics->symbols) {
+    if (!ids.count(s.id) || !s.lexical_local || !s.all_uses_located) continue;
+    const auto &source = editing_sources.at(s.path);
+    const auto name = source.language == "matrix" ? matrix::fold_key(s.name) : s.name;
+    if (!source.available || source.uncovered_keys.count(name) ||
+        !source.name_tokens.count({s.span.start, s.span.length}) ||
+        ambiguous.count(std::make_tuple(s.path, s.span.start, s.span.length))) continue;
+    if (!unlocated.count(s.id)) complete.insert(s.id);
+  }
+  std::string symbol_json;
+  std::set<std::string> policy_paths;
+  for (const auto &s : semantics->symbols) {
+    if (!ids.count(s.id)) continue;
+    const bool rename_safe = complete.count(s.id);
+    const auto entry = "{\"id\":" + std::to_string(s.id) +
+        ",\"kind\":" + quoted(s.kind) + ",\"name\":" + quoted(s.name) +
+        ",\"type\":" + quoted(s.type) + ",\"path\":" + quoted(s.path) +
+        ",\"start\":" + std::to_string(s.span.start) +
+        ",\"length\":" + std::to_string(s.span.length) +
+        (complete.count(s.id) ? ",\"references_complete\":true" : "") +
+        (rename_safe ? ",\"rename_safe\":true" : "") + '}';
+    if (entry.size() + symbol_json.size() + 1 > limit) return "null";
+    if (!symbol_json.empty()) symbol_json += ',';
+    symbol_json += entry;
+    if (rename_safe) policy_paths.insert(s.path);
+  }
   std::string reference_json;
   for (const auto &[key, r] : references) {
     if (ambiguous.count(key)) continue;
@@ -506,17 +798,40 @@ std::string analysis_session::semantic_json() const {
     reference_json += entry;
     paths.insert(r->path);
   }
+  const auto keys_json = [&](const std::set<std::string> &keys) {
+    std::string result = "[";
+    for (const auto &key : keys) {
+      if (result.size() > 1) result += ',';
+      result += quoted(key);
+    }
+    return result + ']';
+  };
+  std::string policy_json = "{\"schema\":\"nil.rename.v1\",\"sources\":[";
+  bool first_policy = true;
+  for (const auto &path : policy_paths) {
+    const auto &source = editing_sources.at(path);
+    const auto entry = "{\"path\":" + quoted(path) + ",\"language\":" + quoted(source.language) +
+        ",\"identifier_keys\":" + keys_json(source.identifier_keys) +
+        ",\"reserved_keys\":" + keys_json(source.reserved_keys) + '}';
+    if (entry.size() + policy_json.size() + symbol_json.size() + reference_json.size() + 1 > limit)
+      return "null";
+    if (!first_policy) policy_json += ',';
+    first_policy = false;
+    policy_json += entry;
+  }
+  policy_json += "]}";
   if (paths.size() > 256) return "null";
   std::string source_json;
   for (const auto &path : paths) {
     const auto entry = "{\"path\":" + quoted(path) + ",\"text\":" + quoted(sources.at(path)) + '}';
-    if (entry.size() + source_json.size() + symbol_json.size() + reference_json.size() + 1 > limit)
+    if (entry.size() + source_json.size() + symbol_json.size() + reference_json.size() + policy_json.size() + 1 > limit)
       return "null";
     if (!source_json.empty()) source_json += ',';
     source_json += entry;
   }
   auto result = "{\"schema\":\"nil.semantic.v1\",\"partial\":true,\"sources\":[" + source_json +
-      "],\"symbols\":[" + symbol_json + "],\"references\":[" + reference_json + "]}";
+      "],\"symbols\":[" + symbol_json + "],\"references\":[" + reference_json +
+      "],\"rename_policy\":" + policy_json + '}';
   return result.size() > limit ? "null" : result;
 }
 
@@ -588,6 +903,16 @@ std::string analysis_session::json(bool success) const {
       semantic = "null";
     out << ",\"semantic\":" << semantic;
   }
+  if (completion_cursor) {
+    auto result = completion_json();
+    if (static_cast<std::size_t>(out.tellp()) + result.size() + 18 > output_limit) result = "null";
+    out << ",\"completion\":" << result;
+  }
+  if (signature_cursor) {
+    auto result = signature_json();
+    if (static_cast<std::size_t>(out.tellp()) + result.size() + 18 > output_limit) result = "null";
+    out << ",\"signature\":" << result;
+  }
   out << "}\n";
   return out.str();
 }
@@ -635,6 +960,28 @@ int run_analysis_cli(int argc, char **argv, compilation_entry compile) {
       if (a == "--source-stdin") { session.source_stdin = true; continue; }
       if (a == "--workspace-stdin") { session.workspace_stdin = true; continue; }
       if (a == "--semantic-index") { session.semantic_requested = true; continue; }
+      if (a == "--signature-at") {
+        if (++i >= argc) throw std::runtime_error("missing value after " + a);
+        const std::string offset = argv[i];
+        if (session.signature_cursor || offset.empty() || offset.size() > 7 ||
+            offset.find_first_not_of("0123456789") != std::string::npos)
+          throw std::runtime_error("--signature-at requires one UTF-8 byte offset");
+        const auto parsed = std::stoul(offset);
+        if (parsed > source_limit) throw std::runtime_error("signature offset exceeds source limit");
+        session.signature_cursor = parsed;
+        continue;
+      }
+      if (a == "--completion-at") {
+        if (++i >= argc) throw std::runtime_error("missing value after " + a);
+        const std::string offset = argv[i];
+        if (session.completion_cursor || offset.empty() || offset.size() > 7 ||
+            offset.find_first_not_of("0123456789") != std::string::npos)
+          throw std::runtime_error("--completion-at requires one UTF-8 byte offset");
+        const auto parsed = std::stoul(offset);
+        if (parsed > source_limit) throw std::runtime_error("completion offset exceeds source limit");
+        session.completion_cursor = parsed;
+        continue;
+      }
       if (a == "--warnings-as-errors") { session.warnings_as_errors = true; continue; }
       if (a == "--disable-rule") {
         if (++i >= argc) throw std::runtime_error("missing value after " + a);

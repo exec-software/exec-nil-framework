@@ -1,6 +1,6 @@
 # Executable NIL format and compatibility
 
-NIL is Ny's stack-machine intermediate representation. Text and binary
+NIL is the shared stack-machine intermediate representation for Ny and Matrix. Text and binary
 executables carry the same schemas, function declarations, constants and
 instructions in the current compiler. They are inputs to `nilinterpreter` and
 `nilassembler`; the latter emits an ordinary host object for `nillinker`.
@@ -17,6 +17,9 @@ instructions in the current compiler. They are inputs to `nilinterpreter` and
 | Class-bearing library | 4 / 1 | V3 records, embedded sources, and class declarations; the same source-bootstrap import contract |
 
 Version numbers describe file layouts, not language or release versions.
+The optional type-annotation flag (`2`) adds annotations to schema records;
+it combines with the library flag (`1`). For example, generated tuple schemas
+carry `@nil_tuple`, so an ordinary tuple executable uses version/flags `3 / 2`.
 Readers reject unknown versions/flags. Current compilers emit executable v3
 without classes and v4 when class metadata is present. `--debug-info` selects
 v5 executable output independently of class use. Older SDKs cannot read
@@ -29,6 +32,14 @@ libraries of either version; a native executable is currently compiled as one re
 Retaining `@ai_context` in NIL is independent of opt-in native
 [executable context](executable-context.md) embedding. Neither annotation
 retention nor that section implements source-level debugger maps.
+
+Tuples use ordinary typed record schemas with canonical `tuple<T1,T2,...>`
+names and ordered numeric fields. See [NIL-0015](../design/NIL-0015-structural-tuples.md).
+Formatted text lowers to `STR_CONCAT` and `TO_STRING <scalar-type>`; the
+zero-operand legacy `TO_STRING` remains readable. The explicit type distinguishes
+boolean formatting from integer formatting and preserves native/VM parity.
+See [NIL-0014](../design/NIL-0014-formatted-text.md) for supported values and
+conversion rules.
 
 Text NIL preserves function declaration lines with a reserved
 `# declaration_line N` comment immediately before the function header, after

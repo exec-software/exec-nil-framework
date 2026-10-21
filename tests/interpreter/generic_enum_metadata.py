@@ -155,22 +155,22 @@ def variant_instructions(instructions: Iterable[Instruction]) -> List[Instructio
 
 def require_instruction(
     instructions: Iterable[Instruction],
-    function_suffix: str,
+    function_name: str,
     opcode: str,
     arguments: Tuple[str, ...],
     debug_line: int,
 ) -> None:
     for instruction in instructions:
         if (
-            instruction.function_name.endswith(function_suffix)
+            instruction.function_name == function_name
             and instruction.opcode == opcode
             and instruction.arguments == arguments
             and instruction.debug_line == debug_line
         ):
             return
     raise AssertionError(
-        "missing {} {} at line {} in function *{}".format(
-            opcode, arguments, debug_line, function_suffix
+        "missing {} {} at line {} in function {}".format(
+            opcode, arguments, debug_line, function_name
         )
     )
 
@@ -181,12 +181,14 @@ def verify_metadata(instructions: List[Instruction]) -> None:
     option_text = "nil::std::core::Option<text>"
 
     required = (
-        ("__byte_result", "NEW_VARIANT", ("Result::Ok", "1", result_bytes, "array<u8>"), 6),
-        ("__byte_result", "NEW_VARIANT", ("Result::Error", "1", result_bytes, "text"), 8),
-        ("__bool_result", "NEW_VARIANT", ("Result::Ok", "1", result_bool, "bool"), 13),
-        ("__bool_result", "NEW_VARIANT", ("Result::Error", "1", result_bool, "text"), 15),
-        ("__text_option", "NEW_VARIANT", ("Option::Some", "1", option_text, "text"), 20),
-        ("__text_option", "NEW_VARIANT", ("Option::None", "0", option_text, "void"), 22),
+        # This source has no module declaration; its functions belong to the
+        # root, not to whichever standard-library dependency was merged last.
+        ("byte_result", "NEW_VARIANT", ("Result::Ok", "1", result_bytes, "array<u8>"), 6),
+        ("byte_result", "NEW_VARIANT", ("Result::Error", "1", result_bytes, "text"), 8),
+        ("bool_result", "NEW_VARIANT", ("Result::Ok", "1", result_bool, "bool"), 13),
+        ("bool_result", "NEW_VARIANT", ("Result::Error", "1", result_bool, "text"), 15),
+        ("text_option", "NEW_VARIANT", ("Option::Some", "1", option_text, "text"), 20),
+        ("text_option", "NEW_VARIANT", ("Option::None", "0", option_text, "void"), 22),
         ("main", "IS_VARIANT", ("Result::Ok", result_bytes, "array<u8>"), 27),
         ("main", "UNWRAP_VARIANT", ("1", result_bytes, "array<u8>"), 27),
         # Line 33 is the wildcard arm: it must retain payload metadata even
@@ -200,9 +202,9 @@ def verify_metadata(instructions: List[Instruction]) -> None:
         ("main", "UNWRAP_VARIANT", ("1", option_text, "text"), 53),
         ("main", "IS_VARIANT", ("Option::None", option_text, "void"), 59),
     )
-    for function_suffix, opcode, arguments, debug_line in required:
+    for function_name, opcode, arguments, debug_line in required:
         require_instruction(
-            instructions, function_suffix, opcode, arguments, debug_line
+            instructions, function_name, opcode, arguments, debug_line
         )
 
     wildcard_unwraps = [

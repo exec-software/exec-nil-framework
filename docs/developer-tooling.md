@@ -24,10 +24,26 @@ the two frontends, including unsaved imports and lexical shadowing, after
 validating the entire native input set. Textual include snapshots are watched
 and checked even when their extensions cannot participate in overlays.
 
-The language server currently has a separate tolerant, document-local index.
-It supplies useful local completion, hover and outline information,
+The compiler now certifies complete occurrence sets for eligible lexical local
+variables and loop binders. VS Code uses those explicit capabilities for Find
+All References and local rename. Rename follows compiler-provided identifier and
+reserved-name policy, then checks the proposed source and verifies every retained
+binding before returning an edit. Named parameters, functions and globals still
+need a graph that includes their external callers. See F42 in the
+[findings](../matrix/docs/next-version-findings.md).
+
+The compiler also supplies bounded completion queries for nonempty value and
+supported receiver-member prefixes. Candidates follow checked bindings, imports,
+declaration order and receiver types. Signature queries retain original argument
+slots and Matrix labels, then describe the selected callable. VS Code validates
+the consumed source snapshots before displaying either result. See
+[NIL-0011](design/NIL-0011-completion-queries.md) and
+[NIL-0012](design/NIL-0012-signature-queries.md) for their supported profiles.
+
+The language server retains a separate tolerant, document-local index.
+It supplies fallback completion, hover and outline information,
 but it does not have the compiler's resolved import graph or reference bindings.
-Its older definition provider is suppressed while compiler analysis is enabled;
+Its definition, references and rename providers are suppressed while compiler analysis is enabled;
 disabling analysis retains that fallback.
 Declaration snapshots alone are insufficient to implement reliable cross-file
 rename, references or semantic completion.
@@ -45,22 +61,27 @@ not complete signatures or a stable type graph. See
 | Stage | Deliverable | Acceptance evidence |
 | --- | --- | --- |
 | Complete semantic coverage | Extend the implemented partial index to fields, methods, type uses, pattern bindings, precise generic/overload identities, and recoverable incomplete code. Add binary dependency identity and generated-source maps. | Mixed Ny/Matrix projects, dirty imports, deletion/rename, shadowing, overloads, generics and incomplete code cannot produce stale or guessed bindings. |
-| Semantic editing | Build import-aware completion and signatures, complete cross-file references, and transactional rename on the expanded model. Extend existing compiler-backed definition navigation as coverage grows. | Real extension-host tests exercise edit/undo, Unicode offsets, cancellation and multi-root workspaces against an installed SDK. |
+| Semantic editing | Extend member/signature queries to unsupported contexts and general parser recovery; add explicitly scoped cross-file references and transactional rename. Extend existing compiler-backed definition navigation as coverage grows. | Real extension-host tests exercise edit/undo, Unicode offsets, cancellation and multi-root workspaces against an installed SDK. |
 | Analyzer extensions | Versioned read-only semantic queries and an explicit, bounded host for language-authored analyzers; shared diagnostics, configuration and fix protocol. | Malformed output, limits, analyzer failure and source-version mismatch cannot apply incorrect edits or corrupt compilation. |
 | Project graphs | Explicit local project references, library/executable targets and dependency ordering, followed by a content-based incremental cache. | Cycles, output collisions and changed dependencies fail or rebuild predictably; a failed build cannot run stale artifacts. |
 | Integrated debugging | Project launch profiles, consistent source maps, richer variable inspection and native-debugger integration. | End-to-end stepping and breakpoint tests cover both languages and each claimed execution route. |
+
+[NIL-0013](design/NIL-0013-project-semantic-editing.md) proposes the entrypoint-graph
+scope, source roles and transactional checks required for cross-file editing.
+It does not expand the currently shipped local rename capability.
 
 Package resolution, lock files and distribution publication are separate from
 the local build driver. Their contracts belong to the package-manager design.
 Native compiler plugins are not a prerequisite for a useful analyzer host.
 
-The near-term priority is expanding the retained binding coverage before
-claiming complete references, rename, or semantic completion. Both frontends
+The near-term priority is expanding retained binding coverage beyond certified
+locals and extending completion/signature coverage beyond the supported contexts. Both frontends
 now preserve supported original-source name spans, and the checker retains
 local bindings after their scopes are discarded. Type strings and declaration
 names still cannot stand in for a complete symbol/type model. Expanded/generated
 locations remain non-editable until source maps exist. Matrix rename also needs
-explicit rules for hyphen, underscore, case-folded, and escaped surface spellings.
+richer spelling rules beyond the initial explicit replacement of certified local
+occurrences, including cross-language declarations and named argument labels.
 
 Adding editor-only heuristics for references or rename would create a third
 interpretation of the languages and make those features difficult to trust. Each stage should ship

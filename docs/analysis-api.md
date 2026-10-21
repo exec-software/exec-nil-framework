@@ -175,6 +175,8 @@ not a compiler execution sandbox or time budget.
 The flag works with disk input, `--source-stdin`, and `--workspace-stdin`.
 Without the flag, the member is absent. A successful supported check returns
 `nil.semantic.v1`; an unavailable index is `null`.
+The example shows the navigation fields; additive local-editing fields are
+described below.
 
 ```json
 {
@@ -223,16 +225,18 @@ not emit a link. A matching name alone never creates one.
 Both frontends retain original name-token ranges. Matrix's surface spelling
 can differ from its compiler name through identifier folding. Ny retains
 original ranges when preprocessing is unchanged, or differs only by verified
-blank-line/final-newline normalization. Other textual transformations suppress
+blank-line/final-newline normalization or the removal of standalone `@pragma once`
+and `@schema` metadata lines. These directives must become exactly one empty
+line while every code line remains byte-for-byte unchanged; an explicit line
+offset map then restores original UTF-8 positions. Other textual transformations suppress
 the unit's name spans. Generated/interpolated nodes without an original name
 token remain unlocated. There are no guessed offsets into expanded text.
 
 `partial: true` is deliberate. Field/member dispatch, type-use strings,
 pattern bindings, full generic/overload occurrence coverage, failed-code
 recovery, and source maps for expansion/generated code remain incomplete.
-An empty reference list does not prove that a symbol is unused. This version
-supports definition navigation for emitted bindings; it is not a complete
-Find All References or rename contract.
+An empty reference list does not prove that a symbol is unused unless that
+individual symbol carries the completeness capability described below.
 
 The index is available only when the full analysis succeeds, including rule
 policy. Parser, import, type, ownership, and warnings-as-errors failures return
@@ -250,8 +254,217 @@ limits still produce an analysis error as described above. Source text and
 span validation may omit unsupported individual locations within an otherwise
 valid partial index.
 
+### Certified local references and rename
+
+An eligible symbol additionally has `references_complete: true`; a candidate
+for rename also has `rename_safe: true`. Missing flags mean unsupported; consumers must never
+infer either capability from `kind`, the number of references, or successful
+checking. The whole index remains partial. These flags currently apply only
+to variable declarations inside function/lambda/test bodies and explicit loop
+binders, with all occurrences confined to their declaration's source file.
+Global variables, functions, fields, types, pattern bindings, and all parameters
+remain outside this editing profile. Named function parameter names can be
+used as Matrix argument labels by callers outside the analyzed graph.
+
+The checker retains actual binding IDs and records missing original spans.
+Export then lexes the original source and requires every identifier token with
+the declaration's key to have an unambiguous retained declaration or reference.
+This includes other declarations with the same spelling: their separate IDs
+preserve shadowing. An unsupported field/type/argument-label occurrence with
+that key withholds the capability rather than guessing its role. The supported
+symbol's own references must all be original name tokens in the same file.
+Ny sources containing an ordinary string with `{` are excluded because legacy
+implicit interpolation is not mapped. Explicit `$"..."` and Matrix
+`formatted "..."` expressions retain original name tokens and participate in
+the normal coverage proof, even after decoded literal prefixes. Assembly in
+either language also excludes the source. Preprocessed or generated units
+without original spans cannot qualify.
+
+Matrix named arguments now follow the checked callable's parameter-name contract.
+A certified local may therefore be renamed even when it shadows a paragraph name;
+argument order no longer depends on a parser-wide signature lookup. Function
+parameters remain ineligible because callers can use their names as labels.
+
+The index includes an additive `rename_policy` object with
+`schema: "nil.rename.v1"` and a `sources` array. Each entry contains:
+
+- `path`: the exact canonical source path already present in `sources`.
+- `language`: `"ny"` or `"matrix"`.
+- `identifier_keys`: the unique original identifier keys throughout that file.
+- `reserved_keys`: language keywords and reserved compiler operation names.
+
+Ny keys preserve spelling. Matrix keys fold ASCII case and remove hyphens and
+underscores. Policy entries exist only for sources with a certified rename candidate.
+There are at most 32,768 identifier keys per source, 131,072 in total, and
+131,072 name tokens examined per source for certification. A coverage-budget
+failure withholds that source's editing capabilities while retaining ordinary
+navigation; the complete JSON still shares the 4 MiB semantic-output bound.
+
+`rename_safe` authorizes a candidate for validation, not an arbitrary
+replacement. Clients must require a policy for the source, accept a bare
+identifier in the declared language, and reject empty normalized keys,
+reserved keys, and keys already present anywhere in that source. The current
+VS Code profile accepts ASCII identifiers: letters/underscore followed by
+letters/digits/underscore, with Matrix additionally allowing hyphens followed
+by a letter. Existing backticks stay outside the edit ranges. Every edited
+occurrence receives the same new spelling.
+
+Before offering edits, a client must analyze the proposed replacement against
+the same complete workspace snapshot and require successful analysis with a
+semantic index. Compare the entire indexed binding graph after accounting for
+changed byte offsets and the renamed declaration; preserve all other resolved
+identities. Snapshot-local numeric IDs cannot be compared directly across
+checks. This second check catches contextual grammar changes and unexpected
+rebinding. Revalidate original source versions and canonical identities after
+that asynchronous check, before returning an edit. A failed or unverifiable
+proposal returns no edit. References use the same snapshot validation and may
+include the declaration according to the caller's requested context.
+
+This profile does not add workspace-wide references for exported symbols,
+parameter rename or lexical scope ranges. Completion uses the separate query
+described below. Older `nil.semantic.v1` producers without the new fields continue to
+support navigation, with local references/rename unavailable.
+
 See [NIL-0010](design/NIL-0010-semantic-source-index.md) for the design decision
 and [developer tooling](developer-tooling.md) for the remaining coverage.
+
+## Completion at an identifier
+
+`--completion-at <offset>` adds a `completion` member to `nil.analysis.v1`.
+The offset is the cursor's UTF-8 byte offset in the original primary source.
+The flag works independently of `--semantic-index`, with disk, `--source-stdin`,
+and `--workspace-stdin` inputs:
+
+```sh
+sdk/nilcompiler --analyze --workspace-stdin --completion-at 82 \
+  -I sdk/nilstd application.matrix < workspace.json
+```
+
+The query accepts a nonempty prefix inside an unqualified value identifier or
+a supported receiver member name, including direct-call and function-value
+expressions.
+Both frontends must have parsed successfully, imports must resolve, and the
+checker must reach the identifier without an earlier checker diagnostic. At
+that point it snapshots the actual visible bindings before looking up the
+unfinished name. A subsequent undefined-name diagnostic does not invalidate
+the snapshot. Consequently a valid completion can accompany `success: false`
+and exit status `1`; clients must inspect the query member independently of
+whole-program success. Exit status `2` still indicates an invalid request.
+
+An available result has this shape:
+
+```text
+completion: {
+  schema: "nil.completion.v1",
+  partial: true,
+  path: canonical_primary_path,
+  cursor: requested_byte_offset,
+  start: replacement_start_byte,
+  length: replacement_length_bytes,
+  sources: [{ path: canonical_native_path, text: exact_consumed_source }],
+  items: [{ name: display_spelling, kind: "function" | "variable" | "parameter" | "field" | "method",
+            type: display_type, insert_text: complete_identifier_spelling }]
+}
+```
+
+Items come from lexical lookup and the current module's imports, including
+visibility checks, shadowing and declaration order. Source functions declared
+later in the module remain available according to normal function lookup.
+Candidates require a verified original declaration token. Member queries use
+the checked receiver type to select source-backed fields and instance methods,
+including imports, inheritance and supported generic substitutions. Accessibility
+and ambiguous member lookup use the same rules as checking. Type names, static
+member contexts, unlocated intrinsics and unsupported bindings are omitted. `type` is
+display metadata, using Matrix vocabulary for a Matrix query; function entries
+and method entries expose their return type rather than a complete signature.
+Source-backed library declarations behind `@pragma once` and `@schema` headers
+retain those tokens through the verified metadata-line mapping above. Includes,
+macro expansion and conditional rewriting still require a general source map.
+
+The compiler filters by the prefix ending at the requested cursor. Ny matching
+is case-sensitive. Matrix matching uses its ASCII case/separator folding, and
+the insertion is checked against the same page-wide name resolver used by the
+frontend. A spelling redirected to another declaration is omitted. Member queries instead
+validate receiver-directed spelling and do not use the page-wide resolver. Matrix
+declarations retain their written display spelling; Ny declarations retain
+their Ny spelling. An edit replaces the entire current identifier, including
+any suffix after the cursor and existing Matrix backtick delimiters. Required
+backticks are included in `insert_text`.
+
+An empty item array is an available query with no matching supported bindings.
+`completion: null` means the position or snapshot is unavailable. Positions in
+comments, literals, type names, unsupported members, qualified names, and blank input
+are not recovered into value queries. Earlier checker errors, parse/import
+failure, preprocessed names without original spans, binary-library dependencies,
+unstable source identities, repeated checker visits to the queried physical
+token (for example through generic specialization), and exhausted budgets also produce `null`. Omitting
+the flag omits the member entirely. This protocol does not claim that a proposed
+value meets the surrounding expression's expected type or call signature.
+
+Every consumed native source, including non-language textual includes, is
+present in `sources`; the existing workspace overlay restrictions still apply.
+Clients must revalidate all captured versions, canonical identities, aliases,
+and source text before using a result. Limits are 256 source snapshots, 4,096
+exported candidates, 4 MiB of encoded query JSON, and the existing 8 MiB total
+analysis response. A query that exceeds a bound becomes `null`, without
+truncating its candidates or input graph and without displacing diagnostics.
+
+The design rationale is recorded in
+[NIL-0011](design/NIL-0011-completion-queries.md).
+
+## Signature help at a call
+
+`--signature-at <offset>` adds an independent `signature` member to
+`nil.analysis.v1`, using the same original UTF-8 cursor offsets and disk,
+raw-stdin or workspace input routes as completion. The compiler selects the
+innermost parsed call argument region at the cursor and resolves its actual
+callable. An unavailable inner call does not fall back to an unrelated outer
+signature. Parameter information is separate from the semantic reference index
+and does not certify parameters or argument labels for rename.
+
+```text
+signature: {
+  schema: "nil.signature.v1",
+  partial: true,
+  path: canonical_primary_path,
+  cursor: requested_byte_offset,
+  start: argument_region_start_byte,
+  length: argument_region_length_bytes,
+  sources: [{ path: canonical_native_path, text: exact_consumed_source }],
+  label: full_display_signature,
+  parameters: [{ name, type, label: display_parameter, variadic: false }],
+  active_parameter: zero_based_index_or_null,
+  return_type: display_return_type
+}
+```
+
+Argument regions exclude the Ny call parentheses and start after Matrix's
+`with`. A zero-length region is valid for an empty Ny call. Original argument
+slots and named labels survive checker reordering. Matrix's active parameter
+follows the selected callable's label, including folded spellings, rather than
+the written argument index. A variadic tail selects its final parameter.
+Unknown labels or positions without a corresponding parameter use null.
+
+Source-backed direct and imported functions, supported methods, and immutable
+callbacks with a proven parameter-name contract can provide signatures. Instance
+methods omit `self`. Display types describe the selected declaration rather than
+speculatively inferring missing generic arguments. Invalid or unresolved argument
+expressions may still yield useful help; an earlier unrelated checker failure,
+unresolved callee, inaccessible callable or unsupported callback contract does not.
+
+The initial query requires parsed call syntax, with one narrow Matrix exception:
+while querying whitespace immediately after a bare `with` on that line, the parser
+can retain an empty argument region. The original source remains a syntax error,
+ordinary compilation still rejects it, and analysis reports `success: false` with
+no semantic index. This query recovery never alters the consumed source snapshots.
+Missing Ny closing parentheses and other parse errors remain unsupported.
+
+A result is limited to 256 parameters, 256 consumed native sources and 4 MiB of
+JSON within the existing 8 MiB analysis response. Binary dependencies, unverifiable
+source identities/spans, ambiguous repeated call occurrences and exceeded limits
+produce `signature: null`. Omitting the flag omits the field. Clients must validate
+all input snapshots and cursor bounds before displaying the result; queries do not
+publish diagnostics or make edits. See [NIL-0012](design/NIL-0012-signature-queries.md).
 
 ## Reflection from Ny or Matrix
 
@@ -333,6 +546,12 @@ source against its captured buffer or current bounded disk read. It also
 observes open aliases and rejects changed models during asynchronous checks.
 With compiler analysis enabled, the extension suppresses the language server's
 older definition guesses. Disabling compiler analysis retains that fallback.
+
+Completion queries run on demand for the active identifier and share the same
+captured-buffer and dependency validation. A verified compiler result supplies
+value candidates while the language server can retain keyword suggestions;
+unavailable queries retain the structural completion fallback. Query snapshots
+also establish watchers for all consumed native inputs.
 
 An untitled buffer with an explicit absolute source filename can participate
 as an unsaved import. An unnamed untitled buffer has no import identity and is

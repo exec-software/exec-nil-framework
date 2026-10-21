@@ -19,12 +19,19 @@ the compiler-backed source debugger.
 - TextMate syntax highlighting for canonical Ny syntax and accepted legacy
   spellings.
 - Matrix highlighting for case-insensitive keywords, hyphenated and backtick
-  names, subject-first declarations, word operators, and multiline text.
+  names, subject-first declarations, word operators, signed numbers and multiline text.
+- Interpolated expression highlighting for Ny `$"..."` and Matrix
+  `formatted "..."`, including nested strings and literal doubled braces.
+  Tuple bindings, destructuring and formatted text have matching snippets.
 - Bracket, quote, comment, indentation, and folding configuration.
 - Snippets for modules, functions, data types, control flow, faults, tests,
   interop, documentation, and `@ai_context` metadata.
 - A `nillsp` client using standard LSP `Content-Length` framing over stdio.
-- Completion, hover, and document outline for Matrix declarations,
+- Compiler-backed completion for visible locals, parameters, imported functions
+  and supported receiver fields/methods, including unresolved prefixes.
+- Compiler-backed signature help for parsed calls, with Matrix named-argument
+  selection and verified imported/callback parameter contracts.
+- Tolerant completion, hover, and document outline for Matrix declarations,
   paragraph parameters, local bindings, and known receiver members.
 - Compiler-resolved Go to Definition for variables, parameters and direct/imported
   functions across Ny and Matrix source files, including unsaved imports.
@@ -278,7 +285,7 @@ continue to use saved disk contents.
 Editor checks are disabled in untrusted workspaces and can be switched off with
 `ny.analysis.enabled`.
 
-## Compiler definitions
+## Compiler navigation and local rename
 
 Go to Definition follows the compiler's resolved bindings for source functions,
 variables and parameters, including lexical shadowing, loop and lambda parameters,
@@ -302,9 +309,72 @@ its absence does not suppress otherwise valid diagnostics.
 
 When compiler analysis is enabled, its definition provider takes precedence over
 the language server's document-local guesses. Disabling `ny.analysis.enabled`
-retains the older language-server definition behavior. Completion and hover
-continue to work from the tolerant language-server index while source is incomplete.
-References and rename are not exposed from this partial compiler index.
+retains the older language-server definition behavior. Hover continues to use
+the tolerant language-server index.
+Find All References and Rename Symbol are available for local variables and loop
+binders only when the compiler certifies every occurrence in that source. These
+capabilities are separate from the partial index: an unindexed token with the
+same spelling, generated use, inline assembly, or legacy implicit Ny interpolation can withhold
+them. Functions, globals, fields, type names, and function/lambda parameters are
+not eligible. Named parameter labels can occur in callers outside the checked
+import graph and need a broader completeness contract.
+Matrix locals that shadow a paragraph name are eligible because named arguments
+now follow the resolved callable’s parameter-name contract.
+
+Rename accepts a new ASCII identifier, with Matrix hyphens supported. The name
+must not be reserved or already occur as an identifier anywhere in the source;
+Matrix comparisons ignore case, hyphens and underscores. The chosen spelling
+replaces every certified occurrence while preserving existing backtick delimiters.
+Before returning an edit, the extension checks the proposed source with the
+compiler, verifies that all retained bindings and source inputs are preserved,
+and revalidates the original buffers and disk inputs. Renaming through multiple
+open aliases of one file is refused. Failed or cancelled checks change no files.
+
+## Compiler completion
+
+With compiler analysis enabled, completion at a nonempty unqualified identifier
+expression uses the checker’s visible bindings, declaration order and resolved
+imports. This includes partially typed names that produce an unresolved-name
+diagnostic. Candidates preserve Matrix folding and escaped names; accepting one
+replaces the full original token, including any suffix after the cursor.
+
+Member prefixes use the checked receiver type, including supported imported
+records/classes, inheritance and generic substitutions. Field and method icons
+distinguish the suggestions; private or ambiguous members are not advertised.
+Blank member positions and unsupported static/builtin contexts retain fallback.
+
+Completion uses a separate `--completion-at` query and does not publish diagnostics.
+The extension validates every consumed source against the current buffers or disk,
+rejects stale responses and watches dependencies. The query is bounded to 256
+sources, 4,096 candidates and 4 MiB of JSON. Function type details describe return
+types, not full signatures, and candidates are not filtered by an expected type.
+
+Blank positions, unsupported member/type contexts, parse or import failures, earlier checker
+failures, ambiguous repeated generic occurrences and binary dependencies retain
+the tolerant language-server fallback. When compiler candidates are available,
+its value bindings take precedence while language keywords and snippets remain.
+An older SDK without the query also retains fallback completion. This is an initial
+identifier-completion profile; general incomplete-code recovery remains future work.
+
+## Compiler signature help
+
+Signature help uses a separate `--signature-at` query at parsed call arguments,
+including empty Ny parentheses and Matrix named arguments. It follows the actual
+selected function or supported method, including imports and proven immutable
+callbacks. Matrix labels select their declaration parameter even when arguments
+are written in a different order. Instance methods omit `self`.
+
+The innermost call takes precedence. Unresolved arguments can still show a resolved
+signature; an unresolved callee cannot inherit an outer signature. Unknown named
+labels retain the full signature text without guessing which parameter to highlight.
+Generic signatures display declaration types, not inferred types for unfinished calls.
+
+The query can also show Matrix help immediately after a bare `with` while retaining
+the source syntax error. Other parse errors, missing Ny closing parentheses, earlier
+checker errors, inaccessible/unsupported callables and binary dependencies produce
+no signature. All source snapshots are validated, stale requests are cancelled, and
+temporary compiler failures can be retried without editing the document. Older SDKs
+without `--signature-at` provide no compiler signature help.
 
 ## Current language-server limits
 

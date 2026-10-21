@@ -1,6 +1,8 @@
 import * as path from "node:path";
 import { ToolInvocation } from "./taskModel";
 import { parseSemanticIndex, SemanticIndex } from "./semanticModel";
+import { CompilerCompletion, parseCompilerCompletion } from "./completionModel";
+import { CompilerSignature, parseCompilerSignature } from "./signatureModel";
 export { byteRangeToOffsets, createByteRangeMapper, TextOffsets } from "./sourceOffsets";
 
 export const maxAnalysisSnapshotBytes = 1024 * 1024;
@@ -76,6 +78,8 @@ export interface AnalysisResult {
   reflection: Record<string, unknown>;
   sources?: Array<{ path: string; text: string }>;
   semantic?: SemanticIndex | null;
+  completion?: CompilerCompletion | null;
+  signature?: CompilerSignature | null;
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -131,6 +135,8 @@ export function parseAnalysisOutput(stdout: string, expectedSource: string, exit
   }
   const semantic = parseSemanticIndex(result.semantic);
   if (semantic && !result.success) throw new Error("Failed analysis cannot publish semantic bindings.");
+  parseCompilerCompletion(result.completion);
+  parseCompilerSignature(result.signature);
   return result as unknown as AnalysisResult;
 }
 

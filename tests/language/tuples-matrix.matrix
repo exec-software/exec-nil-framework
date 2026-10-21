@@ -1,0 +1,67 @@
+book tuple_contract
+
+counter begin record
+    field total as number
+end record
+
+box of type T begin record
+    field item as T
+end record
+
+pair-type means tuple of (number, text)
+
+next receives object as counter returns number begin paragraph
+    set object.total to object.total plus 1
+    give object.total
+end paragraph
+
+wrap of type T receives item as T returns tuple of (T, text) begin paragraph
+    give (item, "wrapped")
+end paragraph
+
+main returns override integer begin paragraph
+    value object is build counter with total being 0
+    value calls is ((next with object being object), (next with object being object), (next with object being object))
+    value (first, second, third) is calls
+    say first
+    say second
+    say third
+    value pair as tuple of (number, text) is (42, "tuple")
+    value boxed is build box of tuple of (number, text) with item being pair
+    value aliased as pair-type is boxed.item
+    value (count, label) is aliased
+    say count
+    say label
+    value nested is ((negative 1.5, true), pair)
+    say nested.0.0
+    say nested.1.1
+    value singleton as tuple of (number) is (9,)
+    value (single-value,) is singleton
+    say single-value
+    value generic is wrap of number with item being 11
+    say generic.0
+    say generic.1
+    value references is (object, reference to object)
+    value copy is references
+    set copy.0.total to 17
+    say references.1.total
+    value (_, discarded) is ((next with object being object), "kept")
+    say object.total
+    say discarded
+    consider nested
+        when ((negative 1.5, flag), (number-value, _)) then
+            say number-value
+            say flag
+        otherwise say 0
+    end consider
+    value matched is consider pair
+        when (42, name) give name
+        otherwise give "miss"
+    end consider
+    say matched
+    consider nested
+        when ((_, _), (_, _)) then say 23
+    end consider
+    value (_, _) is pair
+    give 0
+end paragraph

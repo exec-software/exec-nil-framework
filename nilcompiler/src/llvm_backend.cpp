@@ -9,6 +9,7 @@
 #include "owned_runtime.hpp"
 #include "nil_contract.hpp"
 #include "numeric_literal.hpp"
+#include "scalar_text.hpp"
 #include "inline_asm.hpp"
 
 #ifdef NY_HAS_LLVM
@@ -293,6 +294,7 @@ static bool native_opcode_supported(Opcode opcode) {
   case Opcode::UNWRAP_VARIANT:
   case Opcode::NEW_ARRAY_LITERAL:
   case Opcode::STR_CONCAT:
+  case Opcode::TO_STRING:
   case Opcode::CAST:
   case Opcode::STRLEN:
   case Opcode::INTEROP_CALL:
@@ -322,7 +324,6 @@ static bool native_opcode_supported(Opcode opcode) {
     return true;
   case Opcode::PUSH_FN_PTR:
   case Opcode::SET_FIELD_PTR:
-  case Opcode::TO_STRING:
   case Opcode::CONSOLE_WRITE:
   case Opcode::CONSOLE_WRITELN:
   case Opcode::COUNT:
@@ -3817,6 +3818,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       case Opcode::IS_VARIANT:
       case Opcode::UNWRAP_VARIANT:
       case Opcode::CAST:
+      case Opcode::TO_STRING:
       case Opcode::STRLEN:
       case Opcode::TIME_SLEEP:
       case Opcode::PARALLEL_MAP:
@@ -7601,6 +7603,48 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         break;
       }
 
+      case Opcode::TO_STRING: {
+        auto *value = impl_->popValue();
+        const auto actual = value ? scalar_text_type(impl_->nilType(value)) : "";
+        // Legacy dynamic conversion sees booleans as integer VM values. Only
+        // an explicit bool operand opts into the new true/false spelling.
+        const auto type = minstr.args.empty() ? (actual == "bool" ? "i64" : actual)
+                                             : scalar_text_type(minstr.args[0]);
+        const auto integer_type = [](const std::string &name) {
+          return name == "i32" || name == "i64" || name == "u8" || name == "bool";
+        };
+        if (!value || minstr.args.size() > 1 || !supports_scalar_text(type) ||
+            !supports_scalar_text(actual) ||
+            !(actual == type || (integer_type(actual) && integer_type(type)))) {
+          std::cerr << "[NativeCodegen] TO_STRING requires matching scalar source metadata in function '"
+                    << fn.name << "'\n";
+          return false;
+        }
+        if (type == "text") {
+          if (!value->getType()->isPointerTy()) return false;
+          impl_->pushValue(value, "text");
+          break;
+        }
+        llvm::Type *argument_type = nullptr;
+        const char *symbol = nullptr;
+        if (type == "f64" && value->getType()->isDoubleTy()) {
+          argument_type = llvm::Type::getDoubleTy(ctx);
+          symbol = "nyrt_text_f64";
+        } else if (integer_type(type) && value->getType()->isIntegerTy()) {
+          argument_type = llvm::Type::getInt64Ty(ctx);
+          value = impl_->coerceToI64(value);
+          symbol = type == "bool" ? "nyrt_text_bool" : "nyrt_text_i64";
+        } else {
+          std::cerr << "[NativeCodegen] TO_STRING scalar storage disagrees with metadata\n";
+          return false;
+        }
+        auto *signature = llvm::FunctionType::get(llvm::PointerType::getUnqual(ctx),
+                                                  {argument_type}, false);
+        auto runtime = impl_->module->getOrInsertFunction(symbol, signature);
+        impl_->pushValue(impl_->builder->CreateCall(signature, runtime.getCallee(), {value}), "text");
+        break;
+      }
+
       case Opcode::STR_CONCAT: {
         auto *rhs = impl_->popValue();
         auto *lhs = impl_->popValue();
@@ -8322,6 +8366,9 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_fail", &nyrt_fail);
   expose_runtime_symbol("nyrt_panic", &nyrt_panic);
   expose_runtime_symbol("nyrt_text_substr", &nyrt_text_substr);
+  expose_runtime_symbol("nyrt_text_i64", &nyrt_text_i64);
+  expose_runtime_symbol("nyrt_text_f64", &nyrt_text_f64);
+  expose_runtime_symbol("nyrt_text_bool", &nyrt_text_bool);
   expose_runtime_symbol("nyrt_alloc", &nyrt_alloc);
   expose_runtime_symbol("nyrt_free", &nyrt_free);
   expose_runtime_symbol("nyrt_arg_count", &nyrt_arg_count);

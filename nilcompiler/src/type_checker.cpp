@@ -7,6 +7,7 @@
 #include "diagnostics.hpp"
 #include "nil_contract.hpp"
 #include "numeric_literal.hpp"
+#include "scalar_text.hpp"
 #include "ownership_check.hpp"
 #include "standard_namespace.hpp"
 #include <algorithm>
@@ -18,6 +19,12 @@
 #include <unordered_set>
 
 namespace ny {
+
+// Empty module markers are source-unit boundaries in a merged AST. They
+// restore the root context without creating a module named "" or "::name".
+static std::optional<std::string> module_context(const std::string &name) {
+  return name.empty() ? std::nullopt : std::optional<std::string>(name);
+}
 
 // Conditional expressions use the same symmetric scalar promotion as
 // arithmetic; branch order must never choose the result's physical width.
@@ -33,8 +40,11 @@ static std::optional<std::string> promoted_scalar_join(const std::string &left,
          left == "i32" || right == "i32" ? "i32" : "u8";
 }
 
-type_checker::type_checker(bool collect_semantics)
-    : collect_semantics_(collect_semantics) {
+type_checker::type_checker(bool collect_semantics,
+                           std::optional<completion_request> completion,
+                           std::optional<signature_request> signature)
+    : collect_semantics_(collect_semantics), completion_request_(std::move(completion)),
+      signature_request_(std::move(signature)) {
   for (const auto *name : {"owned", "borrow", "borrow_mut"})
     symbols_.insert_symbol_with_context(name, symbol_kind::type_symbol, nullptr,
         std::nullopt, false, visibility_kind::visibility_public, std::nullopt);
@@ -201,6 +211,219 @@ type_checker::type_checker(bool collect_semantics)
       visibility_kind::visibility_public, std::nullopt);
 }
 
+void type_checker::capture_completion(const ast_identifier_expr &expression) {
+  if (!completion_request_ || !expression.name_span ||
+      expression.name.find("::") != std::string::npos) return;
+  const auto &request = *completion_request_;
+  const auto span = *expression.name_span;
+  const auto &path = expression.source_file.empty() ? diagnostic_source_file_ : expression.source_file;
+  if (path != request.path || !span.length || request.cursor <= span.start ||
+      request.cursor - span.start > span.length) return;
+  if (completion_) {
+    // Generic instantiation or another lowering may revisit the same physical
+    // token under a different inferred scope. No single visit is authoritative.
+    completion_->available = false;
+    completion_->candidates.clear();
+    return;
+  }
+  completion_ = completion_result{true, path, expression.name, span, {}};
+  auto &result = *completion_;
+  // Scope state after an earlier error is not a completion contract. The
+  // identifier being queried may itself be unfinished and fail immediately
+  // after this snapshot; that failure does not invalidate the scope before it.
+  if (!diagnostics_.empty() || !semantics_.available) {
+    result.available = false;
+    return;
+  }
+  std::set<std::string> names;
+  for (const auto *value : symbols_.visible_symbols()) {
+    const auto split = value->name.rfind("::");
+    names.insert(split == std::string::npos ? value->name : value->name.substr(split + 2));
+    if (names.size() > 32768) { result.available = false; return; }
+  }
+  if (const auto imports = imports_.find(current_module_.value_or("<global>"));
+      imports != imports_.end())
+    for (const auto &[name, entry] : imports->second)
+      if (!entry.target_path.empty() && entry.target_path != "*") {
+        names.insert(name);
+        if (names.size() > 32768) { result.available = false; return; }
+      }
+  std::size_t bytes = 0;
+  for (const auto &name : names) {
+    const symbol *binding = nullptr;
+    // Match identifier lookup, including ambiguous imported globals, without
+    // retaining speculative diagnostics or performing expression/type checks.
+    if (!symbols_.lookup_non_global(name)) {
+      const auto before = diagnostics_.size();
+      const auto global = resolve_source_global(name, expression.line);
+      const bool ambiguous = diagnostics_.size() != before;
+      diagnostics_.resize(before);
+      if (ambiguous) continue;
+      if (global) {
+        binding = symbols_.lookup(*global);
+        if (!binding || !binding->type_name) continue;
+      }
+    }
+    if (!binding) {
+      binding = symbols_.lookup(name);
+      if (binding && current_module_ && binding->module &&
+          *binding->module != *current_module_) binding = nullptr;
+      if (!binding && current_module_) binding = symbols_.lookup(*current_module_ + "::" + name);
+      if (!binding)
+        if (const auto imported = resolve_imported_symbol(name)) binding = symbols_.lookup(*imported);
+    }
+    if (!binding || binding->kind == symbol_kind::type_symbol ||
+        !is_symbol_visible(binding, current_module_.value_or(""))) continue;
+    auto id = binding->semantic_id;
+    if (!id && binding->defining_node) {
+      const auto &node = *binding->defining_node;
+      if (node.kind == ast_node_kind::function_decl_node) {
+        const auto &function = static_cast<const ast_function_decl &>(node);
+        id = semantic_node(node, function.name, "function", function.return_type.value_or("void"));
+      } else if (node.kind == ast_node_kind::variable_decl_node) {
+        const auto &variable = static_cast<const ast_variable_decl &>(node);
+        id = semantic_node(node, variable.name, "variable", binding->type_name.value_or(""));
+      }
+    }
+    if (!id || *id >= semantics_.symbols.size()) continue;
+    const auto &declaration = semantics_.symbols[*id];
+    bytes += name.size() + declaration.kind.size() + declaration.type.size() + declaration.path.size();
+    if (bytes > 4 * 1024 * 1024 || result.candidates.size() >= 32768) {
+      result.available = false; result.candidates.clear(); return;
+    }
+    result.candidates.push_back({name, declaration.kind, binding->type_name.value_or(declaration.type),
+                                declaration.path, declaration.span});
+  }
+}
+
+void type_checker::capture_member_completion(
+    const ast_member_access_expr &expression, const type_info &receiver) {
+  if (!completion_request_ || !expression.name_span) return;
+  const auto &request = *completion_request_;
+  const auto span = *expression.name_span;
+  const auto &path = expression.source_file.empty() ? diagnostic_source_file_ : expression.source_file;
+  if (path != request.path || !span.length || request.cursor <= span.start ||
+      request.cursor - span.start > span.length) return;
+  if (completion_) {
+    completion_->available = false;
+    completion_->candidates.clear();
+    return;
+  }
+  if (!diagnostics_.empty() || !semantics_.available) return;
+
+  // A type/namespace expression has different callable rules from a value.
+  // Leave those positions to the structural provider until they have their
+  // own query contract; do not mistake a same-named local for the type.
+  if (expression.object->kind == ast_node_kind::identifier_expr_node) {
+    const auto &id = static_cast<const ast_identifier_expr &>(*expression.object);
+    const symbol *binding = symbols_.lookup_non_global(id.name);
+    if (!binding) binding = symbols_.lookup(resolve_type(id.name).name);
+    if (binding && binding->kind == symbol_kind::type_symbol) return;
+  }
+
+  auto parts = parse_generic_type_string(resolve_type(receiver.name).name);
+  const bool wrapped_receiver = parts.base_name == "ref" || parts.base_name == "ptr";
+  for (unsigned depth = 0; depth < 32 &&
+      (parts.base_name == "ref" || parts.base_name == "ptr") && parts.type_args.size() == 1; ++depth)
+    parts = parse_generic_type_string(resolve_type(parts.type_args.front()).name);
+  const symbol *owner = symbols_.lookup(parts.base_name);
+  if (!owner || !owner->defining_node) {
+    if (const auto imported = resolve_type_name_with_imports(parts.base_name)) {
+      const symbol *declared = symbols_.lookup(*imported);
+      if (declared && declared->kind == symbol_kind::type_symbol && declared->defining_node)
+        owner = declared;
+    }
+  }
+  if (!owner || owner->kind != symbol_kind::type_symbol) return;
+  const auto node_kind = owner->defining_node ? owner->defining_node->kind : ast_node_kind::program_node;
+  const bool record = node_kind == ast_node_kind::struct_decl_node;
+  const bool class_type = node_kind == ast_node_kind::class_decl_node;
+  if (!record && !class_type && (owner->defining_node || owner->members.empty())) return;
+  completion_ = completion_result{true, path, expression.member_name, span, {}, true};
+  auto &result = *completion_;
+
+  std::set<std::string> names;
+  for (const auto &[name, binding] : owner->members) names.insert(name);
+  if (record)
+    for (const auto &field : static_cast<const ast_struct_decl &>(*owner->defining_node).fields)
+      names.insert(field.name);
+  if (class_type) {
+    std::set<const ast_node *> visited;
+    std::function<void(const symbol &)> collect = [&](const symbol &type) {
+      if (!visited.insert(type.defining_node).second || names.size() > 32768) return;
+      const auto &decl = static_cast<const ast_class_decl &>(*type.defining_node);
+      for (const auto &field : decl.fields) names.insert(field.name);
+      for (const auto &method : decl.methods) names.insert(method->name);
+      for (const auto &base : decl.base_classes)
+        if (const symbol *parent = resolve_class_symbol(base)) collect(*parent);
+    };
+    collect(*owner);
+  }
+  if (names.size() > 32768) { result.available = false; return; }
+
+  std::size_t bytes = 0;
+  for (const auto &name : names) {
+    const ast_node *declaration = nullptr;
+    std::optional<source_span> declaration_span;
+    std::string kind;
+    if (class_type) {
+      const auto before = diagnostics_.size();
+      const auto selected = resolve_class_member(*owner, name, expression.line);
+      const bool ambiguous = diagnostics_.size() != before;
+      diagnostics_.resize(before);
+      if (ambiguous) continue;
+      if (selected.field) {
+        declaration = selected.owner->defining_node;
+        declaration_span = selected.field->name_span;
+        kind = "field";
+      } else if (selected.method) {
+        if (wrapped_receiver || !selected.method->generic_params.empty() ||
+            !owner->generic_params.empty() ||
+            (!selected.method->is_public() && current_class_name_ != selected.owner->name) ||
+            selected.method->params.empty() || selected.method->params.front().name != "self" ||
+            std::any_of(selected.method->params.begin(), selected.method->params.end(),
+                [](const ast_param &parameter) { return parameter.is_variadic; })) continue;
+        declaration = selected.method;
+        declaration_span = selected.method->name_span;
+        kind = "method";
+      }
+    }
+    if (!declaration) {
+      const auto member = owner->members.find(name);
+      if (member != owner->members.end()) {
+        const auto &binding = member->second;
+        if (wrapped_receiver || binding.kind != symbol_kind::function_symbol ||
+            !is_symbol_visible(&binding, current_module_.value_or("")) ||
+            !binding.defining_node) continue;
+        declaration = binding.defining_node;
+        declaration_span = declaration->name_span;
+        kind = "method";
+      } else if (record) {
+        for (const auto &field : static_cast<const ast_struct_decl &>(*owner->defining_node).fields)
+          if (field.name == name) {
+            declaration = owner->defining_node;
+            declaration_span = field.name_span;
+            kind = "field";
+            break;
+          }
+      }
+    }
+    if (!declaration || !declaration_span) continue;
+    const auto before = diagnostics_.size();
+    const auto type = resolve_member_type(receiver, name, expression.line);
+    const bool invalid = diagnostics_.size() != before;
+    diagnostics_.resize(before);
+    if (!type || invalid) continue;
+    const auto &declaration_path = declaration->source_file;
+    if (declaration_path.empty()) continue;
+    bytes += name.size() + kind.size() + type->size() + declaration_path.size();
+    if (bytes > 4 * 1024 * 1024 || result.candidates.size() >= 32768) {
+      result.available = false; result.candidates.clear(); return;
+    }
+    result.candidates.push_back({name, kind, *type, declaration_path, *declaration_span});
+  }
+}
+
 void type_checker::disable_semantics() {
   semantics_.available = false;
   semantics_.symbols.clear();
@@ -244,8 +467,7 @@ std::optional<std::size_t> type_checker::semantic_node(
 
 void type_checker::semantic_reference_to(const ast_node &node,
     const std::string &name, const symbol &binding) {
-  if (!collect_semantics_ || !semantics_.available || !node.name_span ||
-      !node.name_span->length) return;
+  if (!collect_semantics_ || !semantics_.available) return;
   auto id = binding.semantic_id;
   if (!id && binding.defining_node) {
     const auto &declaration = *binding.defining_node;
@@ -260,8 +482,15 @@ void type_checker::semantic_reference_to(const ast_node &node,
     }
   }
   if (!id || *id >= semantics_.symbols.size()) return;
+  if (!node.name_span || !node.name_span->length) {
+    semantics_.symbols[*id].all_uses_located = false;
+    return;
+  }
   const auto path = node.source_file.empty() ? diagnostic_source_file_ : node.source_file;
-  if (path.empty()) return;
+  if (path.empty()) {
+    semantics_.symbols[*id].all_uses_located = false;
+    return;
+  }
   const auto key = std::make_tuple(path, node.name_span->start,
                                   node.name_span->length, *id);
   if (semantic_occurrences_.count(key)) return;
@@ -278,8 +507,9 @@ void type_checker::semantic_reference_to(const ast_node &node,
 bool type_checker::check(ast_program &program) {
   // Every check is a fresh semantic session. In particular, AST addresses
   // must never be remembered process-wide or across reused checker instances.
-  *this = type_checker(collect_semantics_);
+  *this = type_checker(collect_semantics_, completion_request_, signature_request_);
   program.accept(*this);
+  validate_scalar_text_calls();
   auto ownership = check_ownership(program);
   for (const auto &diagnostic : ownership.diagnostics)
     add_error(diagnostic.line, diagnostic.message);
@@ -370,6 +600,17 @@ type_info type_checker::resolve_type(const std::string &name) {
       // Recursively resolve the underlying type
       return resolve_type(*self_sym->type_name);
     }
+  }
+
+  const auto structural_tuple = parse_generic_type_string(name);
+  if (structural_tuple.base_name == "tuple") {
+    if (structural_tuple.type_args.empty()) return {"tuple", false};
+    std::string canonical = "tuple<";
+    for (size_t index = 0; index < structural_tuple.type_args.size(); ++index) {
+      if (index) canonical += ", ";
+      canonical += resolve_type(structural_tuple.type_args[index]).name;
+    }
+    return {canonical + ">", false};
   }
 
   // User aliases are declarations, not context-free textual substitutions.
@@ -811,6 +1052,13 @@ bool type_checker::are_types_compatible(const type_info &t1,
   if (type_contains_class(t1.name) || type_contains_class(t2.name))
     return resolve_type(t1.name).name == resolve_type(t2.name).name;
 
+  // Tuple storage shapes are invariant. Literal construction can convert
+  // individual elements, but an existing handle cannot change its layout.
+  const auto tuple_left = parse_generic_type_string(t1.name);
+  const auto tuple_right = parse_generic_type_string(t2.name);
+  if (tuple_left.base_name == "tuple" || tuple_right.base_name == "tuple")
+    return resolve_type(t1.name).name == resolve_type(t2.name).name;
+
   if (t1.name == "any" || t2.name == "any") {
     if (ny::is_debug_enabled())
       ny::diag_debug("[compat] EARLY any");
@@ -1105,6 +1353,26 @@ bool type_checker::check_assignment_type(const type_info &expected,
   if (value) value->checked_class_upcast.reset();
   const auto target = resolve_type(expected.name).name;
   const auto source = resolve_type(actual.name).name;
+  const auto target_tuple = parse_generic_type_string(target);
+  const auto reject_tuple = [&]() {
+    if (value) value->rejected_tuple_operation = "Tuple storage type mismatch: expected '" + target + "', got '" + source + "'";
+    return false;
+  };
+  if (target_tuple.base_name == "tuple" && value &&
+      value->kind == ast_node_kind::struct_literal_expr_node) {
+    auto &tuple = static_cast<ast_struct_literal_expr &>(*value);
+    if (tuple.tuple_literal) {
+      if (target_tuple.type_args.size() != tuple.fields.size()) return reject_tuple();
+      for (size_t index = 0; index < tuple.fields.size(); ++index) {
+        auto &element = tuple.fields[index].second;
+        if (!element || !check_assignment_type(resolve_type(target_tuple.type_args[index]),
+              resolve_type(element->inferred_type.value_or("<unknown>")), element.get()))
+          return reject_tuple();
+      }
+      value->inferred_type = target;
+      return true;
+    }
+  }
   const bool target_class = resolve_class_symbol(target) != nullptr;
   const bool source_class = resolve_class_symbol(source) != nullptr;
   if (target_class || source_class) {
@@ -1114,7 +1382,10 @@ bool type_checker::check_assignment_type(const type_info &expected,
     checked_class_conversions_.push_back(value);
     return true;
   }
-  return are_types_compatible(expected, actual);
+  const bool compatible = are_types_compatible(expected, actual);
+  if (!compatible && (target_tuple.base_name == "tuple" ||
+      parse_generic_type_string(source).base_name == "tuple")) return reject_tuple();
+  return compatible;
 }
 
 bool type_checker::class_method_is_virtual(const symbol &receiver,
@@ -1193,7 +1464,7 @@ std::vector<ast_struct_field> type_checker::class_fields(
 // Resolve the type of a member in a generic struct
 std::optional<std::string>
 type_checker::resolve_member_type(const type_info &struct_type,
-                                  const std::string &member_name) {
+                                  const std::string &member_name, int line) {
   // Recursion depth guard to prevent infinite loops
   static thread_local int rmt_depth = 0;
   rmt_depth++;
@@ -1215,7 +1486,7 @@ type_checker::resolve_member_type(const type_info &struct_type,
   // Handle 'Self' type alias in method context
   if (parts.base_name == "Self" && current_class_name_.has_value()) {
     type_info replacement{*current_class_name_, false};
-    return resolve_member_type(replacement, member_name);
+    return resolve_member_type(replacement, member_name, line);
   }
 
   if (ny::is_debug_enabled()) {
@@ -1237,13 +1508,13 @@ type_checker::resolve_member_type(const type_info &struct_type,
     // We assume inner type string is valid; resolve_type usually returns
     // canonical but here we might have raw string. Ideally resolve it first.
     type_info inner_info = resolve_type(parts.type_args[0]);
-    return resolve_member_type(inner_info, member_name);
+    return resolve_member_type(inner_info, member_name, line);
   }
 
   // Auto-dereference for ptr<T>: treat member access on ptr<T> as access on T
   if (parts.base_name == "ptr" && !parts.type_args.empty()) {
     type_info inner_info = resolve_type(parts.type_args[0]);
-    return resolve_member_type(inner_info, member_name);
+    return resolve_member_type(inner_info, member_name, line);
   }
 
   // Impl-level generic parameters are declared on the surrounding impl rather
@@ -1299,6 +1570,11 @@ type_checker::resolve_member_type(const type_info &struct_type,
     if (const symbol *type_sym = symbols_.lookup(base_info.name)) {
       const auto extended = type_sym->members.find(member_name);
       if (extended != type_sym->members.end()) {
+        if (!is_symbol_visible(&extended->second, current_module_.value_or(""))) {
+          add_error(line, "Method '" + base_info.name + "." + member_name + "' is private to module '" +
+                          extended->second.module.value_or("<unknown>") + "'");
+          return std::nullopt;
+        }
         if (extended->second.type_name)
           return instantiate_generic_type(*extended->second.type_name,
                                           {{"Self", class_symbol->name}});
@@ -1398,6 +1674,11 @@ type_checker::resolve_member_type(const type_info &struct_type,
     // fields)
     auto mem_it = struct_sym->members.find(member_name);
     if (mem_it != struct_sym->members.end()) {
+      if (!is_symbol_visible(&mem_it->second, current_module_.value_or(""))) {
+        add_error(line, "Method '" + base_info.name + "." + member_name + "' is private to module '" +
+                        mem_it->second.module.value_or("<unknown>") + "'");
+        return std::nullopt;
+      }
       if (mem_it->second.type_name) {
         // Member tables store declaration signatures, not concrete receiver
         // types. Preserve vec<u8>.get -> Option<u8> (and nested equivalents)
@@ -1525,9 +1806,15 @@ type_checker::resolve_member_type(const type_info &struct_type,
           return std::isdigit(static_cast<unsigned char>(c));
         });
     if (is_digits) {
-      size_t idx = static_cast<size_t>(std::stoul(member_name));
-      if (idx < parts.type_args.size())
-        return parts.type_args[idx];
+      if (member_name.size() > 1 && member_name.front() == '0') return std::nullopt;
+      // Bound the parse by the actual arity; enormous source positions must
+      // produce a diagnostic rather than throw from stoul.
+      size_t idx = 0;
+      for (const char digit : member_name) {
+        if (idx >= parts.type_args.size()) return std::nullopt;
+        idx = idx * 10 + static_cast<size_t>(digit - '0');
+      }
+      if (idx < parts.type_args.size()) return parts.type_args[idx];
       return std::nullopt;
     }
   }
@@ -1609,7 +1896,7 @@ type_checker::resolve_member_type(const type_info &struct_type,
         auto base_parts = parse_generic_type_string(base);
         type_info base_info = {base_parts.base_name, false}; // simplified
 
-        auto res = resolve_member_type(base_info, member_name);
+        auto res = resolve_member_type(base_info, member_name, line);
         if (res.has_value()) {
           return res;
         }
@@ -1621,6 +1908,11 @@ type_checker::resolve_member_type(const type_info &struct_type,
   std::string mangled_method_name = parts.base_name + "__" + member_name;
   const symbol *method_sym = symbols_.lookup(mangled_method_name);
   if (method_sym && method_sym->kind == symbol_kind::function_symbol) {
+    if (!is_symbol_visible(method_sym, current_module_.value_or(""))) {
+      add_error(line, "Method '" + parts.base_name + "." + member_name + "' is private to module '" +
+                      method_sym->module.value_or("<unknown>") + "'");
+      return std::nullopt;
+    }
     // Return the method's return type (or 'any' if unknown)
     if (method_sym->type_name) {
       return *method_sym->type_name;
@@ -1793,16 +2085,23 @@ void type_checker::bind_pattern_to_type(ast_pattern &pattern,
     }
     return;
   }
-  case ast_pattern_kind::literal_pattern:
-    // Nothing to bind for literals
+  case ast_pattern_kind::literal_pattern: {
+    const auto literal_type = infer_type_from_pattern(pattern);
+    if (literal_type && !are_types_compatible(inferred_type, *literal_type))
+      add_error(line, "Pattern literal is incompatible with tuple element type '" + inferred_type.name + "'");
     return;
+  }
   case ast_pattern_kind::constructor_pattern: {
     // If the inferred_type is a 'tuple<...>' textual form, attempt to bind
     // subpatterns to element types. Otherwise bind subpatterns using the
     // inferred_type itself (best-effort fallback).
     auto parts = parse_generic_type_string(inferred_type.name);
 
-    if (pattern.name.empty() && parts.base_name == "tuple" && !parts.type_args.empty()) {
+    if (pattern.name.empty()) {
+      if (parts.base_name != "tuple" || parts.type_args.size() != pattern.subpatterns.size()) {
+        add_error(line, "Tuple pattern arity does not match type '" + inferred_type.name + "'");
+        return;
+      }
       for (size_t i = 0; i < pattern.subpatterns.size(); ++i) {
         std::string arg_type =
             (i < parts.type_args.size() ? parts.type_args[i]
@@ -2063,7 +2362,8 @@ void type_checker::visit(ast_program &p) {
     diagnostic_source_scope source_scope(diagnostic_source_file_, decl ? decl->source_file : std::string());
     if (decl && decl->kind == ast_node_kind::module_decl_node) {
       auto &mod = static_cast<ast_module_decl &>(*decl);
-      module_ctx = mod.name;
+      module_ctx = module_context(mod.name);
+      if (!module_ctx) continue;
       // Also register the module symbol for static dispatch
       symbol mod_sym(mod.name, symbol_kind::type_symbol, &mod, std::nullopt,
                      false, visibility_kind::visibility_public, std::nullopt);
@@ -2152,7 +2452,7 @@ void type_checker::visit(ast_program &p) {
 
         symbols_.insert_symbol_with_context(
             full_name, symbol_kind::function_symbol, method.get(),
-            method->return_type, false, visibility_kind::visibility_public,
+            method->return_type, false, method->get_visibility(),
             module_ctx, method->generic_params, method->params);
       }
     } else if (decl && decl->kind == ast_node_kind::trait_decl_node) {
@@ -2263,7 +2563,7 @@ void type_checker::visit(ast_program &p) {
     if (!decl)
       continue;
     if (decl->kind == ast_node_kind::module_decl_node) {
-      current_module_ = static_cast<ast_module_decl &>(*decl).name;
+      current_module_ = module_context(static_cast<ast_module_decl &>(*decl).name);
     } else if (decl->kind == ast_node_kind::function_decl_node) {
       auto &function = static_cast<ast_function_decl &>(*decl);
       normalize_signature(function, {});
@@ -2303,7 +2603,7 @@ void type_checker::visit(ast_program &p) {
     if (!decl)
       continue;
     if (decl->kind == ast_node_kind::module_decl_node) {
-      module_ctx = static_cast<ast_module_decl &>(*decl).name;
+      module_ctx = module_context(static_cast<ast_module_decl &>(*decl).name);
       continue;
     }
     if (decl->kind != ast_node_kind::impl_decl_node)
@@ -2341,7 +2641,7 @@ void type_checker::visit(ast_program &p) {
     if (!decl)
       continue;
     if (decl->kind == ast_node_kind::module_decl_node)
-      current_module_ = static_cast<ast_module_decl &>(*decl).name;
+      current_module_ = module_context(static_cast<ast_module_decl &>(*decl).name);
     else if (decl->kind == ast_node_kind::impl_decl_node)
       register_trait_implementation(static_cast<ast_impl_decl &>(*decl));
   }
@@ -2388,6 +2688,12 @@ void type_checker::visit(ast_program &p) {
 }
 
 void type_checker::visit(ast_function_decl &p) {
+  struct function_scope {
+    const ast_function_decl *&current;
+    const ast_function_decl *previous;
+    ~function_scope() { current = previous; }
+  } format_scope{scalar_text_function_, scalar_text_function_};
+  scalar_text_function_ = &p;
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
   semantic_node(p, p.name, "function", p.return_type.value_or(""), diagnostic_source_file_);
   if (p.name == "owned" || p.name == "owned_move" || p.name == "owned_borrow" ||
@@ -2445,6 +2751,8 @@ void type_checker::visit(ast_function_decl &p) {
         gen_param.name, symbol_kind::type_symbol, nullptr, std::nullopt, false,
         visibility_kind::visibility_private, std::nullopt, {}, {},
         gen_param.bounds);
+    if (auto *parameter = symbols_.lookup_mut(gen_param.name))
+      parameter->is_generic_parameter = true;
 
     // Note: Bounds will be checked when the generic function is instantiated
     // For now, we just ensure the trait names in bounds are valid
@@ -2531,6 +2839,32 @@ void type_checker::visit(ast_function_decl &p) {
 
 void type_checker::visit(ast_variable_decl &p) {
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
+  if (!p.tuple_bindings.empty()) {
+    const auto before = diagnostics_.size();
+    if (!current_function_return_type_)
+      add_error(p.line, "Tuple destructuring is only supported for local bindings");
+    if (p.initializer) p.initializer->accept(*this);
+    const auto type = last_expr_type_.value_or(type_unknown);
+    const auto tuple = parse_generic_type_string(resolve_type(type.name).name);
+    if (tuple.base_name != "tuple" || tuple.type_args.size() != p.tuple_bindings.size()) {
+      add_error(p.line, "Tuple destructuring requires a tuple with exactly " +
+          std::to_string(p.tuple_bindings.size()) + " elements; got '" + type.name + "'");
+      if (p.initializer) p.initializer->rejected_tuple_operation = "Invalid tuple destructuring arity or source type";
+      last_expr_type_ = type_void;
+      return;
+    }
+    p.type_name = resolve_type(type.name).name;
+    for (size_t index = 0; index < p.tuple_bindings.size(); ++index) {
+      auto &binding = p.tuple_bindings[index];
+      binding->type_name = tuple.type_args[index];
+      binding->source_file = p.source_file;
+      if (binding->name != "_") binding->accept(*this);
+    }
+    if (diagnostics_.size() != before && p.initializer)
+      p.initializer->rejected_tuple_operation = "Invalid tuple destructuring binding";
+    last_expr_type_ = type_void;
+    return;
+  }
   if (p.name == "owned" || p.name == "owned_move" || p.name == "owned_borrow" ||
       p.name == "owned_borrow_mut" || p.name == "parallel_map")
     add_error(p.line, "Variable name '" + p.name + "' is reserved for a checked language operation");
@@ -2648,16 +2982,24 @@ void type_checker::visit(ast_variable_decl &p) {
               "Variable '" + p.name + "' already declared in this scope");
   }
   if (auto *binding = symbols_.lookup_mut(var_name);
-      binding && binding->defining_node == &p)
+      binding && binding->defining_node == &p) {
+    binding->checked_callable_parameters.reset();
+    // Structural function types do not declare labels. An immutable local
+    // may retain its initializer's proven names; mutable or externally
+    // supplied values need a future explicit labelled function-type contract.
+    if (!p.is_mut && current_function_return_type_ && p.initializer)
+      binding->checked_callable_parameters = p.initializer->checked_callable_parameters;
     binding->semantic_id = semantic_node(p, p.name, "variable", var_type_name,
                                          diagnostic_source_file_);
+  }
   last_expr_type_ = type_void;
 }
 
 void type_checker::visit(ast_module_decl &p) {
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
   // Set the current module context
-  current_module_ = p.name;
+  current_module_ = module_context(p.name);
+  if (!current_module_) return;
 
   // Register the module as a type_symbol to enable static dispatch for
   // module-level functions. This allows `module::function()` syntax to work
@@ -2701,6 +3043,10 @@ void type_checker::visit(ast_import_decl &p) {
 }
 
 void type_checker::visit(ast_class_decl &p) {
+  if (p.name == "tuple") {
+    add_error(p.line, "Type name 'tuple' is reserved for structural tuples");
+    return;
+  }
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
   // Register class name
   std::string name = p.name;
@@ -2757,6 +3103,8 @@ void type_checker::visit(ast_class_decl &p) {
         gen_param.name, symbol_kind::type_symbol, nullptr, std::nullopt, false,
         visibility_kind::visibility_private, std::nullopt, {}, {},
         gen_param.bounds);
+    if (auto *parameter = symbols_.lookup_mut(gen_param.name))
+      parameter->is_generic_parameter = true;
     for (const auto &bound : gen_param.bounds) {
       if (!find_trait(bound))
         add_error(p.line, "Unknown trait '" + bound + "' in generic bound");
@@ -3072,6 +3420,10 @@ void type_checker::visit(ast_class_decl &p) {
 }
 
 void type_checker::visit(ast_type_alias_decl &p) {
+  if (p.name == "tuple") {
+    add_error(p.line, "Type name 'tuple' is reserved for structural tuples");
+    return;
+  }
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
   // Register type alias preserving its visibility
   std::string name = p.name;
@@ -3119,6 +3471,8 @@ void type_checker::visit(ast_type_alias_decl &p) {
     symbols_.insert_symbol_with_context(
         gen_param.name, symbol_kind::type_symbol, nullptr, std::nullopt, false,
         visibility_kind::visibility_private, std::nullopt, {}, {}, gen_param.bounds);
+    if (auto *parameter = symbols_.lookup_mut(gen_param.name))
+      parameter->is_generic_parameter = true;
   }
   for (const auto &gen_param : p.generic_params)
     for (const auto &bound : gen_param.bounds)
@@ -3162,6 +3516,16 @@ void type_checker::visit(ast_println_stmt &s) {
 void type_checker::visit(ast_decl_stmt &s) {
   if (s.declaration) {
     s.declaration->accept(*this);
+    // Prove lexical provenance from a declaration statement in a body, not
+    // from ambient return-type state while some declaration is being checked.
+    // A global initializer resolved from inside a function must never acquire
+    // a closed-local editing capability.
+    if (collect_semantics_ && semantics_.available && current_function_return_type_ &&
+        s.declaration->kind == ast_node_kind::variable_decl_node) {
+      const auto declaration = semantic_nodes_.find(s.declaration.get());
+      if (declaration != semantic_nodes_.end())
+        semantics_.symbols[declaration->second].lexical_local = true;
+    }
   }
 }
 
@@ -3284,6 +3648,8 @@ void type_checker::visit(ast_member_access_expr &e) {
   }
   type_info obj_type = *last_expr_type_;
 
+  capture_member_completion(e, obj_type);
+
   if (const symbol *class_symbol = resolve_class_symbol(obj_type.name)) {
     const auto member = resolve_class_member(*class_symbol, e.member_name, e.line);
     if (member.method) {
@@ -3317,8 +3683,10 @@ void type_checker::visit(ast_member_access_expr &e) {
   }
 
   // Resolve member type
-  auto member_type_name = resolve_member_type(obj_type, e.member_name);
+  auto member_type_name = resolve_member_type(obj_type, e.member_name, e.line);
   if (!member_type_name) {
+    if (parse_generic_type_string(obj_type.name).base_name == "tuple")
+      e.rejected_tuple_operation = "Invalid tuple member '" + e.member_name + "'";
     add_error(e.line, "Type '" + obj_type.name + "' has no member '" +
                           e.member_name + "'");
     last_expr_type_ = type_unknown;
@@ -3329,6 +3697,32 @@ void type_checker::visit(ast_member_access_expr &e) {
 }
 
 void type_checker::visit(ast_struct_literal_expr &e) {
+  if (e.tuple_literal) {
+    const auto before = diagnostics_.size();
+    std::string type = "tuple<";
+    for (size_t index = 0; index < e.fields.size(); ++index) {
+      auto &element = e.fields[index].second;
+      if (element) element->accept(*this);
+      const auto part = last_expr_type_.value_or(type_unknown);
+      if (part.name == "void" || contains_ownership_type(part.name))
+        add_error(e.line, "Tuple elements must be values and cannot contain owned buffers or borrows");
+      if (index) type += ", ";
+      type += resolve_type(part.name).name;
+    }
+    if (e.fields.empty()) add_error(e.line, "A tuple requires at least one element");
+    type += ">";
+    if (diagnostics_.size() != before)
+      e.rejected_tuple_operation = "Invalid tuple element type";
+    e.inferred_type = type;
+    last_expr_type_ = type_info{type, false};
+    return;
+  }
+  if (parse_generic_type_string(e.type_name).base_name == "tuple") {
+    e.rejected_tuple_operation = "Construct structural tuples with '(value, ...)', not record syntax";
+    add_error(e.line, *e.rejected_tuple_operation);
+    last_expr_type_ = type_unknown;
+    return;
+  }
   // Build full type name with generic args
   std::string full_type_name = e.type_name;
   if (!e.type_args.empty()) {
@@ -3773,12 +4167,25 @@ void type_checker::visit(ast_for_in_stmt &s) {
   symbols_.enter_scope();
 
   std::vector<ast_param> vars = s.get_variables();
+  if (elem_type_name && (s.tuple_pattern || vars.size() > 1)) {
+    const auto element = parse_generic_type_string(*elem_type_name);
+    if (element.base_name == "tuple" && element.type_args.size() != vars.size()) {
+      const std::string message = "Tuple loop binding arity does not match its element type";
+      add_error(s.line, message);
+      if (s.iterable) s.iterable->rejected_tuple_operation = message;
+    } else if (element.base_name != "tuple" && element.base_name != "array") {
+      const std::string message = "Tuple loop bindings require tuple or array elements, found '" +
+                                  *elem_type_name + "'";
+      add_error(s.line, message);
+      if (s.iterable) s.iterable->rejected_tuple_operation = message;
+    }
+  }
   for (size_t i = 0; i < vars.size(); ++i) {
     const ast_param &var = vars[i];
     std::optional<std::string> var_type = std::nullopt;
 
     // Tuple-unpack: if elem type is a tuple, attempt to split (rudimentary).
-    if (vars.size() > 1 && elem_type_name.has_value()) {
+    if ((s.tuple_pattern || vars.size() > 1) && elem_type_name.has_value()) {
       const auto element = parse_generic_type_string(*elem_type_name);
       if (element.base_name == "tuple" && i < element.type_args.size())
         var_type = element.type_args[i];
@@ -3829,6 +4236,8 @@ void type_checker::visit(ast_for_in_stmt &s) {
                std::nullopt);
     sym.semantic_id = semantic_declaration(var.name, "variable", type_to_register,
                                            diagnostic_source_file_, var.name_span);
+    if (sym.semantic_id)
+      semantics_.symbols[*sym.semantic_id].lexical_local = true;
     if (!symbols_.insert_symbol(sym))
       add_error(var.line, "Loop variable '" + var.name +
                              "' already declared in this scope");
@@ -3878,6 +4287,7 @@ void type_checker::visit(ast_continue_stmt &s) {
 }
 
 void type_checker::visit(ast_match_stmt &s) {
+  const auto tuple_errors_before = diagnostics_.size();
   // Evaluate the match target first; this establishes a type that arms may
   // use for variable bindings when none are explicitly deduced from patterns.
   if (s.target)
@@ -3893,7 +4303,8 @@ void type_checker::visit(ast_match_stmt &s) {
     // If both pattern and target are known types, ensure they are compatible.
     // Skip validation when either type is unknown or `any` to avoid noisy
     // errors cascading from unrelated issues.
-    if (pattern_type.has_value() && target_type.name != "<unknown>") {
+    if (pattern_type.has_value() && target_type.name != "<unknown>" &&
+        !(arm.pattern.kind == ast_pattern_kind::constructor_pattern && arm.pattern.name.empty())) {
       if (!are_types_compatible(*pattern_type, target_type)) {
         int ln = (arm.body ? arm.body->line : s.line);
         add_error(ln, "Pattern type '" + pattern_type->name +
@@ -3936,6 +4347,10 @@ void type_checker::visit(ast_match_stmt &s) {
     // Clean up the local scope for this arm
     symbols_.leave_scope();
   }
+  if (s.target && parse_generic_type_string(target_type.name).base_name == "tuple" &&
+      diagnostics_.size() != tuple_errors_before)
+    s.target->rejected_tuple_operation = "Invalid tuple pattern or tuple match body";
+
 }
 
 bool type_checker::check_runtime_primitive(ast_call_expr &e) {
@@ -4078,7 +4493,134 @@ bool type_checker::check_runtime_primitive(ast_call_expr &e) {
   return true;
 }
 
+bool type_checker::select_signature_call(const ast_call_expr &call) {
+  if (!signature_request_ || !call.argument_span) return false;
+  const auto &request = *signature_request_;
+  const auto span = *call.argument_span;
+  if (call.source_file != request.path || request.cursor < span.start ||
+      request.cursor - span.start > span.length) return false;
+  // Enter every matching parsed call, including unresolved calls. Otherwise
+  // an unknown inner callee could incorrectly show its outer call's signature.
+  if (signature_ && signature_->span.length < span.length) return false;
+  const bool first = signature_visits_.emplace(span.start, span.length).second;
+  signature_ = signature_result{};
+  signature_->path = call.source_file;
+  signature_->span = span;
+  return first && diagnostics_.empty();
+}
+
+void type_checker::capture_signature(const ast_call_expr &call, const symbol &binding,
+                                     std::size_t parameter_offset, bool eligible) {
+  if (!eligible || !signature_ || !call.argument_span ||
+      signature_->span.start != call.argument_span->start ||
+      signature_->span.length != call.argument_span->length ||
+      !binding.defining_node || !binding.defining_node->name_span ||
+      !is_symbol_visible(&binding, current_module_.value_or(""))) return;
+  const auto &node = *binding.defining_node;
+  // Only a lexical variable may inherit its current body's source identity.
+  // An imported/generated function without provenance is never attributed to
+  // the caller, even if a coincidental token there has the same spelling.
+  if (node.source_file.empty() && node.kind != ast_node_kind::variable_decl_node) return;
+  auto &result = *signature_;
+  result.declaration_path = node.source_file.empty() ? diagnostic_source_file_ : node.source_file;
+  result.declaration_span = node.name_span;
+  if (node.kind == ast_node_kind::function_decl_node) {
+    const auto &function = static_cast<const ast_function_decl &>(node);
+    if (parameter_offset > binding.params.size() || binding.params.size() - parameter_offset > 256)
+      return;
+    result.name = function.name;
+    result.return_type = binding.type_name.value_or("void");
+    for (std::size_t index = parameter_offset; index < binding.params.size(); ++index) {
+      const auto &parameter = binding.params[index];
+      result.parameters.push_back({parameter.name, parameter.type_name.value_or("any"),
+                                   parameter.is_variadic, parameter.name_span});
+    }
+  } else if (node.kind == ast_node_kind::variable_decl_node && binding.type_name &&
+             binding.checked_callable_parameters && !binding.is_mut) {
+    const auto &contract = *binding.checked_callable_parameters;
+    const auto &type = *binding.type_name;
+    if (type.rfind("fn(", 0) != 0 || contract.names.size() > 256 || contract.variadic) return;
+    std::vector<std::string> types;
+    std::size_t start = 3, close = std::string::npos;
+    unsigned parens = 1, angles = 0;
+    for (std::size_t index = start; index < type.size(); ++index) {
+      const char value = type[index];
+      if (value == '(') ++parens;
+      else if (value == ')' && --parens == 0) {
+        if (index > start) types.push_back(type.substr(start, index - start));
+        close = index;
+        break;
+      } else if (value == '<') ++angles;
+      else if (value == '>' && index && type[index - 1] != '-' && angles) --angles;
+      else if (value == ',' && parens == 1 && angles == 0) {
+        types.push_back(type.substr(start, index - start));
+        start = index + 1;
+      }
+    }
+    if (close == std::string::npos || types.size() != contract.names.size()) return;
+    const auto arrow = type.find("->", close);
+    if (arrow == std::string::npos) return;
+    const auto trim = [](std::string text) {
+      const auto begin = text.find_first_not_of(" \t");
+      if (begin == std::string::npos) return std::string();
+      return text.substr(begin, text.find_last_not_of(" \t") - begin + 1);
+    };
+    result.name = static_cast<const ast_variable_decl &>(node).name;
+    result.return_type = trim(type.substr(arrow + 2));
+    for (std::size_t index = 0; index < types.size(); ++index)
+      result.parameters.push_back({contract.names[index], trim(types[index]), false, std::nullopt});
+  } else return;
+  if (result.return_type.empty() || result.name.empty()) return;
+  std::size_t slot = 0;
+  for (std::size_t index = 0; index < call.argument_starts.size(); ++index)
+    if (call.argument_starts[index] <= signature_request_->cursor) slot = index;
+  const auto folded = [](const std::string &name) {
+    std::string key;
+    for (unsigned char c : name)
+      if (c != '-' && c != '_') key += static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
+    return key;
+  };
+  if (!call.source_argument_names.empty() && slot < call.source_argument_names.size()) {
+    const auto &label = call.source_argument_names[slot];
+    if (!label.empty()) {
+      bool ambiguous = false;
+      for (std::size_t index = 0; index < result.parameters.size(); ++index)
+        if (!result.parameters[index].variadic && folded(result.parameters[index].name) == folded(label)) {
+          if (result.active_parameter) ambiguous = true;
+          result.active_parameter = index;
+        }
+      if (ambiguous) result.active_parameter.reset();
+    } else if (!result.parameters.empty() && result.parameters.back().variadic)
+      result.active_parameter = result.parameters.size() - 1;
+  } else if (slot < result.parameters.size()) result.active_parameter = slot;
+  else if (!result.parameters.empty() && result.parameters.back().variadic)
+    result.active_parameter = result.parameters.size() - 1;
+  std::size_t bytes = result.name.size() + result.return_type.size();
+  for (const auto &parameter : result.parameters) bytes += parameter.name.size() + parameter.type.size();
+  result.available = bytes <= 1024 * 1024;
+}
+
+static callable_parameter_contract callable_parameters(
+    const std::vector<ast_param> &parameters, std::size_t offset = 0) {
+  callable_parameter_contract result;
+  for (std::size_t index = offset; index < parameters.size(); ++index)
+    result.names.push_back(parameters[index].name);
+  result.variadic = parameters.size() > offset && parameters.back().is_variadic;
+  return result;
+}
+
 void type_checker::visit(ast_call_expr &e) {
+  const bool signature_selected = select_signature_call(e);
+  const auto signature_errors = diagnostics_.size();
+  bool named_arguments_handled = e.argument_names.empty();
+  struct named_argument_guard {
+    std::function<void()> check;
+    ~named_argument_guard() { check(); }
+  } named_guard{[&] {
+    if (!named_arguments_handled)
+      add_error(e.line, "Named arguments require a resolved parameter-name contract; "
+                        "use positional arguments for this callable");
+  }};
   if (check_runtime_primitive(e)) return;
   /* std::cerr << "[type_checker] visit(call_expr) line " << e.line << "
    * callee_kind=" << (int)e.callee->kind << " expected=" <<
@@ -4112,6 +4654,7 @@ void type_checker::visit(ast_call_expr &e) {
   if (e.callee && !bounded_receiver)
     e.callee->accept(*this);
   checking_class_call_ = saved_class_call;
+  const bool signature_eligible = signature_selected && diagnostics_.size() == signature_errors;
 
   // Visit arguments first to resolve their types for inference
   std::vector<type_info> arg_types;
@@ -4123,6 +4666,81 @@ void type_checker::visit(ast_call_expr &e) {
       arg_types.push_back(type_unknown);
     }
   }
+
+  // Argument labels select positions only after lexical/imported/member
+  // resolution has selected the callable. Reorder inferred types with the
+  // expressions so generic inference and call-boundary checks see one order.
+  const auto order_named_arguments = [&](const callable_parameter_contract &contract) {
+    if (e.argument_names.empty()) return true;
+    named_arguments_handled = true;
+    if (e.argument_names.size() != e.args.size()) {
+      add_error(e.line, "Invalid named argument metadata");
+      return false;
+    }
+    const auto folded = [](const std::string &name) {
+      std::string key;
+      for (unsigned char c : name) {
+        if (c == '-' || c == '_') continue;
+        key += static_cast<char>(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
+      }
+      return key;
+    };
+    const auto fixed = contract.names.size() - (contract.variadic ? 1U : 0U);
+    std::vector<std::optional<std::size_t>> positions(fixed);
+    std::vector<std::size_t> tail;
+    bool valid = true;
+    for (std::size_t index = 0; index < e.argument_names.size(); ++index) {
+      const auto &name = e.argument_names[index];
+      if (name.empty()) {
+        tail.push_back(index);
+        continue;
+      }
+      std::optional<std::size_t> selected;
+      for (std::size_t parameter = 0; parameter < fixed; ++parameter) {
+        if (folded(contract.names[parameter]) == folded(name)) {
+          if (selected) {
+            add_error(e.line, "Ambiguous parameter name '" + name + "'");
+            valid = false;
+            break;
+          }
+          selected = parameter;
+        }
+      }
+      if (!selected) {
+        add_error(e.line, "No parameter named '" + name + "'");
+        valid = false;
+      } else if (positions[*selected]) {
+        add_error(e.line, "Argument '" + name + "' given more than once");
+        valid = false;
+      } else {
+        positions[*selected] = index;
+      }
+    }
+    for (std::size_t index = 0; index < fixed; ++index)
+      if (!positions[index]) {
+        add_error(e.line, "Missing argument '" + contract.names[index] + "'");
+        valid = false;
+      }
+    if (!tail.empty() && !contract.variadic) {
+      add_error(e.line, "A 'more' argument tail requires a variadic callable");
+      valid = false;
+    }
+    if (!valid) return false;
+    std::vector<ast_expr_ptr> ordered;
+    std::vector<type_info> ordered_types;
+    std::vector<std::string> ordered_names;
+    const auto append = [&](std::size_t index) {
+      ordered.push_back(e.args[index]);
+      ordered_types.push_back(arg_types[index]);
+      ordered_names.push_back(e.argument_names[index]);
+    };
+    for (const auto position : positions) append(*position);
+    for (const auto index : tail) append(index);
+    e.args = std::move(ordered);
+    arg_types = std::move(ordered_types);
+    e.argument_names = std::move(ordered_names);
+    return true;
+  };
 
   const auto unannotated_return_type = [&](const symbol &callee) {
     // An omitted return annotation on an actual Ny declaration is void,
@@ -4181,6 +4799,7 @@ void type_checker::visit(ast_call_expr &e) {
       [&](const symbol &callee,
           const std::map<std::string, std::string> &substitutions,
           std::size_t parameter_offset = 0) {
+        record_scalar_text_call(e, callee, substitutions);
         for (std::size_t i = 0; i < e.args.size() && i + parameter_offset < callee.params.size(); ++i) {
           const auto &parameter = callee.params[i + parameter_offset];
           if (!parameter.type_name) continue;
@@ -4267,6 +4886,9 @@ void type_checker::visit(ast_call_expr &e) {
         symbol callable(method.name, symbol_kind::function_symbol,
             const_cast<ast_function_decl *>(&method), method.return_type, false,
             method.get_visibility(), selected.owner->module, method.generic_params, method.params);
+        capture_signature(e, callable, 1, signature_eligible &&
+                          (method.is_public() || current_class_name_ == selected.owner->name));
+        if (!order_named_arguments(callable_parameters(method.params, 1))) return;
         validate_call_arity(callable, e.args.size() + 1, receiver->name + "." + method.name);
         apply_argument_array_context(callable, substitutions, 1);
         if (!method.params.empty()) {
@@ -4354,6 +4976,8 @@ void type_checker::visit(ast_call_expr &e) {
                          const_cast<ast_function_decl *>(selected), selected->return_type,
                          false, selected->get_visibility(), selected_module,
                          selected->generic_params, selected->params);
+    capture_signature(e, method_symbol, 0, signature_eligible);
+    if (!order_named_arguments(callable_parameters(selected->params))) return;
     validate_call_arity(method_symbol, e.args.size(), bounded_receiver->name + "." + selected->name);
     apply_argument_array_context(method_symbol, selected_substitutions);
     const auto caller_module = current_module_;
@@ -4436,6 +5060,14 @@ void type_checker::visit(ast_call_expr &e) {
                 symbols_.lookup(canonical_type + "__" + ma->member_name);
 
           if (method_sym && method_sym->kind == symbol_kind::function_symbol) {
+            if (!is_symbol_visible(method_sym, current_module_.value_or(""))) {
+              add_error(e.line, "Method '" + canonical_type + "." + ma->member_name +
+                  "' is private to module '" + method_sym->module.value_or("<unknown>") + "'");
+              last_expr_type_ = type_unknown;
+              return;
+            }
+            capture_signature(e, *method_sym, 0, signature_eligible);
+            if (!order_named_arguments(callable_parameters(method_sym->params))) return;
             validate_call_arity(*method_sym, e.args.size(),
                                 type_id->name + "." + ma->member_name);
             apply_argument_array_context(*method_sym, {});
@@ -4520,6 +5152,14 @@ void type_checker::visit(ast_call_expr &e) {
         }
 
         if (method_sym && method_sym->kind == symbol_kind::function_symbol) {
+          if (!is_symbol_visible(method_sym, current_module_.value_or(""))) {
+            add_error(e.line, "Method '" + canonical_type + "." + ma->member_name +
+                "' is private to module '" + method_sym->module.value_or("<unknown>") + "'");
+            last_expr_type_ = type_unknown;
+            return;
+          }
+          capture_signature(e, *method_sym, 0, signature_eligible);
+          if (!order_named_arguments(callable_parameters(method_sym->params))) return;
           validate_call_arity(*method_sym, e.args.size(),
                               type_id->name + "." + ma->member_name);
           validate_generic_args(type_sym->generic_params, e.type_args, e.line);
@@ -4628,8 +5268,10 @@ void type_checker::visit(ast_call_expr &e) {
     if (s && (s->kind == symbol_kind::function_symbol ||
               s->kind == symbol_kind::variable_symbol)) {
       semantic_reference_to(*id, id->name, *s);
+      capture_signature(e, *s, 0, signature_eligible);
       // Check if it's a direct function symbol
       if (s->kind == symbol_kind::function_symbol) {
+        if (!order_named_arguments(callable_parameters(s->params))) return;
         validate_call_arity(*s, e.args.size(), id->name);
         std::map<std::string, std::string> substitutions;
 
@@ -4842,6 +5484,15 @@ void type_checker::visit(ast_call_expr &e) {
         }
       } else {
         // It's a variable or parameter with function type
+        if (!e.argument_names.empty() && s->checked_callable_parameters &&
+            s->checked_callable_parameters->variadic) {
+          named_arguments_handled = true;
+          add_error(e.line, "Named variadic callback calls are not supported; "
+                            "call the declared variadic paragraph directly");
+          return;
+        }
+        if (s->checked_callable_parameters &&
+            !order_named_arguments(*s->checked_callable_parameters)) return;
         if (s->type_name && s->type_name->rfind("fn", 0) == 0) {
           // Parse function type string "fn(T) -> U"
           // For now, simple return type extraction
@@ -4885,6 +5536,14 @@ void type_checker::visit(ast_call_expr &e) {
       // produce runtime stores with the wrong physical element type.
       const auto builtin_receiver =
           parse_generic_type_string(resolve_type(type_name).name);
+      // This runtime member has no source declaration, but its label contract
+      // is public in nil.std.text and reflection's Matrix implementation.
+      // Preserve that contract without pretending arbitrary heuristic members
+      // have parameter names or falling back to source-order arguments.
+      if ((builtin_receiver.base_name == "String" ||
+           builtin_receiver.base_name == "text") && method_name == "substr") {
+        if (!order_named_arguments({{"start", "length"}, false})) return;
+      }
       if (builtin_receiver.base_name == "array" && method_name == "push") {
         if (e.args.size() != 1) {
           add_error(e.line, "Array.push expects 1 argument, got " +
@@ -4999,6 +5658,9 @@ void type_checker::visit(ast_call_expr &e) {
       if (s && s->kind == symbol_kind::function_symbol) {
         const bool has_receiver_parameter =
             !s->params.empty() && s->params.front().name == "self";
+        capture_signature(e, *s, has_receiver_parameter ? 1U : 0U, signature_eligible);
+        if (!order_named_arguments(callable_parameters(
+                s->params, has_receiver_parameter ? 1U : 0U))) return;
         validate_call_arity(*s,
                             e.args.size() + (has_receiver_parameter ? 1U : 0U),
                             type_name + "." + method_name);
@@ -5503,6 +6165,11 @@ void type_checker::visit(ast_assignment_expr &e) {
           return std::nullopt;
         object_type = resolve_type(object_type.name);
         auto parts = parse_generic_type_string(object_type.name);
+        if (parts.base_name == "tuple") {
+          e.rejected_tuple_operation = "Tuple elements are immutable; construct a new tuple to replace a value";
+          add_error(e.line, *e.rejected_tuple_operation);
+          return std::nullopt;
+        }
         if ((parts.base_name == "ptr" || parts.base_name == "ref") &&
             parts.type_args.size() == 1)
           return field_type(resolve_type(parts.type_args[0]), depth + 1);
@@ -5588,7 +6255,9 @@ void type_checker::visit(ast_assignment_expr &e) {
 }
 
 void type_checker::visit(ast_identifier_expr &e) {
+  capture_completion(e);
   e.resolved_global_name.reset();
+  e.checked_callable_parameters.reset();
   const auto *fault_binding = symbols_.lookup_non_global(e.name);
   if (fault_binding && fault_binding->defining_node &&
       fault_binding->defining_node->kind == ast_node_kind::fault_handler_node &&
@@ -5631,12 +6300,14 @@ void type_checker::visit(ast_identifier_expr &e) {
   }
   const auto value_type = [&](const symbol &value,
                               const std::map<std::string, std::string> &substitutions) {
+    e.checked_callable_parameters = value.checked_callable_parameters;
     const auto specialized = [&](const std::string &type) {
       return resolve_type(instantiate_generic_type(type, substitutions)).name;
     };
     if (value.kind == symbol_kind::function_symbol &&
         (!value.defining_node ||
          value.defining_node->kind == ast_node_kind::function_decl_node)) {
+      e.checked_callable_parameters = callable_parameters(value.params);
       // Function references are structural values even when found through a
       // type alias or a copied module-member symbol. Their return type alone
       // is never the type of the reference itself.
@@ -5932,6 +6603,7 @@ void type_checker::visit(ast_char_literal &e) {
 }
 
 void type_checker::visit(ast_match_expr &e) {
+  const auto tuple_errors_before = diagnostics_.size();
   // 1. Evaluate target expression
   if (e.target)
     e.target->accept(*this);
@@ -5964,6 +6636,38 @@ void type_checker::visit(ast_match_expr &e) {
     if (!expr)
       return p;
 
+    if (expr->kind == ast_node_kind::struct_literal_expr_node &&
+        static_cast<const ast_struct_literal_expr &>(*expr).tuple_literal) {
+      p.kind = ast_pattern_kind::constructor_pattern;
+      for (const auto &field : static_cast<const ast_struct_literal_expr &>(*expr).fields) {
+        const auto &child = field.second;
+        const bool nested = child && child->kind == ast_node_kind::struct_literal_expr_node &&
+                            static_cast<const ast_struct_literal_expr &>(*child).tuple_literal;
+        const bool signed_number = child && child->kind == ast_node_kind::unary_expr_node &&
+            static_cast<const ast_unary_expr &>(*child).op == token_kind::minus &&
+            static_cast<const ast_unary_expr &>(*child).operand &&
+            static_cast<const ast_unary_expr &>(*child).operand->kind == ast_node_kind::number_literal_node;
+        if (!child || (!nested && !signed_number &&
+            child->kind != ast_node_kind::identifier_expr_node &&
+            child->kind != ast_node_kind::number_literal_node &&
+            child->kind != ast_node_kind::string_literal_node &&
+            child->kind != ast_node_kind::boolean_literal_node &&
+            child->kind != ast_node_kind::char_literal_node))
+          add_error(e.line, "Tuple patterns support bindings, wildcards, scalar literals, and nested tuples");
+        p.subpatterns.push_back(expr_to_pattern(child));
+      }
+      return p;
+    }
+    if (expr->kind == ast_node_kind::unary_expr_node) {
+      const auto &unary = static_cast<const ast_unary_expr &>(*expr);
+      if (unary.op == token_kind::minus && unary.operand &&
+          unary.operand->kind == ast_node_kind::number_literal_node) {
+        p.kind = ast_pattern_kind::literal_pattern;
+        p.literal_kind = ast_node_kind::number_literal_node;
+        p.literal_value = "-" + static_cast<const ast_number_literal &>(*unary.operand).value;
+        return p;
+      }
+    }
     if (expr->kind == ast_node_kind::number_literal_node) {
       p.kind = ast_pattern_kind::literal_pattern;
       p.literal_value = static_cast<ast_number_literal *>(expr.get())->value;
@@ -6032,7 +6736,8 @@ void type_checker::visit(ast_match_expr &e) {
     }
 
     // Check compatibility with target
-    if (pattern_type.has_value() && target_type.name != "<unknown>") {
+    if (pattern_type.has_value() && target_type.name != "<unknown>" &&
+        !(pattern.kind == ast_pattern_kind::constructor_pattern && pattern.name.empty())) {
       if (!are_types_compatible(*pattern_type, target_type)) {
         add_error(e.line, "Pattern type '" + pattern_type->name +
                               "' incompatible with match target type '" +
@@ -6101,6 +6806,10 @@ void type_checker::visit(ast_match_expr &e) {
   }
   last_expr_type_ = common_result_type.value_or(type_unknown);
   e.inferred_type = last_expr_type_->name;
+  if (e.target && parse_generic_type_string(target_type.name).base_name == "tuple" &&
+      diagnostics_.size() != tuple_errors_before)
+    e.target->rejected_tuple_operation = "Invalid tuple pattern or tuple match body";
+
 }
 
 void type_checker::visit(ast_array_literal_expr &e) {
@@ -6191,12 +6900,18 @@ void type_checker::visit(ast_index_expr &e) {
     // Allow indexing and propagate unknown element type.
     last_expr_type_ = type_unknown;
   } else {
+    if (parts.base_name == "tuple")
+      e.rejected_tuple_operation = "Tuple positions require a static .0-style member; tuples cannot be indexed";
     add_error(e.line, "Type '" + obj_type.name + "' cannot be indexed");
     last_expr_type_ = type_unknown;
   }
 }
 
 void type_checker::visit(ast_struct_decl &p) {
+  if (p.name == "tuple") {
+    add_error(p.line, "Type name 'tuple' is reserved for structural tuples");
+    return;
+  }
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
   // Register struct as a type; preserve visibility flag from AST
   std::string struct_name = p.name;
@@ -6232,6 +6947,8 @@ void type_checker::visit(ast_struct_decl &p) {
         gen_param.name, symbol_kind::type_symbol, nullptr, std::nullopt, false,
         visibility_kind::visibility_private, std::nullopt, {}, {},
         gen_param.bounds);
+    if (auto *parameter = symbols_.lookup_mut(gen_param.name))
+      parameter->is_generic_parameter = true;
 
     // Validate that traits in bounds exist
     for (const auto &bound : gen_param.bounds) {
@@ -6377,6 +7094,8 @@ void type_checker::visit(ast_enum_decl &p) {
         gen_param.name, symbol_kind::type_symbol, nullptr, std::nullopt, false,
         visibility_kind::visibility_private, std::nullopt, {}, {},
         gen_param.bounds);
+    if (auto *parameter = symbols_.lookup_mut(gen_param.name))
+      parameter->is_generic_parameter = true;
   }
   for (const auto &gen_param : p.generic_params)
     for (const auto &bound : gen_param.bounds)
@@ -6629,8 +7348,30 @@ void type_checker::register_trait_implementation(ast_impl_decl &p) {
   for (const auto &existing : trait_impls_)
     if (existing.trait_name == trait_name && existing.target_type == target)
       add_error(p.line, "Duplicate trait implementation for '" + target + "'");
-  if (diagnostics_.size() == initial_errors)
+  if (diagnostics_.size() == initial_errors) {
     trait_impls_.push_back(std::move(implementation));
+    for (const auto &required : trait.methods) {
+      const auto *method = methods.at(required->name);
+      const auto access = method->get_visibility() == visibility_kind::visibility_private
+          ? trait_symbol->visibility : method->get_visibility();
+      trait_method_visibility_[method] = access;
+      const auto update = [&](symbol *binding) {
+        if (binding && binding->defining_node == method) {
+          binding->visibility = access;
+          binding->is_pub = access == visibility_kind::visibility_public;
+        }
+      };
+      // All predeclared entry points must agree with the checked contract.
+      // Do not promote additional helpers merely because they share an impl.
+      update(symbols_.lookup_mut(target_parts.base_name + "__" + method->name));
+      const auto written = parse_generic_type_string(p.target_type).base_name + "__" + method->name;
+      update(symbols_.lookup_mut(impl_module ? *impl_module + "::" + written : written));
+      if (symbol *owner = symbols_.lookup_mut(target_parts.base_name)) {
+        const auto found = owner->members.find(method->name);
+        if (found != owner->members.end()) update(&found->second);
+      }
+    }
+  }
   symbols_.leave_scope();
 }
 
@@ -6660,6 +7401,8 @@ void type_checker::visit(ast_trait_decl &p) {
         gen_param.name, symbol_kind::type_symbol, nullptr, std::nullopt, false,
         visibility_kind::visibility_private, std::nullopt, {}, {},
         gen_param.bounds);
+    if (auto *parameter = symbols_.lookup_mut(gen_param.name))
+      parameter->is_generic_parameter = true;
     for (const auto &bound : gen_param.bounds)
       if (!find_trait(bound))
         add_error(p.line, "Unknown trait '" + bound + "' in generic bound");
@@ -6742,6 +7485,8 @@ void type_checker::visit(ast_impl_decl &p) {
         gen_param.name, symbol_kind::type_symbol, nullptr, std::nullopt, false,
         visibility_kind::visibility_private, std::nullopt, {}, {},
         gen_param.bounds);
+    if (auto *parameter = symbols_.lookup_mut(gen_param.name))
+      parameter->is_generic_parameter = true;
     if (!p.trait_name)
       for (const auto &bound : gen_param.bounds)
         if (!find_trait(bound))
@@ -6772,6 +7517,9 @@ void type_checker::visit(ast_impl_decl &p) {
 
   // Visit methods and register them with mangled names
   for (auto &method : p.methods) {
+    const auto trait_access = trait_method_visibility_.find(method.get());
+    const auto access = trait_access == trait_method_visibility_.end()
+        ? method->get_visibility() : trait_access->second;
     method->accept(*this);
     // Register method as TypeName__methodName for global lookup if needed
     // Use resolved target name (qualified) but strip generics
@@ -6782,8 +7530,8 @@ void type_checker::visit(ast_impl_decl &p) {
      * "'\n"; */
     symbols_.insert_symbol_with_context(
         mangled_name, symbol_kind::function_symbol, method.get(),
-        method->return_type, false, visibility_kind::visibility_public,
-        std::nullopt, method->generic_params, method->params);
+        method->return_type, false, access,
+        current_module_, method->generic_params, method->params);
 
     // Register method in the Type's member map for dot-operator resolution
     // We must handle generic types (e.g. "Box<T>" -> "Box") to find the base
@@ -6805,7 +7553,7 @@ void type_checker::visit(ast_impl_decl &p) {
     if (type_sym && type_sym->kind == symbol_kind::type_symbol) {
       symbol method_sym(method->name, symbol_kind::function_symbol,
                         method.get(), method->return_type, false,
-                        method->get_visibility(), std::nullopt,
+                        access, current_module_,
                         method->generic_params, method->params);
       type_sym->members[method->name] = method_sym;
       /* std::cerr << "[visit_impl] Registered member '" << method->name << "'
@@ -7995,6 +8743,7 @@ void type_checker::visit(ast_ref_expr &e) {
 }
 
 void type_checker::visit(ast_lambda_expr &e) {
+  e.checked_callable_parameters = callable_parameters(e.params);
   // Build function type: fn(T1, T2, ...) -> R
   std::string fn_type = "fn(";
   for (size_t i = 0; i < e.params.size(); ++i) {
@@ -8032,16 +8781,81 @@ void type_checker::visit(ast_lambda_expr &e) {
   last_expr_type_ = type_info{fn_type, true};
 }
 
+void type_checker::record_scalar_text_call(
+    const ast_call_expr &call, const symbol &callee,
+    const std::map<std::string, std::string> &substitutions) {
+  if (!callee.defining_node ||
+      callee.defining_node->kind != ast_node_kind::function_decl_node) return;
+  scalar_text_call edge;
+  edge.caller = scalar_text_function_;
+  edge.callee = static_cast<const ast_function_decl *>(callee.defining_node);
+  edge.line = call.line;
+  edge.source_file = diagnostic_source_file_;
+  for (const auto &[name, argument] : substitutions) {
+    const auto type = resolve_type(argument).name;
+    edge.substitutions[name] = type;
+    const auto *parameter = symbols_.lookup(type);
+    if (parameter && parameter->is_generic_parameter) edge.open_types.insert(type);
+  }
+  scalar_text_calls_.push_back(std::move(edge));
+}
+
+void type_checker::validate_scalar_text_calls() {
+  // Only actual open type parameters propagate. A composite such as array<T>
+  // is already outside the scalar contract for every specialization.
+  std::map<const ast_function_decl *, std::vector<const scalar_text_call *>> callers;
+  for (const auto &edge : scalar_text_calls_) callers[edge.callee].push_back(&edge);
+  std::vector<std::pair<const ast_function_decl *, std::string>> pending;
+  for (const auto &[function, parameters] : scalar_text_requirements_)
+    for (const auto &parameter : parameters) pending.emplace_back(function, parameter);
+  for (std::size_t index = 0; index < pending.size(); ++index) {
+    const auto [function, parameter] = pending[index];
+    for (const auto *edge : callers[function]) {
+      if (!edge->caller) continue;
+      const auto argument = edge->substitutions.find(parameter);
+      if (argument != edge->substitutions.end() && edge->open_types.count(argument->second) &&
+          scalar_text_requirements_[edge->caller].insert(argument->second).second)
+        pending.emplace_back(edge->caller, argument->second);
+    }
+  }
+  std::set<std::tuple<std::string, int, const ast_function_decl *, std::string>> reported;
+  for (const auto &edge : scalar_text_calls_) {
+    const auto required = scalar_text_requirements_.find(edge.callee);
+    if (required == scalar_text_requirements_.end()) continue;
+    for (const auto &parameter : required->second) {
+      const auto argument = edge.substitutions.find(parameter);
+      const std::string type = argument == edge.substitutions.end()
+          ? "<unresolved>" : argument->second;
+      if (supports_scalar_text(type) || (edge.caller && edge.open_types.count(type))) continue;
+      if (!reported.emplace(edge.source_file, edge.line, edge.callee, parameter).second) continue;
+      diagnostic_source_scope source_scope(diagnostic_source_file_, edge.source_file);
+      add_error(edge.line, "Function '" + edge.callee->name +
+          "' interpolates generic type '" + parameter + "', but this call supplies '" +
+          type + "'; expected text, bool, i32, i64, u8 or f64; call an explicit formatter for other types");
+    }
+  }
+}
+
 void type_checker::visit(ast_interpolated_string_expr &e) {
-  // Visit each expression part to type check them
   for (const auto &part : e.parts) {
     if (!part.is_literal && part.expression) {
       part.expression->accept(*this);
+      const auto type = last_expr_type_ ? resolve_type(last_expr_type_->name).name : "unknown";
+      part.expression->inferred_type = type;
+      const auto *symbol = symbols_.lookup(type);
+      // Generic bodies are emitted with concrete substitutions. Codegen
+      // checks this same scalar contract again for every specialization.
+      if (symbol && symbol->is_generic_parameter && scalar_text_function_)
+        scalar_text_requirements_[scalar_text_function_].insert(type);
+      if (!supports_scalar_text(type) && !(symbol && symbol->is_generic_parameter))
+        add_error(part.expression->line,
+            "Cannot interpolate value of type '" + type +
+            "'; expected text, bool, i32, i64, u8 or f64; "
+            "call an explicit formatter for other types");
     }
   }
-  // Result type is always text
-  // Result type is always String (primitive)
   last_expr_type_ = type_string;
+  e.inferred_type = type_string.name;
 }
 
 void type_checker::visit(ast_boolean_literal &e) {

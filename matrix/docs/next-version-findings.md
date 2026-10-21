@@ -599,7 +599,7 @@ backend discrepancy. Scratch evidence is in
 `build/text-ordering-work/friction-probes/report.json`.
 
 Matrix quoted literals deliberately have
-[no escape syntax](types-and-text.md#text-has-no-escape-syntax); `\n` remains
+[no escape syntax](types-and-text.md#ordinary-text-has-no-escape-syntax); `\n` remains
 two bytes there, while named `newline` and `tab` produce control characters.
 That documented difference is not a Matrix decoder defect.
 
@@ -1231,14 +1231,425 @@ definition ranges and reject stale/unsupported destinations.
 
 ### F41 — Matrix function-value spelling bypasses normal name folding
 
-**Status:** Confirmed existing parser inconsistency; unchanged by source indexing.
+**Status:** Fixed. Paragraph values now use the same declared-name resolution as
+ordinary identifier expressions and direct calls.
 
 Given a paragraph named `read-count`, a direct call written as
 `evaluate READ_COUNT with 1` resolves its name. A function value written as
-`the paragraph READ_COUNT` instead reports `Undefined identifier 'READ_COUNT'`,
-while `the paragraph read-count` works. The latter parser path uses `nil_symbol`
-directly instead of ordinary `resolve_name` folding. This was reproduced with
-compiler analysis, independent of editor navigation.
+`the paragraph READ_COUNT` previously reported `Undefined identifier 'READ_COUNT'`,
+while `the paragraph read-count` worked. The latter parser path used `nil_symbol`
+directly instead of ordinary `resolve_name` folding. Both now resolve to the
+declared `read-count` symbol; the source index still retains the exact written
+spelling and excludes backtick delimiters from escaped-name ranges.
 
-**Next step:** Apply the same declared-name resolution to function values and
-direct calls, then test case/separator variants, escapes, scopes and imports.
+**Evidence:** `tests/matrix/function_value_contract.py` checks case/separator
+variants, forward declarations, escaped names, lexical shadowing, function-typed
+parameters and Ny/Matrix imports through semantic bindings and both textual and
+binary NIL execution. The parser source-span test covers escaped folded names
+with UTF-8 and CRLF input. External declarations still require their exported NIL
+spelling, as ordinary references do: another page's declarations are unavailable
+to the parser's local folding table. Native indirect calls remain unsupported.
+
+
+### F42 — A partial source index cannot establish complete references
+
+**Status:** Certified local references and rename implemented; broader semantic editing remains open.
+
+A list of known bindings does not prove that it contains every use. Renaming a
+variable through a missing interpolation, assembly operand, generated token or
+named argument can leave a program inconsistent. Named function parameters can
+also be referenced by callers outside the checked import graph.
+
+**Resolution:** The compiler certifies eligible body-local variables and loop
+binders only after checking retained uses against original identifier tokens.
+Missing or ambiguous occurrences with the same spelling withhold certification.
+Inline assembly and Ny interpolation conservatively disable local editing for
+the source. Functions, globals and all function/lambda parameters are excluded.
+The additive `references_complete` and `rename_safe` capabilities enable VS Code
+references and local rename without treating the overall index as complete.
+
+Rename uses compiler-provided identifier and reserved-name keys. A new name must
+be an ASCII identifier unused anywhere in the file; Matrix folds case and
+hyphen/underscore separators for collision checks and preserves existing
+backtick delimiters. This intentionally rejects some otherwise legal renames.
+The editor checks a speculative source snapshot, compares the full retained
+binding graph, then validates the original input set again before returning an
+edit. Multiple open aliases of the same file are refused to avoid divergent
+buffers. Cancellation or a failed check returns no edit.
+
+**Evidence:** Compiler contracts cover lexical shadowing, assignments, loops,
+unused locals, global/parameter exclusions, generated uses and spelling rules.
+Editor tests exercise exact references, rename and undo, Unicode/CRLF, Matrix
+folding and escaping, collisions, dirty imports, untitled files and file aliases.
+
+**Follow-up:** Add a complete caller/project graph for public symbols and named
+parameters and original maps for generated and embedded code. F44 adds an
+initial scope query for identifier completion; general incomplete-code recovery
+and member/type completion still need broader contracts.
+
+
+### F43 — Matrix named-argument order can depend on a shadowed paragraph name
+
+**Status:** Fixed through checked callable parameter-name contracts.
+
+A function-valued local named `operation` could shadow a declared paragraph
+with that name. In `operation with second-part being 2, first-part being 1`,
+the parser used a page-wide paragraph signature to reorder arguments before
+lexical resolution. Renaming the local could remove that lookup and change
+`102` to `201` while preserving the retained reference graph.
+
+**Resolution:** Matrix now retains raw argument labels on the shared call AST.
+The checker orders arguments and their inferred types only after selecting the
+actual lexical, imported, generic or member callable. Labels fold ASCII case
+and separators against that callable's parameters. Unknown, duplicate and
+missing labels fail checking; a named fixed-argument list can precede a `more`
+tail only for a variadic declaration. Runtime argument evaluation follows the
+resulting parameter order.
+
+Immutable body-local paragraph values retain parameter-name provenance from a
+declared paragraph, anonymous paragraph or another proven immutable local.
+Mutable callbacks, function-typed parameters and other values without this
+contract require positional calls. Structural `fn(...)` types still carry
+parameter types without labels. Named variadic callback calls are rejected
+because indirect-call lowering does not pack their trailing arguments; callers
+can invoke the declared variadic paragraph directly.
+
+**Evidence:** `tests/matrix/named_argument_contract.py` executes the original
+shadowing case and its renamed form with deliberately different callback and
+shadowed-declaration parameter orders. It covers nested scopes, immutable
+copies, anonymous paragraphs, forward declarations, escaped/folded labels,
+variadics, Ny/Matrix imports, generic inference and explicit type arguments,
+record/class methods and rejected labels/contracts. Checking the real analyzer
+example also caught an invalid `index` label for the generated `declaration(id)`
+API; its call now uses the declared label. Direct calls run through
+native compilation and both textual and binary NIL; callback cases run through
+both NIL encodings. The tests establish equivalent runtime results across the
+rename, beyond an unchanged reference graph.
+
+**Follow-up:** A labelled function-type contract would allow named calls
+through parameters, mutable callback values and returned functions. Variadic
+indirect calls need a checked packing convention before they can be supported.
+
+
+### F44 — Unresolved identifiers need a completion query independent of successful analysis
+
+**Status:** Initial compiler-backed value-identifier completion implemented.
+
+A successful semantic index cannot answer a typical completion request: a typed
+prefix such as `sam` is usually unresolved. A declaration list also cannot prove
+which local or imported binding is visible at that position.
+
+**Resolution:** `--completion-at` captures visible bindings immediately before
+the checker resolves the selected unqualified identifier expression. An unresolved
+prefix can therefore return candidates while ordinary analysis still fails.
+The result includes every consumed native source, exact UTF-8 replacement offsets,
+source-backed candidate kinds/types and insertion spellings. Matrix folding and
+escaping follow the frontend resolver. VS Code validates snapshots, rejects stale
+requests and replaces the complete token, including a suffix after the cursor.
+
+**Evidence:** Compiler contracts exercise scope exits, nearest shadowing, declaration
+order, mixed-language imports, privacy, Unicode/CRLF, escaped names, query budgets
+and all analysis input routes. Editor tests cover real completion results, source
+changes, imports and exact token edits.
+
+**Follow-up:** The initial query requires parseable syntax and no earlier checker
+error. Blank, member/type and qualified-name positions, generated spans, binary
+libraries and repeated generic occurrences use tolerant editor fallback. Add
+parser recovery, stable generic identities, member/signature queries and expected-type
+filtering. Function details currently expose return types rather than complete
+signatures. Large standard-library graphs may exceed the bounded query budget;
+a persistent source/symbol protocol would avoid retransmitting full snapshots.
+
+
+### F45 — A source without a module inherited the last imported module's context
+
+**Status:** Fixed in merged source-unit boundaries and verified across checking and execution.
+
+A standalone Ny source can omit `module`, but merging its dependencies into one
+AST left the preceding dependency's module active. A root source importing
+`helper.*` could therefore call a private `helper` function as though it belonged
+to `helper`. Adding `module entry` to that same source correctly rejected the
+call. Root globals could also collide with dependency globals because checking
+and lowering qualified them under the inherited module. Completion made this
+visible by exposing imported private candidates in a normal standalone file.
+
+**Resolution:** The merge records an explicit root-context boundary before each
+source unit. Every checker module-tracking pass treats the empty marker as a
+reset and creates no empty module symbol; existing code generation applies the
+same reset. Explicit module/book declarations then establish their own context
+normally. Original source ASTs and reflected declarations do not acquire the
+synthetic boundary markers. This changes ordinary compilation as well as
+analysis, rather than hiding the problem only in completion.
+
+**Evidence:** `tests/tools/module_context_contract.py` checks source-backed
+public imports and distinct consumer/dependency globals through native output,
+textual NIL and binary NIL. Both analysis and ordinary compilation reject a
+private imported call in Ny with and without an explicit module, and in Matrix
+with its required book declaration. `tests/tools/completion_contract.py` keeps
+a module-less Ny consumer in its mixed-language import and selective-import
+privacy cases. The targeted run passed 14 module-context checks and 46 completion
+checks, plus the source-span regression for repeated query occurrences.
+
+
+### F46 — Member completion must use the receiver's checked type and member visibility
+
+**Status:** Initial compiler-backed member query implemented; import visibility corrected.
+
+A file-wide member list cannot distinguish two local receivers whose fields have
+identical names but different types, instantiate a generic field or method result,
+or determine which inherited method is accessible. Matrix member names also
+intentionally bypass the parser's page-wide folded-name map: an unrelated
+unqualified declaration must not redirect a field insertion.
+
+**Resolution:** `--completion-at` captures a nonempty member token after its
+receiver has been checked. Candidates are source-backed record fields, methods,
+inherited class members and extensions, with generic substitutions from ordinary
+member lookup. The result preserves full-token offsets and dependency snapshots.
+Matrix prefix matching folds case and separators while the insertion retains the
+receiver's declaration spelling, including required escaping. Ordinary member
+resolution remains case-sensitive.
+The Matrix lexer now recognizes a dot before a backtick as member punctuation;
+previously an escaped member such as `` input.`value` `` was mistaken for the end
+of a sentence and rejected before checking.
+
+The work exposed a visibility defect: checking an implementation replaced its
+member-table entries with symbols that had lost their owning module, and ordinary
+member lookup did not enforce imported implementation-method privacy. The checker
+now retains that ownership and rejects private imported methods. Completion uses
+the same visibility contract rather than merely hiding otherwise callable methods.
+Generated `Type__method` registrations also retain method visibility, so spelling
+the lowered function name does not bypass the source method's access restriction.
+The legacy lookup of manually named `Type__method` functions checks visibility
+as well, covering declarations that have no implementation member table.
+Both ordinary and generic static dot-call dispatch check access directly after
+selecting the method; a type receiver cannot bypass the value-member checks.
+Required methods of a successfully checked trait implementation inherit the
+trait's access when their implementation omits an explicit public modifier.
+Additional helpers retain declared access; correcting privacy does not make
+exported trait contracts unusable.
+
+**Evidence:** `tests/tools/member_completion_contract.py` covers receiver
+shadowing, generic field/method types, reference/pointer receivers, mixed-language
+imports, imported private methods, inherited class members, Matrix `my` syntax,
+escaped names, folded-name collisions and Unicode/CRLF replacement ranges. It
+compiles applied candidates and checks ordinary-compilation privacy failures.
+The focused run passed 66 member checks, 46 existing lexical-completion checks,
+50 signature checks, and the trait contract's 100 rejected compilations and 12
+accepted controls. Static-call privacy cases cover generic and nongeneric
+receivers, callers with and without a module declaration, public controls,
+analysis and ordinary compilation, and withheld private signature results.
+Clean SDK validation also exposed five cross-book extension operations in the
+Matrix execution fixtures that lacked `public`. The documented visibility rule
+is per paragraph, so those intended exports now say `public` explicitly. A new
+mixed-book Matrix regression accepts a public operation using its own private
+helper, withholds the helper from completion, and rejects an external call in
+both analysis and ordinary compilation. `matrix.execution` passes with privacy
+enforced.
+
+**Follow-up:** Bare dots, type/static receivers, enum members, trait-bound queries,
+generated declarations and builtin heuristic members require further contracts.
+Wrapped reference/pointer receivers currently offer fields only; method receiver
+conversion requires additional coverage.
+The grammar defines no block-level export modifier, but the declaration parser
+currently consumes and ignores `public` before an implementation or extension
+target. Diagnose that unsupported modifier instead of silently accepting it;
+exported paragraphs currently require their own `public` modifier.
+Parser recovery and a persistent source/symbol protocol remain necessary for
+broader incomplete-code support and larger imported graphs. Member case folding
+should be resolved by the checker with receiver-specific ambiguity handling.
+
+
+### F47 — Signature help needs original argument slots and the resolved callable
+
+**Status:** Initial compiler-backed signature query implemented.
+
+A list of reflected declarations cannot identify the callable at a call site,
+and a function's semantic display type contains only its return type. Matrix
+also reorders named arguments after resolution, so the checked argument vector
+cannot identify the parameter under the editor cursor in the original source.
+
+**Resolution:** Both parsers retain the original call argument region, slot
+boundaries and Matrix labels separately from the reordered arguments. A bounded
+`--signature-at` query selects the innermost call and records the actual function,
+source method or proven immutable callback contract. Matrix labels select the
+resolved declaration parameter; unknown labels leave the full signature visible
+without guessing a highlight. Instance methods omit `self`.
+
+A narrow query-only Matrix recovery supports whitespace immediately after a bare
+`with`, while preserving the syntax diagnostic, unsuccessful analysis and absence
+of a semantic index. No source text is rewritten, and ordinary compilation still
+rejects that incomplete call. Source snapshots, offsets and dependency versions
+are validated before the editor shows a result. Temporary compiler failures are
+retryable without source edits, and changed inputs cancel pending work.
+
+**Evidence:** `tests/tools/signature_contract.py` passed 50 compiler checks across
+both languages, input routes, nested calls, invalid arguments, imports, callbacks,
+methods, source provenance and query limits. Eleven real VS Code host checks
+exercise member completion and signatures, including unsaved imports, Matrix
+label selection, bare-`with` recovery, transient failure and input cancellation.
+
+**Follow-up:** Add general incomplete-call recovery, stable inferred generic and
+overload identities, documented builtin signatures and function-type parameter
+labels. Immutable callback signatures currently retain canonical parameter names
+rather than original Matrix spelling. Project-wide parameter rename also needs
+argument-label reference roles and complete caller graphs; query metadata does
+not certify those edits. See NIL-0012 and the proposed NIL-0013.
+
+The editor currently requests signatures on spaces in both languages as well as
+call punctuation. A caller's cancellation suppresses its result, but a query at
+the same cursor can continue occupying the shared compiler queue until it
+finishes or times out. Source changes and new cursor queries do abort it.
+Measure interactive latency and narrow triggers or add cancellation-aware query
+scheduling before extending recovery to more typing contexts.
+
+
+### F48 — Metadata headers erased native library declaration positions
+
+**Status:** Exact source mapping retained for standalone `@pragma once` and `@schema` lines.
+
+Validation against a copied SDK found an available but empty member query for
+`vec<i32>.leng`, despite the source-backed public `length` method and
+`length_cell` field. A signature query for the real text library's `trim`
+function was also unavailable. The files were native sources with complete
+snapshots; lookup and binary provenance were not the cause.
+
+The Ny preprocessor replaces metadata headers with empty lines, while the parser
+previously accepted original locations only when all nonblank lines survived
+unchanged. One `@pragma once` therefore suppressed every declaration token in
+an otherwise unchanged library file. Small fixtures without library headers
+had hidden the gap.
+
+**Resolution:** The parser recognizes only exact, standalone `@pragma once` and
+`@schema` after horizontal whitespace trimming. Each must emit exactly one empty
+line, and every code line must still survive byte-for-byte. The existing line
+offset map restores original UTF-8 name, call and argument-slot positions across
+the removed header text. It does not report offsets into the shorter processed
+source. Other pragmas, parameterized markers, macros, includes and conditional
+rewriting remain unavailable without a general preprocessor source map.
+
+**Evidence:** Parser and query contracts cover metadata headers in primary files
+and imported dependencies, Unicode/BOM, LF/CRLF, missing final newlines, generic
+fields and methods, Ny/Matrix consumers, signature argument slots and compilation
+of completion insertions. Negative controls retain the previous behavior for
+unsupported transformations. The focused run passed 79 member checks, 46 lexical
+completion checks, 57 signature checks and the source-span unit tests. Six actual
+standard-library queries also pass in both languages: `vec<i32>.leng` exposes
+`length` and `length_cell`, `trim` identifies its first parameter, and
+`try_substring` selects the correct parameter across Ny positional and reversed
+Matrix named arguments. Every native snapshot matches the corresponding source
+bytes across the 30-, 31- and 14-file dependency graphs. SDK qualification repeats
+these queries against a fresh copied SDK after sealing the corrected compiler.
+
+**Follow-up:** Add a full preprocessor source map before exposing locations from
+includes, macro expansion or conditional rewriting. Metadata directives with
+arguments or comments remain outside this deliberately narrow mapping contract.
+
+### F49 — Numeric signs should read as values, while subtraction stays explicit
+
+**Observation:** Prefix `minus 1.6` was the only Matrix spelling for a negative
+floating value, even though the operation describes the value's sign. The
+punctuation rule also rejected the familiar `-1.6` notation. Hyphenated names
+make a general symbolic subtraction operator ambiguous with existing source.
+
+**Resolution:** `negative` is now a unary alias for `minus`; `minus` retains its
+infix subtraction meaning. A `-` immediately followed by a digit is accepted as
+a numeric sign, including hexadecimal integers and scientific notation. Thus
+`negative offset`, `-1.6` and `-1.6e-3` are valid, while `left negative right`,
+`left - right`, `- offset` and `-.5` are rejected. Write `-0.5` instead of `-.5`.
+Hyphenated names and their separator-folding behavior are unchanged.
+
+The forms share existing integer-boundary validation and unary lowering, rather
+than introducing signed literal tokens with a different range or arithmetic
+contract. They apply in ordinary expressions, numeric match patterns and
+parameter defaults. `negative` and `tuple` also enter the compiler's reserved
+rename keys, so editor renames cannot introduce newly reserved names silently.
+
+**Coverage:** The signed-number route fixture exercises the 32-bit and 64-bit
+minima, hexadecimal minima, subexpressions, arrays, calls, scientific exponents,
+statement/expression patterns and signed zero distinguished through `atan2`.
+The rejection contract covers malformed and overflowing literals across compile
+modes and editor analysis, checking that existing output artifacts are retained.
+Syntax grammar and language-service tests cover the new keyword, signed number
+spans, scientific type inference and preservation of hyphenated identifiers.
+The focused run passed 480 signed-number rejection/analysis checks, 42 language-service
+protocol tests, 100 extension unit tests and 8 actual VS Code host checks covering
+interpolation and tuple editing alongside the new literal forms.
+
+
+### F50 — Tuples need one structural type and representation across both languages
+
+**Status:** Implemented for nonempty typed tuple values and local destructuring.
+
+The old checker and interpreter contained tuple-like `zip` and array-unpacking
+heuristics, while the surface documentation correctly withheld general tuples.
+Exposing that scaffolding as a language feature would have allowed native and
+interpreter values to disagree. Ny `(T, U)` and Matrix `tuple of (T, U)` now
+share canonical ordered NIL record schemas with immutable numeric slots. Both
+frontends construct `(a, b)`, destructure local bindings, and support nested
+projection and tuple match patterns. Constructors evaluate once in written
+order, and contained record/reference handles preserve their identity.
+
+**Friction addressed:** `(value)` remains grouping, `(value,)` is a singleton,
+and `.0.1` is tokenized as nested positions rather than a decimal. Huge or
+out-of-range positions diagnose without throwing from host integer parsing.
+Tuple literals can convert elements at construction boundaries; existing
+tuples cannot silently change their storage layout.
+
+**Qualification:** The tuple contract covers both frontends, executable text
+and binary NIL, bundles, native routes, and cross-language consumers using
+source and binary libraries with the original source files removed. It also
+checks failure before replacing output.
+
+**Follow-up:** Native arrays of tuple handles need their own storage contract;
+the interpreter can already unpack such arrays. Nested declaration patterns,
+named elements, unit values, user-defined tuple formatting and C ABI mapping
+remain explicit future work. See [NIL-0015](../../docs/design/NIL-0015-structural-tuples.md).
+
+### F51 — Interpolation needs typed conversion and original expression spans
+
+**Observation:** Ny already recognized implicit identifier substitutions in
+ordinary strings, but the implementation treated arithmetic as literal text,
+misdecoded some doubled braces and emitted a `TO_STRING` operation unsupported
+by native compilation. Its identifiers were synthesized from decoded string
+contents without original source positions, which forced the editor to withhold
+local rename for any Ny file containing a brace in an ordinary string. Matrix
+quoted strings and raw text blocks deliberately had no interpolation.
+
+**Resolution:** Explicit Ny `$"..."` and Matrix `formatted "..."` accept ordinary
+expressions inside braces. Both frontends emit the same interpolation AST.
+Their lexers retain original byte positions for every expression token instead
+of parsing decoded literal text, so escaped prefixes, Unicode, CRLF and nested
+quoted arguments cannot shift definitions, signature regions or rename edits.
+The checker and runtime use a typed scalar/text conversion shared by native and
+interpreted execution. Each expression is evaluated once, from left to right.
+Legacy implicit Ny floating interpolation consequently changes from fixed six
+fractional digits to the same shortest round-trip representation. Native text
+retains its NUL-free restriction, including formatted literal segments.
+Generic interpolation records a scalar/text requirement on its declaration.
+Resolved call substitutions propagate that requirement through generic wrappers
+and receiver methods, so editor analysis can reject unsupported concrete
+record, array or tuple arguments at the callsite before code generation.
+
+Doubled braces insert literal braces in explicit formatted text. Ordinary
+Matrix quoted strings and `begin text` blocks remain raw; legacy Ny identifier
+interpolation stays available for compatibility. `formatted` is contextual
+before a quote and remains an ordinary Matrix name elsewhere. Explicit strings
+and their expressions currently occupy one physical source line. Empty holes,
+trailing tokens, unmatched braces and unterminated strings are errors; the
+parser does not silently convert malformed expressions back into text.
+
+**Coverage:** Source-span tests include decoded Ny prefixes, raw Matrix
+backslashes, nested formatted strings, quoted expression arguments, UTF-8,
+CRLF, exact locations after the string and malformed input. Compiler query
+contracts exercise completion and signature help inside holes. The semantic
+contract checks local references and applies an actual rename, proving that
+matching words inside doubled-brace literal text remain unchanged. Execution
+contracts cover the shared scalar conversion and evaluation order.
+
+**Follow-up:** Add multiline formatted text only with an explicit original
+source map through indentation removal. Custom record formatting should use
+the existing `Display` contract once dispatch is qualified on all routes;
+currently callers must explicitly produce a supported scalar or text value.
+Precision and presentation options remain library calls rather than a second
+formatting grammar. The legacy implicit form still lacks original embedded
+name spans and retains its conservative editor exclusion.

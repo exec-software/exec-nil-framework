@@ -117,7 +117,7 @@ receiver_clause = 'on' [ 'mutable' ] 'receiver'
 param_list      = param { ( ',' | 'and' ) param }
                 | 'more' identifier 'as' type ;
 param           = [ 'variable' ] identifier 'as' type
-                  [ 'defaulting' 'to' literal ] ;
+                  [ 'defaulting' 'to' ( literal | signed_number | ( 'negative' | 'minus' ) unary ) ] ;
 
 generic_clause  = 'of' generic_param { ',' generic_param } ;
 (* Several bounds are joined with 'and'.  A bound is a type name, so 'and
@@ -168,7 +168,10 @@ impl_decl       = type_name [ generic_clause ] [ 'provides' nominal_type ]
  *   - two extensions in scope offering the same name on the same type are
  *     ambiguous and REJECT, rather than being resolved by read order;
  *   - an extension applies only where it has been 'read' into scope, so an
- *     operation cannot be obtained without reading the book that grants it. *)
+ *     operation cannot be obtained without reading the book that grants it.
+ * Paragraph visibility is unchanged: mark an exported paragraph 'public';
+ * unmarked paragraphs remain private to the extending book. The extension
+ * block itself has no export modifier. *)
 extension_decl  = nominal_type [ generic_clause ]
                   'begin' 'extension' { paragraph_decl }
                   'end' 'extension' ;
@@ -185,6 +188,7 @@ global_decl     = { modifier } binding_decl ;
 
 type            = ergonomic_type
                 | 'override' machine_type
+                | 'tuple' 'of' '(' type { ',' type } [ ',' ] ')'
                 | 'array' 'of' type
                 | 'owned' 'array' 'of' type
                 | 'shared' 'view' 'of' type
@@ -252,8 +256,11 @@ statement       = binding_decl
                 | 'stop' 'repeating'
                 | 'continue' 'repeating' ;
 
+(* The parenthesized destructuring form is local only. *)
 binding_decl    = ( 'value' | 'variable' | 'constant' ) identifier
-                  [ 'as' type ] 'is' expression ;
+                  [ 'as' type ] 'is' expression
+                | ( 'value' | 'variable' | 'constant' )
+                  '(' identifier { ',' identifier } [ ',' ] ')' 'is' expression ;
 
 assignment      = 'set' place 'to' expression ;
 place           = ( qualified_name | 'my' identifier ) { '.' identifier }
@@ -267,6 +274,8 @@ when_stmt       = 'when' expression 'then' { statement }
 repeat_stmt     = 'repeat' repeat_head { statement } 'end' 'repeat' ;
 repeat_head     = 'while' expression
                 | 'for' 'each' identifier 'in' expression
+                | 'for' 'each' '(' identifier { ',' identifier } [ ',' ] ')'
+                  'in' expression
                 | 'for' identifier 'from' expression 'to' expression
                 | 'forever' ;
 
@@ -276,7 +285,8 @@ repeat_head     = 'while' expression
 consider_stmt   = 'consider' expression { consider_arm }
                   [ 'otherwise' { statement } ] 'end' 'consider' ;
 consider_arm    = 'when' pattern [ 'provided' expression ] 'then' { statement } ;
-pattern         = literal
+pattern         = '(' pattern { ',' pattern } [ ',' ] ')'
+                | literal | signed_number | ( 'negative' | 'minus' ) number_literal
                 | type_name '.' identifier [ 'holding' identifier ]
                 | identifier ;          (* a bare identifier binds the value *)
 
@@ -304,6 +314,8 @@ assembly_stmt   = 'assembly' 'for' identifier 'is' string_literal
 (* Expressions, lowest precedence first                               *)
 (* ------------------------------------------------------------------ *)
 
+tuple_position  = '0' | nonzero_digit { digit } ;
+nonzero_digit   = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' ;
 expression      = or_expr ;
 or_expr         = and_expr { 'or' and_expr } ;
 and_expr        = not_expr { 'and' not_expr } ;
@@ -320,9 +332,11 @@ shift_expr      = additive { ( 'shifted' 'left' 'by'
                              | 'shifted' 'right' 'by' ) additive } ;
 additive        = multiplicative { ( 'plus' | 'minus' ) multiplicative } ;
 multiplicative  = unary { ( 'times' | 'over' | 'remainder' ) unary } ;
-unary           = [ 'minus' | 'bitwise' 'not' ] postfix ;
+unary           = ( 'negative' | 'minus' | 'bitwise' 'not' ) unary
+                | signed_number | postfix ;
+signed_number   = '-' number_literal ; (* '-' must touch the following digit. *)
 
-postfix         = primary { '.' identifier
+postfix         = primary { '.' ( identifier | tuple_position )
                           | 'at' primary
                           | 'with' argument_tail
                           | 'becomes' type
@@ -349,6 +363,7 @@ primary         = literal
                 | 'the' 'paragraph' identifier
                 | '[' [ expression { ',' expression } ] ']'
                 | '(' expression ')'
+                | '(' expression ',' [ expression { ',' expression } [ ',' ] ] ')'
                 | 'build' nominal_type [ 'with' field_init { ',' field_init } ]
                 | 'reference' 'to' identifier
                 | 'apply' identifier 'across' expression
@@ -377,7 +392,7 @@ anonymous_function = 'anonymous' [ 'receives' param_list ] [ 'returns' type ]
 (* Lexical                                                            *)
 (* ------------------------------------------------------------------ *)
 
-literal         = number_literal | text_literal | named_character
+literal         = number_literal | text_literal | formatted_text | named_character
                 | 'true' | 'false' ;
 number_literal  = digit { digit } [ '.' digit { digit } ]
                   [ ('e' | 'E') [ '+' | '-' ] digit { digit } ]
@@ -392,6 +407,12 @@ number_literal  = digit { digit } [ '.' digit { digit } ]
 text_literal    = '"' { character_except_quote_or_newline } '"'
                 | text_block ;
 named_character = 'quote' | 'newline' | 'tab' ;
+formatted_text  = 'formatted' '"' { formatted_segment | '{{' | '}}'
+                | '{' expression '}' } '"' ;
+(* formatted_segment is raw text excluding quotes, braces and newlines.
+ * Expressions use the complete Matrix grammar, including their own quoted
+ * literals. Doubled braces are literal text; backslashes remain ordinary.
+ * 'formatted' is contextual only before a quote, and remains a name elsewhere. *)
 
 (* A raw block, following the universal 'begin <kind>' / 'end <kind>' shape.
  * It is terminated by a line whose only content is 'end text' -- a
@@ -404,8 +425,8 @@ named_character = 'quote' | 'newline' | 'tab' ;
 text_block      = 'begin' 'text' newline { any_line } 'end' 'text' ;
 
 (* A hyphen joins the words of ONE name; a space separates terms in an
- * expression.  '-' is never an operator, because subtraction and negation are
- * both spelled 'minus', which is what frees the character.
+ * expression. '-' immediately followed by a digit signs a numeric literal;
+ * subtraction is 'minus', while general negation is 'negative' or 'minus'.
  *
  * A hyphen must be preceded and followed by a letter, so '-kind', 'kind-',
  * 'frame--kind' and 'total-1' are all lex errors.  Rejecting 'total-1' at the

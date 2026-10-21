@@ -323,7 +323,8 @@ end paragraph
         self.assertEqual(set(result), {"item", "preferred", "numeric-only"})
 
     def test_keyword_context_no_ny_spellings(self) -> None:
-        for fragment, expected in (("value item as |", {"number", "floating", "text"}),
+        for fragment, expected in (("value item as |", {"number", "floating", "text", "tuple of"}),
+                                   ("value result is |", {"negative", "formatted"}),
                                    ("value item as override |", {"integer", "long", "byte", "double"}),
                                    ("repeat |", {"while", "for each", "forever"}),
                                    ("say 1 bitwise |", {"and", "or", "xor", "not"}),
@@ -332,6 +333,38 @@ end paragraph
                 result, _ = completion(fragment)
                 self.assertTrue(expected <= set(result))
                 self.assertFalse({"fn", "let", "i32", "i64", "struct", "impl"} & set(result))
+
+    def test_formatted_text_holes_and_nested_literals(self) -> None:
+        prefix = 'main begin paragraph\n value height as floating is -1.6e-3\n'
+        for value in ('formatted "height: {hei|ght}"', 'formatted "{height|}"',
+                      'formatted "{describe with input being "nested"} {hei|ght}"',
+                      'formatted "{formatted "nested {hei|ght}"}"'):
+            with self.subTest(value=value):
+                result, notes = completion(prefix + ' say ' + value + '\nend paragraph\n')
+                self.assertEqual(set(symbols(result)), {'height'})
+                self.assertFalse([note for note in notes if note['params']['diagnostics']])
+        for value in ('formatted "hei|ght {height}"',
+                      'formatted "{{hei|ght}} {height}"',
+                      'formatted "{describe with input being "hei|ght"}"'):
+            with self.subTest(value=value):
+                result, _ = completion(prefix + ' say ' + value + '\nend paragraph\n')
+                self.assertEqual(result, {})
+
+    def test_destructured_local_bindings(self) -> None:
+        result, _ = completion('main begin paragraph\n value (width, height, _) is (1, 2, 3)\n say |\nend paragraph\n')
+        self.assertTrue({'width', 'height'} <= set(symbols(result)))
+        self.assertNotIn('_', result)
+        result, _ = completion('main begin paragraph\n value (width, height) is (wi|, 2)\nend paragraph\n')
+        self.assertNotIn('width', result)
+
+    def test_signed_scientific_and_hexadecimal_literal_types(self) -> None:
+        prefix = ('floating begin extension\n floating-only returns number begin paragraph\n give 1\n end paragraph\nend extension\n'
+                  'number begin extension\n integer-only returns number begin paragraph\n give 1\n end paragraph\nend extension\n')
+        for literal, method in (('-1.6e-3', 'floating-only'), ('-1E3', 'floating-only'),
+                                ('-0xFE', 'integer-only')):
+            result, _ = completion(prefix + 'main begin paragraph\n value sample is ' + literal +
+                                   '\n say sample.|\nend paragraph\n')
+            self.assertEqual(set(result), {method})
 
     def test_book_boundaries_outline_and_sample_corpus(self) -> None:
         result, _ = completion("book first\nvalue foreign is 1\nbook second\nmain begin paragraph\n |\nend paragraph")

@@ -1,6 +1,7 @@
 #include "native_runtime.hpp"
 #include "database_runtime.hpp"
 #include "integer_conversion.hpp"
+#include "scalar_text.hpp"
 
 #include "secure_file_io.hpp"
 #include "time_support.hpp"
@@ -715,6 +716,24 @@ const char *nyrt_text_substr(const char *text, std::int64_t start,
       static_cast<std::uint64_t>(count), value.size() - begin);
   return own_string(value.substr(static_cast<std::size_t>(begin),
                                 static_cast<std::size_t>(length)));
+}
+
+const char *nyrt_text_i64(std::int64_t value) noexcept {
+  try {
+    if (const auto *result = own_string(ny::scalar_text(value))) return result;
+  } catch (...) {}
+  nyrt_fail("NIL native runtime error: integer formatting failed\n");
+}
+
+const char *nyrt_text_f64(double value) noexcept {
+  try {
+    if (const auto *result = own_string(ny::scalar_text(value))) return result;
+  } catch (...) {}
+  nyrt_fail("NIL native runtime error: floating-point formatting failed\n");
+}
+
+const char *nyrt_text_bool(std::int64_t value) noexcept {
+  return value == 0 ? "false" : "true";
 }
 
 [[noreturn]] void nyrt_panic(const char *message) noexcept {

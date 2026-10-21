@@ -124,6 +124,22 @@ void check_substring_contract(bool &ok) {
                     "substring unexpectedly used scalar instead of byte offsets");
 }
 
+void check_scalar_formatting(bool &ok) {
+  ok &= expect_text(nyrt_text_i64(std::numeric_limits<std::int64_t>::min()),
+                    "-9223372036854775808", "formatting lost the signed minimum");
+  ok &= expect_text(nyrt_text_bool(0), "false", "false formatting failed");
+  ok &= expect_text(nyrt_text_bool(-1), "true", "true formatting failed");
+  ok &= expect_text(nyrt_text_f64(-0.0), "-0", "formatting lost negative zero");
+  ok &= expect_text(nyrt_text_f64(1.2345678901234567), "1.2345678901234567",
+                    "floating formatting lost round-trip precision");
+  ok &= expect_text(nyrt_text_f64(std::numeric_limits<double>::infinity()),
+                    "inf", "infinity formatting failed");
+  ok &= expect_text(nyrt_text_f64(-std::numeric_limits<double>::infinity()),
+                    "-inf", "negative infinity formatting failed");
+  ok &= expect_text(nyrt_text_f64(std::numeric_limits<double>::quiet_NaN()),
+                    "nan", "NaN formatting failed");
+}
+
 void check_array_contract(bool &ok) {
   ok &= expect(nyrt_array_new(999, 0) == nullptr,
                "unknown array kind was accepted");
@@ -644,6 +660,7 @@ int main() {
                "out-of-range argument lookup did not fail closed");
 
   check_substring_contract(ok);
+  check_scalar_formatting(ok);
   check_array_contract(ok);
   check_buffer_contract(ok);
   check_conversion_contract(ok);
