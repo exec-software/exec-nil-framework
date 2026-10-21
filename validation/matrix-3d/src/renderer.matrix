@@ -20,7 +20,6 @@ book matrix.render
 
 read everything from ny.lang.math
 
-
 !!! --- The scene, struct of arrays -----------------------------------------
 !!!
 !!! Parallel arrays rather than an array of records: the layout is indexable

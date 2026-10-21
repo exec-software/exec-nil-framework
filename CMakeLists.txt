@@ -30,6 +30,7 @@ add_subdirectory(nildebugger)
 add_subdirectory(nilassembler)
 add_subdirectory(nillinker)
 add_subdirectory(nilbuild)
+add_subdirectory(aperture)
 
 if(NIL_BUILD_EXPERIMENTAL_TOOLS)
     add_subdirectory(nilschema)

@@ -89,6 +89,9 @@ The framework includes:
   workspace snapshot. Compiler-resolved source bindings support Go to Definition
   for local variables, parameters and imported functions across both languages.
   Certified local variables also support references and checked rename.
+- **Aperture — unified analysis suite.** Code exploration, memory profiling,
+  and performance tracing in a single tool designed for both human developers
+  and AI agents. See [aperture/README.md](aperture/README.md).
 
 See the [standard-library reference](docs/standard-library/index.md),
 [analysis API](docs/analysis-api.md), and [tool reference](docs/tools/index.md)

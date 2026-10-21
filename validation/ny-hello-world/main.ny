@@ -1,4 +1,4 @@
-# Ny's first program.
+# Ny's first starter program.
 
 import ny.lang.core
 import ny.lang.system
