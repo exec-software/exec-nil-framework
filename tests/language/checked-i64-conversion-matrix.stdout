@@ -1,0 +1,17 @@
+0
+0
+0
+7
+1
+2147483648
+-2147483649
+4294967296
+9223372036854775807
+9223372036854775807
+-9223372036854775808
+checked-i64-errors-ok
+204480
+9223372036854775807
+convert.try_to_i64: value contains a digit outside the requested base
+2147483647
+convert.try_to_i32: value is outside the i32 range

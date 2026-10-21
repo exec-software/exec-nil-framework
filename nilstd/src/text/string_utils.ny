@@ -676,12 +676,14 @@ pub fn reverse(s: text) -> text
 end fn
 
 pub fn substring(s: text, start: i64, length: i64) -> text
-    if start < 0 or start >= s.len() as i64 or length <= 0 then
+    let size: i64 = s.len() as i64
+    if start < 0 or start >= size or length <= 0 then
         return ""
     end if
-    let end_pos = start + length
-    if end_pos > s.len() as i64 then
-        return s.substr(start as i32, (s.len() as i64 - start) as i32)
+    # Subtract after validating start so a large length cannot wrap the bound.
+    let available: i64 = size - start
+    if length > available then
+        return s.substr(start as i32, available as i32)
     end if
     return s.substr(start as i32, length as i32)
 end fn

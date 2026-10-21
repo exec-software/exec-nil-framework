@@ -755,7 +755,8 @@ all checker contracts instead of inferring provenance from the final line number
 
 ### F24 — Reflection formatting exposed missing native conversion intrinsics
 
-**Status:** Formatter fixed; broader conversion parity remains open.
+**Status:** Formatter fixed; checked i64 parsing now has native support;
+broader conversion parity remains open.
 
 A pure Matrix diagnostic formatter using `Convert.char_to_i32`,
 `Convert.i32_to_char`, and `Convert.to_hex_padded` compiled and ran in the VM but
@@ -763,6 +764,13 @@ failed native lowering. The shipped helper now uses portable text operations
 and small Ny control-character constants. The paired Ny/Matrix fixtures exercise
 UTF-8, quotes, backslashes, control escaping, and declaration values through all
 six routes. Do not infer native support for every `Convert` intrinsic from this.
+
+The v1 library pass also found that `Convert.try_to_i64` succeeded in both
+interpreted frontends but failed LLVM lowering. Native support now constructs
+the existing `Result<i64, text>` with the correct payload width and managed
+error text. VM/native integer parsing shares one implementation; paired
+fixtures and direct ABI tests pin signed extrema, invalid input and exact
+errors. See the [checked integer-conversion contract](../../docs/standard-library/integer-conversion.md).
 
 ### F25 — Fully qualified enum patterns silently miss matching values
 
@@ -978,3 +986,140 @@ intended universal `number` default separately. Small literals still infer
 or destination annotation does not change an inner expression's width. A
 future change must cover generic identities, mixed-language arrays/calls and
 explicit narrow arithmetic, with matching editor and execution evidence.
+
+### F31 — Text substring bounds overflowed before clamping
+
+**Status:** Compatibility fix and checked text-span APIs implemented.
+
+**Evidence:** With the prior SDK, `substring("abcd", 1, 9223372036854775807)`
+returns empty text rather than `"bcd"`. Adding start and length wraps before
+the bounds check, then the narrowed count is negative. The underlying text
+runtime already checks the remaining length safely; the library wrapper
+introduced the error. Baseline evidence is in
+`build/text-core-work/substring-baseline.json` in the v1 library checkout.
+
+**Resolution:** Validate the start, then compare the requested length with
+`size - start`. The existing helper retains its empty/clipped result policy.
+Matrix-authored `try_substring` and `try_char_at` add exact checked byte access
+as `Option<text>`, including `Some("")` for valid empty spans and `None` for
+invalid bounds. They retain `i64` arguments until validation and share the
+same public `nil.std.text` identity across frontends and legacy imports.
+See the [text-span contract](../../docs/standard-library/text-spans.md).
+
+**Verification:** Paired source fixtures cover whole/empty/end spans, invalid
+and extreme positions/counts, UTF-8 byte positions, source preservation,
+aliases, returned values and compatibility clamping. They are registered for
+all execution routes, standalone assembler/linker pipelines and installed
+source/binary libraries.
+
+**Authoring friction:** A Matrix documentation example using
+`when Option.Some holding value then say value` fails because `value` is a
+reserved binding name, but the diagnostic says it expected `then`. Renaming
+the binding to `span` works. A future diagnostic should identify the reserved
+pattern binding directly; no grammar change was made in this pass.
+
+### F32 — Floating averages can overflow for finite inputs
+
+**Status:** Fixed for finite-input overflow; severe-cancellation accuracy remains limited.
+
+`average_f64` previously computed `sum_f64(items) / count`. For
+`[1e308, 1e308]`, the intermediate sum overflows to positive infinity although
+the mean `1e308` is representable. Negative inputs behave symmetrically, and
+`[1e308, 1e308, -1e308]` also produces positive infinity instead of a finite
+mean. Paired Ny/Matrix probes reproduce these results on all six routes;
+sources and reports are under `build/text-core-work/average-overflow` in the
+v1 library checkout.
+
+**Resolution:** Accumulate two compensated subtotals. Values of magnitude at
+most one retain their scale so subnormal terms survive; larger values use an
+exact power-of-two divisor greater than the count, leaving overflow headroom.
+Retain the rounding tail when merging the subtotals, restore the original
+scale when safe, and clamp the result to the input interval. `sum_f64` is
+unchanged. Empty inputs still return `None`; any nonfinite input deliberately
+uses the original ordered sum/division path, including its order dependence.
+
+**Verification:** Paired Ny/Matrix fixtures cover finite extremes, repeated
+maximum values, cancellation across both subtotals, subnormal ties, aliases
+and nonfinite compatibility on all execution routes and installed libraries.
+Finite expectations come from exact rational arithmetic on the binary64
+inputs. The [averaging contract](../../docs/standard-library/floating-averages.md)
+records the algorithm and evidence boundary.
+
+**Remaining numerical limitation:** Compensation is not exact accumulation.
+For `[1e100, 1e308, 1.7976931348623157e308, -1e308, -1.7976931348623157e308]`,
+the small residual can still disappear, yielding zero instead of a mean near
+`2e99`. Do not promise correct rounding, universal ULP accuracy or permutation
+invariance. An exact or expanded accumulator is separate future work. There
+is no new public API or compiler intrinsic in this fix.
+
+### F33 — Native iteration over an array literal selects an absent iterator
+
+**Status:** Confirmed open lowering bug.
+
+Iterating directly over a text array literal prints its values in the VM, but
+native compilation names an undefined `__ritual_iter` callee. Both Ny and
+Matrix reproduce this on the prior SDK. Indexed traversal of a bound array
+using `range`/`repeat while` works and is used by the checked-conversion
+fixtures. Minimal programs and the VM/native comparison are preserved under
+`build/convert-audit/foreach-literal` in the v1 library checkout.
+
+**Next step:** Carry the iterable expression's resolved array type into loop
+lowering, including literals and returned arrays, and qualify element widths,
+text lifetimes and empty arrays across routes.
+
+### F34 — Renamed module aliases survive into unresolved function calls
+
+**Status:** Confirmed open name-resolution bug.
+
+Ny `namespace words = ny.lang.text` followed by `words::substring(...)`
+passes source compilation but emits a call containing the alias name rather
+than the actual module owner. The VM reports an unknown function. Matrix's
+`read nil.std.text as words` has the same lowering failure when combined with
+an ordinary import that makes the function discoverable. These minimal cases
+use the existing `substring`, so the checked-span addition did not cause the
+failure. Prior-SDK sources and diagnostics are under
+`build/text-core-work/friction-repros/namespace-alias.*` and
+`baseline-results.json`.
+
+Fully qualified canonical and legacy module names work; the checked-text
+fixtures exercise those spellings. Namespace renaming is distinct from the
+supported built-in `ny.lang.*` to `nil.std.*` compatibility mapping.
+
+**Next step:** Resolve renamed import/namespace owners consistently during
+checking and code generation, with mixed-language source and binary-library
+tests.
+
+### F35 — A Matrix generic parameter can consume the next parameter
+
+**Status:** Confirmed open parser bug.
+
+A signature containing `actual as Option of text, label as text` fails at
+the second parameter's `as`, reporting `expected 'begin paragraph' to open
+the body` and MX0105. Moving the generic parameter last allows the equivalent
+program to compile and print `ok`. The prior SDK reproduces both outcomes;
+minimal sources and exact diagnostics are in
+`build/text-core-work/friction-repros/generic-parameter.matrix` and
+`baseline-results.json`.
+
+The checked-text fixtures put `Option of text` last as a temporary workaround.
+**Next step:** Distinguish commas within generic arguments from commas between
+function parameters, then test nested generic types and named arguments without
+requiring parameter reordering.
+
+### F36 — Conversion intrinsics do not preserve a custom Result owner
+
+**Status:** Confirmed open provider-declaration validation gap.
+
+A user-defined `custom::Result<T,E>` can be declared as the return type of a
+function annotated `@intrinsic("convert.try_to_i32")`. The native ABI check
+accepts its shape, but the provider constructs the standard `Result::Ok` tag;
+matching the custom result misses. The VM has the same mismatch. The prior-SDK
+probe returns its fallthrough sentinel `99` instead of parsed value `7` on
+both routes. Evidence is under `build/text-core-work/review/provider-owner*`.
+
+The existing public `nil.std.core.Convert` API uses the standard Result owner
+and is unaffected. The new checked-i64 provider follows the same ownership
+convention; this pass tests malformed structural signatures but does not add
+custom enum support. **Next step:** Reject an incompatible nominal provider
+owner during source/NIL validation, or explicitly support that owner throughout
+construction and matching, with matching VM/native evidence.

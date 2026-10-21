@@ -7,6 +7,7 @@
 #include "matrix_hag_bridge.hpp"
 #include "nil_contract.hpp"
 #include "numeric_literal.hpp"
+#include "integer_conversion.hpp"
 #include "secure_file_io.hpp"
 #include "time_support.hpp"
 #include <algorithm>
@@ -80,68 +81,8 @@ std::uint64_t heap_element_stride(const std::string &type_name) {
   return 8;
 }
 
-struct IntegerParseResult {
-  bool ok = false;
-  std::int64_t value = 0;
-  std::string error;
-};
-
-int ascii_digit_value(char character) {
-  const unsigned char byte = static_cast<unsigned char>(character);
-  if (byte >= '0' && byte <= '9')
-    return byte - '0';
-  if (byte >= 'a' && byte <= 'z')
-    return byte - 'a' + 10;
-  if (byte >= 'A' && byte <= 'Z')
-    return byte - 'A' + 10;
-  return -1;
-}
-
-IntegerParseResult parse_signed_integer(const std::string &text, int base,
-                                        bool accept_prefix) {
-  if (base < 2 || base > 36)
-    return {false, 0, "base must be between 2 and 36"};
-  if (text.empty())
-    return {false, 0, "value is empty"};
-
-  std::size_t position = 0;
-  bool negative = false;
-  if (text[position] == '+' || text[position] == '-') {
-    negative = text[position] == '-';
-    ++position;
-  }
-  if (accept_prefix && position + 2 <= text.size() && text[position] == '0') {
-    const char prefix = text[position + 1];
-    if ((base == 16 && (prefix == 'x' || prefix == 'X')) ||
-        (base == 2 && (prefix == 'b' || prefix == 'B')) ||
-        (base == 8 && (prefix == 'o' || prefix == 'O')))
-      position += 2;
-  }
-  if (position == text.size())
-    return {false, 0, "value has no digits"};
-
-  const std::uint64_t positive_limit =
-      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
-  const std::uint64_t limit = negative ? positive_limit + 1U : positive_limit;
-  std::uint64_t magnitude = 0;
-  for (; position < text.size(); ++position) {
-    const int digit = ascii_digit_value(text[position]);
-    if (digit < 0 || digit >= base)
-      return {false, 0, "value contains a digit outside the requested base"};
-    if (magnitude >
-        (limit - static_cast<std::uint64_t>(digit)) /
-            static_cast<std::uint64_t>(base))
-      return {false, 0, "value is outside the i64 range"};
-    magnitude = magnitude * static_cast<std::uint64_t>(base) +
-                static_cast<std::uint64_t>(digit);
-  }
-
-  if (!negative)
-    return {true, static_cast<std::int64_t>(magnitude), {}};
-  if (magnitude == positive_limit + 1U)
-    return {true, std::numeric_limits<std::int64_t>::min(), {}};
-  return {true, -static_cast<std::int64_t>(magnitude), {}};
-}
+using detail::IntegerParseResult;
+using detail::parse_signed_integer;
 
 std::string format_signed_integer(std::int64_t value, int base,
                                   bool uppercase) {
@@ -2210,11 +2151,11 @@ void VM::executeInstruction(const Instruction &instr) {
           if (parsed.ok)
             push_ok(parsed.value);
           else
-            push_error("convert.try_to_i32: " + parsed.error);
+            push_error(std::string("convert.try_to_i32: ") + parsed.error);
         } else if (parsed.ok) {
           pushStack(parsed.value);
         } else {
-          throw std::runtime_error("convert.to_i32: " + parsed.error);
+          throw std::runtime_error(std::string("convert.to_i32: ") + parsed.error);
         }
         return;
       }
@@ -2227,11 +2168,11 @@ void VM::executeInstruction(const Instruction &instr) {
           if (parsed.ok)
             push_ok(parsed.value);
           else
-            push_error("convert.try_to_i64: " + parsed.error);
+            push_error(std::string("convert.try_to_i64: ") + parsed.error);
         } else if (parsed.ok) {
           pushStack(parsed.value);
         } else {
-          throw std::runtime_error("convert.to_i64: " + parsed.error);
+          throw std::runtime_error(std::string("convert.to_i64: ") + parsed.error);
         }
         return;
       }

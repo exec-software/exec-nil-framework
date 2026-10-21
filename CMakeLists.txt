@@ -2299,17 +2299,20 @@ if(BUILD_TESTING)
         )
         set_tests_properties(ny.qualified-enum-contract PROPERTIES
             LABELS "typecheck;analysis;rc" TIMEOUT 120)
-        foreach(numeric_fixture IN ITEMS scientific-literals scientific-literals-matrix
-                                         integer-literal-widths integer-literal-widths-matrix)
-            if(numeric_fixture MATCHES "-matrix$")
-                set(numeric_frontend matrix)
+        foreach(parity_fixture IN ITEMS scientific-literals scientific-literals-matrix
+                                        integer-literal-widths integer-literal-widths-matrix
+                                        checked-text-spans checked-text-spans-matrix
+                                        checked-i64-conversion checked-i64-conversion-matrix
+                                        average-f64 average-f64-matrix)
+            if(parity_fixture MATCHES "-matrix$")
+                set(parity_frontend matrix)
             else()
-                set(numeric_frontend ny)
+                set(parity_frontend ny)
             endif()
             add_ny_route_test(
-                ny.routes.${numeric_fixture}
-                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${numeric_fixture}.${numeric_frontend}"
-                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${numeric_fixture}.stdout"
+                ny.routes.${parity_fixture}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${parity_fixture}.${parity_frontend}"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${parity_fixture}.stdout"
                 --expected-exit 0
                 --routes all
                 --compiler-arg=--sdk-path
@@ -2317,19 +2320,19 @@ if(BUILD_TESTING)
             )
             if(TARGET nilassembler AND TARGET nillinker)
                 add_test(
-                    NAME ny.tools.${numeric_fixture}
+                    NAME ny.tools.${parity_fixture}
                     COMMAND "${Python3_EXECUTABLE}"
                             "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_toolchain_pipeline.py"
                             --compiler $<TARGET_FILE:nilcompiler>
                             --assembler $<TARGET_FILE:nilassembler>
                             --linker $<TARGET_FILE:nillinker>
                             --runtime $<TARGET_FILE:nilruntime>
-                            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${numeric_fixture}.${numeric_frontend}"
-                            --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${numeric_fixture}.stdout"
+                            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${parity_fixture}.${parity_frontend}"
+                            --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${parity_fixture}.stdout"
                             --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
                             --work-dir "${CMAKE_CURRENT_BINARY_DIR}/tests/tools"
                 )
-                set_tests_properties(ny.tools.${numeric_fixture} PROPERTIES
+                set_tests_properties(ny.tools.${parity_fixture} PROPERTIES
                     LABELS "tools;native;rc" SKIP_RETURN_CODE 77 TIMEOUT 240)
             endif()
         endforeach()
@@ -2352,6 +2355,16 @@ if(BUILD_TESTING)
         )
         set_tests_properties(ny.integer-literals-contract PROPERTIES
             LABELS "typecheck;analysis;rc" TIMEOUT 180)
+        add_test(
+            NAME ny.checked-integer-conversion-contract
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/checked_integer_conversion_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                    --llvm "${NIL_ENABLE_LLVM}"
+        )
+        set_tests_properties(ny.checked-integer-conversion-contract PROPERTIES
+            LABELS "native;rc" SKIP_RETURN_CODE 77 TIMEOUT 120)
         add_ny_route_test(
             ny.routes.canonical-option-result-methods
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/canonical-option-result-methods.ny"

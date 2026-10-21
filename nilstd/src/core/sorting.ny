@@ -443,12 +443,93 @@ pub fn sum_f64(arr: array<f64>) -> f64
     return total
 end fn
 
+# Recover the addition roundoff by subtracting the larger operand first.
+# Callers keep the operands and their sum finite; reassociation is unsafe.
+fn average_f64_roundoff(left: f64, right: f64, total: f64) -> f64
+    let mut left_size = left
+    let mut right_size = right
+    if left_size < 0.0 then left_size = -left_size end if
+    if right_size < 0.0 then right_size = -right_size end if
+    if left_size >= right_size then
+        return (left - total) + right
+    end if
+    return (right - total) + left
+end fn
+
+# Merge the two subtotals and their corrections without allocating an array.
+fn average_f64_merge(a: f64, b: f64, c: f64, d: f64) -> f64
+    let first = a + b
+    let mut error = average_f64_roundoff(a, b, first)
+    let second = first + c
+    error = error + average_f64_roundoff(first, c, second)
+    let third = second + d
+    error = error + average_f64_roundoff(second, d, third)
+    return third + error
+end fn
+
+# A finite mean must not overflow merely because its unscaled sum does.
+# Compensate two sums: values of magnitude <= 1 stay unscaled, preserving
+# subnormals, while larger values use an exact power-of-two divisor > count.
+# This is an approximation, not an exact or correctly rounded reduction.
 pub fn average_f64(arr: array<f64>) -> Option<f64>
     let n = arr.length()
     if n == 0 then
         return Option.None
     end if
-    return Option.Some(sum_f64(arr) / (n as f64))
+    let count = n as f64
+    let mut scale: f64 = 1.0
+    while scale < count do
+        scale = scale * 2.0
+    end while
+    scale = scale * 2.0
+
+    let mut large: f64 = 0.0
+    let mut large_error: f64 = 0.0
+    let mut small: f64 = 0.0
+    let mut small_error: f64 = 0.0
+    let mut lower = arr[0]
+    let mut upper = arr[0]
+    let mut i = 0
+    while i < n do
+        let item = arr[i]
+        if item != item or (item - item) != 0.0 then
+            # Retain the original ordered IEEE arithmetic for nonfinite input.
+            return Option.Some(sum_f64(arr) / count)
+        end if
+        if item < lower then lower = item end if
+        if item > upper then upper = item end if
+        if item >= -1.0 and item <= 1.0 then
+            let next = small + item
+            small_error = small_error + average_f64_roundoff(small, item, next)
+            small = next
+        else
+            let scaled = item / scale
+            let next = large + scaled
+            large_error = large_error + average_f64_roundoff(large, scaled, next)
+            large = next
+        end if
+        i = i + 1
+    end while
+
+    let large_total = large + large_error
+    let large_tail = average_f64_roundoff(large, large_error, large_total)
+    let mut mean: f64 = 0.0
+    if large_total >= -1.0 and large_total <= 1.0 then
+        # Cancellation made the large subtotal safe to restore. Merge before
+        # dividing so tiny residuals and subnormal ties survive the reduction.
+        let restored = large_total * scale
+        let restored_tail = large_tail * scale
+        mean = average_f64_merge(restored, small, restored_tail, small_error) / count
+    else
+        # The large subtotal dominates the small group, whose magnitude is at
+        # most count / scale <= 1/2. Keep this merge scaled to avoid overflow.
+        let combined = average_f64_merge(large_total, small / scale, large_tail, small_error / scale)
+        mean = combined / (count / scale)
+    end if
+    # Rounding at the largest finite value must not escape the input range.
+    if mean < lower then mean = lower end if
+    if mean > upper then mean = upper end if
+    return Option.Some(mean)
 end fn
 
 # =============================================================================

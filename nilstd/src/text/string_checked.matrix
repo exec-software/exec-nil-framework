@@ -1,0 +1,21 @@
+!!! Checked byte spans. Empty spans at the end are valid; invalid bounds
+!!! return None. These operations do not decode Unicode characters.
+book nil.std.text
+
+read everything from nil.std.core
+
+public try-substring receives s as text, start as override long, length as override long returns Option of text begin paragraph
+    value size as override long is (the length of s) becomes override long
+    when start is less than 0 or start is greater than size or length is less than 0 then
+        give Option.None
+    end when
+    !!! Validate before subtraction; adding start and length could overflow.
+    when length is greater than (size minus start) then
+        give Option.None
+    end when
+    give Option.Some holding (s.substr with start being start, length being length)
+end paragraph
+
+public try-char-at receives s as text, index as override long returns Option of text begin paragraph
+    give try-substring with s being s, start being index, length being 1
+end paragraph

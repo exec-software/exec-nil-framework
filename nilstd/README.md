@@ -23,7 +23,7 @@ are first-party packages rather than standard-library modules and live in
 
 ## Current status
 
-The active tree contains 71 sources (68 Ny and three Matrix) organized into 16
+The active tree contains 74 sources (68 Ny and six Matrix) organized into 16
 logical SDK modules:
 `prelude` plus `nil.std.core`, `collections`, `datetime`, `db`, `diagnostics`,
 `io`, `math`, `net`, `nydata`, `reflection`, `runtime`, `security`, `system`, `text`, and
@@ -45,12 +45,23 @@ below.
 
 | Area | Files | Status |
 | --- | ---: | --- |
-| `src/` | 68 Ny files, 3 Matrix files | Sixteen logical SDK modules. Checked-array helpers, stable sorting, and reflection value utilities are implemented in Matrix and consumed from both frontends. |
+| `src/` | 68 Ny files, 6 Matrix files | Sixteen logical SDK modules. Matrix contributes checked arrays/text spans, stable sorting, reflection values, vector helpers and independent random generators, consumed from both frontends. |
 | `experimental/` | 65 Ny files | Design sources excluded from `nilstd`/`nillib` because language semantics, executable providers, or behavioral evidence are incomplete. |
 | `tests/` | 8 Ny files | Preserved design-era tests; these are still separate from the registered route fixtures under the repository-level `tests/` tree. |
 | `native/` | 14 C/C++ files | Preserved platform/provider shims; source presence alone is neither a build, shipment, nor native-support claim. |
 
 ### Active evidence boundary
+
+Finite `average_f64` inputs use compensated subtotals to avoid intermediate
+sum overflow. Paired Ny/Matrix fixtures cover the VM and native paths; the
+[floating-average contract](../docs/standard-library/floating-averages.md)
+describes nonfinite compatibility behavior and the remaining accuracy limits.
+
+Checked text access (`try_substring`, `try_char_at`) and checked decimal
+`Convert.try_to_i64` parsing have paired Ny/Matrix VM/native fixtures. See the
+[text-span contract](../docs/standard-library/text-spans.md) and
+[integer-conversion contract](../docs/standard-library/integer-conversion.md)
+for exact bounds, errors and representation limits.
 
 Registered textual/binary interpreter fixtures cover the exercised core
 algorithms and conversions, canonical `Option`/`Result` operations, collections,
