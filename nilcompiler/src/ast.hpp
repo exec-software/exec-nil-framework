@@ -185,6 +185,7 @@ enum class ast_node_kind {
   assert_expr_node,              // assert.method(args) - intrinsic assertion
   hotreload_expr_node, // hotreload.method(args) - intrinsic hot reload
   if_expr_node, // if cond then expr else expr end if - conditional expression
+  query_expr_node, // eager collect query over a checked array
 
   // Ny testing nodes
   test_block_node,
@@ -318,6 +319,7 @@ struct ast_node::ast_visitor {
   virtual void visit(struct ast_assert_expr &e) {}
   virtual void visit(struct ast_hotreload_expr &e) {}
   virtual void visit(struct ast_if_expr &e) {}
+  virtual void visit(struct ast_query_expr &e) {}
 };
 
 enum class visibility_kind {
@@ -1138,6 +1140,22 @@ struct ast_array_literal_expr : public ast_expr {
       : ast_expr(ast_node_kind::array_literal_expr_node, ln),
         elements(std::move(el)) {}
 
+  void accept(ast_node::ast_visitor &v) override { v.visit(*this); }
+};
+
+// Both frontends share query binding, typing and eager evaluation semantics.
+// Bounds are evaluated outside the binder's scope; row expressions are not
+// closures and never outlive this expression. Checked types are required even
+// when callers request diagnostic continuation with --no-typecheck.
+struct ast_query_expr : public ast_expr {
+  ast_param binding;
+  ast_expr_ptr source, predicate, order_key, skip, take, projection;
+  bool descending = false;
+  bool checked_query = false;
+  std::string element_type, result_element_type, key_type;
+
+  explicit ast_query_expr(int line = 0)
+      : ast_expr(ast_node_kind::query_expr_node, line) {}
   void accept(ast_node::ast_visitor &v) override { v.visit(*this); }
 };
 

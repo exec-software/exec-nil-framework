@@ -49,6 +49,13 @@ NEGATIVE_EXPECTATIONS = {
 SOFT_WORDS = {
     "least", "most", "greater", "less", "than", "equal", "left", "right",
     "by", "each", "length", "milliseconds", "receiver", "x86_64", "formatted",
+    # NIL-0016 phrases use exact ASCII-folded spellings only in their blocks.
+    # They remain identifiers elsewhere and do not reserve whole name families.
+    "collect", "query", "where", "order", "ascending", "descending", "skip", "take",
+    "pattern", "literal", "capture", "matching", "require", "next", "match",
+    "one", "zero", "optional", "exactly", "between", "fewest", "ascii", "digit",
+    "digits", "letters", "whitespace", "any", "character", "through", "start",
+    "input", "either",
 }
 
 # Lowercase markers inside a numeric token are not standalone word terminals.

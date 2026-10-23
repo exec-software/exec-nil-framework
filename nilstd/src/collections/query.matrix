@@ -1,0 +1,41 @@
+!!! Terminals for collected queries. These inspect an already evaluated array;
+!!! they do not defer work or rerun a predicate. Use take before give when only
+!!! one projected value is needed. Element copies retain ordinary shallow semantics.
+book nil.std.collections
+
+read everything from nil.std.core
+
+public query-count of type T receives items as array of T returns number begin paragraph
+    give (the length of items) becomes number
+end paragraph
+
+public query-any of type T receives items as array of T returns boolean begin paragraph
+    give (the length of items) is greater than 0
+end paragraph
+
+public query-first of type T receives items as array of T returns Option of T begin paragraph
+    when (the length of items) equals 0 then
+        give Option.None
+    end when
+    give Option.Some holding (items at 0)
+end paragraph
+
+public query-last of type T receives items as array of T returns Option of T begin paragraph
+    value size is the length of items
+    when size equals 0 then
+        give Option.None
+    end when
+    give Option.Some holding (items at (size minus 1))
+end paragraph
+
+!!! Exactly one value succeeds. Empty and multiple results are distinct errors.
+public query-single of type T receives items as array of T returns Result of T, text begin paragraph
+    value size is the length of items
+    when size equals 0 then
+        give Result.Error holding "query has no results"
+    end when
+    when size is greater than 1 then
+        give Result.Error holding "query has more than one result"
+    end when
+    give Result.Ok holding (items at 0)
+end paragraph

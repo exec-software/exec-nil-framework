@@ -1,0 +1,78 @@
+source
+skip
+take
+where 5
+key 5
+where 1
+where 4
+key 4
+where 2
+key 2
+where 3
+key 3
+give 2
+give 5
+20
+50
+source
+where 5
+where 1
+where 4
+give 4
+where 2
+give 2
+40
+20
+0
+empty skip
+empty take
+0
+one
+two-first
+two-last
+two-first
+two-last
+one
+a
+a
+z
+ä
+0
+0
+1
+1
+1
+128
+255
+-9007199254740993
+9007199254740992
+9007199254740993
+2
+a
+1
+2
+99
+13
+23
+77
+3
+2
+9
+5
+2
+3
+1
+0
+4
+1
+2
+3
+5
+0
+4
+44
+where 1
+where 2
+key 2
+0
+0

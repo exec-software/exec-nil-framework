@@ -6886,6 +6886,68 @@ void type_checker::visit(ast_match_expr &e) {
 
 }
 
+void type_checker::visit(ast_query_expr &e) {
+  e.checked_query = false;
+  const auto errors_before = diagnostics_.size();
+  const auto scalar = [](const std::string &type) {
+    return type == "i32" || type == "i64" || type == "u8" ||
+           type == "bool" || type == "f64" || type == "text" || type == "String";
+  };
+  std::function<bool(const std::string &, unsigned)> supported_element;
+  supported_element = [&](const std::string &type, unsigned depth) {
+    if (scalar(type)) return true;
+    if (depth > 32) return false;
+    const auto tuple = parse_generic_type_string(type);
+    return tuple.base_name == "tuple" && !tuple.type_args.empty() &&
+        std::all_of(tuple.type_args.begin(), tuple.type_args.end(),
+                    [&](const auto &field) { return supported_element(field, depth + 1); });
+  };
+  if (e.source) e.source->accept(*this);
+  const auto source_type = last_expr_type_.value_or(type_unknown);
+  const auto source = parse_generic_type_string(resolve_type(source_type.name).name);
+  if (source.base_name != "array" || source.type_args.size() != 1 ||
+      !supported_element(source.type_args.front(), 0)) {
+    add_error(e.line, "Collect query requires an array of scalars, text, or supported tuples; got '" + source_type.name + "'");
+    e.element_type = "<unknown>";
+  } else {
+    e.element_type = source.type_args.front();
+  }
+  for (const auto &bound : {e.skip, e.take}) {
+    if (!bound) continue;
+    bound->accept(*this);
+    const auto type = last_expr_type_.value_or(type_unknown).name;
+    if (type != "i32" && type != "i64" && type != "u8")
+      add_error(bound->line, "Query skip/take requires an integer count, got '" + type + "'");
+  }
+  symbols_.enter_scope();
+  e.binding.type_name = e.element_type;
+  symbol binding(e.binding.name, symbol_kind::variable_symbol, nullptr,
+                 e.element_type, false, false, std::nullopt);
+  binding.semantic_id = semantic_declaration(e.binding.name, "variable", e.element_type,
+                                            diagnostic_source_file_, e.binding.name_span);
+  if (binding.semantic_id) semantics_.symbols[*binding.semantic_id].lexical_local = true;
+  symbols_.insert_symbol(binding);
+  if (e.predicate) {
+    e.predicate->accept(*this);
+    if (last_expr_type_.value_or(type_unknown).name != "bool")
+      add_error(e.predicate->line, "Query where expression must be boolean");
+  }
+  if (e.order_key) {
+    e.order_key->accept(*this);
+    e.key_type = resolve_type(last_expr_type_.value_or(type_unknown).name).name;
+    if (!scalar(e.key_type))
+      add_error(e.order_key->line, "Query order key must be a scalar or text, got '" + e.key_type + "'");
+  }
+  if (e.projection) e.projection->accept(*this);
+  e.result_element_type = resolve_type(last_expr_type_.value_or(type_unknown).name).name;
+  if (!e.projection || !supported_element(e.result_element_type, 0))
+    add_error(e.line, "Query projection requires a scalar, text, or supported tuple, got '" + e.result_element_type + "'");
+  symbols_.leave_scope();
+  e.inferred_type = "array<" + e.result_element_type + ">";
+  last_expr_type_ = type_info{*e.inferred_type, false};
+  e.checked_query = diagnostics_.size() == errors_before;
+}
+
 void type_checker::visit(ast_array_literal_expr &e) {
   if (e.inferred_type) {
     const auto context_type = resolve_type(*e.inferred_type);

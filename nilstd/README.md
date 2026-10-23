@@ -23,7 +23,7 @@ are first-party packages rather than standard-library modules and live in
 
 ## Current status
 
-The active tree contains 74 sources (68 Ny and six Matrix) organized into 16
+The active tree contains 76 sources (69 Ny and seven Matrix) organized into 16
 logical SDK modules:
 `prelude` plus `nil.std.core`, `collections`, `datetime`, `db`, `diagnostics`,
 `io`, `math`, `net`, `nydata`, `reflection`, `runtime`, `security`, `system`, `text`, and
@@ -45,12 +45,21 @@ below.
 
 | Area | Files | Status |
 | --- | ---: | --- |
-| `src/` | 68 Ny files, 6 Matrix files | Sixteen logical SDK modules. Matrix contributes checked arrays/text spans, stable sorting, reflection values, vector helpers and independent random generators, consumed from both frontends. |
+| `src/` | 69 Ny files, 7 Matrix files | Sixteen logical SDK modules. Matrix contributes checked arrays/text spans, stable sorting, reflection values, vector helpers and independent random generators, consumed from both frontends. |
 | `experimental/` | 65 Ny files | Design sources excluded from `nilstd`/`nillib` because language semantics, executable providers, or behavioral evidence are incomplete. |
 | `tests/` | 8 Ny files | Preserved design-era tests; these are still separate from the registered route fixtures under the repository-level `tests/` tree. |
 | `native/` | 14 C/C++ files | Preserved platform/provider shims; source presence alone is neither a build, shipment, nor native-support claim. |
 
 ### Active evidence boundary
+
+`nil.std.text` provides bounded conventional regex and readable pattern sources,
+named captures, byte spans, search/full-match and safe next-match iteration.
+See the [text-pattern contract](../docs/standard-library/text-patterns.md).
+`nil.std.collections` provides terminals for the compiler's eager, typed array
+queries: count, any, first, last and single. See the
+[query contract](../docs/standard-library/queries.md) for filtering, stable
+ordering, pagination and projection. Both profiles share Ny/Matrix and VM/native
+implementations; legacy experimental regex/LINQ sources remain quarantined.
 
 Finite `average_f64` inputs use compensated subtotals to avoid intermediate
 sum overflow. Paired Ny/Matrix fixtures cover the VM and native paths; the

@@ -1,0 +1,55 @@
+book nil.tests.regex_captures
+read everything from nil.std.text
+
+price begin pattern
+capture amount matching one or more ascii digits
+require next to match literal " USD"
+end pattern
+
+main returns override integer begin paragraph
+    value compiled is compile_pattern with source being "(?<word>[A-Za-z]+)([0-9]+)?"
+    value pattern is compiled.unwrap with nothing
+    value first-result is first_match with pattern being pattern, input being "!alpha42 beta"
+    value first-option is first-result.unwrap with nothing
+    value found is first-option.unwrap with nothing
+    say (capture_named with found being found, name being "word").unwrap with nothing
+    say (capture_index with found being found, index being 0).unwrap with nothing
+    say (capture_index with found being found, index being 2).unwrap with nothing
+    say (capture_start with found being found, index being 0).unwrap with nothing
+    say (capture_length with found being found, index being 0).unwrap with nothing
+    value second-result is next_match with found being found
+    value second-option is second-result.unwrap with nothing
+    value second is second-option.unwrap with nothing
+    say (capture_index with found being second, index being 0).unwrap with nothing
+    say (capture_index with found being second, index being 2).is_none with nothing
+    say ((next_match with found being second).unwrap with nothing).is_none with nothing
+    say (capture_named with found being found, name being "missing").is_none with nothing
+    say (capture_index with found being found, index being -1).is_none with nothing
+    say (capture_index with found being found, index being 99).is_none with nothing
+    say ((full_match with pattern being pattern, input being "a7").unwrap with nothing).is_some with nothing
+    say ((full_match with pattern being pattern, input being "_a7").unwrap with nothing).is_none with nothing
+    say (search_pattern with pattern being pattern, input being "abc", start being -1).is_error with nothing
+    say (search_pattern with pattern being pattern, input being "abc", start being 4).is_error with nothing
+    say (compile_pattern with source being "[").is_error with nothing
+    value empty is (compile_pattern with source being "").unwrap with nothing
+    variable cursor is (first_match with pattern being empty, input being "é").unwrap with nothing
+    variable count as override integer is 0
+    repeat while cursor.is_some with nothing
+        set count to count plus 1
+        set cursor to (next_match with found being (cursor.unwrap with nothing)).unwrap with nothing
+    end repeat
+    say count
+    variable index as override integer is 0
+    repeat while index is less than 30000
+        value temporary-option is (first_match with pattern being pattern, input being "gc17").unwrap with nothing
+        value temporary is temporary-option.unwrap with nothing
+        when (capture_index with found being temporary, index being 2).unwrap with nothing does not equal "17" then give 9 end when
+        set index to index plus 1
+    end repeat
+    say (capture_index with found being found, index being 0).unwrap with nothing
+    value price-pattern is (compile_pattern with source being price).unwrap with nothing
+    value price-option is (first_match with pattern being price-pattern, input being "12 USD").unwrap with nothing
+    value price-match is price-option.unwrap with nothing
+    say (capture_named with found being price-match, name being "amount").unwrap with nothing
+    give 0
+end paragraph

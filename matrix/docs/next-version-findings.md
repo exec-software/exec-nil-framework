@@ -1812,3 +1812,78 @@ accounting, and reclamation after frames depart.
 **Follow-up:** This preserves the public GC statistics' historical slot unit.
 Aperture's typed payload measurement remains independent; it must not be
 silently substituted for the GC API's byte counts.
+
+
+### F56 — Readable patterns need a precise profile and honest resource errors
+
+**Observation:** The old experimental regex declarations had no qualified runtime
+provider. Treating familiar regex dialects as interchangeable would hide real
+semantic differences, especially in lookahead, Unicode classes and captures.
+
+**Implemented:** NIL-0016 introduces one shared, bounded byte-pattern engine,
+consumed by conventional notation and Ny/Matrix prose declarations. Literals are
+escaped; captures, repetition and zero-width lookahead use an explicit grammar.
+The library separates no match from invalid input and exhausted budgets, and
+preserves absent versus participating empty captures. Next-match iteration makes
+progress after empty matches. The compiler checks declaration sources, capture
+labels and exact contextual delimiters; a quoted/escaped label cannot inject
+regex syntax. Compiled programs are immutable and cached within fixed limits.
+
+**Follow-up:** Native text remains NUL-free and byte-oriented. Unicode properties,
+word/grapheme boundaries, alternate dialect parsers, reusable named fragments,
+replacement templates and split/find-all helpers need explicit contracts. Named
+prose declarations currently produce immutable text sources; they do not infer a
+first-class compiled Pattern value. Engine cache/backtracking budgets account for
+native program/state storage rather than exact host RSS or Aperture allocations.
+
+Matrix's unparenthesized nominal generic type grammar makes a nested multi-argument
+shape such as `Result<Option<PatternMatch>, text>` difficult to express without
+ambiguity. The initial pattern wrapper is written in Ny and imported normally
+from Matrix. Add an unambiguous nested type surface rather than proliferating
+wrapper types to conceal this grammar friction.
+
+### F57 — Query composition needs evaluation, ordering and lifetime contracts
+
+**Observation:** Existing callback-based collection helpers and experimental LINQ
+sources did not establish native closure lifetimes or query semantics. Native
+arrays still exclude direct records, enums and nested arrays, so a broad generic
+Enumerable promise would overstate the supported storage model.
+
+**Implemented:** Collected queries share one checked AST and ordinary NIL loop
+lowering. Source and bounds execute once before a shallow snapshot. Filtering,
+stable one-key ordering, pagination and scalar/text/tuple projection work from
+both languages. NaNs sort last in either direction; ties preserve input order.
+Matrix-authored count/any/first/last/single terminals consume the resulting array.
+The binder has an exact source span and lexical scope for editor analysis.
+
+Repeated row expressions also need the ownership checker's loop invariant.
+Review found the query checker omitted it; the analyzer now rejects changes to
+outer owners across row evaluation, including empty sources and take zero.
+Current code generation already rejects the block-tail expression used to expose
+the analysis gap, so this was not evidence of an executable double-move path.
+
+**Follow-up:** Grouping, joins, distinct, multiple order keys, lazy iteration and
+SQL translation remain separate work. Aggregate-array support is still needed
+for ordinary arrays of application records. The current snapshot and sorted
+query allocate temporary arrays; profiling and optimization should preserve
+once-only effects and stable ordering rather than silently changing semantics.
+
+### F58 — Nested enum constructors lost payload type context in native lowering
+
+**Observation:** `Result<Option<T>, text>.Ok(Option.None)` passed source checking
+but emitted a generic inner variant without a concrete enum schema. The VM could
+run it, while native lowering correctly refused the incomplete metadata. Pattern
+search's `Result<Option<PatternMatch>, text>` exposed the gap.
+
+**Implemented:** Enum constructor lowering resolves concrete payload types before
+emitting argument expressions. Member, qualified and built-in alias constructor
+paths retain the nested type context and source argument evaluation order. The
+native enum fixture now exercises absent/present nested options, a floating
+payload, multiple nested payloads, and side-effect ordering.
+
+**Follow-up:** Multi-payload enum construction is covered, but destructuring a
+multi-payload variant in a match is still unsupported. The current checker can
+misreport each binding as the combined `(T, T)` payload, while code generation
+explicitly rejects multi-payload pattern lowering. Implement component typing,
+extraction and diagnostic consistency together; the current constructor fix does
+not imply that pattern support exists.

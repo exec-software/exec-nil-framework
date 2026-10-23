@@ -308,5 +308,26 @@
     "body": [
       "\\$\"${1:Height}: {${2:height}}\""
     ]
+  },
+  "Text pattern": {
+    "prefix": "pattern",
+    "description": "Declare a bounded byte-oriented text pattern with a named capture and lookahead",
+    "body": [
+      "pattern ${1:price}",
+      "    capture ${2:amount} matching one or more ascii digits",
+      "    require next to match literal \"${3: USD}\"",
+      "end pattern"
+    ]
+  },
+  "Collect query": {
+    "prefix": "query",
+    "description": "Collect an eager array query with filtering, ordering and projection",
+    "body": [
+      "collect query from ${1:item} in ${2:items}",
+      "    where ${1:item} > ${3:0}",
+      "    order by ${1:item} ascending",
+      "    select ${1:item}",
+      "end query"
+    ]
   }
 }

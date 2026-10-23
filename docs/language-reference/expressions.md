@@ -3,6 +3,14 @@
 Expressions produce values. Statements such as assignments and void calls do
 not supply placeholder values.
 
+## Collected queries and text patterns
+
+`collect query ... end query` produces a typed array from a source array,
+with optional filtering, stable ordering and pagination before projection.
+See [collected queries](../standard-library/queries.md) for both Ny and Matrix
+syntax and evaluation rules. Named [text patterns](../standard-library/text-patterns.md)
+are immutable text-source declarations consumed by the shared pattern library.
+
 ## Literals
 
 ### Integer Literals

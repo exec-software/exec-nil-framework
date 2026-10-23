@@ -104,3 +104,58 @@ test("grammar maintains both accepted multiline comment forms", async () => {
   const cEnd = grammar.tokenizeLine("still context */", cStart.ruleStack);
   assert.ok(cEnd.tokens.some((token) => token.scopes.includes("comment.block.ny")));
 });
+
+test("Ny prose patterns scope captures and nested blocks without interpolation", async () => {
+  const grammar = await loadNyGrammar();
+  assert.ok(grammar);
+  const opened = grammar.tokenizeLine("pattern price", INITIAL);
+  assert.ok(opened.tokens.some(token => token.scopes.includes("entity.name.pattern.ny")));
+  let state = opened.ruleStack;
+  const capture = grammar.tokenizeLine("capture amount matching one or more ascii digits", state);
+  assert.ok(capture.tokens.some(token => token.scopes.includes("entity.name.capture.ny")));
+  state = grammar.tokenizeLine("require next not to match begin pattern", capture.ruleStack).ruleStack;
+  const literal = grammar.tokenizeLine('literal "{amount} end pattern"', state);
+  assert.ok(literal.tokens.some(token => token.scopes.includes("string.quoted.double.pattern.ny")));
+  assert.equal(literal.tokens.some(token => token.scopes.includes("meta.interpolation.ny")), false);
+  state = grammar.tokenizeLine("end pattern", literal.ruleStack).ruleStack;
+  const outer = grammar.tokenizeLine("optional literal \" USD\"", state);
+  assert.ok(outer.tokens.some(token => token.scopes.includes("keyword.control.pattern.ny")));
+  state = grammar.tokenizeLine("end pattern", outer.ruleStack).ruleStack;
+  const ordinary = grammar.tokenizeLine("let pattern = capture + 1", state);
+  assert.equal(ordinary.tokens.some(token => token.scopes.includes("meta.pattern.ny")), false);
+  assert.equal(ordinary.tokens.some(token => token.scopes.includes("keyword.control.pattern.ny")), false);
+});
+
+test("Ny query clauses are contextual and ordinary expressions retain their scopes", async () => {
+  const grammar = await loadNyGrammar();
+  assert.ok(grammar);
+  let state = grammar.tokenizeLine("let chosen = collect query from item in items", INITIAL).ruleStack;
+  for (const line of ["where item > 0", "order by item descending", "skip 1", "take 2", "select item + 1"]) {
+    const result = grammar.tokenizeLine(line, state);
+    assert.ok(result.tokens.some(token => token.scopes.includes("keyword.control.query.ny")), line);
+    state = result.ruleStack;
+  }
+  state = grammar.tokenizeLine("end query", state).ruleStack;
+  const ordinary = grammar.tokenizeLine("let where = take + select", state);
+  assert.equal(ordinary.tokens.some(token => token.scopes.includes("meta.query.ny")), false);
+  assert.equal(ordinary.tokens.some(token => token.scopes.includes("keyword.control.query.ny")), false);
+  const snippets = JSON.parse(fs.readFileSync("snippets/ny.code-snippets", "utf8")) as Record<string, { prefix: string; body: string[] }>;
+  assert.equal(snippets["Text pattern"]!.prefix, "pattern");
+  assert.equal(snippets["Collect query"]!.prefix, "query");
+  assert.equal(snippets["Text pattern"]!.body.at(-1), "end pattern");
+  assert.equal(snippets["Collect query"]!.body.at(-1), "end query");
+});
+
+test("Ny query keywords match the compiler's projection and ordering vocabulary", async () => {
+  const grammar = await loadNyGrammar();
+  assert.ok(grammar);
+  const state = grammar.tokenizeLine("collect query", INITIAL).ruleStack;
+  for (const word of ["select", "ascending", "descending"]) {
+    const result = grammar.tokenizeLine(word, state);
+    assert.ok(result.tokens.some(token => token.scopes.includes("keyword.control.query.ny")), word);
+  }
+  for (const word of ["give", "asc", "desc", "ascending_value", "descending_value"]) {
+    const result = grammar.tokenizeLine(word, state);
+    assert.equal(result.tokens.some(token => token.scopes.includes("keyword.control.query.ny")), false, word);
+  }
+});
