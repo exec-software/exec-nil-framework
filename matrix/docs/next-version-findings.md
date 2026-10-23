@@ -1714,3 +1714,56 @@ custom formatting and native FFI layout remain separate work from storing
 typed tuple handles.
 The VM still represents raw pointers as integers: a matching virtual address
 can establish a live allocation, but cannot establish the value's provenance.
+
+### F53 — Memory diagnostics need explicit accounting and capture boundaries
+
+**Observation:** Aperture's initial memory command returned placeholder
+snapshots. Runtime allocation counts alone cannot establish leaks: retained
+values may still be reachable, and VM values and native allocations have
+different storage representations. A report taken after shutdown cleanup also
+hides the storage developers need to investigate.
+
+**Resolution:** Opt-in sessions record real allocation, resize, release and GC
+activity and finalize before runtime teardown. VM and native source execution
+share the versioned `aperture.memory.v1` report contract, with source attribution,
+completion status, explicit scope and bounded tracking. Counters obey
+`allocated - freed = live`; peaks describe simultaneous live storage. Aperture
+preserves target output and exit status, refuses to overwrite reports, and
+rejects missing or malformed measurements. VS Code can run either route and
+open the saved report.
+
+**Follow-up:** VM text, record and host-container storage remain outside this
+first accounting scope. Native descriptor/capacity measurements differ from VM
+payload bytes. Neither represents process RSS. Full call stacks, retention
+graphs, allocation lifetimes, parallel-session aggregation, CPU sampling and
+debugger snapshots need separate contracts. The first capture owns one runtime
+session; restarting a paused VM must mark its old capture abandoned rather than
+silently combining executions. See the [Aperture design](../../aperture/docs/DESIGN.md).
+
+### F54 — Native system-call arguments and console input still have route gaps
+
+**Observation:** Aperture's real-program qualification exposed two existing
+native limitations. Importing `nil.std.system.*` and calling `exit(7)` passes
+source checking and works in the interpreter, but direct native compilation
+rejects the call with `std_sys.exit requires one i32 operand`. Writing
+`exit(7 as i32)` qualifies the native boundary and preserves exit status 7 on
+both routes. The source declaration already requires `i32`; an accepted literal
+argument should acquire the same scalar representation as an explicitly cast
+argument before native interop lowering.
+
+Separately, `nil.std.io.read_line()` works in the interpreter but native
+compilation rejects its reachable `console.read_line` intrinsic as unsupported.
+Both failures reproduce through direct native compilation with the SDK that
+predates Aperture recording, so they are not profiling regressions.
+
+**Current handling:** Aperture passes program arguments without shell expansion
+and keeps standard input attached to the target. Its contract tests exercise
+space-containing and empty arguments on both routes, and line input on the VM.
+Native console input is not claimed as supported. Explicitly typed `exit`
+arguments qualify orderly exit profiling in both execution routes.
+
+**Follow-up:** Apply declared scalar parameter conversions consistently at native
+interop calls, then add a paired literal/variable/explicit-cast contract. Add
+native console line input with an explicit EOF, encoding and allocation-lifetime
+contract, including memory-source attribution for the returned text. These are
+language/runtime parity tasks rather than profiler-specific workarounds.

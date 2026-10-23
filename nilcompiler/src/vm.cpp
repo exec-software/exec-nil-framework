@@ -692,6 +692,21 @@ int64_t invoke_native(void *fn_ptr, const std::vector<int64_t> &args) {
 
 VM::VM() : pc_(0) {}
 
+void VM::beginMemoryProfile() {
+  if (memory_profile_started_ || !memory_profile_allowed_)
+    return;
+  memory_profile_started_ = true;
+  if (!memory_profile_.begin("vm"))
+    throw std::runtime_error("Could not start Aperture memory profile");
+}
+
+bool VM::finishMemoryProfile(const char *status, bool completed) noexcept {
+  if (!memory_profile_started_ || memory_profile_finished_)
+    return true;
+  memory_profile_finished_ = true;
+  return memory_profile_.finish(status, completed);
+}
+
 std::istream &VM::inputStream() {
   return input_stream_ ? *input_stream_ : std::cin;
 }
@@ -703,6 +718,10 @@ std::ostream &VM::outputStream() {
 void VM::resetRuntimeState(const std::string &root_function) {
   // Configuration belongs to the host and survives a restart. Everything that
   // can be observed or owned by the Ny program belongs to one invocation.
+  // A restart abandons a paused invocation; it must not combine its allocation
+  // history with the next run or count teardown as program releases.
+  if (!finishMemoryProfile("abandoned", false))
+    throw std::runtime_error("Could not finish Aperture memory profile");
   unwindOwned(0);
   databases_.clear();
   file_handles_.clear();
@@ -790,12 +809,17 @@ bool VM::stepInstruction() try {
   validateInstructionLocation();
   if (pc_ >= program_.size())
     return false;
+  beginMemoryProfile();
   executeInstruction(program_[pc_]);
   ++pc_;
   validateInstructionLocation();
   debug_state_ = DebugState::PAUSED;
+  if (pc_ >= program_.size() &&
+      !finishMemoryProfile("completed", true))
+    throw std::runtime_error("Could not finish Aperture memory profile");
   return pc_ < program_.size();
 } catch (...) {
+  (void)finishMemoryProfile("failed", false);
   unwindOwned(0);
   throw;
 }
@@ -811,6 +835,7 @@ std::vector<VM::DebugFrameSnapshot> VM::getDebugFrames() const {
 }
 
 void VM::execute(bool reset) try {
+  beginMemoryProfile();
   if (reset) {
     // Preserve the historical embedding contract: callers may load a program,
     // inject globals with setGlobal(), and then use execute(true).  A debugger
@@ -859,6 +884,11 @@ void VM::execute(bool reset) try {
       ++pc_;
       validateInstructionLocation();
       debug_state_ = DebugState::PAUSED;
+      if (pc_ >= program_.size()) {
+        if (!finishMemoryProfile("completed", true))
+          throw std::runtime_error("Could not finish Aperture memory profile");
+        return;
+      }
       bool should_continue = false;
       if (debug_callback_) {
         // Callback with NEXT instruction (if valid)
@@ -875,14 +905,21 @@ void VM::execute(bool reset) try {
     ++pc_;
     validateInstructionLocation();
   }
+  if (!finishMemoryProfile("completed", true))
+    throw std::runtime_error("Could not finish Aperture memory profile");
 }
 
 catch (...) {
+  (void)finishMemoryProfile("failed", false);
   unwindOwned(0);
   throw;
 }
 
 void VM::executeInstruction(const Instruction &instr) {
+  if (memory_profile_.enabled())
+    memory_profile_.site(instr.source_file,
+                         call_stack_.empty() ? "" : call_stack_.back().fn_name,
+                         instr.line > 0 ? static_cast<std::uint64_t>(instr.line) : 0);
   if (pending_fault_ && instr.op != Opcode::LABEL && instr.op != Opcode::FAULT_SAVE)
     throw std::runtime_error("pending fault must be saved before ordinary execution");
   const auto is_array_value = [](const Value &value) {
@@ -1544,6 +1581,10 @@ void VM::executeInstruction(const Instruction &instr) {
           it->second.data.push_back(
               canonical_pointer_value(it->second, args[1], "array__push"));
           it->second.element_count++;
+          if (memory_profile_.enabled())
+            memory_profile_.resize(
+                reinterpret_cast<const void *>(static_cast<std::uintptr_t>(handle)),
+                profileHeapBlockBytes(it->second));
         }
       }
       // A void call has no operand-stack result.
@@ -2923,7 +2964,9 @@ void VM::executeInstruction(const Instruction &instr) {
           pc_ = program_.size();
           return;
         }
-        std::exit(code);
+        // std::exit bypasses VM destruction. Preserve the retained heap before
+        // leaving, while keeping the program's requested status on success.
+        std::exit(finishMemoryProfile("completed", true) ? code : 1);
       } else if (fn_name == "arg_count") {
         if (!args.empty())
           throw std::runtime_error("std_sys.arg_count: expected no arguments");
@@ -5472,6 +5515,10 @@ void VM::executeInstruction(const Instruction &instr) {
     workers.reserve(slots);
     for (std::size_t index = 0; index < slots; ++index) {
       auto worker = std::make_unique<VM>();
+      // A scalar worker is part of the parent invocation, never a separate
+      // report owner. Worker implementation allocations are outside VM heap
+      // block coverage; the parent records the resulting array below.
+      worker->memory_profile_allowed_ = false;
       worker->setMemoryMode(memory_mode_);
       worker->setProcessExitTrapping(true);
       worker->loadProgram(program_, constants_);
@@ -6006,7 +6053,7 @@ void VM::executeInstruction(const Instruction &instr) {
       int64_t ptr = std::get<int64_t>(ptr_val);
       auto it = heap_.find(ptr);
       if (it != heap_.end()) {
-        heap_.erase(it);
+        releaseHeapBlock(ptr);
       } else {
         std::cerr << "[nilinterpreter] FREE: invalid pointer " << ptr
                   << std::endl;
@@ -6208,7 +6255,7 @@ void VM::unwindOwned(std::size_t depth) {
   while (owned_scopes_.size() > depth) {
     const auto &scope = owned_scopes_.back();
     for (const auto &slot : scope.slots) {
-      heap_.erase(slot.second);
+      releaseHeapBlock(slot.second);
       if (scope.frame_depth > 0 && scope.frame_depth <= call_stack_.size())
         call_stack_[scope.frame_depth - 1].locals[slot.first] = int64_t(0);
     }
@@ -6407,6 +6454,44 @@ std::uint64_t VM::currentHeapBytes() const {
   return total;
 }
 
+std::uint64_t VM::profileHeapBlockBytes(const HeapBlock &block) const {
+  // These are language-visible payload bytes, not the host's sizeof(Value),
+  // vector capacity, allocator overhead, or transitive string/record storage.
+  // Keep profiling independent of the historical gc.allocated_bytes metric.
+  auto stride = heap_element_stride(block.type_name);
+  if (block.type_name == "array") {
+    const auto element = canonical_array_type(block.element_type);
+    stride = element == "i32" || element == "f32" ? 4
+             : element == "bool" || element == "u8" ? 1
+                                                     : 8;
+  }
+  const auto maximum = std::numeric_limits<std::uint64_t>::max();
+  const auto bytes = static_cast<std::uint64_t>(block.byte_data.size());
+  const auto count = static_cast<std::uint64_t>(block.data.size());
+  if (count > (maximum - bytes) / stride)
+    return maximum;
+  return count * stride + bytes;
+}
+
+std::uint64_t VM::profileHeapBytes() const {
+  const auto maximum = std::numeric_limits<std::uint64_t>::max();
+  std::uint64_t total = 0;
+  for (const auto &[pointer, block] : heap_) {
+    (void)pointer;
+    const auto bytes = profileHeapBlockBytes(block);
+    if (bytes > maximum - total)
+      return maximum;
+    total += bytes;
+  }
+  return total;
+}
+
+void VM::releaseHeapBlock(int64_t pointer) {
+  if (heap_.erase(pointer))
+    memory_profile_.release(
+        reinterpret_cast<const void *>(static_cast<std::uintptr_t>(pointer)));
+}
+
 void VM::storeHeapBlock(int64_t pointer, HeapBlock block) {
   const std::uint64_t bytes = heapBlockBytes(block);
   const std::uint64_t observable_limit =
@@ -6417,12 +6502,29 @@ void VM::storeHeapBlock(int64_t pointer, HeapBlock block) {
   else
     total_allocated_bytes_ += bytes;
   heap_[pointer] = std::move(block);
+  if (memory_profile_.enabled()) {
+    const auto &stored = heap_.at(pointer);
+    const auto kind = stored.type_name == "array"
+        ? "array<" + stored.element_type + ">"
+        : stored.type_name == "__iter" ? std::string("iterator")
+        : (pc_ < program_.size() && program_[pc_].op == Opcode::OWN_ALLOC
+               ? "owned_buffer<" : "buffer<") + stored.type_name + ">";
+    memory_profile_.allocate(
+        reinterpret_cast<const void *>(static_cast<std::uintptr_t>(pointer)),
+        profileHeapBlockBytes(stored), kind);
+  }
 }
 
 void VM::gcCollect() {
   if (memory_mode_ != MemoryMode::SAFE_GC) {
     return; // Only run GC in safe mode
   }
+
+  const bool profiling = memory_profile_.enabled();
+  const auto profile_bytes_before = profiling ? profileHeapBytes() : 0;
+  const auto profile_objects_before = heap_.size();
+  const auto profile_start = profiling ? std::chrono::steady_clock::now()
+                                      : std::chrono::steady_clock::time_point{};
 
   // Reset all marks
   for (auto &[ptr, block] : heap_) {
@@ -6442,6 +6544,14 @@ void VM::gcCollect() {
   if (total_collections_ <
       static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
     ++total_collections_;
+  if (profiling) {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - profile_start).count();
+    memory_profile_.collection(
+        elapsed > 0 ? static_cast<std::uint64_t>(elapsed) : 0,
+        profile_bytes_before - std::min(profile_bytes_before, profileHeapBytes()),
+        profile_objects_before - heap_.size());
+  }
 }
 
 void VM::gcMarkRoots() {
@@ -6551,7 +6661,7 @@ void VM::gcSweep() {
   }
 
   for (int64_t ptr : to_free) {
-    heap_.erase(ptr);
+    releaseHeapBlock(ptr);
   }
 }
 

@@ -2525,6 +2525,22 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
     impl_->value_nil_types.clear();
     impl_->label_map.clear();
 
+    // Source capsules are opt-in; programs without them still identify the
+    // generated function and available line, without inventing a source path.
+    // The runtime makes this a no-op unless memory recording was requested.
+    const auto emit_profile_site = [&](const std::string &file, int line) {
+      auto *pointer = llvm::PointerType::getUnqual(ctx);
+      auto *word = llvm::Type::getInt64Ty(ctx);
+      auto site = impl_->module->getOrInsertFunction("nyrt_profile_site",
+          llvm::FunctionType::get(llvm::Type::getVoidTy(ctx),
+                                 {pointer, pointer, word}, false));
+      impl_->builder->CreateCall(site,
+          {impl_->builder->CreateGlobalString(file),
+           impl_->builder->CreateGlobalString(fn.name),
+           llvm::ConstantInt::get(word, std::max(0, line))});
+    };
+    emit_profile_site(fn.source_file, fn.source_line);
+
     struct NativeStructInitialization {
       const nil_struct_def *definition = nullptr;
     };
@@ -3943,6 +3959,28 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                   << required_stack << " value(s), found "
                   << impl_->value_stack.size() << '\n';
         return false;
+      }
+
+      // Builtins dispatched directly from a call can allocate in the runtime;
+      // publish their call site as well as explicit allocating instructions.
+      switch (op) {
+      case Opcode::ALLOC:
+      case Opcode::OWN_ALLOC:
+      case Opcode::NEW_ARRAY:
+      case Opcode::NEW_ARRAY_LITERAL:
+      case Opcode::NEW_STRUCT:
+      case Opcode::NEW_VARIANT:
+      case Opcode::STR_CONCAT:
+      case Opcode::TO_STRING:
+      case Opcode::CALL:
+      case Opcode::CALL_METHOD:
+      case Opcode::INTEROP_CALL:
+      case Opcode::PARALLEL_MAP:
+        emit_profile_site(minstr.source_file.empty() ? fn.source_file : minstr.source_file,
+                          minstr.debug_line);
+        break;
+      default:
+        break;
       }
 
       switch (op) {
@@ -8415,6 +8453,7 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_owned_v1_unwind", &nyrt_owned_v1_unwind);
   expose_runtime_symbol("nyrt_context_begin", &nyrt_context_begin);
   expose_runtime_symbol("nyrt_context_end", &nyrt_context_end);
+  expose_runtime_symbol("nyrt_profile_site", &nyrt_profile_site);
   expose_runtime_symbol("nyrt_roots_enter", &nyrt_roots_enter);
   expose_runtime_symbol("nyrt_roots_leave", &nyrt_roots_leave);
   expose_runtime_symbol("nyrt_safepoint", &nyrt_safepoint);

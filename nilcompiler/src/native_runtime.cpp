@@ -1,6 +1,7 @@
 #include "native_runtime.hpp"
 #include "database_runtime.hpp"
 #include "integer_conversion.hpp"
+#include "memory_profile.hpp"
 #include "scalar_text.hpp"
 
 #include "secure_file_io.hpp"
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <charconv>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -65,6 +67,7 @@ struct nyrt_buffer {
 };
 
 struct runtime_context {
+  ny::memory_profile::Session profile;
   ny::database::Context databases;
   struct allocation {
     void *data;
@@ -342,6 +345,7 @@ nyrt_array *make_array(std::uint32_t kind, std::uint64_t length) noexcept {
     context.arrays.push_back(std::move(array));
     account_managed_bytes(byte_count);
     account_managed_bytes(sizeof(nyrt_array));
+    context.profile.allocate(result, sizeof(nyrt_array) + byte_count, "array");
   } catch (...) {
     return nullptr;
   }
@@ -373,13 +377,15 @@ void *make_buffer(std::uint32_t kind, std::uint64_t length) noexcept {
   void *result = buffer->data;
   try {
     context.buffers.push_back(std::move(buffer));
+    context.profile.allocate(context.buffers.back().get(), sizeof(nyrt_buffer) + storage_bytes, "buffer");
   } catch (...) {
     return nullptr;
   }
   return result;
 }
 
-void *allocate_owned(std::uint64_t requested_size) noexcept {
+void *allocate_owned(std::uint64_t requested_size,
+                     std::string_view kind = "managed") noexcept {
   std::uint64_t size_limit = std::numeric_limits<std::uint64_t>::max();
   if constexpr (sizeof(std::size_t) <= sizeof(std::uint64_t)) {
     size_limit =
@@ -396,6 +402,7 @@ void *allocate_owned(std::uint64_t requested_size) noexcept {
   try {
     context.allocations.push_back({storage, size});
     account_managed_bytes(size);
+    context.profile.allocate(storage, size, kind);
   } catch (...) {
     std::free(storage);
     return nullptr;
@@ -407,7 +414,7 @@ const char *own_string(std::string_view value) noexcept {
   if (value.size() == std::numeric_limits<std::size_t>::max())
     return nullptr;
   auto *storage = static_cast<char *>(
-      allocate_owned(static_cast<std::uint64_t>(value.size()) + 1U));
+      allocate_owned(static_cast<std::uint64_t>(value.size()) + 1U, "text"));
   if (storage == nullptr)
     return nullptr;
   if (!value.empty())
@@ -520,6 +527,7 @@ bool reserve(nyrt_array &array, std::uint64_t capacity) noexcept {
   array.capacity = capacity;
   account_managed_bytes(byte_count - array.allocated_bytes);
   array.allocated_bytes = byte_count;
+  context.profile.resize(&array, sizeof(nyrt_array) + byte_count);
   return true;
 }
 
@@ -669,6 +677,8 @@ void *nyrt_parallel_map_v1(const void *inputs, std::uint32_t input_kind,
 
 void nyrt_context_begin(int argc, const char *const *argv) noexcept {
   nyrt_context_end();
+  if (!context.profile.begin("native"))
+    nyrt_fail("NIL native runtime error: could not start memory capture\n");
   if (argc < 0 || (argc > 0 && argv == nullptr))
     nyrt_fail("NIL native runtime error: invalid process argument vector\n");
   if (argc == 0)
@@ -678,6 +688,7 @@ void nyrt_context_begin(int argc, const char *const *argv) noexcept {
     for (int index = 0; index < argc; ++index)
       context.arguments.emplace_back(argv[index] == nullptr ? "" : argv[index]);
   } catch (...) {
+    (void)context.profile.finish("failed", false);
     nyrt_context_end();
     nyrt_fail("NIL native runtime error: could not initialize process "
               "arguments\n");
@@ -685,6 +696,9 @@ void nyrt_context_begin(int argc, const char *const *argv) noexcept {
 }
 
 void nyrt_context_end() noexcept {
+  // Capture application retention before invocation-owned storage is torn down.
+  if (!context.profile.finish())
+    nyrt_fail("NIL native runtime error: memory capture failed\n");
   context.databases.clear();
   nyrt_owned_v1_unwind(0);
   context.pending_fault.reset();
@@ -700,7 +714,13 @@ void nyrt_context_end() noexcept {
   std::vector<std::string>().swap(context.arguments);
 }
 
+void nyrt_profile_site(const char *file, const char *function,
+                       std::uint64_t line) noexcept {
+  context.profile.site(file ? file : "", function ? function : "", line);
+}
+
 [[noreturn]] void nyrt_fail(const char *message) noexcept {
+  (void)context.profile.finish("failed", false);
   if (message != nullptr)
     std::fputs(message, stderr);
   std::fflush(nullptr);
@@ -757,6 +777,7 @@ std::int32_t nyrt_free(void *pointer) noexcept {
       context.allocations.end(), [pointer](const auto &item) { return item.data == pointer; });
   if (allocation == context.allocations.end())
     return 0;
+  context.profile.release(allocation->data);
   std::free(allocation->data);
   context.allocations.erase(allocation);
   return 1;
@@ -902,6 +923,8 @@ void nyrt_fault_v1_report_uncaught() noexcept {
   }
   std::fprintf(stderr, " at line %lld\n", static_cast<long long>(fault.line));
   std::fflush(stderr);
+  if (!context.profile.finish("failed", false))
+    nyrt_fail("NIL native runtime error: memory capture failed\n");
 }
 
 std::uint64_t nyrt_managed_bytes() noexcept {
@@ -920,6 +943,11 @@ void nyrt_collect() noexcept {
   // Uninstrumented embedding and older SDK objects keep their historical
   // invocation lifetime. Never guess at arbitrary C/C++ machine-stack roots.
   if (context.frames.empty()) return;
+  const bool profiling = context.profile.enabled();
+  const auto collection_start = profiling ? std::chrono::steady_clock::now()
+      : std::chrono::steady_clock::time_point{};
+  const auto bytes_before = profiling ? nyrt_managed_bytes() : 0;
+  const auto objects_before = profiling ? nyrt_managed_objects() : 0;
   try {
     struct object {
       void *data;
@@ -990,12 +1018,23 @@ void nyrt_collect() noexcept {
     context.allocations.erase(std::remove_if(context.allocations.begin(),
         context.allocations.end(), [&](const auto &item) {
           if (live(item.data)) return false;
+          context.profile.release(item.data);
           std::free(item.data);
           return true;
         }), context.allocations.end());
     context.arrays.erase(std::remove_if(context.arrays.begin(), context.arrays.end(),
-        [&](const auto &item) { return !live(item.get()); }), context.arrays.end());
+        [&](const auto &item) {
+          if (live(item.get())) return false;
+          context.profile.release(item.get());
+          return true;
+        }), context.arrays.end());
     context.allocated_since_collection = 0;
+    if (profiling) {
+      const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now() - collection_start).count();
+      context.profile.collection(static_cast<std::uint64_t>(std::max<std::int64_t>(elapsed, 0)),
+          bytes_before - nyrt_managed_bytes(), objects_before - nyrt_managed_objects());
+    }
   } catch (...) {
     // All tracing allocations precede sweep. An exhausted tracing workspace
     // must preserve the heap, never turn a partial mark into reclamation.
@@ -1026,6 +1065,8 @@ const char *nyrt_arg(std::int64_t index) noexcept {
   if (code < 0 || code > 255)
     nyrt_fail("NIL native runtime error: std_sys.exit: code must be between 0 "
               "and 255\n");
+  if (!context.profile.finish("exited", true))
+    nyrt_fail("NIL native runtime error: memory capture failed\n");
   std::fflush(nullptr);
   std::exit(static_cast<int>(code));
 }
@@ -1137,6 +1178,7 @@ std::int32_t nyrt_buffer_free(void *value) noexcept {
     // Retain the allocation as an inactive tombstone until context teardown.
     // Its address therefore cannot be reused to make a stale pointer valid.
     candidate->active = false;
+    context.profile.release(candidate.get());
     return 1;
   }
   return 0;
@@ -1148,6 +1190,7 @@ std::int32_t nyrt_owned_buffer_release(void *value) noexcept {
     const auto &candidate = *item;
     if (candidate->data == value && candidate->active &&
         checked_buffer(value, candidate->kind) == candidate.get()) {
+      context.profile.release(candidate.get());
       context.buffers.erase(item);
       return 1;
     }

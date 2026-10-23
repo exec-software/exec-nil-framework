@@ -47,6 +47,7 @@ set(NILCOMPILER_CORE_SOURCES
 # the static companion use the same implementation and versioned C ABI.
 add_library(nilruntime_objects OBJECT
     src/native_runtime.cpp
+    src/memory_profile.cpp
     src/owned_runtime.cpp
     src/secure_file_io.cpp
     src/database_runtime.cpp

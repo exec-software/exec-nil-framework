@@ -49,7 +49,7 @@ test("manifest contributes both frontends, shared tasks, and source debugger int
     "run",
     "native",
     "build-sdk",
-    "ctest", "project-check", "project-build", "project-run"
+    "ctest", "project-check", "project-build", "project-run", "profile-memory", "profile-memory-native"
   ]);
   assert.equal(manifest.contributes.debuggers[0]?.type, "ny");
   assert.deepEqual(manifest.contributes.debuggers[0]?.languages, ["ny", "matrix"]);

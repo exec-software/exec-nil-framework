@@ -48,6 +48,10 @@ void nyrt_parallel_fail_v1(const char *message) noexcept;
 std::int32_t nyrt_parallel_failed_v1() noexcept;
 void nyrt_context_begin(int argc, const char *const *argv) noexcept;
 void nyrt_context_end() noexcept;
+// Additive opt-in profiling attribution. Source strings are copied only during
+// NIL_MEMORY_PROFILE captures; line zero/file empty mean unavailable.
+void nyrt_profile_site(const char *file, const char *function,
+                       std::uint64_t line) noexcept;
 [[noreturn]] void nyrt_fail(const char *message) noexcept;
 // Native text is NUL-free, byte-indexed UTF-8 storage. Substring clamps a
 // negative start/count to zero and clips count to the remaining byte length.
