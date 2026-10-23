@@ -53,6 +53,14 @@ class QualificationTests(unittest.TestCase):
     def test_positive_metadata(self):
         self.assertEqual(qualification.qualification_errors(fixture(), True, "a" * 40), [])
 
+    def test_aperture_hash_is_bound_and_legacy_tool_evidence_remains_valid(self):
+        value = fixture()
+        value["qualification"]["evidence"]["tools"]["aperture"] = "e" * 64
+        self.rejection(value, "tool hashes differ")
+        value["tools"] = [tool for tool in value["tools"] if tool["name"] != "aperture"]
+        del value["qualification"]["evidence"]["tools"]["aperture"]
+        self.assertEqual(qualification.qualification_errors(value, True, "a" * 40), [])
+
     def test_nil_sdk_requires_matching_shared_runtime_evidence(self):
         value = fixture()
         value["schema"] = "nil.sdk.v1"
@@ -387,6 +395,75 @@ class RuntimeLayoutTests(unittest.TestCase):
         self.shared.unlink()
         with self.assertRaisesRegex(SystemExit, "matching shared native runtime"):
             self.package.validate_stage_input(self.root)
+
+    def test_new_packages_require_executable_aperture(self):
+        aperture = self.root / self.package.executable_name("aperture")
+        aperture.unlink()
+        with self.assertRaisesRegex(SystemExit, "missing files=.*aperture"):
+            self.package.validate_stage_input(self.root)
+        if os.name != "nt":
+            aperture.write_text("fixture")
+            aperture.chmod(0o644)
+            with self.assertRaisesRegex(SystemExit, "tool is not executable.*aperture"):
+                self.package.validate_stage_input(self.root)
+
+    def test_sealed_tool_inventory_accepts_legacy_or_aperture_and_rejects_mismatch(self):
+        spec = importlib.util.spec_from_file_location("nil_validator_inventory_test", ROOT / "scripts/validate-sdk.py")
+        validator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(validator)
+        native = self.root / "nillib/native"
+        native.mkdir(parents=True)
+        self.static.rename(native / self.static.name)
+        self.shared.rename(native / self.shared.name)
+        (self.root / "manifest.json").write_text("{}")
+
+        def records(names):
+            return [{"name": name, "path": validator.executable_name(name),
+                     "bytes": (self.root / validator.executable_name(name)).stat().st_size,
+                     "sha256": validator.sha256(self.root / validator.executable_name(name))}
+                    for name in names]
+
+        full_records = records(validator.REQUIRED_TOOLS)
+        errors = validator.root_layout_errors(self.root)
+        files, directories = validator.inventory_tree(self.root, errors)
+        validator.validate_exact_layout(self.root, files, directories, errors)
+        validator.validate_tools(full_records, files, errors)
+        self.assertEqual(errors, [])
+        errors = []
+        validator.validate_tools(full_records[:-1], files, errors)
+        self.assertTrue(any("canonical ordered tool set" in error for error in errors), errors)
+        aperture = self.root / validator.executable_name("aperture")
+        aperture.write_text("changed payload")
+        errors = []
+        validator.validate_tools(full_records, files, errors)
+        self.assertTrue(any("aperture hash mismatch" in error for error in errors), errors)
+        aperture.unlink()
+        errors = validator.root_layout_errors(self.root)
+        files, directories = validator.inventory_tree(self.root, errors)
+        validator.validate_exact_layout(self.root, files, directories, errors)
+        validator.validate_tools(full_records[:-1], files, errors)
+        self.assertEqual(errors, [])
+        validator.validate_tools(full_records, files, errors)
+        self.assertTrue(any("missing file: aperture" in error for error in errors), errors)
+        (self.root / "unexpected-tool").write_text("fixture")
+        self.assertTrue(validator.root_layout_errors(self.root))
+        self.assertIn("9 tools", validator.validation_success_message(False, 1, 1, 9))
+
+    def test_aperture_identity_keeps_its_preview_version(self):
+        spec = importlib.util.spec_from_file_location("nil_validator_identity_test", ROOT / "scripts/validate-sdk.py")
+        validator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(validator)
+        outputs = [subprocess.CompletedProcess([], 0, "Usage: aperture <command>\n", ""),
+                   subprocess.CompletedProcess([], 0, "aperture 0.1.0-dev (NIL Framework)\n", "")]
+        with patch.object(validator.subprocess, "run", side_effect=outputs):
+            self.assertIsNone(validator.tool_identity_error(
+                self.root / "aperture", "aperture", "Usage: aperture", self.root, {},
+                version_suffix=" (NIL Framework)"))
+        outputs[-1] = subprocess.CompletedProcess([], 0, "nilcompiler 1.0.0-rc.1\n", "")
+        with patch.object(validator.subprocess, "run", side_effect=outputs):
+            self.assertIn("version identity failed", validator.tool_identity_error(
+                self.root / "aperture", "aperture", "Usage: aperture", self.root, {},
+                version_suffix=" (NIL Framework)"))
 
     def test_duplicate_or_malformed_shared_runtime_rejected(self):
         (self.root / "libnil.dylib").write_bytes(self.shared.read_bytes())

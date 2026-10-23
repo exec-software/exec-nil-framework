@@ -218,6 +218,20 @@ class SdkGateTests(unittest.TestCase):
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_framework_versions_remain_pinned_with_independent_aperture_preview(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sdk = Path(directory)
+            def identity(arguments):
+                name = Path(arguments[0]).name
+                return "aperture 0.1.0-dev (NIL Framework)" if name == "aperture" else name + " " + VERSION
+            with patch.object(release, "capture", side_effect=identity):
+                self.assertEqual(release.validate_tool_versions(sdk, VERSION), {})
+                (sdk / "aperture").write_text("fixture")
+                self.assertEqual(release.validate_tool_versions(sdk, VERSION), {"aperture": "0.1.0-dev"})
+            with patch.object(release, "capture", return_value="nilcompiler wrong"):
+                with self.assertRaisesRegex(release.ReleaseError, "nilcompiler.*committed VERSION"):
+                    release.validate_tool_versions(sdk, VERSION)
+
     def test_atomic_no_replace_preserves_existing_empty_directory(self):
         if sys.platform != "linux":
             self.skipTest("release assembly targets Linux only")
@@ -239,7 +253,7 @@ class ArchiveTests(unittest.TestCase):
             sdk = root / "sdk"
             sdk.mkdir()
             files = {}
-            for relative in ("nilcompiler", "manifest.json", "nillib/core.nil", "nilstd/core.ny", "docs/index.html"):
+            for relative in ("nilcompiler", "aperture", "manifest.json", "nillib/core.nil", "nilstd/core.ny", "docs/index.html"):
                 path = sdk / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(relative.encode())
@@ -256,7 +270,7 @@ class ArchiveTests(unittest.TestCase):
                 for member in archive:
                     self.assertEqual((member.uid, member.gid, member.uname, member.gname, member.mtime), (0, 0, "", "", 1234))
                     self.assertFalse(member.issym() or member.islnk())
-                    if member.name.endswith("/nilcompiler"):
+                    if member.name.endswith(("/nilcompiler", "/aperture")):
                         self.assertEqual(member.mode, 0o755)
                     elif member.isfile():
                         self.assertEqual(member.mode, 0o644)
@@ -400,6 +414,7 @@ class LocalStagingTests(unittest.TestCase):
         stack.enter_context(patch.object(release, "elf_inventory", return_value={
             **INVENTORY, "platform": {"os": "linux", "architecture": "x86_64"}}))
         stack.enter_context(patch.object(release, "capture", side_effect=lambda command, **kw:
+            "aperture 0.1.0-dev (NIL Framework)" if Path(command[0]).name == "aperture" else
             Path(command[0]).name + " " + VERSION if Path(command[0]).name in release.TOOLS else ""))
         return argparse.Namespace(repo_root=ROOT, sdk=sdk, output=root / "release-a", expected_revision=REVISION,
                                   dependency_policy=policy_path, notices=notices_path, vsix=None)

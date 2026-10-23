@@ -216,11 +216,16 @@ end paragraph
 The output is `1` then `3`; the array becomes `[1, 1, 2, 3]`. Ny calls the same
 function as `try_copy_range(pixels, 0, pixels, 1, 3)`.
 
-The supported test slice covers `i32`, `i64`, `u8`, `bool`, `f64`, and NUL-free
-`text`. It does not expand native support for record arrays, nested arrays, or
-other scalar layouts. Checked byte stores retain the existing `u8` conversion
+The scalar test slice covers `i32`, `i64`, `u8`, `bool`, `f64`, and NUL-free
+`text`. The [tuple-array contract](../../tests/tools/tuple_array_contract.py)
+adds generic construction, indexed/intrinsic access and overlapping checked
+copies with exact tuple schemas. Copies preserve tuple values and contained
+reference identities. Native record, enum and nested-array element arrays
+remain unsupported. Checked byte stores retain the existing `u8` conversion
 rules; these APIs validate indices and ranges, not numeric conversions.
-The older raw array accessors keep their existing zero/no-op bounds behavior.
+Raw scalar array accessors retain their zero/no-op bounds behavior. Raw tuple
+reads outside the array fail because no default tuple exists; use checked
+operations or validate bounds before reading.
 
 The related `copy_to` guards on `list`, `queue`, `stack`, `hash_set`, and
 `dictionary` now check remaining destination space by subtraction. Invalid
@@ -229,8 +234,8 @@ write. This fixes the extreme-offset overflow identified by the independent
 3D validation project. Its copied SDK remains a historical test subject.
 
 Further array work remains: real vector reservation/resizing, strided buffer
-views with ownership rules, and native aggregate arrays. None is implied by
-these helpers.
+views with ownership rules, and native record/enum/nested-array element layouts.
+None is implied by these helpers.
 
 ## Stable index ordering
 

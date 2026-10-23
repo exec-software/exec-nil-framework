@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile Ny's standard library and seal a staged SDK with a manifest."""
+"""Compile NIL's standard library and seal a staged SDK with a manifest."""
 
 from __future__ import annotations
 
@@ -25,22 +25,12 @@ from sdk_artifact_validation import (
     is_nil_library, is_nil_v2_library, is_static_archive,
     nil_library_format, nil_library_version,
 )
-from sdk_qualification import collect_qualification, qualification_errors, source_identity
+from sdk_qualification import TOOLS, collect_qualification, qualification_errors, source_identity
 from sdk_sources import is_source, module_declarations, module_artifact_path
 from sdk_runtime import STATIC_NAMES, SHARED_NAMES, RUNTIME_PAIRS, shared_library_valid
 
 
-REQUIRED_TOOLS = (
-    "nilcompiler",
-    "nilinterpreter",
-    "nilassembler",
-    "nillinker",
-    "nillsp",
-    "nildebugger",
-    "nilschema",
-    "nilagent",
-    "nilbuild",
-)
+REQUIRED_TOOLS = TOOLS
 MANIFEST_NAME = "manifest.json"
 NATIVE_RUNTIME_ARCHIVE_NAMES = STATIC_NAMES
 

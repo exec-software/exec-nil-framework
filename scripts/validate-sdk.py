@@ -24,22 +24,12 @@ from sdk_artifact_validation import (
     is_nil_library, is_nil_v2_library, is_static_archive,
     nil_library_format, nil_library_version,
 )
-from sdk_qualification import qualification_errors
+from sdk_qualification import LEGACY_TOOLS, TOOLS, qualification_errors
 from sdk_sources import is_source, module_artifact_path, canonical_std_namespace
 from sdk_runtime import STATIC_NAMES, SHARED_NAMES, RUNTIME_PAIRS, shared_library_valid, shared_runtime_smoke
 
 
-REQUIRED_TOOLS = (
-    "nilcompiler",
-    "nilinterpreter",
-    "nilassembler",
-    "nillinker",
-    "nillsp",
-    "nildebugger",
-    "nilschema",
-    "nilagent",
-    "nilbuild",
-)
+REQUIRED_TOOLS = TOOLS
 SDK_DIRECTORIES = ("nillib", "nilstd", "docs")
 RELEASE_DOCUMENTATION_FILES = {
     "docs/release/THIRD_PARTY_NOTICES.txt",
@@ -84,6 +74,11 @@ def arguments() -> argparse.Namespace:
 
 def executable_name(name: str) -> str:
     return name + (".exe" if os.name == "nt" else "")
+
+
+def inventory_tools(paths) -> tuple[str, ...]:
+    """Recognize the two sealed v1 inventories, without permitting omissions."""
+    return REQUIRED_TOOLS if executable_name("aperture") in paths else LEGACY_TOOLS
 
 
 def sha256(path: Path) -> str:
@@ -152,7 +147,7 @@ def inventory_tree(root: Path, errors: list[str]) -> tuple[dict[str, Path], set[
 def root_layout_errors(sdk: Path) -> list[str]:
     errors: list[str] = []
     expected_files = {
-        *(executable_name(name) for name in REQUIRED_TOOLS),
+        *(executable_name(name) for name in LEGACY_TOOLS),
         "LICENSE",
         MANIFEST_NAME,
     }
@@ -177,6 +172,8 @@ def root_layout_errors(sdk: Path) -> list[str]:
             actual_directories.add(entry.name)
         else:
             errors.append("SDK root contains a special entry: {}".format(entry.name))
+    if executable_name("aperture") in actual_files:
+        expected_files.add(executable_name("aperture"))
     if actual_files != expected_files:
         errors.append(
             "SDK root files differ: missing={} extra={}".format(
@@ -278,7 +275,7 @@ def validate_exact_layout(
     errors: list[str],
 ) -> None:
     expected_root_files = {
-        *(executable_name(name) for name in REQUIRED_TOOLS),
+        *(executable_name(name) for name in inventory_tools(files)),
         "LICENSE",
         MANIFEST_NAME,
     }
@@ -433,9 +430,10 @@ def validate_tools(
             files,
             errors,
         )
-    if names != list(REQUIRED_TOOLS):
+    expected_tools = inventory_tools(files)
+    if names != list(expected_tools):
         errors.append("manifest tool names must be the canonical ordered tool set")
-    expected_paths = [executable_name(name) for name in REQUIRED_TOOLS]
+    expected_paths = [executable_name(name) for name in expected_tools]
     if paths != expected_paths:
         errors.append("manifest tool paths must name each canonical root executable exactly once")
 
@@ -705,6 +703,7 @@ def tool_identity_error(
     usage: str,
     cwd: Path,
     environment: dict[str, str],
+    version_suffix: str = "",
 ) -> str | None:
     try:
         help_process = subprocess.run(
@@ -752,7 +751,8 @@ def tool_identity_error(
         return "SDK {} --version could not run: {}".format(name, exc)
     if (
         version_process.returncode != 0
-        or re.fullmatch(re.escape(name) + r" [^\s]+\n?", version_process.stdout)
+        or re.fullmatch(re.escape(name) + r" [^\s]+" +
+                        re.escape(version_suffix) + r"\n?", version_process.stdout)
         is None
         or version_process.stderr
     ):
@@ -857,6 +857,13 @@ def run_smoke(sdk: Path, native_enabled: bool) -> list[str]:
             identity_error = tool_identity_error(
                 tool, name, usage, root, smoke_environment
             )
+            if identity_error is not None:
+                errors.append(identity_error)
+        aperture = sdk / executable_name("aperture")
+        if aperture.is_file():
+            identity_error = tool_identity_error(
+                aperture, "aperture", "Usage: aperture", root, smoke_environment,
+                version_suffix=" (NIL Framework)")
             if identity_error is not None:
                 errors.append(identity_error)
         if errors:
@@ -1145,11 +1152,12 @@ def run_smoke(sdk: Path, native_enabled: bool) -> list[str]:
 
 
 def validation_success_message(
-    structural_only: bool, module_count: int, page_count: int
+    structural_only: bool, module_count: int, page_count: int,
+    tool_count: int = len(REQUIRED_TOOLS),
 ) -> str:
     summary = (
         "{} tools, {} logical library modules, {} documentation pages".format(
-            len(REQUIRED_TOOLS), module_count, page_count
+            tool_count, module_count, page_count
         )
     )
     if structural_only:
@@ -1230,7 +1238,8 @@ def main() -> int:
         for error in errors:
             print("- {}".format(error))
         return 1
-    print(validation_success_message(args.skip_smoke, module_count, page_count))
+    print(validation_success_message(args.skip_smoke, module_count, page_count,
+                                     len(inventory_tools(files))))
     qualification = manifest.get("qualification", {})
     mode = qualification.get("mode", "development (legacy manifest)")
     print("SDK qualification: {} (not a language release declaration)".format(mode))

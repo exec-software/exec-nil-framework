@@ -135,6 +135,7 @@ std::uint64_t stride_for_kind(std::uint32_t kind) noexcept {
   case NYRT_ARRAY_I64:
   case NYRT_ARRAY_F64:
   case NYRT_ARRAY_TEXT:
+  case NYRT_ARRAY_TUPLE:
     return sizeof(std::int64_t);
   case NYRT_ARRAY_BOOL:
   case NYRT_ARRAY_U8:
@@ -349,7 +350,8 @@ nyrt_array *make_array(std::uint32_t kind, std::uint64_t length) noexcept {
 
 void *make_buffer(std::uint32_t kind, std::uint64_t length) noexcept {
   // New array element kinds do not implicitly expand the raw-pointer ABI.
-  if (kind == NYRT_ARRAY_F64 || kind == NYRT_ARRAY_TEXT)
+  if (kind != NYRT_ARRAY_I32 && kind != NYRT_ARRAY_I64 &&
+      kind != NYRT_ARRAY_BOOL && kind != NYRT_ARRAY_U8)
     return nullptr;
   const std::uint64_t stride = stride_for_kind(kind);
   std::size_t byte_count = 0;
@@ -458,6 +460,7 @@ std::uint64_t load_value(const nyrt_array &array,
         static_cast<const std::int64_t *>(array.data)[index]);
   case NYRT_ARRAY_F64:
   case NYRT_ARRAY_TEXT:
+  case NYRT_ARRAY_TUPLE:
     return static_cast<const std::uint64_t *>(array.data)[index];
   case NYRT_ARRAY_BOOL:
   case NYRT_ARRAY_U8:
@@ -490,6 +493,7 @@ void store_value(nyrt_array &array, std::uint64_t index,
     break;
   case NYRT_ARRAY_F64:
   case NYRT_ARRAY_TEXT:
+  case NYRT_ARRAY_TUPLE:
     // f64 is an IEEE bit pattern; text is a context/static-lifetime address.
     // Neither is an integer conversion, nor does array growth own/free text.
     static_cast<std::uint64_t *>(array.data)[index] = value;
@@ -970,7 +974,8 @@ void nyrt_collect() noexcept {
       pending.pop_back();
       const auto &item = objects[index];
       if (item.array) {
-        if (item.array->kind == NYRT_ARRAY_TEXT)
+        if (item.array->kind == NYRT_ARRAY_TEXT ||
+            item.array->kind == NYRT_ARRAY_TUPLE)
           scan(item.array->data, item.array->length * item.array->stride);
       } else {
         // Object/enum layouts use aligned word slots. Conservatively retaining
@@ -1069,9 +1074,15 @@ std::uint64_t nyrt_array_get(const void *value, std::uint32_t expected_kind,
                              std::int64_t index) noexcept {
   const auto *array = checked_array(value, expected_kind);
   if (array == nullptr || index < 0 ||
-      static_cast<std::uint64_t>(index) >= array->length)
+      static_cast<std::uint64_t>(index) >= array->length) {
+    if (expected_kind == NYRT_ARRAY_TUPLE)
+      nyrt_fail("NIL native runtime error: tuple array read is out of bounds or has an invalid handle\n");
     return 0;
-  return load_value(*array, static_cast<std::uint64_t>(index));
+  }
+  const auto result = load_value(*array, static_cast<std::uint64_t>(index));
+  if (expected_kind == NYRT_ARRAY_TUPLE && result == 0)
+    nyrt_fail("NIL native runtime error: tuple array read encountered an uninitialized element\n");
+  return result;
 }
 
 std::int32_t nyrt_array_set(void *value, std::uint32_t expected_kind,

@@ -1,5 +1,6 @@
 #include "native_runtime.hpp"
 #include "integer_conversion.hpp"
+#include "array_intrinsic.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -241,8 +242,91 @@ void check_array_contract(bool &ok) {
                    nyrt_array_get(texts, NYRT_ARRAY_TEXT, 82) == 0,
                "text array kind/bounds validation failed");
   ok &= expect(nyrt_buffer_new(NYRT_ARRAY_F64, 1) == nullptr &&
-                   nyrt_buffer_new(NYRT_ARRAY_TEXT, 1) == nullptr,
+                   nyrt_buffer_new(NYRT_ARRAY_TEXT, 1) == nullptr &&
+                   nyrt_buffer_new(NYRT_ARRAY_TUPLE, 1) == nullptr,
                "new array kinds expanded the raw-pointer ABI unexpectedly");
+}
+
+void check_tuple_array_contract(bool &ok) {
+  const auto bits = [](const void *value) {
+    return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(value));
+  };
+  const auto text = nyrt_i64_to_text(987654321);
+  auto *nested_array = nyrt_array_new_with_value(NYRT_ARRAY_I64, 1, 73);
+  auto *nested = static_cast<std::uint64_t *>(nyrt_alloc(16));
+  auto *tuple = static_cast<std::uint64_t *>(nyrt_alloc(16));
+  void *array = nyrt_array_new_with_value(NYRT_ARRAY_TUPLE, 2, bits(tuple));
+  if (!expect(text && nested_array && nested && tuple && array,
+              "could not allocate tuple array test graph")) {
+    ok = false;
+    return;
+  }
+  nested[0] = bits(text);
+  nested[1] = bits(nested_array);
+  tuple[0] = bits(nested);
+  tuple[1] = 42;
+  for (int index = 0; index < 80; ++index)
+    ok &= expect(nyrt_array_push(array, NYRT_ARRAY_TUPLE, bits(tuple)) == 1,
+                 "tuple array growth failed");
+  ok &= expect(nyrt_array_length(array, NYRT_ARRAY_TUPLE) == 82 &&
+                   nyrt_array_get(array, NYRT_ARRAY_TUPLE, 81) == bits(tuple),
+               "tuple array did not preserve shared object identity across growth");
+  ok &= expect(nyrt_array_set(array, NYRT_ARRAY_TUPLE, -1, 0) == 0 &&
+                   nyrt_array_set(array, NYRT_ARRAY_TEXT, 0, 0) == 0 &&
+                   nyrt_array_length(array, NYRT_ARRAY_TEXT) == -1,
+               "tuple array bounds or runtime kind mismatch was accepted");
+
+  // The sole published root is the outer array, so retaining the transitive
+  // tuple/text/array graph proves payload slots participate in native tracing.
+  std::uint64_t root = bits(array);
+  const void *slots[] = {&root};
+  nyrt_roots_enter(slots, 1);
+  nyrt_collect();
+  ok &= expect(nyrt_managed_objects() == 5,
+               "tuple array tracing did not retain exactly its reachable graph");
+  ok &= expect(nyrt_array_get(array, NYRT_ARRAY_TUPLE, 0) == bits(tuple) &&
+                   tuple[0] == bits(nested) && nested[1] == bits(nested_array) &&
+                   nyrt_array_get(nested_array, NYRT_ARRAY_I64, 0) == 73,
+               "tuple array lost a transitive aggregate or array during collection");
+  ok &= expect_text(reinterpret_cast<const char *>(static_cast<std::uintptr_t>(nested[0])),
+                    "987654321", "tuple array lost transitive text during collection");
+  auto *replacement = static_cast<std::uint64_t *>(nyrt_alloc(8));
+  if (replacement) {
+    replacement[0] = 17;
+    for (int index = 0; index < 82; ++index)
+      ok &= expect(nyrt_array_set(array, NYRT_ARRAY_TUPLE, index, bits(replacement)) == 1,
+                   "tuple array replacement failed");
+    nyrt_collect();
+    ok &= expect(nyrt_managed_objects() == 2 &&
+                     nyrt_array_length(nested_array, NYRT_ARRAY_I64) == -1,
+                 "replaced tuple array elements retained an unreachable graph");
+  } else {
+    ok = false;
+  }
+  root = 0;
+  nyrt_collect();
+  ok &= expect(nyrt_managed_objects() == 0,
+               "unrooted tuple array graph survived collection");
+  nyrt_roots_leave(slots);
+
+  ok &= expect(ny::canonical_array_type("tuple<Mesh-Node, tuple<String, Box<Item>>>") ==
+                   "tuple<Mesh-Node,tuple<text,Box<Item>>>",
+               "tuple array canonicalization erased nominal identity");
+  ok &= expect(!ny::is_array_tuple_type("tuple<>") &&
+                   !ny::is_array_tuple_type("tuple<i64,>") &&
+                   !ny::is_array_tuple_type("tuple<i64>>"),
+               "malformed tuple array metadata was accepted");
+  const auto contract = ny::parse_array_intrinsic({"intrinsic", "array.get", "2",
+      "tuple<Widget,text>", "tuple<Widget,String>"});
+  ok &= expect(contract.element == "tuple<Widget,text>",
+               "tuple array intrinsic did not canonicalize scalar aliases");
+  bool wrong_case_rejected = false;
+  try {
+    (void)ny::parse_array_intrinsic({"intrinsic", "array.get", "2",
+        "tuple<widget,text>", "tuple<Widget,text>"});
+  } catch (const std::runtime_error &) { wrong_case_rejected = true; }
+  ok &= expect(wrong_case_rejected,
+               "tuple array intrinsic ignored case-sensitive nominal identity");
 }
 
 void check_buffer_contract(bool &ok) {
@@ -665,6 +749,7 @@ int main() {
   check_buffer_contract(ok);
   check_conversion_contract(ok);
   check_file_contract(ok);
+  check_tuple_array_contract(ok);
 
   auto *owned = static_cast<unsigned char *>(nyrt_alloc(8));
   ok &= expect(owned != nullptr, "could not allocate context-owned storage");

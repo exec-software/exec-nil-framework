@@ -88,6 +88,14 @@ Array types remain invariant. The remaining inference questions are tracked
 in [F30](next-version-findings.md#f30--large-integer-expressions-can-narrow-before-an-i64-argument-conversion).
 Ny APIs accepting `i32` may instead require `becomes override integer`.
 
+Tuples use `tuple of (number, text)` and can be stored in
+`array of tuple of (number, text)` on interpreted and native routes. Each array
+element retains the exact ordered tuple type; whole-element writes do not make
+tuple slots mutable. Reading outside a tuple array is an error rather than a
+synthetic tuple value. Scalar-array read defaults remain unchanged. Native
+arrays of records, choices and nested arrays remain unsupported. See the
+[tuple contract](../../docs/language-reference/tuples.md#arrays-of-tuples).
+
 **`main` is a special case.** The NIL entry contract is `main() -> i32`.
 Matrix writes `main returns number` and the lowering emits `i32` for that one
 function. A process exit status is eight bits in practice, so nothing is lost,

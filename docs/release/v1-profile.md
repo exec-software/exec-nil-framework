@@ -77,9 +77,11 @@ parallel map, and sleep. The manuals define their precise limits:
 Source `println` has exactly one argument on every route, including unchecked
 frontend mode. Use `println("")` for a blank line.
 
-The nine SDK commands are `nilcompiler`, `nilinterpreter`, `nilassembler`,
-`nillinker`, `nildebugger`, `nillsp`, `nilbuild`, `nilschema`, and `nilagent`. The last two are
-experimental utilities, not v1 language guarantees. The LSP has a deliberately
+The ten SDK commands are `nilcompiler`, `nilinterpreter`, `nilassembler`,
+`nillinker`, `nildebugger`, `nillsp`, `nilbuild`, `nilschema`, `nilagent`, and `aperture`.
+`nilschema` and `nilagent` are experimental utilities, not v1 language guarantees.
+Aperture is a separately versioned analysis/debugging preview; packaging it does
+not extend the v1 language or debugger guarantees. The LSP has a deliberately
 limited capability set. `nilbuild` supports the [local-project profile](../tools/projects.md),
 with process execution qualified on Linux. `nypm` and `nilaix` are not part of this release.
 

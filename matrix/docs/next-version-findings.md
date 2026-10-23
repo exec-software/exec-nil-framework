@@ -1578,7 +1578,8 @@ interpolation and tuple editing alongside the new literal forms.
 
 ### F50 — Tuples need one structural type and representation across both languages
 
-**Status:** Implemented for nonempty typed tuple values and local destructuring.
+**Status:** Implemented for nonempty typed tuple values, local destructuring
+and typed tuple arrays in the interpreter and native routes.
 
 The old checker and interpreter contained tuple-like `zip` and array-unpacking
 heuristics, while the surface documentation correctly withheld general tuples.
@@ -1600,10 +1601,10 @@ and binary NIL, bundles, native routes, and cross-language consumers using
 source and binary libraries with the original source files removed. It also
 checks failure before replacing output.
 
-**Follow-up:** Native arrays of tuple handles need their own storage contract;
-the interpreter can already unpack such arrays. Nested declaration patterns,
-named elements, unit values, user-defined tuple formatting and C ABI mapping
-remain explicit future work. See [NIL-0015](../../docs/design/NIL-0015-structural-tuples.md).
+**Follow-up:** The tuple-array storage and loop contract is implemented in F52.
+Nested declaration patterns, named elements, unit values, user-defined tuple
+formatting and C ABI mapping remain explicit future work. See
+[NIL-0015](../../docs/design/NIL-0015-structural-tuples.md).
 
 ### F51 — Interpolation needs typed conversion and original expression spans
 
@@ -1653,3 +1654,63 @@ currently callers must explicitly produce a supported scalar or text value.
 Precision and presentation options remain library calls rather than a second
 formatting grammar. The legacy implicit form still lacks original embedded
 name spans and retains its conservative editor exclusion.
+
+### F52 — Tuple arrays need exact schemas, managed lifetime and explicit bounds
+
+**Observation:** Typed tuple values alone did not make collections of tuples
+portable. Native arrays had scalar element kinds only, generic array intrinsics
+rejected tuples, and interpreter tuple-loop support could fall back to generic
+iterator behavior. Disabling the source type checker also allowed mixed tuple
+schemas into arrays. Treating an invalid read as scalar zero could then appear
+to produce a tuple that had never been constructed.
+
+**Resolution:** Tuple arrays now have an explicit native element kind carrying
+managed tuple handles and their exact ordered schema. Nominal names inside a
+tuple retain their case. The VM checks the annotated schema and initialization
+of stored tuples; native lowering and runtime tracing preserve tuple handles
+and their reachable text, record and reference values. Empty arrays carry the
+same schema as populated ones. Source mismatches reject before replacing an
+output artifact, including when `--no-typecheck` is requested. Fresh tuple
+literals can apply checked scalar conversions at declared construction
+boundaries; existing tuple values and array types remain invariant.
+
+Raw NIL must also prove each tuple slot's declared kind and nominal identity.
+An enum value cannot stand in for a record, different concrete generic enum
+types cannot alias through a shared variant name, and an integer is not proof
+of a live allocation. Pointer checks verify the allocation type and alignment,
+including null and logical one-past values. Positive source cases preserve declared choices and live
+typed base/interior/one-past pointers without changing pointer ownership rules.
+Textual NIL loading now retains enum variants and payload types. Intrinsic
+results retain concrete enum metadata, including generic `Result` values;
+older annotated wrappers can recover that identity from their declared return.
+
+Indexed reads, whole-element replacement, append, generic new/get/set/length
+and checked range copies share that representation. Array aliases observe
+mutation and growth; extracted tuple values keep their immutable slots and
+contained reference identities. Tuple loops evaluate the selected array once,
+including direct paragraph returns, and retain ordinary binding scopes,
+wildcards, `break` and `continue`. Rebinding the source name does not retarget
+the active loop.
+
+Out-of-range tuple reads and uninitialized tuple slots fail explicitly. There
+is no synthetic default tuple. Out-of-range writes remain no-ops, and existing
+scalar-array read defaults are unchanged. Native arrays whose elements are
+records, choices or other arrays remain excluded; support for tuple handles
+does not establish a general aggregate-array ABI.
+
+**Coverage:** Paired Ny/Matrix tuple-array fixtures and
+`tests/tools/tuple_array_contract.py` specify source and binary execution,
+bundles, native compilation, cross-frontend source/binary-library consumption,
+generic standard-library calls, overlap copies, schema failures and bounds.
+The tuple contract includes direct, named and returned array loops. Native
+runtime tests inspect aliasing, growth, transitive collection and reclamation.
+Raw text/binary NIL tests cover malformed nominal fields and initialization,
+legacy intrinsic wrappers, and collection at the tuple-initializer allocation
+boundary.
+
+**Follow-up:** Extend other aggregate-array layouts only with equally explicit
+schema, initialization and lifetime contracts. Nested declaration patterns,
+custom formatting and native FFI layout remain separate work from storing
+typed tuple handles.
+The VM still represents raw pointers as integers: a matching virtual address
+can establish a live allocation, but cannot establish the value's provenance.

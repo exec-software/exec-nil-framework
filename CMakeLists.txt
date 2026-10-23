@@ -2352,6 +2352,7 @@ if(BUILD_TESTING)
             LABELS "typecheck;analysis;rc" TIMEOUT 120)
         foreach(parity_fixture IN ITEMS scientific-literals scientific-literals-matrix
                                         formatted-text formatted-text-matrix
+                                        tuple-arrays tuple-arrays-matrix
                                         signed-numbers-matrix
                                         integer-literal-widths integer-literal-widths-matrix
                                         checked-text-spans checked-text-spans-matrix
@@ -2409,6 +2410,22 @@ if(BUILD_TESTING)
                 --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(nil.tuple-contract PROPERTIES
             LABELS "ny;matrix;analysis;tuples;routes" TIMEOUT 180)
+        add_test(NAME nil.tuple-array-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/tuple_array_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.tuple-array-contract PROPERTIES
+            LABELS "ny;matrix;analysis;tuples;arrays;routes" TIMEOUT 240)
+        if(TARGET nilassembler AND TARGET nillinker)
+            add_test(NAME nil.tuple-array-nil-contract
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/tuple_array_nil_contract.py"
+                    --interpreter $<TARGET_FILE:nilinterpreter> --assembler $<TARGET_FILE:nilassembler>
+                    --linker $<TARGET_FILE:nillinker> --runtime $<TARGET_FILE:nilruntime>
+                    --llvm "${NIL_ENABLE_LLVM}")
+            set_tests_properties(nil.tuple-array-nil-contract PROPERTIES
+                LABELS "nil;native;interpreter;arrays;tuples" TIMEOUT 120)
+        endif()
         add_test(
             NAME ny.scientific-literals-contract
             COMMAND "${Python3_EXECUTABLE}"

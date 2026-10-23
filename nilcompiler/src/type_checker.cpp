@@ -1347,6 +1347,14 @@ bool type_checker::type_contains_class(const std::string &type) {
   return false;
 }
 
+bool type_checker::type_contains_tuple(const std::string &type) {
+  const auto parts = parse_generic_type_string(resolve_type(type).name);
+  if (parts.base_name == "tuple") return true;
+  for (const auto &argument : parts.type_args)
+    if (type_contains_tuple(argument)) return true;
+  return false;
+}
+
 bool type_checker::check_assignment_type(const type_info &expected,
                                          const type_info &actual,
                                          ast_expr *value) {
@@ -1358,6 +1366,28 @@ bool type_checker::check_assignment_type(const type_info &expected,
     if (value) value->rejected_tuple_operation = "Tuple storage type mismatch: expected '" + target + "', got '" + source + "'";
     return false;
   };
+  // A newly constructed array can contextualize each fresh tuple. Existing
+  // arrays retain invariant element layouts; no array handle is reinterpreted.
+  if (target_tuple.base_name == "array" && target_tuple.type_args.size() == 1 &&
+      type_contains_tuple(target_tuple.type_args.front()) && value &&
+      value->kind == ast_node_kind::array_literal_expr_node) {
+    auto &array = static_cast<ast_array_literal_expr &>(*value);
+    for (auto &element : array.elements) {
+      if (!element || !check_assignment_type(resolve_type(target_tuple.type_args.front()),
+            resolve_type(element->inferred_type.value_or("<unknown>")), element.get()))
+        return reject_tuple();
+    }
+    value->inferred_type = target;
+    return true;
+  }
+  const auto source_shape = parse_generic_type_string(source);
+  if ((target_tuple.base_name == "array" || source_shape.base_name == "array") &&
+      (type_contains_tuple(target) || type_contains_tuple(source))) {
+    // The historical array<any> compatibility rule applies to freshly
+    // constructed empty literals, not aliases of an existing storage handle.
+    if (target != source) return reject_tuple();
+    return true;
+  }
   if (target_tuple.base_name == "tuple" && value &&
       value->kind == ast_node_kind::struct_literal_expr_node) {
     auto &tuple = static_cast<ast_struct_literal_expr &>(*value);
@@ -1383,8 +1413,8 @@ bool type_checker::check_assignment_type(const type_info &expected,
     return true;
   }
   const bool compatible = are_types_compatible(expected, actual);
-  if (!compatible && (target_tuple.base_name == "tuple" ||
-      parse_generic_type_string(source).base_name == "tuple")) return reject_tuple();
+  if (!compatible && (type_contains_tuple(target) || type_contains_tuple(source)))
+    return reject_tuple();
   return compatible;
 }
 
@@ -2893,6 +2923,13 @@ void type_checker::visit(ast_variable_decl &p) {
   // Check initializer if present
   type_info init_type = type_unknown;
   if (p.initializer) {
+    if (p.type_name && p.initializer->kind == ast_node_kind::array_literal_expr_node) {
+      const auto declared = resolve_type(*p.type_name);
+      const auto context = parse_generic_type_string(declared.name);
+      if (context.base_name == "array" && context.type_args.size() == 1 &&
+          type_contains_tuple(context.type_args.front()))
+        p.initializer->inferred_type = declared.name;
+    }
     p.initializer->accept(*this);
     if (last_expr_type_) {
       init_type = *last_expr_type_;
@@ -3556,7 +3593,8 @@ void type_checker::visit(ast_return_stmt &s) {
       auto &array = static_cast<ast_array_literal_expr &>(*s.value);
       const auto context =
           parse_generic_type_string(current_function_return_type_->name);
-      if (array.elements.empty() && context.base_name == "array" &&
+      if ((array.elements.empty() || type_contains_tuple(current_function_return_type_->name)) &&
+          context.base_name == "array" &&
           context.type_args.size() == 1 && context.type_args[0] != "any" &&
           context.type_args[0] != "<unknown>") {
         s.value->inferred_type = current_function_return_type_->name;
@@ -4230,6 +4268,14 @@ void type_checker::visit(ast_for_in_stmt &s) {
     std::string type_to_register =
         var_type.has_value() ? *var_type : std::string("any");
 
+    // A tuple-loop wildcard consumes its position without introducing a
+    // binding, matching tuple declaration and match-pattern destructuring.
+    if (var.name == "_" && (s.tuple_pattern || vars.size() > 1)) {
+      if (s.variables.size() > i)
+        s.variables[i].type_name = type_to_register;
+      continue;
+    }
+
     // Insert variable symbol with inferred type and preserve mutability
     symbol sym(var.name, symbol_kind::variable_symbol, nullptr,
                std::optional<std::string>(type_to_register), var.is_mut, false,
@@ -4238,9 +4284,13 @@ void type_checker::visit(ast_for_in_stmt &s) {
                                            diagnostic_source_file_, var.name_span);
     if (sym.semantic_id)
       semantics_.symbols[*sym.semantic_id].lexical_local = true;
-    if (!symbols_.insert_symbol(sym))
-      add_error(var.line, "Loop variable '" + var.name +
-                             "' already declared in this scope");
+    if (!symbols_.insert_symbol(sym)) {
+      const std::string message = "Loop variable '" + var.name +
+                                  "' already declared in this scope";
+      add_error(var.line, message);
+      if (s.iterable && (s.tuple_pattern || vars.size() > 1))
+        s.iterable->rejected_tuple_operation = "Invalid tuple loop binding: " + message;
+    }
 
     // Mutate AST so future type-checking sees the variable type when it checks
     // a reference to the same name inside the loop. Assign into actual AST
@@ -4622,6 +4672,11 @@ void type_checker::visit(ast_call_expr &e) {
                         "use positional arguments for this callable");
   }};
   if (check_runtime_primitive(e)) return;
+  // Explicit generic arguments belong to the caller's lexical/module
+  // context. Preserve their canonical nominal identities on the AST before
+  // lowering or specializing a callee declared in a different module.
+  for (auto &argument : e.type_args)
+    argument = resolve_type(argument).name;
   /* std::cerr << "[type_checker] visit(call_expr) line " << e.line << "
    * callee_kind=" << (int)e.callee->kind << " expected=" <<
    * (int)ast_node_kind::member_access_expr_node << std::endl; */
@@ -4804,12 +4859,21 @@ void type_checker::visit(ast_call_expr &e) {
           const auto &parameter = callee.params[i + parameter_offset];
           if (!parameter.type_name) continue;
           const auto expected = resolve_type(instantiate_generic_type(*parameter.type_name, substitutions));
-          // Legacy general argument inference is intentionally unchanged.
-          // Class boundaries, however, require an explicit checked proof.
-          if ((type_contains_class(expected.name) || type_contains_class(arg_types[i].name)) &&
-              !check_assignment_type(expected, arg_types[i], e.args[i].get()))
+          // Aggregate boundaries require an explicit checked storage proof.
+          // A fresh tuple/array literal may receive element context; an
+          // existing tuple or array handle must retain its exact shape.
+          const bool tuple_boundary = type_contains_tuple(expected.name) ||
+              type_contains_tuple(arg_types[i].name);
+          const bool class_boundary = type_contains_class(expected.name) ||
+              type_contains_class(arg_types[i].name);
+          if ((tuple_boundary || class_boundary) &&
+              !check_assignment_type(expected, arg_types[i], e.args[i].get())) {
             add_error(e.line, "Function '" + callee.name + "' argument " +
-                                  std::to_string(i + 1) + " has incompatible class type");
+                std::to_string(i + 1) + " has incompatible " +
+                (tuple_boundary ? "tuple storage type" : "class type"));
+            if (tuple_boundary)
+              e.rejected_tuple_operation = "Function argument has incompatible tuple storage type";
+          }
         }
         for (std::size_t argument_index = 0;
              argument_index < e.args.size() &&
@@ -5545,6 +5609,9 @@ void type_checker::visit(ast_call_expr &e) {
         if (!order_named_arguments({{"start", "length"}, false})) return;
       }
       if (builtin_receiver.base_name == "array" && method_name == "push") {
+        const bool tuple_storage = builtin_receiver.type_args.size() == 1 &&
+            type_contains_tuple(builtin_receiver.type_args.front());
+        const auto before = diagnostics_.size();
         if (e.args.size() != 1) {
           add_error(e.line, "Array.push expects 1 argument, got " +
                                 std::to_string(e.args.size()));
@@ -5562,13 +5629,18 @@ void type_checker::visit(ast_call_expr &e) {
           const bool storage_conversion =
               (expected.name == "u8" || expected.name == "bool") &&
               integer_storage_value(actual.name);
-          if (!storage_conversion && !are_types_compatible(expected, actual)) {
+          const bool compatible = tuple_storage
+              ? check_assignment_type(expected, actual, e.args.front().get())
+              : are_types_compatible(expected, actual);
+          if (!storage_conversion && !compatible) {
             add_error(e.line, "Array.push element type mismatch. Expected '" +
                                   expected.name + "', got '" + actual.name + "'");
           }
         }
         if (!e.type_args.empty())
           add_error(e.line, "Array.push does not accept method type arguments");
+        if (tuple_storage && diagnostics_.size() != before)
+          e.rejected_tuple_operation = "Invalid tuple array push: element schema and argument contract must match";
         last_expr_type_ = type_void;
         ma->inferred_type = type_void.name;
         e.inferred_type = type_void.name;
@@ -6245,7 +6317,9 @@ void type_checker::visit(ast_assignment_expr &e) {
     e.value->accept(*this);
   const type_info val_type = last_expr_type_.value_or(type_unknown);
   if (target_type &&
-      !(storage_conversion ? storage_types_compatible(*target_type, val_type)
+      !(storage_conversion && !type_contains_tuple(target_type->name) &&
+                              !type_contains_tuple(val_type.name)
+                           ? storage_types_compatible(*target_type, val_type)
                            : check_assignment_type(*target_type, val_type, e.value.get()))) {
     add_error(e.line, "Type mismatch in " + assignment_kind +
                           "assignment. Expected '" + target_type->name +
@@ -6813,6 +6887,27 @@ void type_checker::visit(ast_match_expr &e) {
 }
 
 void type_checker::visit(ast_array_literal_expr &e) {
+  if (e.inferred_type) {
+    const auto context_type = resolve_type(*e.inferred_type);
+    const auto context = parse_generic_type_string(context_type.name);
+    if (context.base_name == "array" && context.type_args.size() == 1 &&
+        type_contains_tuple(context.type_args.front())) {
+      const auto expected = resolve_type(context.type_args.front());
+      for (auto &element : e.elements) {
+        element->accept(*this);
+        const auto actual = last_expr_type_.value_or(type_unknown);
+        if (!check_assignment_type(expected, actual, element.get())) {
+          const std::string message = "Array element type mismatch. Expected '" +
+              expected.name + "', got '" + actual.name + "'";
+          add_error(e.line, message);
+          e.rejected_tuple_operation = message;
+        }
+      }
+      last_expr_type_ = context_type;
+      e.inferred_type = context_type.name;
+      return;
+    }
+  }
   if (e.elements.empty()) {
     if (e.inferred_type) {
       const auto context = parse_generic_type_string(*e.inferred_type);
@@ -6848,9 +6943,13 @@ void type_checker::visit(ast_array_literal_expr &e) {
   // Recheck every element against the final width: a previously compatible
   // bool/i32 pair does not make bool compatible with a later i64 element.
   for (const auto &type : element_types) {
-    if (!are_types_compatible(*elem_type, type))
-      add_error(e.line, "Array element type mismatch. Expected '" +
-                            elem_type->name + "', got '" + type.name + "'");
+    if (!are_types_compatible(*elem_type, type)) {
+      const std::string message = "Array element type mismatch. Expected '" +
+          elem_type->name + "', got '" + type.name + "'";
+      add_error(e.line, message);
+      if (type_contains_tuple(elem_type->name) || type_contains_tuple(type.name))
+        e.rejected_tuple_operation = message;
+    }
   }
 
   // Construct array type string: array<T>

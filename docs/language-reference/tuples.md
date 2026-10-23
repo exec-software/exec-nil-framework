@@ -65,19 +65,54 @@ a mutable record field without replacing the tuple's slot. This follows the
 existing record-handle contract, not C by-value aggregate layout.
 
 Tuples can nest and participate in generic function signatures. Scalar, text,
-and supported record/reference elements use the existing native field layouts.
+and supported record/reference, enum and typed-pointer elements use the existing
+native field layouts.
 Owned buffers and borrows cannot be hidden inside tuples. Record field,
 pointer, and foreign-call restrictions still apply; tuples do not establish a
 C-compatible ABI.
 
 Tuple patterns support binding names, `_`, scalar literals and nested tuple
 patterns in Ny `match` and Matrix `consider`. Guards execute after the pattern
-has bound its names. Tuple-array loops can unpack elements in the interpreter;
-arrays of tuple handles remain outside the native array contract and are
-rejected by native compilation. Loop unpacking requires tuple elements with
-matching arity; scalar arrays and numeric ranges cannot be unpacked. Existing
-interpreter unpacking of homogeneous nested arrays remains available.
-Declaration destructuring is local only.
+has bound its names. Declaration destructuring is local only.
+
+## Arrays of tuples
+
+Tuple arrays work in interpreted and native code. Every element has the same
+ordered tuple schema. The array is mutable: indexing, whole-element replacement,
+`push`, and the shared `nil.std.collections` array primitives preserve that
+schema. The tuple slots themselves remain immutable. Array aliases observe
+replacement and growth, while a previously extracted tuple keeps its value.
+Contained record and reference values keep their shared identities.
+
+```ny
+let points: array<(f64, f64)> = [(1.0, 2.0), (3.0, 4.0)]
+points[0] = (-1.5, 2.5)
+points.push((5.0, 6.0))
+for (x, y) in points
+    println(x + y)
+end for
+```
+
+Ny `for (x, y) in points` and Matrix `repeat for each (x, y) in points`
+unpack tuples with matching arity. A loop evaluates its array expression once,
+including a function call returning the array. Rebinding the source variable
+inside the body does not change that selected array. Ordinary iteration binds
+the entire tuple; `_` can discard individual positions. Scalar arrays and
+numeric ranges cannot be unpacked into tuple bindings. Existing interpreter
+unpacking of homogeneous nested arrays remains available.
+
+An out-of-range tuple-array read is a runtime error, including reads through
+`get<T>`. A tuple has no synthetic zero/default value. Out-of-range writes are
+no-ops, and scalar arrays keep their existing zero-valued read behavior. Use
+checked collection operations or validate bounds before reading. Native arrays
+whose elements are records, enums or arrays remain unsupported; a supported
+tuple may itself contain supported record/reference elements or nested tuples.
+Declared enum fields retain their concrete type, including generic arguments.
+Typed raw-pointer fields preserve the pointer value, including an interior or
+one-past pointer; storing a pointer in a tuple does not transfer ownership or
+permit dereferencing one-past storage. Release the original allocation explicitly
+after its final use.
 
 See [NIL-0015](../design/NIL-0015-structural-tuples.md) for the representation and
-[tuple contract tests](../../tests/tools/tuple_contract.py) for route coverage.
+the [tuple](../../tests/tools/tuple_contract.py) and
+[tuple-array](../../tests/tools/tuple_array_contract.py) contracts for route coverage.

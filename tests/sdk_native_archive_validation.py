@@ -505,7 +505,7 @@ def main() -> int:
                 "--skip-smoke success did not identify its structural-only scope"
             )
         if full_message != (
-            "NIL Framework SDK contract valid: 9 tools, 15 logical library modules, "
+            "NIL Framework SDK contract valid: 10 tools, 15 logical library modules, "
             "17 documentation pages"
         ):
             raise AssertionError("full SDK validation success wording regressed")

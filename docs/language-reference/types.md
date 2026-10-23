@@ -118,12 +118,16 @@ array, tuple, and native-call layouts have narrower contracts than a general
 C-compatible ABI. Standard-library collections are separate APIs, not an
 implied built-in map literal or interchangeable `vec<T>` syntax.
 
-The evidenced native array elements are `i32`, `i64`, `u8`, `bool`, `f64`, and
-NUL-free text. Typed out-of-range reads return the element's zero value;
-out-of-range writes do nothing. `push` requires a compatible element and
+Native array elements include `i32`, `i64`, `u8`, `bool`, `f64`, NUL-free text,
+and supported structural tuples. Scalar out-of-range reads return the element's
+zero value; tuple-array reads fail because a tuple has no default zero value.
+Out-of-range writes do nothing. `push` requires a compatible element and
 preserves aliases when the descriptor grows. Use an explicit cast before
 pushing an integer into `array<f64>`; storage does not reinterpret its bits.
-Nested arrays and raw `ptr<f64>`/`ptr<text>` remain outside this native subset.
+Tuple arrays retain one exact ordered schema and permit whole-element
+replacement while tuple slots stay immutable. See the [tuple reference](tuples.md).
+Native arrays of records, enums and nested arrays, and raw
+`ptr<f64>`/`ptr<text>`, remain outside this subset.
 
 ## Structs and generic enums
 
