@@ -59,7 +59,8 @@ def main() -> None:
              'evaluate exit with code being (returned with nothing)', 'once\n'),
             ('explicit', 'exit(7 as i32)',
              'evaluate exit with code being (7 becomes override integer)', ''),
-            ('floating', 'exit(7.9)', 'evaluate exit with code being 7.9', ''),
+            ('floating', 'exit(7.9 as i32)',
+             'evaluate exit with code being (7.9 becomes override integer)', ''),
             # Narrowing follows existing CAST/storage modulo semantics. It is
             # deliberately tested rather than accidentally relying on LLVM
             # coercion or OS truncation of the process exit code.
@@ -94,8 +95,8 @@ def main() -> None:
             # floating values before the process-exit provider can run.
             source = root / ('outside-range.' + language)
             source.write_text(program(language,
-                'exit(1e30)' if language == 'ny' else
-                'evaluate exit with code being 1e30', declarations[language]))
+                'exit(1e30 as i32)' if language == 'ny' else
+                'evaluate exit with code being (1e30 becomes override integer)', declarations[language]))
             execute(source, 'outside-range-' + language, status=1,
                     diagnostic='CAST: floating-point value is non-finite or outside i64 range')
 
@@ -151,29 +152,81 @@ def main() -> None:
                     execute(source, 'library-' + provider_language + '-' + dependency + '-' + language,
                             search, stdout='9\n')
 
-        # Applying scalar storage conversions must not turn handles/text into
-        # implicit numeric parsing or pointer casts.
+        # Representation normalization must not become implicit numeric
+        # parsing, float truncation or pointer casts. Preserve provider checks
+        # on both checked and unchecked source paths. Raw VM pointers and
+        # booleans are integer words, so only native code can reject their
+        # exact ABI type.
         invalid = [
-            ('text', 'exit("7")', 'evaluate exit with code being "7"', 'requires a scalar'),
+            ('text', 'exit("7")', 'evaluate exit with code being "7"'),
             ('pointer', 'let p = allocate<i32>(1)\nexit(p)',
-             'allocate p as pointer to override integer sized 1\nevaluate exit with code being p', 'requires a scalar'),
-            ('array', 'exit([7])', 'evaluate exit with code being [7]', 'requires a scalar'),
+             'allocate p as pointer to override integer sized 1\nevaluate exit with code being p'),
+            ('array', 'exit([7])', 'evaluate exit with code being [7]'),
             ('function', 'exit(returned)',
-             'evaluate exit with code being the paragraph returned', 'requires a scalar'),
-            ('missing', 'exit()', 'evaluate exit with nothing', 'expects 1 arguments'),
+             'evaluate exit with code being the paragraph returned'),
+            ('boolean', 'let code: bool = true\nexit(code)',
+             'value code as boolean is true\nevaluate exit with code being code'),
+            ('fraction', 'exit(7.9)', 'evaluate exit with code being 7.9'),
+            ('huge_float', 'exit(1e30)', 'evaluate exit with code being 1e30'),
         ]
         for language in ('ny', 'matrix'):
-            for name, ny, matrix, diagnostic in invalid:
+            for name, ny, matrix in invalid:
                 source = root / ('invalid-' + name + '.' + language)
                 source.write_text(program(language, ny if language == 'ny' else matrix,
                                           declarations[language]))
-                for flags in (['--no-bundle'], ['--no-bundle', '--emit-binary-nil'],
-                              *([['--native'], ['--native', '--jit']] if args.llvm == 'ON' else [])):
-                    output = root / 'protected-output'
-                    output.write_bytes(b'previous artifact')
-                    run([compiler, '--quiet', '--no-stdlib', *flags, '-o', output, source],
-                        status=1, diagnostic=diagnostic)
-                    assert output.read_bytes() == b'previous artifact'
+                for unchecked in ([], ['--no-typecheck']):
+                    for encoding in ([], ['--emit-binary-nil']):
+                        output = root / 'invalid.nil'
+                        run([compiler, '--quiet', '--no-stdlib', '--no-bundle', *unchecked,
+                             *encoding, '-o', output, source])
+                        if name not in ('pointer', 'boolean'):
+                            run([interpreter, '--no-ai', output], status=1,
+                                diagnostic='std_sys.exit: expected one integer code')
+                    if args.llvm == 'ON':
+                        for flags in (['--native'], ['--native', '--jit']):
+                            output = root / 'protected-output'
+                            output.write_bytes(b'previous artifact')
+                            run([compiler, '--quiet', '--no-stdlib', *unchecked, *flags,
+                                 '-o', output, source], status=1,
+                                diagnostic='NativeCodegen')
+                            assert output.read_bytes() == b'previous artifact'
+
+            source = root / ('missing.' + language)
+            source.write_text(program(language, 'exit()' if language == 'ny' else
+                                      'evaluate exit with nothing', declarations[language]))
+            for flags in (['--no-bundle'], ['--no-bundle', '--emit-binary-nil'],
+                          *([['--native'], ['--native', '--jit']] if args.llvm == 'ON' else [])):
+                output = root / 'protected-output'
+                output.write_bytes(b'previous artifact')
+                run([compiler, '--quiet', '--no-stdlib', *flags, '-o', output, source],
+                    status=1, diagnostic='expects 1 arguments')
+                assert output.read_bytes() == b'previous artifact'
+
+            # Sleep deliberately validates integer durations itself. An
+            # implicit CAST here would silently turn 0.5 into a zero wait.
+            for name, value in (('fraction', '0.5'), ('text', '"invalid"'),
+                                ('huge', '9223372036854775808.0')):
+                source = root / ('duration-' + name + '.' + language)
+                declaration = ('@intrinsic("time.sleep")\nfn sleep_ms(value: i64)\nend fn\n'
+                               if language == 'ny' else
+                               'note intrinsic "time.sleep"\nsleep-ms receives item as number\n')
+                body = 'sleep_ms(' + value + ')' if language == 'ny' else \
+                       'evaluate sleep-ms with item being ' + value
+                source.write_text(program(language, body, declaration))
+                for unchecked in ([], ['--no-typecheck']):
+                    for encoding in ([], ['--emit-binary-nil']):
+                        output = root / 'invalid-duration.nil'
+                        run([compiler, '--quiet', '--no-stdlib', '--no-bundle', *unchecked,
+                             *encoding, '-o', output, source])
+                        run([interpreter, '--no-ai', output], status=1,
+                            diagnostic='TIME_SLEEP: expected an integer duration')
+                    if args.llvm == 'ON':
+                        output = root / 'protected-duration'
+                        output.write_bytes(b'previous artifact')
+                        run([compiler, '--quiet', '--no-stdlib', '--native', *unchecked,
+                             '-o', output, source], status=1,
+                            diagnostic='TIME_SLEEP requires one integer duration')
+                        assert output.read_bytes() == b'previous artifact'
 
         if args.llvm == 'ON':
             # Source casts qualify operands without relaxing provider ABIs.

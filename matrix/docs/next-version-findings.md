@@ -1749,16 +1749,19 @@ Direct native dispatch bypassed the declared wrapper's scalar parameter
 boundary. Separately, native lowering did not implement the reachable
 `console.read_line` and `console.flush` intrinsics.
 
-**Implemented:** Source lowering now applies declared scalar parameter
-conversions before direct annotated interop/intrinsic dispatch. Literals,
+**Implemented:** Source lowering now normalizes declared scalar parameter
+representations before direct annotated interop/intrinsic dispatch. Literals,
 variables, returned values, reordered Matrix named arguments, and declarations
 loaded from source or binary libraries use the existing scalar conversion
 semantics. Integer narrowing wraps as it does at other scalar storage
-boundaries; nonfinite or out-of-range floating-to-integer conversion faults.
-Text, arrays and pointer handles cannot become implicit numeric arguments.
-Raw NIL and forged provider declarations must still satisfy exact native ABI
-checks. This is a lowering fix; broad scalar compatibility diagnostics in the
-analysis/typechecking API remain a separate task.
+boundaries. Floating-to-integer conversion requires an explicit source cast;
+its nonfinite and out-of-range checks remain intact. Boolean and non-scalar
+operands retain their representation so provider validation can reject them.
+In particular, implicit conversion must not make a fractional sleep duration
+silently succeed. Raw NIL and forged provider declarations must still satisfy
+exact native ABI checks. This is a lowering fix; broad scalar compatibility
+diagnostics in the analysis/typechecking API remain a separate task, including
+VM values whose handle representation alone cannot prove their source type.
 
 Native line input and flushing now have runtime, wrapper, direct NIL, and JIT
 implementations. Line input strips LF, preserves an empty line or a final

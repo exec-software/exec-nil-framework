@@ -3802,7 +3802,7 @@ public:
       }
 
       // Direct native dispatch bypasses the declared wrapper's parameter
-      // boundary. Preserve that boundary explicitly: PUSH_CONST uses a word
+      // boundary. Preserve scalar representation explicitly: PUSH_CONST uses a word
       // representation even for an i32 literal, and an accepted scalar
       // argument can have a different width from the declared parameter.
       // This is source lowering only; handwritten NIL must still satisfy the
@@ -3835,15 +3835,20 @@ public:
             if (scalar_types.count(expected)) {
               auto actual = substitute_nil_type_name(*ce.args[index]->inferred_type, substitutions);
               if (actual == "int") actual = "i32";
-              if (!scalar_types.count(actual)) {
-                cg_.reject_codegen_construct(ce.line,
-                    "Native function '" + native_call_declaration->name + "' argument " +
-                        std::to_string(index + 1) + " requires a scalar for parameter '" +
-                        parameter.name + "' of type '" + expected + "', got '" + actual + "'",
-                    "pass a checked scalar value; handles and text are not numeric arguments");
-                return;
-              }
-              scalar_type = std::move(expected);
+              const bool floating_argument = actual == "f64" || actual == "f32";
+              const bool floating_parameter = expected == "f64" || expected == "f32";
+              const bool boolean_argument = actual == "bool";
+              const bool boolean_parameter = expected == "bool";
+              // Providers own their value/category checks. Do not turn a
+              // fractional duration into an integer or parse text/handles as
+              // numeric values, including under --no-typecheck (which can
+              // still leave inferred_type metadata). Float-to-integer
+              // conversion and changes of boolean category therefore require
+              // an explicit source cast.
+              if (scalar_types.count(actual) &&
+                  (!floating_argument || floating_parameter) &&
+                  boolean_argument == boolean_parameter)
+                scalar_type = std::move(expected);
             }
           }
         }
