@@ -42,10 +42,17 @@ help/version identity. Aperture retains its own preview version.
 
 ## `aperture`
 
-Aperture is the framework's analysis and debugging preview, with `explore`,
-`memory`, `trace`, and `agent` commands. Run `aperture --help` for its command
-interface. Its prototype capabilities are separate from the v1 language and
-`nildebugger` contracts. See the [Aperture overview](../../aperture/README.md).
+Aperture records runtime memory activity from Ny and Matrix programs. Use
+`aperture memory --output memory.json example.matrix` for the interpreter or
+add `--native` for native compilation and execution. Inspect a saved report with
+`aperture memory --report memory.json`, optionally adding `--json`.
+
+Reports include allocated, freed, live and peak logical storage, allocation
+sites, and GC activity within their stated accounting scope. They do not measure
+process RSS or establish memory leaks. Recording currently requires a POSIX
+host; saved-report inspection does not execute the target. Heap snapshots,
+CPU tracing, code exploration and debugger integration remain planned. See the
+[Aperture overview](../../aperture/README.md) for options and limitations.
 
 ## `nilbuild`
 

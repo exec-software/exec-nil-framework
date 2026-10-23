@@ -1,99 +1,87 @@
-# Aperture Design Notes
+# Aperture memory profiling
 
-## Rationale
+Aperture's first complete workflow records a program, reports where runtime
+memory accumulates, and provides source locations for investigation. The CLI and
+runtime share a versioned report format so editor features and automated tools
+can consume the same evidence.
 
-The NIL framework has three existing analysis/debugging tools:
+## Recording flow
 
-1. **`nilcompiler --analyze`** — static analysis of source
-2. **`nildebugger`** — interactive runtime debugging (DAP-based)
-3. **`nilinterpreter`** — runtime execution with instrumentation hooks
+1. The CLI validates the target and exclusively reserves an optional output
+   destination before execution.
+2. Source inputs are compiled with debug metadata to temporary NIL. Native source
+   inputs then pass through `nilassembler` and `nillinker` using that metadata.
+3. Aperture starts the interpreter or native target directly, with an argument
+   vector and no shell. `NIL_MEMORY_PROFILE` names a fresh file in a private
+   temporary directory. Compilation tools do not receive that setting.
+4. The runtime reserves its report path exclusively, records allocations and
+   releases, and finalizes the report before tearing down its managed state.
+5. Aperture validates the report before displaying or publishing it. Failed or
+   incomplete runs remain explicitly identified; a successful target without a
+   valid completed profile is a profiling failure.
 
-These cover individual phases but lack a unified interface. Aperture unifies
-them into a single analysis engine, and adds a machine-readable interface for
-AI agents.
+The child inherits standard input/output/error and the caller's working
+directory. Target output stays on standard output; recording summaries go to
+standard error. Saved-report inspection uses standard output and does not run a
+program. Target exit codes are propagated, including signal-derived statuses.
 
-## Architecture
+## Runtime contract
 
-### Engine Model
+`NIL_MEMORY_PROFILE` activates an opt-in recording session. The shared collector
+is inert when the variable is absent. Runtime hooks identify allocation sites,
+record allocation and resize deltas, and record logical release and collection
+events. The native compiler emits source-site updates at allocating instructions;
+the interpreter uses its current instruction and debug metadata.
 
-Each analysis capability is a self-contained engine:
+A session writes one `aperture.memory.v1` JSON object containing:
 
-```
-┌─────────────┐
-│ Aperture CLI │  dispatches to the appropriate engine
-└──────┬──────┘
-       │
-   ┌───┼───┬───────────┐
-   ▼   ▼   ▼           ▼
-┌────┐┌────┐┌──────┐┌────────┐
-│Explore││Memory││Trace ││Agent  │
-│Engine││Engine││Engine││Interface│
-└────┘└────┘└──────┘└────────┘
-   │      │        │         │
-   └──────┼────────┴─────────┘
-          ▼
-   ┌──────────────┐
-   │ Aperture Core │  shared types, logger, target resolution
-   └──────────────┘
-```
+| Field | Meaning |
+|---|---|
+| `schema` | Exactly `aperture.memory.v1` |
+| `route` | `vm` or `native` |
+| `measurement` | `runtime_logical_bytes` |
+| `completed`, `status` | Whether recording finalized, and how execution ended |
+| `totals` | Allocated/freed/live/peak bytes and objects; resize count |
+| `collections` | Collection count, elapsed nanoseconds, reclaimed bytes and objects |
+| `sites` | The same counters grouped by file, function, line, and allocation kind |
+| `scope` | Accounting boundaries and runtime-specific exclusions |
+| `errors` | Instrumentation/reporting failures |
+| `excluded_sessions` | Runtime sessions outside the recorded session |
+| `site_limit_reached` | Whether source-site detail reached its recording limit |
 
-### Engine Responsibilities
+Byte counters use delta accounting: growth adds allocated bytes, shrinkage adds
+freed bytes, and resizing does not create or free an object. Therefore
+`allocated - freed = live`, with `live <= peak <= allocated`. Peak values are
+maxima over the session, not sums of per-site peaks. Unknown source metadata uses
+an empty file and line zero; it must not be replaced with guessed source lines.
 
-| Engine | Responsibility | Output |
-|--------|---------------|--------|
-| **Explore** | Decompilation, call graphs, type hierarchy | Function map, call graph |
-| **Memory** | Heap profiling, allocation tracking, leak detection | Snapshots, leak list |
-| **Trace** | CPU profiling, flame graphs, hotspot analysis | Stack samples, timing data |
-| **Agent** | AI-driven analysis orchestration | Recommendations, findings |
+Reports aggregate sites rather than retaining all individual events. Native and
+VM storage models differ, so byte-for-byte parity is not a contract. Both routes
+must preserve program behavior and identify the relevant source allocation.
+The report is finalized before ordinary shutdown cleanup, retaining useful live
+storage evidence instead of automatically reporting zero.
 
-### Data Flow
+## Limits and failure behavior
 
-1. **CLI** resolves the target file (`.nil`, `.ny`, `.matrix`, or native)
-2. **Core** provides shared infrastructure: logger, target metadata
-3. **Engine** performs its analysis, producing structured results
-4. **Agent** can orchestrate multiple engines and correlate results
+Live allocations are not classified as leaks. No root-retention graph, allocation
+lifetime, full call stack, allocation-rate timeline, CPU sample, or debugger heap
+snapshot is produced yet. Source locations can be unavailable in artifacts built
+without debug metadata. Allocations outside the NIL runtime's tracked storage
+are outside the report's scope. In native unmanaged mode, raw allocations,
+records, variants, and string concatenation use libc directly and are excluded;
+arrays and other storage allocated through the NIL runtime remain tracked.
 
-### AI Agent Interface
+The CLI rejects malformed JSON, unknown schema versions, missing fields,
+inconsistent counters, oversized reports, and unsupported status values. It
+never interprets report strings as commands. Existing output files and symlink
+referents are not overwritten. Runtime output failures are diagnostics and
+nonzero results, not apparently successful empty profiles. Abrupt process death
+may leave an unfinished temporary report and cannot promise a final snapshot.
 
-Aperture's differentiator is its machine-readable output. Every engine supports
-`--json` mode, emitting structured JSON that an AI agent can consume. The
-`agent` subcommand orchestrates all engines and produces a unified report.
+## Next integrations
 
-This enables:
-- Autonomous code analysis by AI agents
-- Correlation of findings across engines (e.g., memory leaks + hotspots)
-- Recommendation generation based on multiple data sources
-
-## Integration Points
-
-### With nilcompiler
-
-The explore engine will eventually use nilcompiler's semantic analysis API
-to get accurate call graphs and type information from source code.
-
-### With nilinterpreter
-
-The memory and trace engines need hooks into the NIL VM to capture:
-- Allocation events (for memory profiling)
-- Execution ticks (for CPU tracing)
-- Stack frames (for flame graphs)
-
-### With nildebugger
-
-The debugger's DAP protocol provides source-level debugging. Aperture can
-use this for interactive analysis sessions where the agent queries live
-program state.
-
-## Future Extensions
-
-- **Visual flame graphs** — HTML output for browser viewing
-- **Diff analysis** — compare two versions of a program
-- **Continuous profiling** — attach to running processes
-- **Custom analysis plugins** — extensible engine system
-- **Web interface** — GUI for interactive exploration
-
-## Naming
-
-"Aperture" — a lens opening that lets light in. Aperture illuminates the
-inside of NIL programs. It's a single word, easy to type, and fits the
-photography metaphor: memory snapshots, call graph exposures, trace captures.
+VS Code can launch recording and read the same saved JSON for source navigation.
+Future debugger support should reuse the source identity and allocation hooks to
+capture snapshots while paused. Retention analysis, snapshot comparison,
+allocation timelines, and CPU call trees can extend the suite without claiming
+those features in the current memory report.
