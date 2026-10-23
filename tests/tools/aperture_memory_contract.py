@@ -212,6 +212,22 @@ end paragraph
         assert gc_profile['totals']['live_objects'] >= 1, gc_profile
         checks += 1
 
+        if args.llvm == 'ON':
+            # Native collection runs at managed safepoints; the public
+            # gc.collect intrinsic is not yet lowered on that route.
+            fixture = Path(__file__).resolve().parents[1] / 'language/stdlib-native-primitives-lifetime.ny'
+            native_gc = root / 'native collection.ny'
+            native_gc.write_text(fixture.read_text())
+            output = root / 'native-collection.json'
+            result = run([aperture, 'memory', '--native', '--output', output, native_gc])
+            assert result.stdout == fixture.with_suffix('.stdout').read_text(), result
+            profile = validate(output, 'native', native_gc)
+            assert profile['collections']['count'] >= 1, profile
+            assert profile['collections']['freed_objects'] >= 1, profile
+            assert profile['collections']['freed_bytes'] > 0, profile
+            assert profile['totals']['live_objects'] >= 1, profile
+            checks += 1
+
         owned = root / 'owned.ny'
         owned.write_text('fn main() -> i32\nif true then\nlet value = owned<i32>(4)\n'
                          'println(42)\nend if\nreturn 0\nend fn\n')

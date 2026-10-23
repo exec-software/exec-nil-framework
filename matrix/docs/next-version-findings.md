@@ -1753,8 +1753,15 @@ argument before native interop lowering.
 
 Separately, `nil.std.io.read_line()` works in the interpreter but native
 compilation rejects its reachable `console.read_line` intrinsic as unsupported.
-Both failures reproduce through direct native compilation with the SDK that
+These two failures reproduce through direct native compilation with the SDK that
 predates Aperture recording, so they are not profiling regressions.
+
+The public `nil.std.runtime.collect` wrapper also retains a VM-only
+`gc.collect` intrinsic; native lowering rejects an explicit call. Native managed
+safepoints do collect automatically. Profiling the existing text-lifetime stress
+fixture confirms that reclaimed native storage appears in collection counters
+while rooted strings survive. An explicit cross-route collection API remains
+separate work from observing the collector that already runs.
 
 **Current handling:** Aperture passes program arguments without shell expansion
 and keeps standard input attached to the target. Its contract tests exercise
