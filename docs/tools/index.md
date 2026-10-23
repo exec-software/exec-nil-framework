@@ -15,7 +15,7 @@ A complete SDK has the following top-level shape:
 ```text
 nilcompiler  nilinterpreter  nilassembler  nillinker
 nillsp       nildebugger     nilschema     nilagent
-nilbuild
+nilbuild     aperture
 nillib/      nilstd/         docs/         manifest.json
 ```
 
@@ -34,6 +34,18 @@ and semantic analysis. The current compiler re-checks that embedded interface
 and regenerates imported bodies. Direct compiled-body linking is a later format
 step, so `nillib` is a source-independent distribution today, not yet a
 zero-recompilation module cache.
+
+Earlier sealed `nil.sdk.v1` generations contain the original nine commands;
+validation continues to accept that complete inventory. New SDK builds require
+Aperture, include its digest in the manifest and build evidence, and check its
+help/version identity. Aperture retains its own preview version.
+
+## `aperture`
+
+Aperture is the framework's analysis and debugging preview, with `explore`,
+`memory`, `trace`, and `agent` commands. Run `aperture --help` for its command
+interface. Its prototype capabilities are separate from the v1 language and
+`nildebugger` contracts. See the [Aperture overview](../../aperture/README.md).
 
 ## `nilbuild`
 
