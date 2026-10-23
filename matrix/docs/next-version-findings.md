@@ -1740,37 +1740,72 @@ debugger snapshots need separate contracts. The first capture owns one runtime
 session; restarting a paused VM must mark its old capture abandoned rather than
 silently combining executions. See the [Aperture design](../../aperture/docs/DESIGN.md).
 
-### F54 — Native system-call arguments and console input still have route gaps
+### F54 — Native system-call arguments and console input needed route parity
 
 **Observation:** Aperture's real-program qualification exposed two existing
-native limitations. Importing `nil.std.system.*` and calling `exit(7)` passes
-source checking and works in the interpreter, but direct native compilation
-rejects the call with `std_sys.exit requires one i32 operand`. Writing
-`exit(7 as i32)` qualifies the native boundary and preserves exit status 7 on
-both routes. The source declaration already requires `i32`; an accepted literal
-argument should acquire the same scalar representation as an explicitly cast
-argument before native interop lowering.
+native limitations. `nil.std.system.exit(7)` passed source checking and worked
+in the interpreter, but native compilation required an explicit `as i32` cast.
+Direct native dispatch bypassed the declared wrapper's scalar parameter
+boundary. Separately, native lowering did not implement the reachable
+`console.read_line` and `console.flush` intrinsics.
 
-Separately, `nil.std.io.read_line()` works in the interpreter but native
-compilation rejects its reachable `console.read_line` intrinsic as unsupported.
-These two failures reproduce through direct native compilation with the SDK that
-predates Aperture recording, so they are not profiling regressions.
+**Implemented:** Source lowering now applies declared scalar parameter
+conversions before direct annotated interop/intrinsic dispatch. Literals,
+variables, returned values, reordered Matrix named arguments, and declarations
+loaded from source or binary libraries use the existing scalar conversion
+semantics. Integer narrowing wraps as it does at other scalar storage
+boundaries; nonfinite or out-of-range floating-to-integer conversion faults.
+Text, arrays and pointer handles cannot become implicit numeric arguments.
+Raw NIL and forged provider declarations must still satisfy exact native ABI
+checks. This is a lowering fix; broad scalar compatibility diagnostics in the
+analysis/typechecking API remain a separate task.
 
-The public `nil.std.runtime.collect` wrapper also retains a VM-only
-`gc.collect` intrinsic; native lowering rejects an explicit call. Native managed
-safepoints do collect automatically. Profiling the existing text-lifetime stress
-fixture confirms that reclaimed native storage appears in collection counters
-while rooted strings survive. An explicit cross-route collection API remains
-separate work from observing the collector that already runs.
+Native line input and flushing now have runtime, wrapper, direct NIL, and JIT
+implementations. Line input strips LF, preserves an empty line or a final
+nonempty unterminated line, and faults on EOF or input errors. On POSIX, CR is
+retained. UTF-8 bytes are preserved. Native text's existing NUL-terminated ABI
+requires explicit rejection of embedded NUL, while the VM retains that byte.
+Reading publishes a preceding console prompt before blocking. Returned native
+text is managed storage that survives collection when rooted and appears in
+Aperture allocation sites. Console contracts exercise Ny and Matrix, both
+memory modes, long input, prompt visibility, failures and invalid ABI metadata.
+Aperture exercises stdin forwarding and EOF failure reports on both routes.
 
-**Current handling:** Aperture passes program arguments without shell expansion
-and keeps standard input attached to the target. Its contract tests exercise
-space-containing and empty arguments on both routes, and line input on the VM.
-Native console input is not claimed as supported. Explicitly typed `exit`
-arguments qualify orderly exit profiling in both execution routes.
+**Follow-up:** The public `nil.std.runtime.collect`, `stats`, and critical-section
+wrappers still need a coherent native API. Native managed safepoints already
+collect automatically, and Aperture observes reclaimed storage. Simply exposing
+the internal collection helper would be misleading: it deliberately does
+nothing without compiler-managed root frames. Public collection also needs
+safe/unsafe mode checks, generation validation, nested critical sections, and
+per-context counters with defined reset and overflow behavior.
 
-**Follow-up:** Apply declared scalar parameter conversions consistently at native
-interop calls, then add a paired literal/variable/explicit-cast contract. Add
-native console line input with an explicit EOF, encoding and allocation-lifetime
-contract, including memory-source attribution for the returned text. These are
-language/runtime parity tasks rather than profiler-specific workarounds.
+Public GC statistics and Aperture measure different scopes. VM GC statistics
+count raw buffers and eight-byte array slots; native managed storage includes
+text, records, descriptors and capacity, while raw allocations are separate.
+Define those units and the returned statistics object's own allocation before
+claiming cross-route equivalence. Windows console behavior still needs platform
+qualification.
+
+Imported library allocation sites can retain a function name without a source
+file when the library lacks debug metadata; a full caller stack is not captured.
+An embedding host that enables the C++ input stream's `eofbit` exception mask
+can also turn a valid final unterminated line into an error. Normal CLI stream
+defaults are covered; custom exception-mask behavior needs a shared VM/native
+input policy and a separate embedding contract.
+
+### F55 — VM array growth omitted cumulative allocation statistics
+
+**Observation:** Appending to an array increased `current_heap_usage` but left
+`stats().total_allocated` unchanged. Growing an initially empty array could make
+live bytes exceed cumulative bytes, including through an alias.
+
+**Implemented:** Each successful append charges one existing eight-byte GC
+array slot to the cumulative counter. The shared accounting helper saturates
+at the public signed 64-bit limit. Element replacement, explicit free, and
+collection do not add or subtract cumulative allocation bytes. Safe and unsafe
+VM contracts cover repeated growth, aliases, `i32`/`u8`/`bool` arrays, raw buffer
+accounting, and reclamation after frames depart.
+
+**Follow-up:** This preserves the public GC statistics' historical slot unit.
+Aperture's typed payload measurement remains independent; it must not be
+silently substituted for the GC API's byte counts.

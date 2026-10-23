@@ -82,6 +82,16 @@ std::uint64_t heap_element_stride(const std::string &type_name) {
   return 8;
 }
 
+void account_heap_allocation(std::uint64_t &total, std::uint64_t bytes) {
+  const auto observable_limit =
+      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+  const auto increment = std::min(bytes, observable_limit);
+  if (total > observable_limit - increment)
+    total = observable_limit;
+  else
+    total += increment;
+}
+
 using detail::IntegerParseResult;
 using detail::parse_signed_integer;
 
@@ -1581,6 +1591,10 @@ void VM::executeInstruction(const Instruction &instr) {
           it->second.data.push_back(
               canonical_pointer_value(it->second, args[1], "array__push"));
           it->second.element_count++;
+          // Match the GC statistics' logical heap slots, independently of
+          // Aperture's typed payload bytes. Charge only a successful append.
+          account_heap_allocation(total_allocated_bytes_,
+                                  heap_element_stride(it->second.type_name));
           if (memory_profile_.enabled())
             memory_profile_.resize(
                 reinterpret_cast<const void *>(static_cast<std::uintptr_t>(handle)),
@@ -6494,13 +6508,7 @@ void VM::releaseHeapBlock(int64_t pointer) {
 
 void VM::storeHeapBlock(int64_t pointer, HeapBlock block) {
   const std::uint64_t bytes = heapBlockBytes(block);
-  const std::uint64_t observable_limit =
-      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
-  if (total_allocated_bytes_ >
-      observable_limit - std::min(bytes, observable_limit))
-    total_allocated_bytes_ = observable_limit;
-  else
-    total_allocated_bytes_ += bytes;
+  account_heap_allocation(total_allocated_bytes_, bytes);
   heap_[pointer] = std::move(block);
   if (memory_profile_.enabled()) {
     const auto &stored = heap_.at(pointer);
