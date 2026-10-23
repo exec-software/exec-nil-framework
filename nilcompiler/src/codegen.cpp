@@ -1037,6 +1037,13 @@ static size_t get_native_size(codegen &cg, const std::string &type_name) {
   return 8;
 }
 
+static bool is_declared_enum_type(codegen &cg, const std::string &type) {
+  const auto parsed = parse_generic_type_name(type);
+  const auto base = canonical_builtin_enum_base(parsed ? parsed->base_name : type);
+  return cg.lookup_enum_decl(base) ||
+         cg.lookup_enum_decl(cg.lookup_enum_fqn(base));
+}
+
 class emitter {
 public:
   emitter(nil_function &out, nil_module &mod, codegen &cg,
@@ -3934,7 +3941,11 @@ public:
               raw_ret = *fn_decl_for_intrinsic_check->return_type;
             }
             if (!raw_ret.empty() && raw_ret != "void") {
-              if (raw_ret == "text" || raw_ret == "String") {
+              if (is_declared_enum_type(cg_, raw_ret)) {
+                // Intrinsics return typed managed enum values. Their register
+                // width is not a substitute for the concrete generic identity.
+                ret_type_str = canonical_nil_type_name(raw_ret);
+              } else if (raw_ret == "text" || raw_ret == "String") {
                 ret_type_str = "text";
               } else {
                 size_t sz = get_native_size(cg_, raw_ret);
@@ -6085,7 +6096,9 @@ codegen::assemble_module(const ast_program &program,
           call.args.push_back(std::to_string(fn_decl.params.size()));
 
           std::string ret_type_str = "void";
-          if (fn_decl.return_type.has_value()) {
+          if (is_declared_enum_type(*this, fn.return_type)) {
+            ret_type_str = canonical_nil_type_name(fn.return_type);
+          } else if (fn_decl.return_type.has_value()) {
             ret_type_str = *fn_decl.return_type;
             size_t sz = get_native_size(
                 *this, ret_type_str); // Need `get_native_size` visibility?

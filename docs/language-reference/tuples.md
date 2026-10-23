@@ -65,7 +65,8 @@ a mutable record field without replacing the tuple's slot. This follows the
 existing record-handle contract, not C by-value aggregate layout.
 
 Tuples can nest and participate in generic function signatures. Scalar, text,
-and supported record/reference elements use the existing native field layouts.
+and supported record/reference, enum and typed-pointer elements use the existing
+native field layouts.
 Owned buffers and borrows cannot be hidden inside tuples. Record field,
 pointer, and foreign-call restrictions still apply; tuples do not establish a
 C-compatible ABI.
@@ -106,6 +107,11 @@ no-ops, and scalar arrays keep their existing zero-valued read behavior. Use
 checked collection operations or validate bounds before reading. Native arrays
 whose elements are records, enums or arrays remain unsupported; a supported
 tuple may itself contain supported record/reference elements or nested tuples.
+Declared enum fields retain their concrete type, including generic arguments.
+Typed raw-pointer fields preserve the pointer value, including an interior or
+one-past pointer; storing a pointer in a tuple does not transfer ownership or
+permit dereferencing one-past storage. Release the original allocation explicitly
+after its final use.
 
 See [NIL-0015](../design/NIL-0015-structural-tuples.md) for the representation and
 the [tuple](../../tests/tools/tuple_contract.py) and

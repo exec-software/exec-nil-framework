@@ -102,6 +102,7 @@ and control flow in both frontends and execution modes.
 `tests/language/tuple-arrays.ny`, `tests/language/tuple-arrays-matrix.matrix` and
 `tests/tools/tuple_array_contract.py` cover indexing, whole-tuple replacement,
 scalar/text/nested fields, shared record identities, growth and returned values,
+concrete and generic enum fields, typed base/interior/one-past pointers,
 generic standard-library primitives and overlapping checked copies. The contract
 also exercises cross-language source/binary-library consumers, exact schema
 rejection before output replacement, tuple bounds failures and remaining native

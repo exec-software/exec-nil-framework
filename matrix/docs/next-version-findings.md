@@ -1674,6 +1674,16 @@ output artifact, including when `--no-typecheck` is requested. Fresh tuple
 literals can apply checked scalar conversions at declared construction
 boundaries; existing tuple values and array types remain invariant.
 
+Raw NIL must also prove each tuple slot's declared kind and nominal identity.
+An enum value cannot stand in for a record, different concrete generic enum
+types cannot alias through a shared variant name, and an integer is not proof
+of a live allocation. Pointer checks verify the allocation type and alignment,
+including null and logical one-past values. Positive source cases preserve declared choices and live
+typed base/interior/one-past pointers without changing pointer ownership rules.
+Textual NIL loading now retains enum variants and payload types. Intrinsic
+results retain concrete enum metadata, including generic `Result` values;
+older annotated wrappers can recover that identity from their declared return.
+
 Indexed reads, whole-element replacement, append, generic new/get/set/length
 and checked range copies share that representation. Array aliases observe
 mutation and growth; extracted tuple values keep their immutable slots and
@@ -1694,8 +1704,13 @@ bundles, native compilation, cross-frontend source/binary-library consumption,
 generic standard-library calls, overlap copies, schema failures and bounds.
 The tuple contract includes direct, named and returned array loops. Native
 runtime tests inspect aliasing, growth, transitive collection and reclamation.
+Raw text/binary NIL tests cover malformed nominal fields and initialization,
+legacy intrinsic wrappers, and collection at the tuple-initializer allocation
+boundary.
 
 **Follow-up:** Extend other aggregate-array layouts only with equally explicit
 schema, initialization and lifetime contracts. Nested declaration patterns,
 custom formatting and native FFI layout remain separate work from storing
 typed tuple handles.
+The VM still represents raw pointers as integers: a matching virtual address
+can establish a live allocation, but cannot establish the value's provenance.

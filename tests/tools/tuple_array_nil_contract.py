@@ -14,6 +14,14 @@ import tempfile
 
 PAIR = "tuple<i64,text>"
 SCHEMAS = [(PAIR, [("0", "i64"), ("1", "text")], ["@nil_tuple"])]
+ENUMS = [
+    ("Other", [("One", "")]),
+    ("Expected", [("One", ""), ("Payload", "i64")]),
+    ("expected", [("One", "")]),
+    ("Generic<i64>", [("None", ""), ("Some", "i64")]),
+    ("Generic<text>", [("None", ""), ("Some", "text")]),
+    ("Result<i32,text>", [("Ok", "i32"), ("Error", "text")]),
+]
 
 
 def instructions(source: str) -> list[tuple[str, list[str]]]:
@@ -21,18 +29,26 @@ def instructions(source: str) -> list[tuple[str, list[str]]]:
             if (parts := line.split())]
 
 
-def encode(body, schemas, binary):
+def encode(body, schemas, binary, extra_functions=()):
     body = body + instructions("PUSH_CONST 0\nRET")
+    functions = [("main", "i32", [], body), *extra_functions]
     if not binary:
         lines = ['module tuple_array_nil', 'const word = "retained text"']
         for name, fields, annotations in schemas:
             lines += annotations + ["struct " + name]
             lines += [field + ": " + kind for field, kind in fields]
             lines += ["end struct"]
-        lines += ["function main() -> i32:"]
-        lines += [" ".join([opcode, *(json.dumps(argument) for argument in args)])
-                  for opcode, args in body]
-        return ("\n".join(lines + ["end function", ""])).encode()
+        for name, variants in ENUMS:
+            lines += ["enum " + name]
+            lines += [variant + (": " + payload if payload else "")
+                      for variant, payload in variants]
+            lines += ["end enum"]
+        for name, result_type, annotations, function_body in functions:
+            lines += annotations + [f"function {name}() -> {result_type}:"]
+            lines += [" ".join([opcode, *(json.dumps(argument) for argument in args)])
+                      for opcode, args in function_body]
+            lines += ["end function"]
+        return ("\n".join(lines + [""])).encode()
 
     def u32(value):
         return struct.pack("<I", value)
@@ -46,12 +62,19 @@ def encode(body, schemas, binary):
         types += string(name) + u32(len(fields))
         types += b"".join(string(field) + string(kind) for field, kind in fields)
         types += u32(len(annotations)) + b"".join(map(string, annotations))
-    types += u32(0)
-    function = (u32(1) + string("main") + u32(0) + u32(0) + string("i32") +
-                u32(0) + u32(0) + u32(0) + u32(len(body)))
-    for opcode, args in body:
-        function += string(opcode) + u32(len(args))
-        function += b"".join(map(string, args)) + u32(0)
+    types += u32(len(ENUMS))
+    for name, variants in ENUMS:
+        types += string(name) + u32(len(variants))
+        types += b"".join(string(variant) + string(payload) for variant, payload in variants)
+        types += u32(0)
+    function = u32(len(functions))
+    for name, result_type, annotations, function_body in functions:
+        function += (string(name) + u32(0) + u32(0) + string(result_type) +
+                     u32(0) + u32(0) + u32(len(annotations)) +
+                     b"".join(map(string, annotations)) + u32(len(function_body)))
+        for opcode, args in function_body:
+            function += string(opcode) + u32(len(args))
+            function += b"".join(map(string, args)) + u32(0)
     sections = [(1, types), (2, function),
                 (3, u32(1) + string("word") + string("retained text")),
                 (4, u32(0)), (5, string("tuple_array_nil") + u32(0))]
@@ -131,6 +154,56 @@ def main():
         ("case-different-field", instructions("NEW_STRUCT tuple<Widget>\nNEW_STRUCT widget\n"
          "PUSH_CONST 73\nSET_FIELD value\nSET_FIELD 0\nNEW_ARRAY_LITERAL 1 tuple<Widget>\nPOP"), nominal_schemas),
     ]
+    def singleton_schema(element):
+        return [(f"tuple<{element}>", [("0", element)], ["@nil_tuple"])]
+
+    enum_schemas = singleton_schema("Expected")
+    invalid += [
+        ("enum-for-record", instructions("NEW_STRUCT tuple<Widget>\nNEW_VARIANT Other::One 0\n"
+         "SET_FIELD 0\nNEW_ARRAY_LITERAL 1 tuple<Widget>\nPOP"), nominal_schemas),
+        ("unrelated-enum", instructions("NEW_STRUCT tuple<Expected>\nNEW_VARIANT Other::One 0\n"
+         "SET_FIELD 0\nNEW_ARRAY_LITERAL 1 tuple<Expected>\nPOP"), enum_schemas),
+        ("case-different-enum", instructions("NEW_STRUCT tuple<Expected>\nNEW_VARIANT expected::One 0\n"
+         "SET_FIELD 0\nNEW_ARRAY_LITERAL 1 tuple<Expected>\nPOP"), enum_schemas),
+        ("unknown-variant", instructions("NEW_STRUCT tuple<Expected>\nNEW_VARIANT Expected::Missing 0\n"
+         "SET_FIELD 0\nNEW_ARRAY_LITERAL 1 tuple<Expected>\nPOP"), enum_schemas),
+        ("wrong-enum-payload", instructions("NEW_STRUCT tuple<Expected>\nPUSH_CONST_STR word\n"
+         "NEW_VARIANT Expected::Payload 1 Expected i64\nSET_FIELD 0\n"
+         "NEW_ARRAY_LITERAL 1 tuple<Expected>\nPOP"), enum_schemas),
+        ("wrong-generic-unit-enum", instructions("NEW_STRUCT tuple<Generic<i64>>\n"
+         "NEW_VARIANT Generic::None 0 Generic<text> void\nSET_FIELD 0\n"
+         "NEW_ARRAY_LITERAL 1 tuple<Generic<i64>>\nPOP"), singleton_schema("Generic<i64>")),
+        ("missing-record-schema", instructions("NEW_STRUCT tuple<Missing>\nNEW_STRUCT Missing\n"
+         "SET_FIELD 0\nNEW_ARRAY_LITERAL 1 tuple<Missing>\nPOP"), singleton_schema("Missing")),
+        ("partial-record", instructions("NEW_STRUCT tuple<Widget>\nNEW_STRUCT Widget\n"
+         "SET_FIELD 0\nNEW_ARRAY_LITERAL 1 tuple<Widget>\nPOP"), nominal_schemas),
+        ("exact-record-before-suffix", instructions("NEW_STRUCT tuple<Widget>\nNEW_STRUCT other::Widget\n"
+         "PUSH_CONST 73\nSET_FIELD value\nSET_FIELD 0\nNEW_ARRAY_LITERAL 1 tuple<Widget>\nPOP"),
+         nominal_schemas + [("other::Widget", [("value", "i64")], [])]),
+        ("integer-for-pointer", instructions("NEW_STRUCT tuple<ptr<i32>>\nPUSH_CONST 42\n"
+         "SET_FIELD 0\nNEW_ARRAY_LITERAL 1 tuple<ptr<i32>>\nPOP"), singleton_schema("ptr<i32>")),
+        ("wrong-pointer-kind", instructions("NEW_STRUCT tuple<ptr<i32>>\nPUSH_CONST 1\nALLOC i64\n"
+         "SET_FIELD 0\nNEW_ARRAY_LITERAL 1 tuple<ptr<i32>>\nPOP"), singleton_schema("ptr<i32>")),
+    ]
+    enum_control_schemas = singleton_schema("Generic<i64>") + singleton_schema("Result<i32,text>")
+    enum_control = instructions("NEW_STRUCT tuple<Generic<i64>>\nPUSH_CONST 91\n"
+        "NEW_VARIANT Generic::Some 1 Generic<i64> i64\nSET_FIELD 0\n"
+        "NEW_ARRAY_LITERAL 1 tuple<Generic<i64>>\nPUSH_CONST 0\nGET_INDEX\nGET_FIELD 0\n"
+        "UNWRAP_VARIANT 1 Generic<i64> i64\nCALL println 1\n"
+        "NEW_STRUCT tuple<Generic<i64>>\nNEW_VARIANT Generic::None 0 Generic<i64> void\nSET_FIELD 0\n"
+        "NEW_ARRAY_LITERAL 1 tuple<Generic<i64>>\nPUSH_CONST 0\nGET_INDEX\nGET_FIELD 0\n"
+        "IS_VARIANT Generic::None Generic<i64> void\nCALL println 1")
+    builtin_enum_control = instructions(
+        "NEW_STRUCT tuple<Result<i32,text>>\nPUSH_CONST_STR word\n"
+        "INTEROP_CALL intrinsic convert.try_to_i32 1 Result<i32,text>\nSET_FIELD 0\n"
+        "NEW_ARRAY_LITERAL 1 tuple<Result<i32,text>>\nPUSH_CONST 0\nGET_INDEX\nGET_FIELD 0\n"
+        "IS_VARIANT Result::Error Result<i32,text> text\nCALL println 1")
+    legacy_wrapper = instructions("PUSH_CONST_STR word\n"
+        "INTEROP_CALL intrinsic convert.try_to_i32 1 i64\nRET")
+    legacy_control = instructions("NEW_STRUCT tuple<Result<i32,text>>\nCALL legacy_convert 0\n"
+        "SET_FIELD 0\nNEW_ARRAY_LITERAL 1 tuple<Result<i32,text>>\n"
+        "PUSH_CONST 0\nGET_INDEX\nGET_FIELD 0\n"
+        "IS_VARIANT Result::Error Result<i32,text> text\nCALL println 1")
 
     with tempfile.TemporaryDirectory(prefix="nil-tuple-array-wire-") as directory:
         root = Path(directory)
@@ -144,9 +217,9 @@ def main():
             assert result.returncode == 0 and not result.stderr, result
             assert output is None or result.stdout == output, result
 
-        def source(name, body, schemas, binary):
+        def source(name, body, schemas, binary, extra_functions=()):
             path = root / (name + (".binary.nil" if binary else ".text.nil"))
-            path.write_bytes(encode(body, schemas, binary))
+            path.write_bytes(encode(body, schemas, binary, extra_functions))
             return path
 
         def native(path, name, output):
@@ -165,9 +238,29 @@ def main():
             gc_path = source("initializer-gc", gc_control, nested_schemas, binary)
             success(run([paths["interpreter"], "--no-ai", gc_path]), "73\n")
             checks += 1
+            enum_path = source("enum-values", enum_control + builtin_enum_control,
+                               enum_control_schemas, binary)
+            success(run([paths["interpreter"], "--no-ai", enum_path]), "91\n1\n1\n")
+            checks += 1
+            for annotations in (["@intrinsic(\"convert.try_to_i32\")"],
+                                ["@intrinsic(\"convert.try_to_i64\")"], []):
+                legacy_path = source("legacy-wrapper", legacy_control,
+                    singleton_schema("Result<i32,text>"), binary,
+                    [("legacy_convert", "Result<i32,text>", annotations, legacy_wrapper)])
+                result = run([paths["interpreter"], "--no-ai", legacy_path])
+                if annotations == ["@intrinsic(\"convert.try_to_i32\")"]:
+                    success(result, "1\n")
+                else:
+                    assert result.returncode > 0 and not result.stdout and "tuple" in result.stderr, result
+                checks += 1
             if args.llvm == "ON":
                 native(path, "valid", expected)
                 native(gc_path, "initializer-gc", "73\n")
+                # Native builtins are lowered through annotated wrappers; the
+                # source fixtures cover that route. This raw direct instruction
+                # exercises only the VM's intrinsic result metadata boundary.
+                native(source("generic-enum-values", enum_control,
+                              enum_control_schemas, binary), "enum-values", "91\n1\n")
                 identity = nominal_tuple + instructions(
                     "NEW_ARRAY_LITERAL 1 tuple<Widget>\nCAST array<tuple<Widget>>\n"
                     "PUSH_CONST 0\nGET_INDEX\nGET_FIELD 0\nGET_FIELD value\nCALL println 1")

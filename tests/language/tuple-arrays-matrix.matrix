@@ -1,9 +1,16 @@
 book tuple_arrays
 read everything from nil.std.collections
+read everything from nil.std.core
+read everything from nil.std.core
 
 counter begin record
     field total as number
 end record
+
+reading-state begin choice
+    when Ready holding override integer
+    when Idle
+end choice
 
 repeat-pair of type T receives item as T returns array of T begin paragraph
     value values as array of T is new-with-value of T with size being 2, `value` being item
@@ -106,5 +113,54 @@ main returns override integer begin paragraph
     value returned-pairs is fresh-pairs with nothing
     say (returned-pairs at 0).1
     say (returned-pairs at 1).0
+
+    value active as reading-state is reading-state.Ready holding 73
+    value inactive as reading-state is reading-state.Idle
+    value states is [(active, "active"), (inactive, "idle")]
+    consider (states at 0).0
+        when reading-state.Ready holding amount then say amount
+        when reading-state.Idle then say 0
+    end consider
+    set states at 0 to (inactive, "replaced")
+    consider (states at 0).0
+        when reading-state.Ready holding amount then say amount
+        when reading-state.Idle then say (states at 0).1
+    end consider
+    value present as Option of number is Option.Some holding (91 becomes number)
+    value absent as Option of number is Option.None
+    value options is [(present,), (absent,)]
+    consider (options at 0).0
+        when Option.Some holding amount then say amount
+        when Option.None then say 0
+    end consider
+    consider (options at 1).0
+        when Option.Some holding amount then say amount
+        when Option.None then say "empty"
+    end consider
+
+    value parsed is [((Convert.try-to-i32 with "94"),), ((Convert.try-to-i32 with "invalid"),)]
+    consider (parsed at 0).0
+        when Result.Ok holding amount then say amount
+        when Result.Error holding _ then say "unexpected"
+    end consider
+    consider (parsed at 1).0
+        when Result.Ok holding _ then say "unexpected"
+        when Result.Error holding _ then say "parse rejected"
+    end consider
+
+    allocate raw as pointer to override integer sized 3
+    set raw at 0 to 81
+    set raw at 1 to 82
+    set raw at 2 to 83
+    value pointers is [(raw, "base"), (raw plus 1, "interior"), (raw plus 3, "one-past")]
+    value base-pointer is (pointers at 0).0
+    value interior-pointer is (pointers at 1).0
+    value end-pointer is (pointers at 2).0
+    say base-pointer at 0
+    say interior-pointer at 0
+    value last-pointer is end-pointer minus 1
+    say last-pointer at 0
+    say end-pointer equals (raw plus 3)
+    release raw
     give 0
 end paragraph

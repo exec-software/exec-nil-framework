@@ -242,6 +242,8 @@ using EnumPayload =
 struct EnumValue {
   std::string variant_name;  // e.g., "Option::Some" or "Result::Ok"
   std::vector<EnumPayload> payloads;
+  // Concrete NEW_VARIANT/intrinsic result identity survives generic unit tags.
+  std::string type_name;
 };
 
 // Array instance

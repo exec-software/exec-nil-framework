@@ -1,9 +1,16 @@
 module tuple_arrays
 import nil.std.collections
+import nil.std.core
+import nil.std.core
 
 struct Counter
     value: i64
 end struct
+
+enum ReadingState
+    Ready(i32)
+    Idle
+end enum
 
 fn repeat_pair<T>(item: T) -> array<T>
     let values: array<T> = new_with_value<T>(2, item)
@@ -106,5 +113,54 @@ fn main() -> i32
     let returned_pairs = fresh_pairs()
     println(returned_pairs[0].1)
     println(returned_pairs[1].0)
+
+    let active: ReadingState = ReadingState.Ready(73)
+    let inactive: ReadingState = ReadingState.Idle
+    let states = [(active, "active"), (inactive, "idle")]
+    match states[0].0
+        ReadingState.Ready(amount) -> println(amount)
+        ReadingState.Idle -> println(0)
+    end match
+    states[0] = (inactive, "replaced")
+    match states[0].0
+        ReadingState.Ready(amount) -> println(amount)
+        ReadingState.Idle -> println(states[0].1)
+    end match
+    let present: Option<i64> = Option.Some(91 as i64)
+    let absent: Option<i64> = Option.None
+    let options = [(present,), (absent,)]
+    match options[0].0
+        Option.Some(amount) -> println(amount)
+        Option.None -> println(0)
+    end match
+    match options[1].0
+        Option.Some(amount) -> println(amount)
+        Option.None -> println("empty")
+    end match
+
+    let parsed = [(Convert.try_to_i32("94"),), (Convert.try_to_i32("invalid"),)]
+    match parsed[0].0
+        Result.Ok(amount) -> println(amount)
+        Result.Error(_) -> println("unexpected")
+    end match
+    match parsed[1].0
+        Result.Ok(_) -> println("unexpected")
+        Result.Error(_) -> println("parse rejected")
+    end match
+
+    let raw = allocate<i32>(3)
+    raw[0] = 81
+    raw[1] = 82
+    raw[2] = 83
+    let pointers = [(raw, "base"), (raw + 1, "interior"), (raw + 3, "one-past")]
+    let base_pointer = pointers[0].0
+    let interior_pointer = pointers[1].0
+    let end_pointer = pointers[2].0
+    println(base_pointer[0])
+    println(interior_pointer[0])
+    let last_pointer = end_pointer - 1
+    println(last_pointer[0])
+    println(end_pointer == raw + 3)
+    deallocate(raw)
     return 0
 end fn

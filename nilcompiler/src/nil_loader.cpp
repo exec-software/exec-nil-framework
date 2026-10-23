@@ -2131,8 +2131,21 @@ parseProgram(std::istream &is,
             trim_textual_field(line.substr(0, colon)), trim_textual_field(line.substr(colon + 1)));
       continue;
     }
-    if (in_enum_definition)
+    if (in_enum_definition) {
+      const auto colon = line.find(':');
+      nil_enum_def::variant variant;
+      variant.name = trim_textual_field(line.substr(0, colon));
+      if (colon != std::string::npos)
+        variant.associated_type = trim_textual_field(line.substr(colon + 1));
+      if (variant.name.empty())
+        throw std::runtime_error("Malformed enum variant at textual NIL line " +
+                                 std::to_string(input_line));
+      auto &variants = fault_metadata.enums.back().variants;
+      variants.push_back(std::move(variant));
+      if (variants.size() > max_parameter_count)
+        throw std::runtime_error("Textual NIL enum variant count exceeds safety limit");
       continue;
+    }
     if (line[0] == '@') {
       if (!in_function && line.rfind("@test ", 0) != 0) {
         declaration_line.annotation(line, input_line);

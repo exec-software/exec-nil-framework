@@ -931,68 +931,145 @@ void VM::executeInstruction(const Instruction &instr) {
     }
     return schema;
   };
+  const auto resolve_storage_schema = [&](const auto &definitions, const std::string &type) {
+    using Definition = typename std::decay_t<decltype(definitions)>::value_type;
+    const Definition *match = nullptr;
+    const auto expected = canonical_array_type(type);
+    for (const auto &candidate : definitions) {
+      if (canonical_array_type(candidate.name) != expected) continue;
+      if (match) return static_cast<const Definition *>(nullptr);
+      match = &candidate;
+    }
+    if (match) return match;
+    const auto suffix = "::" + expected;
+    for (const auto &candidate : definitions) {
+      const auto actual = canonical_array_type(candidate.name);
+      if (actual.size() <= suffix.size() ||
+          actual.compare(actual.size() - suffix.size(), suffix.size(), suffix) != 0) continue;
+      if (match) return static_cast<const Definition *>(nullptr);
+      match = &candidate;
+    }
+    return match;
+  };
+  std::unordered_set<const StructData *> validated_storage_objects;
   const auto validate_tuple_value = [&](const auto &self, const Value &value,
                                          const std::string &type,
                                          const std::string &operation,
                                          unsigned depth) -> void {
-    const auto *schema = validate_tuple_schema(validate_tuple_schema, type, operation, depth);
-    const auto shape = array_tuple_elements(type);
-    const auto *tuple = std::get_if<StructValue>(&value);
+    const auto expected = canonical_array_type(type);
     const auto reject = [&]() {
-      throw std::runtime_error(operation + ": expected a fully initialized tuple value of exact type '" + type + "'");
+      throw std::runtime_error(operation + ": expected a fully initialized tuple element of exact type '" + type + "'");
     };
-    if (!tuple || !tuple->data ||
-        canonical_array_type(tuple->type_name) != canonical_array_type(type))
-      reject();
-    const auto &data = *tuple->data;
-    if (data.fields.size() + data.array_fields.size() + data.string_fields.size() +
-        data.double_fields.size() + data.struct_fields.size() + data.enum_fields.size() != shape->size())
-      reject();
-    for (std::size_t index = 0; index < shape->size(); ++index) {
-      const auto field = std::to_string(index);
-      const auto &expected = (*shape)[index];
-      if (schema->fields[index].first != field ||
-          canonical_array_type(schema->fields[index].second) != expected)
-        reject();
-      if (expected == "text") {
-        if (!data.string_fields.count(field)) reject();
-      } else if (expected == "f64") {
-        if (!data.double_fields.count(field)) reject();
-      } else if (expected == "i32" || expected == "i64" || expected == "u8" ||
-                 expected == "bool" || expected.rfind("ptr<", 0) == 0) {
-        const auto found = data.fields.find(field);
-        if (found == data.fields.end()) reject();
-        if ((expected == "i32" && (found->second < INT32_MIN || found->second > INT32_MAX)) ||
-            (expected == "u8" && (found->second < 0 || found->second > 255)) ||
-            (expected == "bool" && found->second != 0 && found->second != 1))
-          reject();
-      } else if (expected.rfind("array<", 0) == 0) {
-        const auto found = data.array_fields.find(field);
-        if (found == data.array_fields.end()) reject();
-        const auto block = heap_.find(found->second.address);
-        if (block == heap_.end() || block->second.type_name != "array" ||
-            "array<" + canonical_array_type(block->second.element_type) + ">" != expected)
-          reject();
-      } else if (is_array_tuple_type(expected)) {
-        const auto found = data.struct_fields.find(field);
-        if (found == data.struct_fields.end() || !found->second) reject();
-        self(self, Value(*found->second), expected, operation, depth + 1);
-      } else {
-        const auto found = data.struct_fields.find(field);
-        if (found != data.struct_fields.end() && found->second) {
-          auto nominal = expected;
-          if (nominal.rfind("ref<", 0) == 0 && nominal.back() == '>')
-            nominal = nominal.substr(4, nominal.size() - 5);
-          const auto actual = canonical_array_type(found->second->type_name);
-          const auto suffix = "::" + nominal;
-          if (actual != nominal &&
-              (nominal.find("::") != std::string::npos || actual.size() <= suffix.size() ||
-               actual.compare(actual.size() - suffix.size(), suffix.size(), suffix) != 0))
-            reject();
-        } else if (!data.enum_fields.count(field)) {
-          reject();
-        }
+    if (depth >= 64 || !class_metadata_) reject();
+    if (expected == "text") {
+      if (!std::holds_alternative<std::string>(value)) reject();
+      return;
+    }
+    if (expected == "f64") {
+      if (!std::holds_alternative<double>(value)) reject();
+      return;
+    }
+    if (expected == "i32" || expected == "i64" || expected == "u8" || expected == "bool") {
+      const auto *integer = std::get_if<int64_t>(&value);
+      if (!integer || (expected == "i32" && (*integer < INT32_MIN || *integer > INT32_MAX)) ||
+          (expected == "u8" && (*integer < 0 || *integer > 255)) ||
+          (expected == "bool" && *integer != 0 && *integer != 1)) reject();
+      return;
+    }
+    if (expected.rfind("ptr<", 0) == 0) {
+      const auto *pointer = std::get_if<int64_t>(&value);
+      if (!pointer) reject();
+      if (*pointer == 0) return; // A null raw pointer remains a valid stored value.
+      const auto location = findHeapPointer(*pointer, true);
+      const auto element = expected.substr(4, expected.size() - 5);
+      if (!location || canonical_array_type(location->block->type_name) != element) reject();
+      return;
+    }
+    if (expected.rfind("array<", 0) == 0) {
+      const auto *handle = std::get_if<ArrayHandle>(&value);
+      if (!handle) reject();
+      const auto found = heap_.find(handle->address);
+      if (found == heap_.end() || found->second.type_name != "array" ||
+          "array<" + canonical_array_type(found->second.element_type) + ">" != expected) reject();
+      return;
+    }
+    if (const auto *enumeration = resolve_storage_schema(class_metadata_->enums, expected)) {
+      const auto *item = std::get_if<EnumValue>(&value);
+      if (!item) reject();
+      const auto tag = canonical_variant_name(item->variant_name);
+      const auto separator = tag.rfind("::");
+      const auto owner = separator == std::string::npos ? std::string{} : tag.substr(0, separator);
+      const auto concrete = item->type_name.empty() ? owner : item->type_name;
+      if (concrete.empty() || resolve_storage_schema(class_metadata_->enums, concrete) != enumeration) reject();
+      auto schema_owner = canonical_array_type(enumeration->name);
+      if (owner.find('<') == std::string::npos) {
+        const auto generic = schema_owner.find('<');
+        if (generic != std::string::npos) schema_owner.resize(generic);
       }
+      const auto suffix = "::" + owner;
+      if (!owner.empty() && owner != schema_owner &&
+          (schema_owner.size() <= suffix.size() ||
+           schema_owner.compare(schema_owner.size() - suffix.size(), suffix.size(), suffix) != 0)) reject();
+      const auto variant_name = separator == std::string::npos ? tag : tag.substr(separator + 2);
+      const auto variant = std::find_if(enumeration->variants.begin(), enumeration->variants.end(),
+          [&](const auto &candidate) { return candidate.name == variant_name; });
+      if (variant == enumeration->variants.end()) reject();
+      std::vector<std::string> payload_types;
+      const auto &payload = variant->associated_type;
+      if (!payload.empty()) {
+        if (payload.front() == '(' && payload.back() == ')') {
+          const auto parts = array_tuple_elements("tuple<" + payload.substr(1, payload.size() - 2) + ">");
+          if (!parts) reject();
+          payload_types = *parts;
+        } else payload_types.push_back(payload);
+      }
+      if (payload_types.size() != item->payloads.size()) reject();
+      for (std::size_t index = 0; index < payload_types.size(); ++index)
+        std::visit([&](const auto &stored) {
+          using Payload = std::decay_t<decltype(stored)>;
+          if constexpr (std::is_same_v<Payload, std::shared_ptr<EnumValue>>) {
+            if (!stored) reject();
+            self(self, Value(*stored), payload_types[index], operation, depth + 1);
+          } else self(self, Value(stored), payload_types[index], operation, depth + 1);
+        }, item->payloads[index]);
+      return;
+    }
+    auto nominal = expected;
+    if (nominal.rfind("ref<", 0) == 0 && nominal.back() == '>')
+      nominal = nominal.substr(4, nominal.size() - 5);
+    const auto *schema = is_array_tuple_type(nominal)
+        ? validate_tuple_schema(validate_tuple_schema, nominal, operation, depth)
+        : resolve_storage_schema(class_metadata_->structs, nominal);
+    const auto *object = std::get_if<StructValue>(&value);
+    if (!schema || !object || !object->data) reject();
+    const auto *actual_schema = resolve_storage_schema(class_metadata_->structs, object->type_name);
+    if (find_nil_class(*class_metadata_, nominal)) {
+      validateClassValue(value, nominal);
+      if (!actual_schema) reject();
+      schema = actual_schema;
+    } else if (actual_schema != schema) reject();
+    // Repeated record references preserve aliasing, and recursive interpreter
+    // records must not recurse forever during this storage-boundary check.
+    if (!validated_storage_objects.insert(object->data.get()).second) return;
+    const auto &data = *object->data;
+    if (data.fields.size() + data.array_fields.size() + data.string_fields.size() +
+        data.double_fields.size() + data.struct_fields.size() + data.enum_fields.size() != schema->fields.size()) reject();
+    for (const auto &[field, field_type] : schema->fields) {
+      std::optional<Value> stored;
+      const auto take = [&](const auto &fields) {
+        if (const auto found = fields.find(field); found != fields.end()) {
+          if (stored) reject();
+          using Stored = std::decay_t<decltype(found->second)>;
+          if constexpr (std::is_same_v<Stored, std::shared_ptr<StructValue>>) {
+            if (!found->second) reject();
+            stored = Value(*found->second);
+          } else stored = Value(found->second);
+        }
+      };
+      take(data.fields); take(data.array_fields); take(data.string_fields);
+      take(data.double_fields); take(data.struct_fields); take(data.enum_fields);
+      if (!stored) reject();
+      self(self, *stored, field_type, operation, depth + 1);
     }
   };
   const auto canonical_pointer_value =
@@ -4694,6 +4771,24 @@ void VM::executeInstruction(const Instruction &instr) {
                                lib_name + "::" + fn_name);
     if (returns_void)
       stack_.resize(result_base);
+    else if (auto *result = std::get_if<EnumValue>(&stack_.back());
+             result && result->type_name.empty()) {
+      result->type_name = canonical_array_type(instr.args[3]);
+      // Older intrinsic wrappers encoded all enum results using their i64
+      // storage representation. Only the matching annotated wrapper may
+      // supply its declared concrete enum identity for that legacy encoding.
+      if (lib_name == "intrinsic" && result->type_name == "i64" &&
+          class_metadata_ && !call_stack_.empty()) {
+        const auto &frame = call_stack_.back();
+        if (frame.entry_pc < program_.size()) {
+          const auto &annotations = program_[frame.entry_pc].function_annotations;
+          const auto annotation = "@intrinsic(\"" + fn_name + "\")";
+          if (std::find(annotations.begin(), annotations.end(), annotation) != annotations.end() &&
+              resolve_storage_schema(class_metadata_->enums, frame.return_type))
+            result->type_name = canonical_array_type(frame.return_type);
+        }
+      }
+    }
   } break;
 
   // Math Opcodes
@@ -5597,6 +5692,8 @@ void VM::executeInstruction(const Instruction &instr) {
     int arg_count = std::stoi(instr.args[1]);
     EnumValue ev;
     ev.variant_name = canonical_variant_name(instr.args[0]);
+    if (instr.args.size() >= 3)
+      ev.type_name = canonical_array_type(instr.args[2]);
 
     // Pop payload arguments in reverse order and store them
     std::vector<EnumPayload> payloads;
