@@ -407,6 +407,17 @@ private:
     case ast_node_kind::array_literal_expr_node:
       for (auto &item : static_cast<ast_array_literal_expr &>(*expression).elements) expr(item.get());
       break;
+    case ast_node_kind::query_expr_node: {
+      auto &value = static_cast<ast_query_expr &>(*expression);
+      expr(value.source.get()); expr(value.skip.get()); expr(value.take.get());
+      const auto before = state_;
+      enter();
+      ordinary_binding(value.binding.name);
+      expr(value.predicate.get()); expr(value.order_key.get()); expr(value.projection.get());
+      leave();
+      require_invariant(before, value.line, "query");
+      break;
+    }
     case ast_node_kind::struct_literal_expr_node:
       for (auto &field : static_cast<ast_struct_literal_expr &>(*expression).fields) expr(field.second.get());
       break;

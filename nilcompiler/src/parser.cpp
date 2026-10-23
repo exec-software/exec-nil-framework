@@ -19,6 +19,8 @@ Design notes:
 #include <optional>
 #include "parser.hpp"
 #include "numeric_literal.hpp"
+#include "pattern_syntax.hpp"
+#include "pattern_engine.hpp"
 #include "standard_namespace.hpp"
 #include "diagnostics.hpp"
 
@@ -887,6 +889,43 @@ std::vector<std::string> parser::parse_leading_annotations() {
   return collected_annotations;
 }
 
+std::shared_ptr<ast_decl> parser::parse_text_pattern_declaration(visibility_kind visibility) {
+  advance(); // contextual 'pattern'
+  const auto name = consume(token_kind::identifier, "Expected a text pattern name");
+  const auto begin = pos_;
+  std::vector<patterns::prose_token> body;
+  int nesting = 1;
+  while (!is_at_end() && body.size() <= 16384) {
+    const auto current = advance();
+    body.push_back({current.lexeme, current.kind == token_kind::string_literal,
+                    current.kind == token_kind::semicolon});
+    if (current.kind != token_kind::string_literal && peek().lexeme == "pattern" &&
+        peek().kind == token_kind::identifier) {
+      if (current.lexeme == "begin") ++nesting;
+      if (current.lexeme == "end" && --nesting == 0) {
+        body.push_back({advance().lexeme, false, false});
+        break;
+      }
+    }
+  }
+  auto parsed = patterns::parse_prose(body);
+  if (!parsed.error.empty()) {
+    const auto index = std::min(begin + parsed.error_token, tokens_.size() - 1);
+    add_error(tokens_[index], parsed.error);
+  } else {
+    const auto error = patterns::validate(parsed.source);
+    if (!error.empty()) add_error(name, "Invalid text pattern: " + error);
+  }
+  match(token_kind::semicolon);
+  auto decl = std::make_shared<ast_variable_decl>(name.lexeme,
+      std::make_shared<ast_string_literal>(parsed.source, name.line),
+      std::string("text"), false, visibility == visibility_kind::visibility_public, name.line);
+  decl->is_const = true;
+  decl->visibility = visibility;
+  decl->name_span = span_for_name(name);
+  return decl;
+}
+
 std::shared_ptr<ast_decl> parser::parse_declaration() {
   const auto collected_annotations = parse_leading_annotations();
 
@@ -914,6 +953,11 @@ std::shared_ptr<ast_decl> parser::parse_declaration() {
 
   // stream and maps to the enum values.
   visibility_kind visibility = parse_visibility_modifier();
+
+  if (check(token_kind::identifier) && peek().lexeme == "pattern" &&
+      pos_ + 1 < tokens_.size() && tokens_[pos_ + 1].kind == token_kind::identifier) {
+    return parse_text_pattern_declaration(visibility);
+  }
 
   if (match(token_kind::function_kw)) {
     return parse_function_declaration(visibility, false, collected_annotations);
@@ -2204,6 +2248,10 @@ std::shared_ptr<ast_stmt> parser::parse_statement() {
       add_error(peek(), "Expected 'asm' after 'end'");
     }
     result = assembly;
+  } else if (check(token_kind::identifier) && peek().lexeme == "pattern" &&
+             pos_ + 1 < tokens_.size() && tokens_[pos_ + 1].kind == token_kind::identifier) {
+    auto decl = parse_text_pattern_declaration();
+    result = std::make_shared<ast_decl_stmt>(decl, decl ? decl->line : previous().line);
   } else if (match(token_kind::let_kw)) {
     // std::cerr << "[parse_statement] matched 'let' token at pos=" << pos_
     //           << " line=" << previous().line << "\n";
@@ -3250,6 +3298,10 @@ std::shared_ptr<ast_expr> parser::parse_call(std::shared_ptr<ast_expr> callee) {
 }
 
 std::shared_ptr<ast_expr> parser::parse_primary() {
+  if (check(token_kind::identifier) && peek().lexeme == "collect" &&
+      pos_ + 1 < tokens_.size() && tokens_[pos_ + 1].kind == token_kind::identifier &&
+      tokens_[pos_ + 1].lexeme == "query")
+    return parse_query_expression();
   // Debug helper to print the token at peek (for parser debugging)
   auto debug_peek = [&](const std::string &label) {
     // if (!is_at_end()) {
@@ -3705,6 +3757,59 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
   // Fallback: treat as identifier usage
   token t = advance();
   return std::make_shared<ast_string_literal>(t.lexeme, t.line);
+}
+
+std::shared_ptr<ast_expr> parser::parse_query_expression() {
+  const auto start = advance(); // contextual collect
+  advance(); // query
+  auto query = std::make_shared<ast_query_expr>(start.line);
+  const auto word = [&](const char *spelling) {
+    return (check(token_kind::identifier) || check(token_kind::where_kw)) && peek().lexeme == spelling;
+  };
+  const auto require_word = [&](const char *spelling) {
+    if (word(spelling)) { advance(); return true; }
+    add_error(peek(), std::string("Expected '") + spelling + "' in collect query");
+    return false;
+  };
+  while (match(token_kind::semicolon)) {}
+  require_word("from");
+  const auto binder = consume(token_kind::identifier, "Expected query binding after 'from'");
+  query->binding.name = binder.lexeme;
+  query->binding.name_span = span_for_name(binder);
+  query->binding.line = binder.line;
+  consume(token_kind::in_kw, "Expected 'in' after query binding");
+  query->source = parse_expression();
+  int previous_clause = 0;
+  while (!is_at_end() && !check(token_kind::end_kw)) {
+    while (match(token_kind::semicolon)) {}
+    if (check(token_kind::end_kw)) break;
+    const int clause = word("where") ? 1 : word("order") ? 2 :
+                       word("skip") ? 3 : word("take") ? 4 : word("select") ? 5 : 0;
+    if (!clause) {
+      add_error(peek(), "Expected where, order by, skip, take, select, or end query");
+      advance();
+      continue;
+    }
+    if (clause <= previous_clause)
+      add_error(peek(), "Query clauses must appear once in from, where, order by, skip, take, select order");
+    previous_clause = clause;
+    advance();
+    if (clause == 2) require_word("by");
+    auto expression = parse_expression();
+    if (clause == 1) query->predicate = expression;
+    if (clause == 2) {
+      query->order_key = expression;
+      if (word("descending")) { query->descending = true; advance(); }
+      else if (word("ascending")) advance();
+    }
+    if (clause == 3) query->skip = expression;
+    if (clause == 4) query->take = expression;
+    if (clause == 5) query->projection = expression;
+  }
+  consume(token_kind::end_kw, "Expected 'end query' after query projection");
+  require_word("query");
+  if (!query->projection) add_error(start, "Collect query requires a final select expression");
+  return query;
 }
 
 std::shared_ptr<ast_expr> parser::parse_match_expression() {

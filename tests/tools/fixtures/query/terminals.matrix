@@ -1,0 +1,32 @@
+book query_terminals
+read everything from nil.std.collections
+read everything from nil.std.core
+main returns override integer begin paragraph
+value selected is collect begin query
+from each item in [3,1,2]
+order by item
+give (item,formatted "row {item}")
+end query
+say query-count of tuple of (override integer,text) with items being selected
+say query-any of tuple of (override integer,text) with items being selected
+say ((query-first of tuple of (override integer,text) with items being selected).unwrap with nothing).1
+say ((query-last of tuple of (override integer,text) with items being selected).unwrap with nothing).1
+say (query-single of tuple of (override integer,text) with items being selected).unwrap-error with nothing
+value just-one is collect begin query
+from each pair in selected
+where pair.0 equals 2
+give pair
+end query
+say ((query-single of tuple of (override integer,text) with items being just-one).unwrap with nothing).1
+value no-rows is collect begin query
+from each pair in selected
+take 0
+give pair
+end query
+say query-count of tuple of (override integer,text) with items being no-rows
+say query-any of tuple of (override integer,text) with items being no-rows
+say (query-first of tuple of (override integer,text) with items being no-rows).is-none with nothing
+say (query-last of tuple of (override integer,text) with items being no-rows).is-none with nothing
+say (query-single of tuple of (override integer,text) with items being no-rows).unwrap-error with nothing
+give 0
+end paragraph

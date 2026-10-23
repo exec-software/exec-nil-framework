@@ -1,0 +1,21 @@
+book text_patterns
+read everything from nil.std.text
+
+dollar-amount begin pattern
+    capture amount matching one or more ascii digits
+    require next to match literal " USD"
+end pattern
+
+main returns override integer begin paragraph
+    value pattern is (compile-pattern with dollar-amount).unwrap with nothing
+    value found is ((first-match with pattern, "price: 12 USD").unwrap with nothing).unwrap with nothing
+    say (capture-named with found, "amount").unwrap with nothing
+    say (capture-start with found, 0).unwrap with nothing
+    say ((full-match with pattern, "12 USD").unwrap with nothing).is-none with nothing
+    value alternate is (compile-pattern with "(?<word>cat|dog)(?!s)").unwrap with nothing
+    value other is ((first-match with alternate, "cats dog").unwrap with nothing).unwrap with nothing
+    say (capture-named with other, "word").unwrap with nothing
+    say (compile-pattern with "[").is-error with nothing
+    say ((first-match with pattern, "none").unwrap with nothing).is-none with nothing
+    give 0
+end paragraph

@@ -24,13 +24,15 @@
 #
 # Cross-refs:
 #   ny.lang.core  — Iterator<T>, Clone, Eq, Ord, Hash traits
-#   ny.lang.linq  — Enumerable operates on ICollection<T>
+#   query-count / query-any / query-first / query-last / query-single
+#   inspect eagerly collected query arrays (query.matrix).
 # =============================================================================
 
 package nil.std.collections
 
 import nil.std.collections.array
 import nil.std.collections.array_checked
+import nil.std.collections.query
 import nil.std.collections.list
 import nil.std.collections.vector
 import nil.std.collections.dictionary

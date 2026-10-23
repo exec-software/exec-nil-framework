@@ -5,4 +5,5 @@ package nil.std.text
 
 import nil.std.text.string_utils
 import nil.std.text.string_checked
-# Experimental: string_builder, regex
+import nil.std.text.patterns
+# Experimental: string_builder

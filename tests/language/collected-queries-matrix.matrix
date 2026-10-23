@@ -1,0 +1,31 @@
+book collected_queries
+read everything from nil.std.collections
+main returns override integer begin paragraph
+    value orders is [(101, false, 4.5), (102, true, 9.0), (103, false, 7.0)]
+    value selected is collect begin query
+        from each order in orders
+        where order.1 equals false
+        order by order.2 descending
+        take 10
+        give (order.0, order.2)
+    end query
+    say query-count with selected
+    say query-any with selected
+    say ((query-first with selected).unwrap with nothing).0
+    say ((query-last with selected).unwrap with nothing).0
+    say (query-single with selected).is-error with nothing
+    value single-row is collect begin query
+        from each row in selected
+        take 1
+        give row.0
+    end query
+    say (query-single with single-row).unwrap with nothing
+    value empty is collect begin query
+        from each row in selected
+        where false
+        give row.0
+    end query
+    say (query-first with empty).is-none with nothing
+    say query-any with empty
+    give 0
+end paragraph

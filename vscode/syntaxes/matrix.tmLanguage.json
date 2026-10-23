@@ -16,6 +16,12 @@
       "include": "#strings"
     },
     {
+      "include": "#pattern-declarations"
+    },
+    {
+      "include": "#query-blocks"
+    },
+    {
       "include": "#primitive-extension"
     },
     {
@@ -507,6 +513,146 @@
               "match": "\\}"
             }
           ]
+        }
+      ]
+    },
+    "pattern-strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.pattern.matrix",
+          "begin": "\"",
+          "end": "\"|$",
+          "patterns": []
+        }
+      ]
+    },
+    "nested-pattern": {
+      "name": "meta.pattern.matrix",
+      "begin": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[bB][eE][gG][iI][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[pP][aA][tT][tT][eE][rR][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+      "beginCaptures": {
+        "0": {
+          "name": "keyword.control.pattern.matrix"
+        }
+      },
+      "end": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][nN][dD])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[pP][aA][tT][tT][eE][rR][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+      "endCaptures": {
+        "0": {
+          "name": "keyword.control.pattern.matrix"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#pattern-strings"
+        },
+        {
+          "include": "#nested-pattern"
+        },
+        {
+          "match": "((?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[cC][aA][pP][tT][uU][rR][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+((?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))(?=[ \t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][aA][tT][cC][hH][iI][nN][gG])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))",
+          "captures": {
+            "1": {
+              "name": "keyword.control.pattern.matrix"
+            },
+            "2": {
+              "name": "entity.name.capture.matrix"
+            }
+          }
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[lL][iI][tT][eE][rR][aA][lL])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][aA][tT][cC][hH][iI][nN][gG])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[rR][eE][qQ][uU][iI][rR][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[nN][eE][xX][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[nN][oO][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][oO])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][aA][tT][cC][hH])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][nN][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[zZ][eE][rR][oO])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][oO][rR][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][pP][tT][iI][oO][nN][aA][lL])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][xX][aA][cC][tT][lL][yY])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[bB][eE][tT][wW][eE][eE][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][nN][dD])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[fF][eE][wW][eE][sS][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][sS][cC][iI][iI])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[dD][iI][gG][iI][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[dD][iI][gG][iI][tT][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[lL][eE][tT][tT][eE][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[lL][eE][tT][tT][eE][rR][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[wW][hH][iI][tT][eE][sS][pP][aA][cC][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][nN][yY])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[cC][hH][aA][rR][aA][cC][tT][eE][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[fF][rR][oO][mM])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][hH][rR][oO][uU][gG][hH])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[sS][tT][aA][rR][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][nN][dD])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][fF])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[iI][nN][pP][uU][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][iI][tT][hH][eE][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "keyword.control.pattern.matrix"
+        },
+        {
+          "include": "#numbers"
+        },
+        {
+          "include": "#constants"
+        }
+      ]
+    },
+    "pattern-declarations": {
+      "name": "meta.pattern.matrix",
+      "begin": "^[ \\t]*(?:[pP][uU][bB][lL][iI][cC][ \\t]+)?((?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))[ \\t]+((?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[bB][eE][gG][iI][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[pP][aA][tT][tT][eE][rR][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))",
+      "beginCaptures": {
+        "1": {
+          "name": "entity.name.pattern.matrix"
+        },
+        "2": {
+          "name": "storage.type.pattern.matrix"
+        }
+      },
+      "end": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][nN][dD])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[pP][aA][tT][tT][eE][rR][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+      "endCaptures": {
+        "0": {
+          "name": "keyword.control.pattern.matrix"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#pattern-strings"
+        },
+        {
+          "include": "#nested-pattern"
+        },
+        {
+          "match": "((?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[cC][aA][pP][tT][uU][rR][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+((?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))(?=[ \t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][aA][tT][cC][hH][iI][nN][gG])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))",
+          "captures": {
+            "1": {
+              "name": "keyword.control.pattern.matrix"
+            },
+            "2": {
+              "name": "entity.name.capture.matrix"
+            }
+          }
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[lL][iI][tT][eE][rR][aA][lL])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][aA][tT][cC][hH][iI][nN][gG])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[rR][eE][qQ][uU][iI][rR][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[nN][eE][xX][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[nN][oO][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][oO])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][aA][tT][cC][hH])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][nN][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[zZ][eE][rR][oO])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][oO][rR][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][pP][tT][iI][oO][nN][aA][lL])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][xX][aA][cC][tT][lL][yY])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[bB][eE][tT][wW][eE][eE][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][nN][dD])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[fF][eE][wW][eE][sS][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][sS][cC][iI][iI])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[dD][iI][gG][iI][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[dD][iI][gG][iI][tT][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[lL][eE][tT][tT][eE][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[lL][eE][tT][tT][eE][rR][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[wW][hH][iI][tT][eE][sS][pP][aA][cC][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][nN][yY])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[cC][hH][aA][rR][aA][cC][tT][eE][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[fF][rR][oO][mM])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][hH][rR][oO][uU][gG][hH])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[sS][tT][aA][rR][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][nN][dD])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][fF])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[iI][nN][pP][uU][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][iI][tT][hH][eE][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "keyword.control.pattern.matrix"
+        },
+        {
+          "include": "#numbers"
+        },
+        {
+          "include": "#constants"
+        }
+      ]
+    },
+    "query-blocks": {
+      "name": "meta.query.matrix",
+      "begin": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[cC][oO][lL][lL][eE][cC][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[bB][eE][gG][iI][nN])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[qQ][uU][eE][rR][yY])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+      "beginCaptures": {
+        "0": {
+          "name": "keyword.control.query.matrix"
+        }
+      },
+      "end": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][nN][dD])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[qQ][uU][eE][rR][yY])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+      "endCaptures": {
+        "0": {
+          "name": "keyword.control.query.matrix"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#formatted-strings"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[oO][rR][dD][eE][rR])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[bB][yY])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[fF][rR][oO][mM])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[eE][aA][cC][hH])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[fF][rR][oO][mM])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[wW][hH][eE][rR][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[sS][kK][iI][pP])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][aA][kK][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[sS][eE][lL][eE][cC][tT])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[gG][iI][vV][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][sS][cC][eE][nN][dD][iI][nN][gG])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[dD][eE][sS][cC][eE][nN][dD][iI][nN][gG])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][sS][cC])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[dD][eE][sS][cC])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "name": "keyword.control.query.matrix"
+        },
+        {
+          "include": "$self"
         }
       ]
     }

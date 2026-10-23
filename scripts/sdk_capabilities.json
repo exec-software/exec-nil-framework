@@ -77,6 +77,18 @@
       "limitations": ["Varints use i64 carriers; this is not unsigned 64-bit scalar support, signed LEB128, a general protobuf parser or a streaming cursor abstraction.", "CRC-32 detects accidental corruption, not malicious modification or authenticity. This bitwise baseline makes no throughput, hardware-acceleration or concurrent-mutation guarantee."]
     },
     {
+      "id": "bounded-text-patterns",
+      "observed": "Paired Ny/Matrix fixtures agree across six routes for prose pattern declarations, conventional ordered alternatives, named captures and byte spans, positive/negative lookahead, whole-input matching, no-match results and malformed-pattern errors through nil.std.text.",
+      "tests": ["ny.routes.text-patterns", "ny.routes.text-patterns-matrix"],
+      "limitations": ["This is the NUL-free, case-sensitive NIL byte-pattern profile with ASCII character classes, not Unicode character matching or PCRE, ECMAScript, POSIX or RE2 compatibility. Captures can split UTF-8 sequences.", "Parsing, compilation, input, matching work, backtracking and cache storage have explicit limits; exhausted budgets return errors rather than no-match. These route fixtures do not exhaust those boundaries or establish linear-time execution, a process-memory bound, or throughput guarantees.", "Replacement, split/find-all collections, backreferences, lookbehind, dialect flags and reusable prose fragments are outside this profile; first/next matching has separate focused iteration contracts."]
+    },
+    {
+      "id": "eager-array-queries",
+      "observed": "Paired Ny/Matrix fixtures agree across six routes for eager scalar and tuple array queries with filtering, descending ordering, take, scalar/tuple projections and count/any/first/last/single terminals, including empty and multiple-result outcomes through nil.std.collections.",
+      "tests": ["ny.routes.collected-queries", "ny.routes.collected-queries-matrix"],
+      "limitations": ["The initial query profile accepts i32/i64/u8/bool/f64/text rows and structural tuples of those values. Text ordering, stable ties, NaNs, pagination boundaries, source snapshots and side-effect order have separate focused contracts; these route fixtures do not qualify every combination or sustained allocation workload.", "Queries eagerly snapshot array elements and collect results; this is not a full LINQ implementation, a lazy iterator, SQL translation or an implicit database provider. Record/enum/nested-array rows, grouping, joins, distinct and multiple order keys are outside this profile."]
+    },
+    {
       "id": "sleep",
       "observed": "The time contract fixture agrees for its clock and bounded sleep calls.",
       "tests": ["ny.routes.native-time-contract"],
@@ -105,7 +117,11 @@
     {"test": "ny.routes.checked-hex-runtime", "fixture": "checked-hex-runtime", "stdlib": true},
     {"test": "ny.routes.checked-binary-runtime", "fixture": "checked-binary-runtime", "stdlib": true},
     {"test": "ny.routes.checked-varint-runtime", "fixture": "checked-varint-runtime", "stdlib": true},
-    {"test": "ny.routes.checked-crc-runtime", "fixture": "checked-crc-runtime", "stdlib": true}
+    {"test": "ny.routes.checked-crc-runtime", "fixture": "checked-crc-runtime", "stdlib": true},
+    {"test": "ny.routes.text-patterns", "fixture": "text-patterns", "stdlib": true},
+    {"test": "ny.routes.text-patterns-matrix", "fixture": "text-patterns-matrix", "stdlib": true},
+    {"test": "ny.routes.collected-queries", "fixture": "collected-queries", "stdlib": true},
+    {"test": "ny.routes.collected-queries-matrix", "fixture": "collected-queries-matrix", "stdlib": true}
   ],
   "limitations": [
     "Only the supported Linux x86_64 Release LLVM host can receive technical rc-checks qualification.",

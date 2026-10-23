@@ -81,10 +81,14 @@ def load_catalog(repo: Path) -> dict[str, Any]:
 
 def expected_inputs(repo: Path, build: Path, proof: dict[str, Any]) -> dict[str, Any]:
     suffix = ".exe" if os.name == "nt" else ""
+    sources = [repo / "tests/language" / (proof["fixture"] + extension)
+               for extension in (".ny", ".matrix", ".mat")
+               if (repo / "tests/language" / (proof["fixture"] + extension)).is_file()]
+    require(len(sources) == 1, "proof fixture must have exactly one Ny or Matrix source")
     return {
         "compiler": str(build / "bin" / ("nilcompiler" + suffix)),
         "interpreter": str(build / "bin" / ("nilinterpreter" + suffix)),
-        "source": str(repo / "tests/language" / (proof["fixture"] + ".ny")),
+        "source": str(sources[0]),
         "expected_stdout": str(repo / "tests/language" / (proof["fixture"] + ".stdout")),
         "expected_stderr": None, "expected_exit": 0, "routes": ROUTES,
         "timeout_seconds": 10.0,

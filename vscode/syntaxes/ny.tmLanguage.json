@@ -10,6 +10,12 @@
       "include": "#strings"
     },
     {
+      "include": "#pattern-declarations"
+    },
+    {
+      "include": "#query-blocks"
+    },
+    {
       "include": "#annotations"
     },
     {
@@ -385,6 +391,148 @@
       "patterns": [
         {
           "include": "#interpolation-braces"
+        },
+        {
+          "include": "$self"
+        }
+      ]
+    },
+    "pattern-strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.pattern.ny",
+          "begin": "\"",
+          "end": "\"|$",
+          "patterns": [
+            {
+              "match": "\\\\.",
+              "name": "constant.character.escape.ny"
+            }
+          ]
+        }
+      ]
+    },
+    "nested-pattern": {
+      "name": "meta.pattern.ny",
+      "begin": "(?<![A-Za-z0-9_])(?:begin)(?![A-Za-z0-9_])[ \\t]+(?<![A-Za-z0-9_])(?:pattern)(?![A-Za-z0-9_])",
+      "beginCaptures": {
+        "0": {
+          "name": "keyword.control.pattern.ny"
+        }
+      },
+      "end": "(?<![A-Za-z0-9_])(?:end)(?![A-Za-z0-9_])[ \\t]+(?<![A-Za-z0-9_])(?:pattern)(?![A-Za-z0-9_])",
+      "endCaptures": {
+        "0": {
+          "name": "keyword.control.pattern.ny"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#pattern-strings"
+        },
+        {
+          "include": "#nested-pattern"
+        },
+        {
+          "match": "((?<![A-Za-z0-9_])(?:capture)(?![A-Za-z0-9_]))[ \\t]+([A-Za-z_][A-Za-z0-9_]*)(?=[ \t]+(?<![A-Za-z0-9_])(?:matching)(?![A-Za-z0-9_]))",
+          "captures": {
+            "1": {
+              "name": "keyword.control.pattern.ny"
+            },
+            "2": {
+              "name": "entity.name.capture.ny"
+            }
+          }
+        },
+        {
+          "match": "(?<![A-Za-z0-9_])(?:(?<![A-Za-z0-9_])(?:literal)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:matching)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:require)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:next)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:not)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:to)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:match)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:one)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:zero)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:or)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:more)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:optional)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:exactly)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:between)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:and)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:fewest)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ascii)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:digit)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:digits)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:letter)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:letters)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:whitespace)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:any)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:character)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:from)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:through)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:start)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:end)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:of)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:input)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:either)(?![A-Za-z0-9_]))(?![A-Za-z0-9_])",
+          "name": "keyword.control.pattern.ny"
+        },
+        {
+          "include": "#numbers"
+        },
+        {
+          "include": "#constants"
+        }
+      ]
+    },
+    "pattern-declarations": {
+      "name": "meta.pattern.ny",
+      "begin": "^[ \\t]*(?:pub[ \\t]+)?((?<![A-Za-z0-9_])(?:pattern)(?![A-Za-z0-9_]))[ \\t]+([A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_])",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.pattern.ny"
+        },
+        "2": {
+          "name": "entity.name.pattern.ny"
+        }
+      },
+      "end": "(?<![A-Za-z0-9_])(?:end)(?![A-Za-z0-9_])[ \\t]+(?<![A-Za-z0-9_])(?:pattern)(?![A-Za-z0-9_])",
+      "endCaptures": {
+        "0": {
+          "name": "keyword.control.pattern.ny"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#pattern-strings"
+        },
+        {
+          "include": "#nested-pattern"
+        },
+        {
+          "match": "((?<![A-Za-z0-9_])(?:capture)(?![A-Za-z0-9_]))[ \\t]+([A-Za-z_][A-Za-z0-9_]*)(?=[ \t]+(?<![A-Za-z0-9_])(?:matching)(?![A-Za-z0-9_]))",
+          "captures": {
+            "1": {
+              "name": "keyword.control.pattern.ny"
+            },
+            "2": {
+              "name": "entity.name.capture.ny"
+            }
+          }
+        },
+        {
+          "match": "(?<![A-Za-z0-9_])(?:(?<![A-Za-z0-9_])(?:literal)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:matching)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:require)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:next)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:not)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:to)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:match)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:one)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:zero)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:or)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:more)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:optional)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:exactly)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:between)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:and)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:fewest)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ascii)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:digit)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:digits)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:letter)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:letters)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:whitespace)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:any)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:character)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:from)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:through)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:start)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:end)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:of)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:input)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:either)(?![A-Za-z0-9_]))(?![A-Za-z0-9_])",
+          "name": "keyword.control.pattern.ny"
+        },
+        {
+          "include": "#numbers"
+        },
+        {
+          "include": "#constants"
+        }
+      ]
+    },
+    "query-blocks": {
+      "name": "meta.query.ny",
+      "begin": "(?<![A-Za-z0-9_])(?:collect)(?![A-Za-z0-9_])[ \\t]+(?<![A-Za-z0-9_])(?:query)(?![A-Za-z0-9_])",
+      "beginCaptures": {
+        "0": {
+          "name": "keyword.control.query.ny"
+        }
+      },
+      "end": "(?<![A-Za-z0-9_])(?:end)(?![A-Za-z0-9_])[ \\t]+(?<![A-Za-z0-9_])(?:query)(?![A-Za-z0-9_])",
+      "endCaptures": {
+        "0": {
+          "name": "keyword.control.query.ny"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_])(?:order)(?![A-Za-z0-9_])[ \\t]+(?<![A-Za-z0-9_])(?:by)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:from)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:where)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:skip)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:take)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:select)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:give)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ascending)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:descending)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:asc)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:desc)(?![A-Za-z0-9_])",
+          "name": "keyword.control.query.ny"
         },
         {
           "include": "$self"

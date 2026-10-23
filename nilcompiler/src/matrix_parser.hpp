@@ -211,6 +211,7 @@ private:
                                                      std::optional<std::string> contract,
                                                      kw closing_kind);
   std::shared_ptr<ny::ast_decl> parse_book_binding(bool is_public);
+  std::shared_ptr<ny::ast_decl> parse_text_pattern(const token &name, bool is_public);
   std::shared_ptr<ny::ast_decl> parse_record(bool is_public, int line,
                                              const std::string &name,
                                              std::vector<ny::ast_generic_param> generics);
@@ -266,6 +267,7 @@ private:
   ny::ast_expr_ptr parse_unary();
   ny::ast_expr_ptr parse_postfix();
   ny::ast_expr_ptr parse_primary();
+  ny::ast_expr_ptr parse_query_expression();
   ny::ast_expr_ptr parse_when_expression();
   ny::ast_expr_ptr parse_consider_expression();
   ny::ast_expr_ptr parse_build();
