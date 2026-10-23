@@ -149,6 +149,41 @@ end paragraph
             assert result.stdout == '42\nmatrix\n', result
             validate(output, route, matrix)
 
+        # Scalar worker clones must remain isolated even when source-site
+        # instrumentation is present in their ordinary callable originals.
+        # Only the parent's input and output arrays belong to this capture.
+        parallel = root / 'parallel workers.ny'
+        parallel.write_text('fn square(value: i64) -> i64\nreturn value * value\nend fn\n'
+            'fn transform(value: i64) -> i64\nreturn square(value) + 3\nend fn\n'
+            'fn main() -> i32\n'
+            'let inputs: array<i64> = [1 as i64, 2 as i64, 3 as i64, 4 as i64, '
+            '5 as i64, 6 as i64, 7 as i64, 8 as i64]\n'
+            'let outputs = parallel_map(transform, inputs)\n'
+            'println(outputs[7])\nprintln(inputs[2])\nprintln(outputs.len())\n'
+            'println(transform(5))\nreturn 0\nend fn\n')
+        for route in ('vm', 'native') if args.llvm == 'ON' else ('vm',):
+            output = root / ('parallel-' + route + '.json')
+            flags = ['--native'] if route == 'native' else []
+            result = run([aperture, 'memory', '--output', output, *flags, parallel])
+            assert result.stdout == '67\n3\n8\n28\n', result
+            profile = validate(output, route, parallel)
+            totals = profile['totals']
+            assert totals['allocated_objects'] == totals['live_objects'] == 2, profile
+            assert totals['freed_objects'] == totals['resizes'] == 0, profile
+            assert all(site['function'] == 'main' and site['kind'].startswith('array')
+                       and site['file'] == str(parallel) and site['line'] > 0
+                       for site in profile['sites']), profile['sites']
+            assert sum(site['allocated_objects'] for site in profile['sites']) == 2, profile
+            assert any('parallel workers' in scope for scope in profile['scope']), profile
+            if route == 'vm':
+                # VM workers disable recording before opening a session.
+                assert profile['excluded_sessions'] == 0, profile
+            else:
+                # Native workers initialize their own invocation contexts;
+                # the first-session collector explicitly excludes those.
+                assert profile['excluded_sessions'] > 0, profile
+            checks += 2
+
         # Normal nonzero program exits are propagated with a usable report.
         failure = root / 'failure.ny'
         failure.write_text('fn main() -> i32\nlet values = [7]\nprintln(values[0])\nreturn 7\nend fn\n')

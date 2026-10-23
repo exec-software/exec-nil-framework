@@ -8115,6 +8115,13 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           std::cerr << "[NativeCodegen] isolated worker contains an indirect native call\n";
           return false;
         }
+        if (callee->getName() == "nyrt_profile_site") {
+          // Worker clones are certified scalar-only and outside the parent
+          // capture. Keep their copies free of runtime context access while
+          // retaining attribution in the ordinary callable function.
+          call->eraseFromParent();
+          continue;
+        }
         if (callee->getName() == "nyrt_fail") {
           auto *terminator = call->getParent()->getTerminator();
           if (!llvm::isa<llvm::UnreachableInst>(terminator) || call->getNextNode() != terminator) {
