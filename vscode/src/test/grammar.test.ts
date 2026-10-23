@@ -145,3 +145,17 @@ test("Ny query clauses are contextual and ordinary expressions retain their scop
   assert.equal(snippets["Text pattern"]!.body.at(-1), "end pattern");
   assert.equal(snippets["Collect query"]!.body.at(-1), "end query");
 });
+
+test("Ny query keywords match the compiler's projection and ordering vocabulary", async () => {
+  const grammar = await loadNyGrammar();
+  assert.ok(grammar);
+  const state = grammar.tokenizeLine("collect query", INITIAL).ruleStack;
+  for (const word of ["select", "ascending", "descending"]) {
+    const result = grammar.tokenizeLine(word, state);
+    assert.ok(result.tokens.some(token => token.scopes.includes("keyword.control.query.ny")), word);
+  }
+  for (const word of ["give", "asc", "desc", "ascending_value", "descending_value"]) {
+    const result = grammar.tokenizeLine(word, state);
+    assert.equal(result.tokens.some(token => token.scopes.includes("keyword.control.query.ny")), false, word);
+  }
+});

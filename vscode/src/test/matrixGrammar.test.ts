@@ -83,6 +83,19 @@ test("Matrix collection query scopes stay inside their block", async () => {
   assert.equal(snippets["Collect query"]!.body.at(-1), "end query");
 });
 
+test("Matrix query keywords match the compiler's projection and ordering vocabulary", async () => {
+  const grammar = await loadMatrixGrammar();
+  const state = grammar.tokenizeLine("collect begin query", INITIAL).ruleStack;
+  for (const word of ["give", "GIVE", "ascending", "ASCENDING", "descending", "DESCENDING"]) {
+    const result = grammar.tokenizeLine(word, state);
+    assert.ok(scopesAt(result, word, word).includes("keyword.control.query.matrix"), word);
+  }
+  for (const word of ["select", "SELECT", "asc", "ASC", "desc", "DESC", "ascending-value", "descending_value"]) {
+    const result = grammar.tokenizeLine(word, state);
+    assert.equal(scopesAt(result, word, word).includes("keyword.control.query.matrix"), false, word);
+  }
+});
+
 test("Matrix scopes subject-first declarations, modifiers, parameters, and type aliases", async () => {
   const grammar = await loadMatrixGrammar();
   const declaration = "PUBLIC replaces read-sensor receives variable sensor-id as number returns sensor-reading begin paragraph";

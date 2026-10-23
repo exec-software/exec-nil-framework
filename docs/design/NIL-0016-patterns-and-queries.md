@@ -51,7 +51,7 @@ Without ordering, filtering and pagination walk the snapshot in input order and
 stop after the requested number of selected rows. With ordering, all qualifying
 rows receive a single key evaluation and stable merge sorting precedes pagination.
 Projection runs once per selected row after pagination. This avoids duplicated
-side effects and gives equal-key records a deterministic order. The standard
+side effects and gives equal-key rows a deterministic order. The standard
 library adds terminals over the resulting array.
 
 [The query contract](../standard-library/queries.md) defines exact syntax and

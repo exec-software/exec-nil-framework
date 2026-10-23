@@ -531,7 +531,7 @@
           "include": "#strings"
         },
         {
-          "match": "(?<![A-Za-z0-9_])(?:order)(?![A-Za-z0-9_])[ \\t]+(?<![A-Za-z0-9_])(?:by)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:from)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:where)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:skip)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:take)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:select)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:give)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ascending)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:descending)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:asc)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:desc)(?![A-Za-z0-9_])",
+          "match": "(?<![A-Za-z0-9_])(?:order)(?![A-Za-z0-9_])[ \\t]+(?<![A-Za-z0-9_])(?:by)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:from)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:where)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:skip)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:take)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:select)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ascending)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:descending)(?![A-Za-z0-9_])",
           "name": "keyword.control.query.ny"
         },
         {
