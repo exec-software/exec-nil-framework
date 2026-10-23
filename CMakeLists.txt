@@ -1008,6 +1008,24 @@ if(BUILD_TESTING)
             --compiler-arg=--sdk-path
             --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
         )
+        add_test(NAME nil.native-argument-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_argument_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler>
+                --interpreter $<TARGET_FILE:nilinterpreter>
+                --assembler $<TARGET_FILE:nilassembler>
+                --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.native-argument-contract PROPERTIES LABELS "interop;routes" TIMEOUT 180)
+        if(NIL_ENABLE_LLVM)
+            add_test(NAME nil.native-console-contract
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_console_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --assembler $<TARGET_FILE:nilassembler>
+                    --linker $<TARGET_FILE:nillinker>
+                    --runtime $<TARGET_FILE:nilruntime>
+                    --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src")
+            set_tests_properties(nil.native-console-contract PROPERTIES LABELS "console;native;routes" TIMEOUT 180)
+        endif()
         if(TARGET aperture)
             add_executable(nil_vm_memory_profile_tests tests/vm_memory_profile_tests.cpp)
             target_link_libraries(nil_vm_memory_profile_tests PRIVATE nilcompiler_core)
@@ -2898,7 +2916,7 @@ if(BUILD_TESTING)
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/system-exit-runtime.ny"
             --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/system-exit-runtime.stdout"
             --expected-exit 7
-            --routes text-interpreter,binary-interpreter
+            --routes all
             --compiler-arg=--sdk-path
             --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
         )
@@ -2912,6 +2930,19 @@ if(BUILD_TESTING)
             --compiler-arg=--sdk-path
             --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
         )
+        foreach(gc_growth_mode IN ITEMS safe unsafe)
+            add_ny_route_test(
+                ny.routes.gc-array-growth-${gc_growth_mode}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/gc-array-growth.ny"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/gc-array-growth.stdout"
+                --expected-exit 0
+                --routes text-interpreter,binary-interpreter
+                --compiler-arg=--sdk-path
+                --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+                --interpreter-arg=--memory-mode=${gc_growth_mode}
+                --program-arg=${gc_growth_mode}
+            )
+        endforeach()
         add_ny_route_test(
             ny.routes.gc-runtime
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/gc-runtime.ny"

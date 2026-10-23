@@ -111,6 +111,10 @@ const char *nyrt_arg(std::int64_t index) noexcept;
 
 void nyrt_write_stdout(const char *text, std::int32_t newline) noexcept;
 void nyrt_write_stderr(const char *text, std::int32_t newline) noexcept;
+// Reads through LF, retaining any CR and accepting a final unterminated line.
+// The result is managed text; EOF, host errors and embedded NUL fail explicitly.
+const char *nyrt_read_line() noexcept;
+void nyrt_flush_stdout() noexcept;
 
 void *nyrt_array_new(std::uint32_t kind, std::int64_t length) noexcept;
 void *nyrt_array_new_with_value(std::uint32_t kind, std::int64_t length,

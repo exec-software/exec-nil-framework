@@ -9,6 +9,7 @@
 #include <initializer_list>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -123,6 +124,45 @@ void check_substring_contract(bool &ok) {
   const std::string utf8 = "\xc3\xa9!";
   ok &= expect_text(nyrt_text_substr(utf8.c_str(), 1, 1), utf8.substr(1, 1),
                     "substring unexpectedly used scalar instead of byte offsets");
+}
+
+void check_console_input_contract(bool &ok) {
+  nyrt_context_begin(0, nullptr);
+  const std::string expected[] = {"", "snowman-\xE2\x98\x83", "retained\r",
+                                 std::string(200000, 'x'), "last"};
+  std::string bytes;
+  for (std::size_t index = 0; index < 5; ++index) {
+    bytes += expected[index];
+    if (index != 4) bytes += '\n';
+  }
+  std::istringstream input(bytes);
+  const auto original_state = std::cin.rdstate();
+  auto *original_input = std::cin.rdbuf(input.rdbuf());
+  std::uint64_t values[5] = {};
+  const void *slots[] = {&values[0], &values[1], &values[2], &values[3], &values[4]};
+  nyrt_roots_enter(slots, 5);
+  std::uint64_t expected_bytes = 0;
+  for (std::size_t index = 0; index < 5; ++index) {
+    const auto *line = nyrt_read_line();
+    values[index] = reinterpret_cast<std::uintptr_t>(line);
+    expected_bytes += expected[index].size() + 1;
+    nyrt_collect();
+    for (std::size_t retained = 0; retained <= index; ++retained)
+      ok &= expect_text(reinterpret_cast<const char *>(values[retained]),
+                        expected[retained], "read_line changed input or lost a managed root");
+    ok &= expect(nyrt_managed_bytes() == expected_bytes &&
+                     nyrt_managed_objects() == index + 1,
+                 "read_line did not account for its owned text storage");
+  }
+  // A final nonempty line succeeds without LF. Its text survives the EOF bit.
+  std::cin.rdbuf(original_input);
+  std::cin.clear(original_state);
+  for (auto &value : values) value = 0;
+  nyrt_collect();
+  ok &= expect(nyrt_managed_bytes() == 0 && nyrt_managed_objects() == 0,
+               "read_line text was not reclaimed after its roots expired");
+  nyrt_roots_leave(slots);
+  nyrt_context_end();
 }
 
 void check_scalar_formatting(bool &ok) {
@@ -791,5 +831,6 @@ int main() {
                "context cleanup left a stale raw buffer usable");
   nyrt_context_end();
 
+  check_console_input_contract(ok);
   return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

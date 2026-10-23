@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include <limits>
 #include <map>
 #include <memory>
@@ -1084,6 +1085,30 @@ void nyrt_write_stderr(const char *text, std::int32_t newline) noexcept {
   if (newline != 0)
     std::fputc('\n', stderr);
 }
+
+const char *nyrt_read_line() noexcept {
+  // Console output uses C stdio. Publish pending prompts even if an embedder
+  // has disabled C++ stream synchronization or changed std::cin's tie.
+  std::fflush(stdout);
+  try {
+    std::string line;
+    if (!std::getline(std::cin, line))
+      nyrt_fail("NIL native runtime error: console.read_line: input is unavailable or reached EOF\n");
+    // Native text is a NUL-terminated ABI. Never turn a valid input prefix
+    // into an apparently successful read by silently dropping the suffix.
+    if (line.find('\0') != std::string::npos)
+      nyrt_fail("NIL native runtime error: console.read_line: embedded NUL is unsupported by native text\n");
+    if (const char *result = own_string(line))
+      return result;
+  } catch (const std::ios_base::failure &) {
+    nyrt_fail("NIL native runtime error: console.read_line: input is unavailable or reached EOF\n");
+  } catch (...) {
+    // Allocation failures also stay inside the C ABI boundary.
+  }
+  nyrt_fail("NIL native runtime error: console.read_line: could not allocate input text\n");
+}
+
+void nyrt_flush_stdout() noexcept { std::fflush(stdout); }
 
 void *nyrt_array_new(std::uint32_t kind, std::int64_t length) noexcept {
   if (length < 0)

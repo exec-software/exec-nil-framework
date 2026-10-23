@@ -237,7 +237,7 @@ end paragraph
                          'raise Problem { code: 7 }\nreturn 0\nend fn\n')
         explicit_exit = root / 'explicit exit.ny'
         explicit_exit.write_text('import nil.std.system.*\nfn main() -> i32\n'
-                                 'let values = [42]\nprintln(values[0])\nexit(7 as i32)\nreturn 0\nend fn\n')
+                                 'let values = [42]\nprintln(values[0])\nexit(7)\nreturn 0\nend fn\n')
         for route in ('vm', 'native') if args.llvm == 'ON' else ('vm',):
             flags = ['--native'] if route == 'native' else []
             output = root / ('owned-' + route + '.json')
@@ -259,25 +259,42 @@ end paragraph
             checks += 2
 
         forwarding = root / 'arguments and input.ny'
+        forwarding.write_text('import nil.std.system.*\nimport nil.std.io.*\n'
+            'fn main() -> i32\nlet values = [42]\nprintln(arg_count())\n'
+            'println(arg(0))\nprintln(arg(1))\nprintln(arg(2))\n'
+            'println(read_line())\nprintln(values[0])\nreturn 0\nend fn\n')
         for route in ('vm', 'native') if args.llvm == 'ON' else ('vm',):
-            # console.read_line is currently VM-only; argument forwarding is
-            # qualified on both routes without implying native console support.
-            forwarding.write_text('import nil.std.system.*\n' +
-                ('import nil.std.io.*\n' if route == 'vm' else '') +
-                'fn main() -> i32\nlet values = [42]\nprintln(arg_count())\n'
-                'println(arg(0))\nprintln(arg(1))\nprintln(arg(2))\n' +
-                ('println(read_line())\n' if route == 'vm' else '') +
-                'println(values[0])\nreturn 0\nend fn\n')
             flags = ['--native'] if route == 'native' else []
             output = root / ('arguments-' + route + '.json')
             result = run([aperture, 'memory', '--sdk-path', stdlib, '--output', output,
                           *flags, forwarding, '--', 'space argument', '', '$(touch INJECTED)'],
                          input_text='hello from stdin\n')
-            expected_forwarding = '3\nspace argument\n\n$(touch INJECTED)\n' + ('hello from stdin\n' if route == 'vm' else '') + '42\n'
+            expected_forwarding = '3\nspace argument\n\n$(touch INJECTED)\nhello from stdin\n42\n'
             assert result.stdout == expected_forwarding, result
-            validate(output, route, forwarding)
+            profile = validate(output, route, forwarding)
+            if route == 'native':
+                # The imported wrapper owns this allocation. Libraries without
+                # source metadata still retain its function identity.
+                assert any(site['kind'] == 'text' and 'read_line' in site['function']
+                           and site['allocated_bytes'] == 17
+                           for site in profile['sites']), profile
         assert not (root / 'INJECTED').exists(), 'program argument was interpreted by a shell'
         checks += 1
+
+        # Console EOF is a target failure, with a usable incomplete profile.
+        eof_source = root / 'console EOF.ny'
+        eof_source.write_text('import nil.std.io.*\nfn main() -> i32\n'
+            'let values = [42]\nprintln(values[0])\nprintln(read_line())\nreturn 0\nend fn\n')
+        for route in ('vm', 'native') if args.llvm == 'ON' else ('vm',):
+            output = root / ('console-eof-' + route + '.json')
+            flags = ['--native'] if route == 'native' else []
+            result = run([aperture, 'memory', '--sdk-path', stdlib, '--output', output,
+                          *flags, eof_source], 1, input_text='')
+            assert result.stdout == '42\n' and 'console.read_line' in result.stderr, result
+            profile = json.loads(output.read_text())
+            assert profile['status'] == 'failed' and not profile['completed'], profile
+            assert profile['totals']['allocated_objects'] >= 1, profile
+            checks += 1
 
         # The requested destination must be writable and fresh before target
         # execution. Existing files, target source, and symlink referents survive.

@@ -3801,6 +3801,61 @@ public:
         }
       }
 
+      // Direct native dispatch bypasses the declared wrapper's parameter
+      // boundary. Preserve scalar representation explicitly: PUSH_CONST uses a word
+      // representation even for an i32 literal, and an accepted scalar
+      // argument can have a different width from the declared parameter.
+      // This is source lowering only; handwritten NIL must still satisfy the
+      // native provider's exact operand and declaration contracts.
+      const ast_function_decl *native_call_declaration = nullptr;
+      auto call_substitutions = substitutions;
+      if (ce.callee && ce.callee->kind == ast_node_kind::identifier_expr_node) {
+        const auto &id = static_cast<const ast_identifier_expr &>(*ce.callee);
+        const auto name = cg_.lookup_function_fqn(id.name, current_module_);
+        const auto *declaration = cg_.lookup_function_decl(name);
+        if (declaration && native_dispatch_annotation_count(*declaration) == 1) {
+          native_call_declaration = declaration;
+          for (std::size_t index = 0;
+               index < declaration->generic_params.size() && index < ce.type_args.size();
+               ++index)
+            call_substitutions[declaration->generic_params[index].name] =
+                substitute_nil_type_name(ce.type_args[index], substitutions);
+        }
+      }
+      const auto emit_call_argument = [&](std::size_t index) {
+        std::optional<std::string> scalar_type;
+        if (native_call_declaration && index < native_call_declaration->params.size() &&
+            ce.args[index]->inferred_type) {
+          const auto &parameter = native_call_declaration->params[index];
+          if (parameter.type_name && !parameter.is_variadic) {
+            auto expected = substitute_nil_type_name(*parameter.type_name, call_substitutions);
+            if (expected == "int") expected = "i32";
+            static const std::set<std::string> scalar_types = {
+                "i32", "i64", "u8", "bool", "f64", "f32"};
+            if (scalar_types.count(expected)) {
+              auto actual = substitute_nil_type_name(*ce.args[index]->inferred_type, substitutions);
+              if (actual == "int") actual = "i32";
+              const bool floating_argument = actual == "f64" || actual == "f32";
+              const bool floating_parameter = expected == "f64" || expected == "f32";
+              const bool boolean_argument = actual == "bool";
+              const bool boolean_parameter = expected == "bool";
+              // Providers own their value/category checks. Do not turn a
+              // fractional duration into an integer or parse text/handles as
+              // numeric values, including under --no-typecheck (which can
+              // still leave inferred_type metadata). Float-to-integer
+              // conversion and changes of boolean category therefore require
+              // an explicit source cast.
+              if (scalar_types.count(actual) &&
+                  (!floating_argument || floating_parameter) &&
+                  boolean_argument == boolean_parameter)
+                scalar_type = std::move(expected);
+            }
+          }
+        }
+        emit_expr(*ce.args[index], scalar_type);
+        emit_scalar_boundary(scalar_type, ce.args[index]->line);
+      };
+
       // Effective arg count (adjusted when variadic args are packed into array)
       size_t effective_arg_count = ce.args.size();
       // Check for variadic last param — pack trailing args into
@@ -3813,7 +3868,7 @@ public:
           if (!vdecl->params.empty() && vdecl->params.back().is_variadic) {
             size_t fixed = vdecl->params.size() - 1;
             for (size_t i = 0; i < fixed && i < ce.args.size(); ++i)
-              emit_expr(*ce.args[i]);
+              emit_call_argument(i);
             size_t nvar = ce.args.size() > fixed ? ce.args.size() - fixed : 0;
             for (size_t i = fixed; i < ce.args.size(); ++i)
               emit_expr(*ce.args[i]);
@@ -3832,8 +3887,8 @@ public:
         }
       }
       if (!did_vararg_pack) {
-        for (const auto &arg : ce.args)
-          emit_expr(*arg);
+        for (std::size_t index = 0; index < ce.args.size(); ++index)
+          emit_call_argument(index);
       }
       std::string fname = "<call>";
       if (ce.callee && ce.callee->kind == ast_node_kind::identifier_expr_node) {
