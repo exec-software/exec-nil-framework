@@ -42,7 +42,8 @@ end fn
 
 Supported native function boundaries currently include integer and boolean
 words, `f64`, named/concrete generic enums, text, `array<i32/i64/u8/bool/f64/text>`,
-`ptr<i32/i64/u8/bool>`, and validated concrete struct layouts. Generic struct
+arrays of supported structural tuples, `ptr<i32/i64/u8/bool>`, and validated
+concrete struct layouts. Generic struct
 schemas are materialized for supported field layouts, including `f64`/`u8`
 fields, nested struct handles and `ref<Struct>`. These references preserve shared object identity;
 they are not scalar stack references or a borrow checker. Scalar references,

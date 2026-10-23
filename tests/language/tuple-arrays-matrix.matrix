@@ -1,0 +1,110 @@
+book tuple_arrays
+read everything from nil.std.collections
+
+counter begin record
+    field total as number
+end record
+
+repeat-pair of type T receives item as T returns array of T begin paragraph
+    value values as array of T is new-with-value of T with size being 2, `value` being item
+    append item to values
+    give values
+end paragraph
+
+make-owned returns array of tuple of (number, text) begin paragraph
+    value values as array of tuple of (number, text) is []
+    variable index as override integer is 0
+    repeat while index is less than 257
+        value entry as tuple of (number, text) is (index, formatted "owned-{index}")
+        append entry to values
+        set index to index plus 1
+    end repeat
+    give values
+end paragraph
+
+fresh-pairs returns array of tuple of (number, text) begin paragraph
+    give [(1, "returned"), ((2 becomes number), "wide")]
+end paragraph
+
+main returns override integer begin paragraph
+    value first as tuple of (number, text, floating, boolean) is (41, "first", -1.5, true)
+    value second as tuple of (number, text, floating, boolean) is (42, "second", 2.25, false)
+    value items is [first, second]
+    value alias is items
+    value retained is items at 0
+    say the length of items
+    say (items at 0).0
+    say (items at 1).1
+    say (items at 0).2
+    say (items at 1).3
+    set items at 0 to second
+    say (alias at 0).0
+    say retained.1
+    append first to alias
+    say the length of items
+    say (items at 2).1
+    set items at -1 to first
+    set items at 3 to second
+    say the length of items
+    say (items at 0).0
+
+    value nested is [((1, "nested"), (false, -0.5)), ((2, "tail"), (true, 0.25))]
+    say (nested at 0).0.1
+    say (nested at 1).1.0
+    say (nested at 0).1.1
+    value singles as array of tuple of (number) is [((9 becomes number),), ((10 becomes number),)]
+    say (singles at 1).0
+
+    value object is build counter with total being 5
+    value references is [(object, "shared")]
+    value saved is references at 0
+    set saved.0.total to 17
+    say (references at 0).0.total
+    set references at 0 to ((build counter with total being 23), "replacement")
+    say saved.0.total
+    say (references at 0).0.total
+
+    value repeated is repeat-pair of tuple of (number, text, floating, boolean) with item being first
+    say length of tuple of (number, text, floating, boolean) with arr being repeated
+    evaluate array-set of tuple of (number, text, floating, boolean) with arr being repeated, idx being 1, `value` being second
+    value selected is get of tuple of (number, text, floating, boolean) with arr being repeated, idx being 1
+    say selected.1
+    evaluate array-set of tuple of (number, text, floating, boolean) with arr being repeated, idx being -1, `value` being second
+    evaluate array-set of tuple of (number, text, floating, boolean) with arr being repeated, idx being 3, `value` being second
+    say (repeated at 0).1
+    say try-copy-range of tuple of (number, text, floating, boolean) with source being repeated, source-offset being 0, destination being repeated, destination-offset being 1, count being 2
+    say (repeated at 1).1
+    say (repeated at 2).1
+    say try-copy-range of tuple of (number, text, floating, boolean) with source being repeated, source-offset being 1, destination being repeated, destination-offset being 0, count being 2
+    say (repeated at 0).1
+    say (repeated at 1).1
+    say try-copy-range of tuple of (number, text, floating, boolean) with source being repeated, source-offset being 0, destination being repeated, destination-offset being 2, count being 2
+    say (repeated at 2).1
+
+    value empty as array of tuple of (number, text, floating, boolean) is []
+    say the length of empty
+    append second to empty
+    say (empty at 0).0
+    value filled is new-with-value of tuple of (counter, text) with size being 2, `value` being (object, "filled")
+    set (filled at 0).0.total to 31
+    say (filled at 1).0.total
+    say object.total
+    value returned-values is make-owned with nothing
+    value owned-alias is returned-values
+    value first-owned is returned-values at 0
+    append ((257 becomes number), "added") to owned-alias
+    say the length of returned-values
+    say first-owned.1
+    say (returned-values at 128).1
+    say (returned-values at 256).0
+    say (returned-values at 257).1
+    value converted as array of tuple of (number, text) is [(1, "declared"), ((2 becomes number), "wide")]
+    set converted at 0 to (3, "replaced")
+    append (4, "pushed") to converted
+    say (converted at 0).0
+    say (converted at 2).0
+    value returned-pairs is fresh-pairs with nothing
+    say (returned-pairs at 0).1
+    say (returned-pairs at 1).0
+    give 0
+end paragraph

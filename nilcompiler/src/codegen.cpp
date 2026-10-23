@@ -1360,11 +1360,13 @@ public:
     const auto parsed = parse_generic_type_name(array_type);
     if (!parsed || parsed->base_name != "array" || parsed->type_args.size() != 1)
       return reject("array intrinsic declaration requires an exact array type");
-    const std::vector<std::string> operands = {
+    std::vector<std::string> operands = {
         "intrinsic", name, std::to_string(argument_count), result,
-        canonical_array_scalar(parsed->type_args[0])};
+        parsed->type_args[0]};
     array_intrinsic_contract contract;
     try {
+      operands[3] = canonical_array_type(operands[3]);
+      operands[4] = canonical_array_type(operands[4]);
       contract = parse_array_intrinsic(operands);
     } catch (const std::runtime_error &error) {
       return reject(error.what());
@@ -1382,13 +1384,18 @@ public:
     if (declaration.params.size() != expected.size())
       return reject("array intrinsic declaration has an invalid parameter count");
     for (std::size_t index = 0; index < expected.size(); ++index) {
-      auto actual = canonical_array_scalar(substitute_nil_type_name(
-          declaration.params[index].type_name.value_or(""), concrete));
-      if (actual == "array<string>" || actual == "array<str>")
-        actual = "array<text>";
+      std::string actual;
+      try {
+        actual = canonical_array_type(substitute_nil_type_name(
+            declaration.params[index].type_name.value_or(""), concrete));
+      } catch (const std::runtime_error &error) {
+        return reject(error.what());
+      }
       if (actual != expected[index])
         return reject("array intrinsic declaration has an invalid parameter type");
     }
+    if (is_array_tuple_type(contract.element))
+      cg_.materialize_struct_schema(contract.element, mod_, line, 0, true);
     push_instr("INTEROP_CALL", operands, line);
     return true;
   }
@@ -1926,18 +1933,28 @@ public:
         }
       }
 
-      // Optimization: if the iterable is a named identifier and the emitter has
-      // seen a corresponding local variable with a container type (array / vec
-      // / slice), perform an index-based loop instead of using the generic
-      // iterator protocol. This avoids iterator overhead and enables more
-      // efficient codegen for common container loops.
-      if (!handled && for_s.iterable &&
-          for_s.iterable->kind == ast_node_kind::identifier_expr_node) {
-        const auto &id =
-            static_cast<const ast_identifier_expr &>(*for_s.iterable);
-        auto it = local_var_types.find(id.name);
-        if (it != local_var_types.end()) {
-          std::string var_type = it->second;
+      // Typed arrays use the same index-based lowering for names, literals,
+      // calls, and member expressions. Evaluate the array once before binding
+      // loop variables, so side effects and a binding that shadows its source
+      // cannot change which container the loop traverses. Other containers
+      // retain their existing named-local optimization.
+      if (!handled && for_s.iterable) {
+        std::string var_type = unambiguous_expression_type(*for_s.iterable);
+        std::string container_local;
+        const bool named = for_s.iterable->kind == ast_node_kind::identifier_expr_node;
+        if (named) {
+          const auto &id = static_cast<const ast_identifier_expr &>(*for_s.iterable);
+          const auto local = local_var_types.find(id.name);
+          if (var_type.empty() && local != local_var_types.end())
+            var_type = substitute_nil_type_name(local->second, substitutions);
+          if (local != local_var_types.end()) container_local = id.name;
+        }
+        const auto iterable_container = parse_generic_type_name(var_type);
+        const bool array_expression =
+            (iterable_container && iterable_container->base_name == "array" &&
+             !iterable_container->type_args.empty()) ||
+            (var_type.size() > 2 && var_type.compare(var_type.size() - 2, 2, "[]") == 0);
+        if (array_expression || !container_local.empty()) {
 
           // Helper lambdas for trimming and numeric detection
           auto trim_local = [](std::string s) {
@@ -2014,6 +2031,12 @@ public:
             // Implement index-based iteration for this container
             const bool typed_array = pos_array != std::string::npos ||
                                      var_type.rfind("[]") != std::string::npos;
+            if (typed_array) {
+              container_local = new_temp("iterable");
+              emit_expr(*for_s.iterable);
+              push_instr("STORE_LOCAL", {container_local}, for_s.line);
+              local_var_types[container_local] = var_type;
+            }
             std::string tmp_len = new_temp("len");
             std::string tmp_idx = new_temp("idx");
 
@@ -2023,7 +2046,7 @@ public:
               push_instr("STORE_LOCAL", {tmp_len}, for_s.line);
             } else {
               // Query runtime length: __ritual_len(container)
-              push_instr("LOAD_LOCAL", {id.name}, for_s.line);
+              push_instr("LOAD_LOCAL", {container_local}, for_s.line);
               if (typed_array)
                 push_instr("LEN", {}, for_s.line);
               else
@@ -2048,7 +2071,7 @@ public:
             push_instr("JMP_IF_NOT", {end}, for_s.line);
 
             // value = __ritual_index(container, idx)
-            push_instr("LOAD_LOCAL", {id.name}, for_s.line);
+            push_instr("LOAD_LOCAL", {container_local}, for_s.line);
             push_instr("LOAD_LOCAL", {tmp_idx}, for_s.line);
             if (typed_array)
               push_instr("GET_INDEX", {}, for_s.line);
@@ -2067,6 +2090,7 @@ public:
               push_instr("STORE_LOCAL", {tmp_val}, for_s.line);
               for (size_t ii = 0; ii < for_s.variables.size(); ++ii) {
                 const auto &pv = for_s.variables[ii];
+                if (pv.name == "_") continue;
                 push_instr("LOAD_LOCAL", {tmp_val}, for_s.line);
                 if (elem_type && !extract_tuple_parts(*elem_type).empty()) {
                   cg_.materialize_struct_schema(substitute_nil_type_name(*elem_type, substitutions), mod_, for_s.line);
@@ -2247,6 +2271,7 @@ public:
           // loop variables.
           for (size_t ii = 0; ii < for_s.variables.size(); ++ii) {
             const auto &pv = for_s.variables[ii];
+            if (pv.name == "_") continue;
             push_instr("LOAD_LOCAL", {tmp_val}, for_s.line);
             const auto container = parse_generic_type_name(
                 substitute_nil_type_name(for_s.iterable->inferred_type.value_or(""), substitutions));
@@ -2843,6 +2868,10 @@ public:
       // instead of accepting a wildcard handle or trusting the first value.
       if (element_type == "any")
         element_type = unambiguous_array_element_type(arr);
+      // An empty array still exposes its tuple shape through its element
+      // metadata, even when no tuple constructor otherwise emits the schema.
+      if (is_array_tuple_type(element_type))
+        cg_.materialize_struct_schema(element_type, mod_, arr.line, 0, true);
       push_instr("NEW_ARRAY_LITERAL",
                  {std::to_string(arr.elements.size()), element_type}, arr.line);
       break;
@@ -3840,14 +3869,8 @@ public:
         if (!ce.type_args.empty()) {
           // Apply substitutions to type args
           std::vector<std::string> concrete_type_args;
-          for (const auto &arg : ce.type_args) {
-            auto it = substitutions.find(arg);
-            if (it != substitutions.end()) {
-              concrete_type_args.push_back(it->second);
-            } else {
-              concrete_type_args.push_back(arg);
-            }
-          }
+          for (const auto &arg : ce.type_args)
+            concrete_type_args.push_back(substitute_nil_type_name(arg, substitutions));
 
           // Mangle name: foo<i32> -> foo__i32
           // Save FQN before type-arg suffix (used for queue_specialization key)

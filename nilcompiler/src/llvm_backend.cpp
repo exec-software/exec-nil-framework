@@ -419,6 +419,8 @@ native_array_kind_for_element(const std::string &type) {
     return NYRT_ARRAY_F64;
   if (normalized == "text" || normalized == "string" || normalized == "str")
     return NYRT_ARRAY_TEXT;
+  if (is_array_tuple_type(type))
+    return NYRT_ARRAY_TUPLE;
   return std::nullopt;
 }
 
@@ -428,24 +430,6 @@ static bool is_native_scalar_abi_type(const std::string &type) {
          normalized == "i64" || normalized == "u8" || normalized == "u16" ||
          normalized == "u32" || normalized == "u64" || normalized == "f32" ||
          normalized == "f64" || normalized == "bool" || normalized == "char";
-}
-
-static std::optional<std::string>
-native_generic_argument(const std::string &type, const std::string &name) {
-  const std::string normalized = normalize_nil_type(type);
-  const std::string prefix = name + "<";
-  if (normalized.size() <= prefix.size() + 1 ||
-      normalized.rfind(prefix, 0) != 0 || normalized.back() != '>') {
-    return std::nullopt;
-  }
-  const std::string argument =
-      normalized.substr(prefix.size(), normalized.size() - prefix.size() - 1);
-  if (argument.empty() || argument.find('<') != std::string::npos ||
-      argument.find('>') != std::string::npos ||
-      argument.find(',') != std::string::npos) {
-    return std::nullopt;
-  }
-  return argument;
 }
 
 static std::optional<std::vector<std::string>>
@@ -487,18 +471,30 @@ native_generic_arguments(const std::string &type, const std::string &name) {
   return arguments;
 }
 
+static std::optional<std::string>
+native_generic_argument(const std::string &type, const std::string &name) {
+  // A container has one argument even when that argument contains a nested
+  // tuple or generic record. Nominal case must survive extraction.
+  const auto compact = compact_nil_type(type);
+  if (normalize_nil_type(compact.substr(0, name.size() + 1)) != name + "<")
+    return std::nullopt;
+  const auto arguments = native_generic_arguments(type, name);
+  return arguments && arguments->size() == 1
+             ? std::optional<std::string>(arguments->front()) : std::nullopt;
+}
+
 static native_handle_kind
 native_handle_kind_for_nil_type(const std::string &type) {
   const std::string normalized = normalize_nil_type(type);
   if (normalized == "text" || normalized == "string" || normalized == "str")
     return native_handle_kind::text;
 
-  if (const auto element = native_generic_argument(normalized, "array")) {
+  if (const auto element = native_generic_argument(type, "array")) {
     return native_array_kind_for_element(*element).has_value()
                ? native_handle_kind::scalar_array
                : native_handle_kind::unsupported;
   }
-  if (const auto element = native_generic_argument(normalized, "ptr")) {
+  if (const auto element = native_generic_argument(type, "ptr")) {
     return is_native_word_element_type(*element)
                ? native_handle_kind::integer_pointer
                : native_handle_kind::unsupported;
@@ -519,6 +515,9 @@ static bool native_handle_types_compatible(const std::string &actual,
   if (expected_kind == native_handle_kind::scalar_array) {
     const auto actual_element = native_generic_argument(actual, "array");
     const auto expected_element = native_generic_argument(expected, "array");
+    if (actual_element && expected_element &&
+        (is_array_tuple_type(*actual_element) || is_array_tuple_type(*expected_element)))
+      return canonical_array_type(*actual_element) == canonical_array_type(*expected_element);
     return actual_element && expected_element &&
            native_array_kind_for_element(*actual_element) ==
                native_array_kind_for_element(*expected_element);
@@ -1803,6 +1802,16 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       return nullptr;
     const std::string normalized = normalize_nil_type(element_type);
     auto *i64_type = llvm::Type::getInt64Ty(ctx);
+    if (is_array_tuple_type(element_type)) {
+      if (!value->getType()->isPointerTy() ||
+          canonical_array_type(impl_->nilType(value)) != canonical_array_type(element_type) ||
+          !is_native_aggregate_nil_type(mod, element_type)) {
+        std::cerr << "[NativeCodegen] " << operation
+                  << " requires an exact tuple element of type '" << element_type << "'\n";
+        return nullptr;
+      }
+      return impl_->builder->CreatePtrToInt(value, i64_type, "ny.array.tuple.bits");
+    }
     if (normalized == "f64") {
       if (normalize_nil_type(impl_->nilType(value)) != "f64") {
         std::cerr << "[NativeCodegen] " << operation
@@ -1864,6 +1873,9 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
   auto native_array_loaded_value =
       [&](llvm::Value *word, const std::string &element_type) -> llvm::Value * {
     const auto kind = native_array_kind_for_element(element_type);
+    if (kind == NYRT_ARRAY_TUPLE)
+      return impl_->builder->CreateIntToPtr(
+          word, llvm::PointerType::getUnqual(ctx), "ny.array.tuple.value");
     if (kind == NYRT_ARRAY_F64)
       return impl_->builder->CreateBitCast(
           word, llvm::Type::getDoubleTy(ctx), "ny.array.f64.value");
@@ -2158,10 +2170,40 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
 
   std::unordered_set<const nil_struct_def *> reachable_structs;
   std::vector<const nil_struct_def *> struct_worklist;
+  std::unordered_set<std::string> visited_layout_types;
+  bool valid_tuple_schemas = true;
   auto add_struct_type = [&](const std::string &type) {
-    if (const auto *definition = find_native_aggregate_definition(mod, type)) {
-      if (reachable_structs.insert(definition).second)
+    std::vector<std::string> pending{type};
+    while (!pending.empty()) {
+      const auto current = compact_nil_type(pending.back());
+      pending.pop_back();
+      if (!visited_layout_types.insert(current).second)
+        continue;
+      const auto *definition = find_native_aggregate_definition(mod, current);
+      if (is_array_tuple_type(current)) {
+        const auto fields = native_generic_arguments(current, "tuple");
+        bool valid = definition && fields && definition->fields.size() == fields->size() &&
+            compact_nil_type(definition->name) == current &&
+            std::find(definition->annotations.begin(), definition->annotations.end(),
+                      "@nil_tuple") != definition->annotations.end();
+        if (valid)
+          for (std::size_t i = 0; i < fields->size(); ++i)
+            valid = valid && definition->fields[i].first == std::to_string(i) &&
+                canonical_array_type(definition->fields[i].second) == canonical_array_type((*fields)[i]);
+        if (!valid) {
+          std::cerr << "[NativeCodegen] tuple type '" << current
+                    << "' requires its exact ordered @nil_tuple schema\n";
+          valid_tuple_schemas = false;
+        }
+      }
+      if (definition && reachable_structs.insert(definition).second)
         struct_worklist.push_back(definition);
+      if (const auto element = native_generic_argument(current, "array"))
+        pending.push_back(*element);
+      if (const auto *enumeration = find_nil_enum_definition(mod, current))
+        for (const auto &variant : enumeration->variants)
+          if (const auto payloads = native_enum_variant_payload_types(variant))
+            pending.insert(pending.end(), payloads->begin(), payloads->end());
     }
   };
 
@@ -2185,6 +2227,15 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                  !instruction.args.empty()) {
         add_struct_type(instruction.args[0]);
       }
+      if (opcode == Opcode::NEW_ARRAY_LITERAL && instruction.args.size() >= 2)
+        add_struct_type(instruction.args[1]);
+      if (opcode == Opcode::INTEROP_CALL && instruction.args.size() == 5 &&
+          instruction.args[0] == "intrinsic" && is_array_intrinsic(instruction.args[1])) {
+        add_struct_type(instruction.args[3]);
+        add_struct_type(instruction.args[4]);
+      }
+      if (opcode == Opcode::NEW_VARIANT && instruction.args.size() >= 3)
+        add_struct_type(instruction.args[2]);
     }
   }
 
@@ -2207,6 +2258,9 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
     }
   }
 
+  if (!valid_tuple_schemas)
+    return false;
+
   // Acyclic nested objects are supported. Keep recursive schema shapes closed
   // until nullable/recursive initialization has a defined language contract.
   // Peel leaves iteratively so malformed deeply nested schemas cannot consume
@@ -2219,7 +2273,11 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
     auto &pending = pending_dependencies[definition];
     for (const auto &[field_name, field_type] : definition->fields) {
       (void)field_name;
-      if (const auto *nested = find_native_aggregate_definition(mod, field_type)) {
+      // An array is a handle, but its tuple schema still contributes a
+      // dependency. Recursive aggregate graphs keep the existing rejection.
+      const auto element = native_generic_argument(field_type, "array");
+      if (const auto *nested = find_native_aggregate_definition(
+              mod, element && is_array_tuple_type(*element) ? *element : field_type)) {
         ++pending;
         dependent_structs[nested].push_back(definition);
       }
@@ -3216,12 +3274,13 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           const std::string value_type = nil_parameter_type(fn.params[1]);
           if (!element_type || !native_array_kind_for_element(*element_type) ||
               normalize_nil_type(size_type) != "i32" ||
-              normalize_nil_type(value_type) !=
-                  normalize_nil_type(*element_type) ||
+              canonical_array_type(value_type) !=
+                  canonical_array_type(*element_type) ||
               native_handle_kind_for_nil_type(fn.return_type) !=
                   native_handle_kind::scalar_array ||
               !size_arg->getType()->isIntegerTy() ||
-              (native_handle_kind_for_nil_type(value_type) == native_handle_kind::text
+              ((native_handle_kind_for_nil_type(value_type) == native_handle_kind::text ||
+                is_array_tuple_type(value_type))
                    ? !val_arg->getType()->isPointerTy()
                    : !val_arg->getType()->isIntegerTy()) ||
               !impl_->current_function->getReturnType()->isPointerTy()) {
@@ -3326,13 +3385,14 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
               native_generic_argument(array_type, "array");
           if (!element_type || !native_array_kind_for_element(*element_type) ||
               normalize_nil_type(index_type) != "i32" ||
-              normalize_nil_type(fn.return_type) !=
-                  normalize_nil_type(*element_type) ||
+              canonical_array_type(fn.return_type) !=
+                  canonical_array_type(*element_type) ||
               native_handle_kind_for_nil_type(array_type) !=
                   native_handle_kind::scalar_array ||
               !arr_arg->getType()->isPointerTy() ||
               !idx_arg->getType()->isIntegerTy() ||
-              (native_handle_kind_for_nil_type(fn.return_type) == native_handle_kind::text
+              ((native_handle_kind_for_nil_type(fn.return_type) == native_handle_kind::text ||
+                is_array_tuple_type(fn.return_type))
                    ? !impl_->current_function->getReturnType()->isPointerTy()
                    : !impl_->current_function->getReturnType()->isIntegerTy())) {
             std::cerr << "[NativeCodegen] array.get intrinsic '" << fn.name
@@ -3353,7 +3413,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
               {arr_arg,
                llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false)),
                impl_->coerceToI64(idx_arg)});
-          if (*kind == NYRT_ARRAY_TEXT)
+          if (*kind == NYRT_ARRAY_TEXT || *kind == NYRT_ARRAY_TUPLE)
             value = native_array_loaded_value(value, *element_type);
           else
             value = impl_->castInteger(value,
@@ -3382,13 +3442,14 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           const std::string value_type = nil_parameter_type(fn.params[2]);
           if (!element_type || !native_array_kind_for_element(*element_type) ||
               normalize_nil_type(index_type) != "i32" ||
-              normalize_nil_type(value_type) !=
-                  normalize_nil_type(*element_type) ||
+              canonical_array_type(value_type) !=
+                  canonical_array_type(*element_type) ||
               native_handle_kind_for_nil_type(array_type) !=
                   native_handle_kind::scalar_array ||
               !arr_arg->getType()->isPointerTy() ||
               !idx_arg->getType()->isIntegerTy() ||
-              (native_handle_kind_for_nil_type(value_type) == native_handle_kind::text
+              ((native_handle_kind_for_nil_type(value_type) == native_handle_kind::text ||
+                is_array_tuple_type(value_type))
                    ? !val_arg->getType()->isPointerTy()
                    : !val_arg->getType()->isIntegerTy()) ||
               !impl_->current_function->getReturnType()->isVoidTy()) {
@@ -4677,6 +4738,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                       << array_type << "' in function '" << fn.name << "'\n";
             return false;
           }
+          require_initialized_struct(value, "array__push");
           auto *stored_value = native_storage_word(value, *element, "array__push");
           if (!stored_value)
             return false;
@@ -5473,7 +5535,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         // Pointer If target is "i32", "i64", "any", we want Int
 
         const auto target_handle_kind =
-            native_handle_kind_for_nil_type(normalized_target);
+            native_handle_kind_for_nil_type(target_type);
         const bool target_is_aggregate =
             is_native_aggregate_nil_type(mod, target_type);
         const bool target_is_ptr =
@@ -5509,7 +5571,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           impl_->pushValue(val, target_type);
         } else if (target_is_ptr) {
           if (!src_ty->isPointerTy() || source_type.empty() ||
-              !native_handle_types_compatible(source_type, normalized_target)) {
+              !native_handle_types_compatible(source_type, target_type)) {
             std::cerr << "[NativeCodegen] ordinary CAST cannot convert '"
                       << (source_type.empty() ? std::string("untyped scalar")
                                               : source_type)
@@ -5518,7 +5580,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                       << "'; only exact compatible handle casts are allowed\n";
             return false;
           }
-          impl_->pushValue(val, normalized_target);
+          impl_->pushValue(val, canonical_array_type(target_type));
         } else if (target_enum != nullptr) {
           if (!src_ty->isIntegerTy() || source_enum != target_enum) {
             std::cerr << "[NativeCodegen] ordinary CAST cannot convert '"
@@ -6439,6 +6501,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
             for (std::size_t index = contract.argument_count; index > 0; --index)
               arguments[index - 1] = impl_->popValue();
             const auto kind = native_array_kind_for_element(contract.element);
+            if (!kind) return false;
             const auto integer_argument = [&](std::size_t index) -> llvm::Value * {
               auto *value = arguments[index];
               const auto nil_type = normalize_nil_type(impl_->nilType(value));
@@ -6475,6 +6538,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
             auto *kind_type = llvm::Type::getInt32Ty(ctx);
             if (contract.operation == array_intrinsic_operation::create) {
               auto *size = integer_argument(0);
+              require_initialized_struct(arguments[1], func_name);
               auto *initial = native_storage_word(arguments[1], contract.element, func_name);
               if (!size || !initial)
                 return false;
@@ -6514,6 +6578,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                                                       {array, kind_value, index});
               impl_->pushValue(native_array_loaded_value(word, contract.element), contract.element);
             } else {
+              require_initialized_struct(arguments[2], func_name);
               auto *value = native_storage_word(arguments[2], contract.element, func_name);
               if (!value)
                 return false;
@@ -7317,13 +7382,13 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           std::cerr << "[NativeCodegen] NEW_ARRAY_LITERAL in function '"
                     << fn.name
                     << "' requires exact contextual element metadata "
-                       "(i32, i64, bool, u8, f64, or text); got '"
+                       "(i32, i64, bool, u8, f64, text, or tuple); got '"
                     << (minstr.args.size() < 2 ? std::string("<missing>")
                                                : minstr.args[1])
                     << "'\n";
           return false;
         }
-        const std::string element_type = normalize_nil_type(minstr.args[1]);
+        const std::string element_type = canonical_array_type(minstr.args[1]);
         if (!native_array_kind_for_element(element_type)) {
           if (element_type == "f32" || element_type == "f64") {
             std::cerr << "[NativeCodegen] floating-point array elements are "
@@ -7391,6 +7456,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
             return false;
           }
 
+          require_initialized_struct(val, "NEW_ARRAY_LITERAL");
           llvm::Value *val_to_store =
               native_storage_word(val, element_type, "NEW_ARRAY_LITERAL");
           if (!val_to_store)
@@ -7533,6 +7599,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                     << fn.name << "'\n";
           return false;
         }
+        require_initialized_struct(val, "SET_INDEX");
         llvm::Value *val_to_store =
             native_storage_word(val, *element_type, "SET_INDEX");
         if (!val_to_store) {

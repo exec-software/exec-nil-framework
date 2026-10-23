@@ -15,6 +15,9 @@ enum nyrt_array_kind : std::uint32_t {
   NYRT_ARRAY_U8 = 4,
   NYRT_ARRAY_F64 = 5,
   NYRT_ARRAY_TEXT = 6,
+  // Compiler-proven, fully initialized tuple object handles. The runtime
+  // traces the handles; exact tuple schema identity remains in typed NIL.
+  NYRT_ARRAY_TUPLE = 7,
 };
 
 // Additive database ABI. Success is 1, failure 0; outputs are context-owned.

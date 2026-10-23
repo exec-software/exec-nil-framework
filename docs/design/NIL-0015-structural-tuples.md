@@ -44,6 +44,33 @@ array unpacking retains its separate interpreter behavior. Static positional
 access must be within the shape's arity. Numeric member tokenization keeps
 `value.0.1` distinct from decimal literals.
 
+## Tuple arrays
+
+Native tuple arrays use a distinct managed element kind containing traced tuple
+handles. Their exact `tuple<T1,T2,...>` metadata selects the annotated record
+schema; names of nominal types inside the shape retain their case. Empty arrays
+materialize the schema too. Construction, indexed replacement, append and the
+generic array intrinsics validate the same element shape, including when source
+type checking is disabled. A tuple handle cannot be substituted for a different
+ordered shape. Fresh literals may apply checked element conversions at a
+declared construction boundary; existing tuple values and arrays remain invariant.
+
+The container is mutable while tuple slots remain immutable. Replacing an array
+element leaves extracted tuple handles intact. Shared record/reference fields
+retain identity through aliasing, copying, array growth and function returns.
+Native tracing follows tuple handles and their transitive text/aggregate fields.
+
+Ordinary and destructuring loops evaluate their array expression once. Literal,
+named and function-returned arrays use indexed traversal of the selected array;
+rebinding a source variable does not retarget the running loop. Bindings keep
+their normal scope and control-flow behavior, including `break` and `continue`.
+
+Tuple-array reads require a valid initialized element. Out-of-range reads fail
+instead of manufacturing a tuple with default fields. Out-of-range writes remain
+no-ops, and existing scalar-array bounds behavior is unchanged. This extension
+does not enable native arrays with record, enum or array elements, nor arbitrary
+pointer-valued array storage.
+
 ## Boundaries
 
 - No empty tuple/unit value; existing Ny `()` remains the `void` type.
@@ -53,8 +80,8 @@ access must be within the shape's arity. Numeric member tokenization keeps
   destructured with another declaration. Module/global destructuring is not
   supported.
 - Owned buffers and borrows cannot be tuple elements.
-- Arrays of tuples execute only in the interpreter until native aggregate
-  arrays receive their own qualified layout contract.
+- Tuple arrays require one exact supported schema. Native arrays of records,
+  enums and nested arrays remain outside this layout contract.
 - Tuple patterns support bindings, wildcards, scalar literals and nested
   tuples. This does not expand nested enum-payload patterns.
 - A tuple inside a public signature has its canonical structural shape, but
@@ -68,6 +95,15 @@ reference identity, discarded positions and match forms through executable
 text/binary NIL, bundles and LLVM routes. `tests/tools/tuple_contract.py` checks
 invalid shapes, slot writes, huge/out-of-range positions and arity errors,
 verifies cross-language consumers using source and binary libraries with the
-original source files removed, and tests the interpreter/native tuple-array
-boundary. Interpreter loop coverage includes named and literal arrays as well
-as singleton tuples in both frontends.
+original source files removed. Its tuple-array loop cases cover direct, named
+and returned arrays, singleton tuples, discarded positions, evaluation order
+and control flow in both frontends and execution modes.
+
+`tests/language/tuple-arrays.ny`, `tests/language/tuple-arrays-matrix.matrix` and
+`tests/tools/tuple_array_contract.py` cover indexing, whole-tuple replacement,
+scalar/text/nested fields, shared record identities, growth and returned values,
+generic standard-library primitives and overlapping checked copies. The contract
+also exercises cross-language source/binary-library consumers, exact schema
+rejection before output replacement, tuple bounds failures and remaining native
+aggregate-array exclusions. Native runtime tests inspect transitive collection
+and reclamation through tuple arrays.

@@ -245,11 +245,14 @@ can type-check but still fails if it reads before initialization.
 ## Native arrays and aggregate references
 
 Native arrays are runtime descriptors with exact element kinds for `i32`,
-`i64`, `bool`, `u8`, `f64`, and NUL-free `text`. `f64` values retain their bits;
-text elements hold traced text pointers, not integer values. Function and
-field boundaries preserve array element identity. An out-of-range read yields
-the element's zero value (`0.0` or empty text for the added kinds); an
-out-of-range write is a no-op. Nested array elements remain unsupported.
+`i64`, `bool`, `u8`, `f64`, NUL-free `text`, and supported structural tuples.
+`f64` values retain their bits; text and tuple elements hold traced pointers.
+Tuple metadata preserves the exact ordered `@nil_tuple` schema, including
+nominal type names. Function and field boundaries preserve array element
+identity. Scalar out-of-range reads yield the element's zero value; tuple reads
+fail on an invalid index or uninitialized element rather than fabricating a
+default tuple. Out-of-range writes are no-ops. Arrays of records, enums and
+nested arrays remain unsupported natively.
 
 The public STL array primitives lower to
 `INTEROP_CALL intrinsic operation arity result_type element_type`, where
@@ -260,7 +263,8 @@ is exact element metadata, not an FFI calling convention. Constructors return
 Size and index arguments use the `i32` contract; constructors reject negative
 sizes and raw NIL values outside that range instead of truncating or clamping.
 The historical four-operand `array.length 1 i64` form remains readable.
-Declared `f32` helpers and aggregate-element constructors reject explicitly.
+Declared `f32` helpers and unsupported aggregate-element constructors reject
+explicitly. Tuple constructors, getters and setters require matching schemas.
 
 Nested struct fields hold nominally typed object handles, matching the VM's
 reference semantics. `ref<Struct>` and aggregate-only `REF_LOCAL` preserve that
@@ -283,7 +287,7 @@ allocators themselves do not collect. Return values are spilled by the caller
 before another safepoint can run. The same instrumentation is used by JIT,
 native compilation and standalone assembly.
 
-The runtime traces owned blocks and text-array elements, including reachable
+The runtime traces owned blocks and text/tuple-array elements, including reachable
 cycles and nested aggregate/enum payloads. It follows only known owned address
 ranges, not arbitrary words as host pointers. Numeric words that resemble
 addresses may conservatively retain an object. Static root slots are reused

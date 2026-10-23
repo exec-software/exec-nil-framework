@@ -221,6 +221,7 @@ private:
   std::vector<ast_struct_field> class_fields(const symbol &receiver, int line);
   bool class_assignable(const std::string &expected, const std::string &actual);
   bool type_contains_class(const std::string &type);
+  bool type_contains_tuple(const std::string &type);
   bool check_assignment_type(const type_info &expected, const type_info &actual,
                              ast_expr *value);
   bool class_method_is_virtual(const symbol &receiver, const std::string &name);

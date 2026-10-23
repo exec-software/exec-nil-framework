@@ -694,5 +694,13 @@ reference values retain their existing identities. `(x)` groups an expression;
 `(x,)` is a one-element tuple. Its type is `tuple of (T)`. Use `_` to discard a
 position while destructuring. Names in a declaration are flat; nested tuple
 patterns are available in `consider`. Empty tuples, dynamic positional indexing
-and global destructuring are not supported. See the shared
+and global destructuring are not supported.
+
+`array of tuple of (number, text)` works in interpreted and native code. The
+array can replace or append complete tuples while each tuple's slots stay
+immutable. Use `repeat for each (count, label) in items` to unpack each element;
+the array expression is evaluated once, including a paragraph call. An
+out-of-range tuple-array read fails because there is no default tuple value.
+Native arrays of records, choices and nested arrays remain unsupported.
+See the shared
 [tuple reference](../docs/language-reference/tuples.md) for the exact contract.

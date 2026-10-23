@@ -890,6 +890,8 @@ void VM::executeInstruction(const Instruction &instr) {
            std::holds_alternative<ArrayValue>(value);
   };
   const auto array_default_value = [](const HeapBlock &block) -> Value {
+    if (is_array_tuple_type(block.element_type))
+      throw std::runtime_error("tuple array read is out of bounds or has an invalid handle");
     // Match intrinsic metadata normalization for supported scalar types.
     // Keep the original block metadata intact: nominal aggregate names are
     // case-sensitive even though built-in scalar aliases are normalized here.
@@ -902,9 +904,104 @@ void VM::executeInstruction(const Instruction &instr) {
       return ArrayHandle{};
     return int64_t(0);
   };
+  const auto validate_tuple_schema = [&](const auto &self, const std::string &type,
+                                          const std::string &operation,
+                                          unsigned depth) -> const nil_struct_def * {
+    const auto shape = array_tuple_elements(type);
+    const auto reject = [&]() {
+      throw std::runtime_error(operation + ": requires an exact declared tuple schema for '" + type + "'");
+    };
+    if (!shape || depth >= 64 || !class_metadata_)
+      reject();
+    const nil_struct_def *schema = nullptr;
+    for (const auto &candidate : class_metadata_->structs) {
+      if (canonical_array_type(candidate.name) != canonical_array_type(type)) continue;
+      if (schema) reject();
+      schema = &candidate;
+    }
+    if (!schema || schema->fields.size() != shape->size() ||
+        std::find(schema->annotations.begin(), schema->annotations.end(), "@nil_tuple") == schema->annotations.end())
+      reject();
+    for (std::size_t index = 0; index < shape->size(); ++index) {
+      if (schema->fields[index].first != std::to_string(index) ||
+          canonical_array_type(schema->fields[index].second) != (*shape)[index])
+        reject();
+      if (is_array_tuple_type((*shape)[index]))
+        (void)self(self, (*shape)[index], operation, depth + 1);
+    }
+    return schema;
+  };
+  const auto validate_tuple_value = [&](const auto &self, const Value &value,
+                                         const std::string &type,
+                                         const std::string &operation,
+                                         unsigned depth) -> void {
+    const auto *schema = validate_tuple_schema(validate_tuple_schema, type, operation, depth);
+    const auto shape = array_tuple_elements(type);
+    const auto *tuple = std::get_if<StructValue>(&value);
+    const auto reject = [&]() {
+      throw std::runtime_error(operation + ": expected a fully initialized tuple value of exact type '" + type + "'");
+    };
+    if (!tuple || !tuple->data ||
+        canonical_array_type(tuple->type_name) != canonical_array_type(type))
+      reject();
+    const auto &data = *tuple->data;
+    if (data.fields.size() + data.array_fields.size() + data.string_fields.size() +
+        data.double_fields.size() + data.struct_fields.size() + data.enum_fields.size() != shape->size())
+      reject();
+    for (std::size_t index = 0; index < shape->size(); ++index) {
+      const auto field = std::to_string(index);
+      const auto &expected = (*shape)[index];
+      if (schema->fields[index].first != field ||
+          canonical_array_type(schema->fields[index].second) != expected)
+        reject();
+      if (expected == "text") {
+        if (!data.string_fields.count(field)) reject();
+      } else if (expected == "f64") {
+        if (!data.double_fields.count(field)) reject();
+      } else if (expected == "i32" || expected == "i64" || expected == "u8" ||
+                 expected == "bool" || expected.rfind("ptr<", 0) == 0) {
+        const auto found = data.fields.find(field);
+        if (found == data.fields.end()) reject();
+        if ((expected == "i32" && (found->second < INT32_MIN || found->second > INT32_MAX)) ||
+            (expected == "u8" && (found->second < 0 || found->second > 255)) ||
+            (expected == "bool" && found->second != 0 && found->second != 1))
+          reject();
+      } else if (expected.rfind("array<", 0) == 0) {
+        const auto found = data.array_fields.find(field);
+        if (found == data.array_fields.end()) reject();
+        const auto block = heap_.find(found->second.address);
+        if (block == heap_.end() || block->second.type_name != "array" ||
+            "array<" + canonical_array_type(block->second.element_type) + ">" != expected)
+          reject();
+      } else if (is_array_tuple_type(expected)) {
+        const auto found = data.struct_fields.find(field);
+        if (found == data.struct_fields.end() || !found->second) reject();
+        self(self, Value(*found->second), expected, operation, depth + 1);
+      } else {
+        const auto found = data.struct_fields.find(field);
+        if (found != data.struct_fields.end() && found->second) {
+          auto nominal = expected;
+          if (nominal.rfind("ref<", 0) == 0 && nominal.back() == '>')
+            nominal = nominal.substr(4, nominal.size() - 5);
+          const auto actual = canonical_array_type(found->second->type_name);
+          const auto suffix = "::" + nominal;
+          if (actual != nominal &&
+              (nominal.find("::") != std::string::npos || actual.size() <= suffix.size() ||
+               actual.compare(actual.size() - suffix.size(), suffix.size(), suffix) != 0))
+            reject();
+        } else if (!data.enum_fields.count(field)) {
+          reject();
+        }
+      }
+    }
+  };
   const auto canonical_pointer_value =
-      [](const HeapBlock &block, const Value &value,
+      [&](const HeapBlock &block, const Value &value,
          const std::string &operation) -> Value {
+    if (block.type_name == "array" && is_array_tuple_type(block.element_type)) {
+      validate_tuple_value(validate_tuple_value, value, block.element_type, operation, 0);
+      return value;
+    }
     const std::string storage_type = canonical_array_scalar(
         block.type_name == "array" ? block.element_type : block.type_name);
     if (storage_type == "f64") {
@@ -2033,6 +2130,8 @@ void VM::executeInstruction(const Instruction &instr) {
         }
       }
       const auto contract = parse_array_intrinsic(metadata);
+      if (is_array_tuple_type(contract.element))
+        (void)validate_tuple_schema(validate_tuple_schema, contract.element, fn_name, 0);
       if (args.size() != contract.argument_count)
         throw std::runtime_error("array intrinsic argument count mismatch");
       const auto integer = [&](std::size_t index) {
@@ -2056,20 +2155,22 @@ void VM::executeInstruction(const Instruction &instr) {
         block.element_type = contract.element;
         block.element_count = static_cast<std::size_t>(count);
         const Value initial = canonical_pointer_value(block, args[1], fn_name);
-        if (memory_mode_ == MemoryMode::SAFE_GC && gc_critical_depth_ == 0 &&
-            ++alloc_count_ >= gc_threshold_)
-          gcCollect();
         block.data.assign(static_cast<std::size_t>(count), initial);
         const auto handle = next_ptr_;
         next_ptr_ += static_cast<std::int64_t>(extent);
         storeHeapBlock(handle, std::move(block));
         pushStack(ArrayHandle{handle});
+        // The result now roots the initializer's nested array handles. The
+        // popped intrinsic arguments alone are not roots during collection.
+        if (memory_mode_ == MemoryMode::SAFE_GC && gc_critical_depth_ == 0 &&
+            ++alloc_count_ >= gc_threshold_)
+          gcCollect();
         return;
       }
       const auto *handle = std::get_if<ArrayHandle>(&args[0]);
       const auto found = handle ? heap_.find(handle->address) : heap_.end();
       if (found == heap_.end() || found->second.type_name != "array" ||
-          canonical_array_scalar(found->second.element_type) != contract.element)
+          canonical_array_type(found->second.element_type) != contract.element)
         throw std::runtime_error("array intrinsic requires a matching typed array handle");
       auto &block = found->second;
       if (contract.operation == array_intrinsic_operation::length) {
@@ -5357,6 +5458,8 @@ void VM::executeInstruction(const Instruction &instr) {
     HeapBlock block;
     block.type_name = "array";
     block.element_type = instr.args.size() >= 2 ? instr.args[1] : "any";
+    if (is_array_tuple_type(block.element_type))
+      (void)validate_tuple_schema(validate_tuple_schema, block.element_type, "NEW_ARRAY_LITERAL", 0);
     block.element_count = count;
     block.data.resize(count);
 
@@ -5397,10 +5500,11 @@ void VM::executeInstruction(const Instruction &instr) {
 
       const auto exact = heap_.find(ptr);
       if (array && exact != heap_.end() && exact->second.type_name == "array") {
-        value = array_default_value(exact->second);
         if (idx >= 0 &&
             static_cast<std::size_t>(idx) < exact->second.data.size())
           value = exact->second.data[static_cast<std::size_t>(idx)];
+        else
+          value = array_default_value(exact->second);
       } else if (const auto current = findHeapPointer(ptr, true)) {
         const auto moved = moveHeapPointer(*current, idx, false);
         if (moved) {

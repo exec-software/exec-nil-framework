@@ -1153,7 +1153,10 @@ static void attach_class_metadata(std::vector<Instruction> &program, nil_module 
       throw std::runtime_error("Class instruction outside a declared function");
   }
   validate_nil_class_contract(metadata);
-  if (!program.empty() && !metadata.classes.empty())
+  // Tuple arrays also use exact record schemas at execution time, including
+  // modules that declare no classes at all.
+  if (!program.empty() && (!metadata.classes.empty() || !metadata.structs.empty() ||
+                           !metadata.enums.empty()))
     program.front().module_metadata = std::make_shared<const nil_module>(std::move(metadata));
 }
 
@@ -2041,7 +2044,7 @@ parseProgram(std::istream &is,
     declaration_line.record(line, input_line);
     source_debug.record(line, input_line);
     if (!in_function && !in_struct_definition && !in_enum_definition &&
-        parse_class_record(line, input_line, fault_metadata, klass, nullptr)) continue;
+        parse_class_record(line, input_line, fault_metadata, klass, &pending_annotations)) continue;
     if (line.find("const ") == 0) {
       if (++parsed_constants > max_constant_count) {
         throw std::runtime_error(
@@ -2088,7 +2091,9 @@ parseProgram(std::istream &is,
                                  std::to_string(input_line));
       }
       in_struct_definition = true;
-      fault_metadata.structs.push_back({trim_textual_field(line.substr(7)), {}});
+      fault_metadata.structs.push_back({trim_textual_field(line.substr(7)), {},
+                                       std::move(pending_annotations)});
+      pending_annotations.clear();
       continue;
     }
     if (line == "end struct") {
@@ -2106,7 +2111,9 @@ parseProgram(std::istream &is,
                                  std::to_string(input_line));
       }
       in_enum_definition = true;
-      fault_metadata.enums.push_back({trim_textual_field(line.substr(5)), {}});
+      fault_metadata.enums.push_back({trim_textual_field(line.substr(5)), {},
+                                     std::move(pending_annotations)});
+      pending_annotations.clear();
       continue;
     }
     if (line == "end enum") {

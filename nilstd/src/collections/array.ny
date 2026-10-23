@@ -2,10 +2,11 @@ module nil.std.collections
 
 # Runtime-backed array primitives. Intrinsic declarations intentionally have
 # no fallback body; their annotations provide the implementation.
-# The verified element kinds are i32, i64, u8, bool, f64, and text. The f32
-# declarations below are reserved and reject on use until their ABI is defined.
-# Sizes are nonnegative i32 values. Out-of-bounds reads yield the element's
-# zero value and writes are no-ops, matching built-in array indexing.
+# Element kinds include i32, i64, u8, bool, f64, text, and supported structural
+# tuples. The f32 declarations are reserved until their ABI is defined.
+# Sizes are nonnegative i32 values. Out-of-bounds scalar reads yield zero;
+# tuple reads fail because there is no default tuple. Writes outside the array
+# are no-ops, matching built-in array indexing.
 
 @intrinsic("array.new_with_value")
 pub fn new_with_value<T>(size: i32, value: T) -> array<T>

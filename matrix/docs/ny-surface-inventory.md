@@ -136,7 +136,7 @@ about whether a value changed representation.
 | `*alias` on `ref<T>` | no spelling | rejected in Ny |
 | `owned<T>` | `owned array of <type>` | executed for `integer`, `long`, `byte` |
 | `borrow<T>` / `borrow_mut<T>` | `shared view of <type>` / `exclusive view of <type>` | executed |
-| `(T, U)`, `(a, b)`, `let (a,b) = value` | `tuple of (T, U)`, `(a, b)`, `value (a,b) is result` | shared typed immutable tuple slots; native aggregate-array limits remain |
+| `(T, U)`, `(a, b)`, `let (a,b) = value` | `tuple of (T, U)`, `(a, b)`, `value (a,b) is result` | shared immutable tuple slots and typed tuple arrays on VM/native routes; record/enum/nested-array element arrays remain excluded natively |
 
 Out-of-range typed array reads yield the element's zero value and out-of-range
 writes are a no-op. Matrix keeps that, because changing it would change NIL

@@ -114,7 +114,11 @@ correctly through shared aliases. Gather validates every requested index
 before constructing its separate result array.
 Indices and counts are `i32` (`override integer` in Matrix). The exercised
 element types are `i32`, `i64`, `u8`, `bool`, `f64`, and NUL-free `text`.
-Ny and Matrix consumer fixtures cover the same API. See the
+Paired tuple-array fixtures also cover generic construction, access and checked
+overlapping copies, preserving tuple schemas and contained reference identities.
+Raw tuple-array reads outside the array fail instead of returning a default
+tuple; scalar defaults remain unchanged. Ny and Matrix consumer fixtures cover
+the shared APIs. See the
 [checked-array contract](../docs/standard-library/index.md#checked-arrays)
 for signatures, naming, zero-length rules, and remaining work.
 
