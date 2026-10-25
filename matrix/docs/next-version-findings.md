@@ -1925,3 +1925,21 @@ gap; it did not depend on regex or generic Result types.
 type on the AST for lowering. Regression coverage includes concatenation, text
 methods, comparisons, returned and unwrapped arrays, and once-only index effects.
 Ny and Matrix pattern fixtures also retain direct indexed operations.
+
+### F61 — Binary-only library analysis lacks editor symbol data
+
+**Observation:** The sealed SDK's source-backed imports provide completion for
+all three new pattern helpers from Ny and Matrix. Restricting lookup to `nillib`
+still type-checks complete calls successfully, but semantic analysis returns no
+symbols and completion requests return no completion result. Runtime consumer
+tests with binary libraries pass, so this is an editor-analysis limitation.
+
+**Current boundary:** The SDK includes `nilstd` source and the normal editor
+workflow uses it; the real VS Code host checks pass with that layout. Binary-only
+third-party libraries cannot currently provide equivalent completion/navigation.
+
+**Follow-up:** Preserve declaration identities, types and navigable interface
+locations when analyzing imported NIL libraries. Test completion and semantic
+navigation against a copied binary-only dependency with its source removed,
+including both frontends and incomplete calls. Do not treat successful binary
+compilation as evidence that its editor metadata is available.
