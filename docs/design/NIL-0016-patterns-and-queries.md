@@ -34,6 +34,14 @@ case-sensitive. Conventional regex names are preserved exactly.
 limits, captures and iteration. Unsupported dialect features fail explicitly;
 PCRE, ECMAScript, POSIX and RE2 compatibility are not claimed.
 
+Whole-match collection, splitting and literal replacement build on the same
+iteration contract. A bounded scan establishes complete match spans before
+materializing results. Zero-width matches advance only the search cursor;
+the output cursor preserves every unmatched byte. Replacement preflights the
+complete output size and joins pieces in a balanced tree. The library permits
+4096 matches and 1 MiB of replacement output; each underlying search retains
+its own engine work budget.
+
 ## Collected queries
 
 `collect query ... end query` in Ny and `collect begin query ... end query` in

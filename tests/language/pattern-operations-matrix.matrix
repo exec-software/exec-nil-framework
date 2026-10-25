@@ -1,0 +1,99 @@
+book validation.pattern-operations
+read everything from nil.std.core
+read everything from nil.std.text
+read everything from nil.std.collections
+
+require receives ok as boolean, label as text returns nothing begin paragraph
+    evaluate assert-true with condition being ok, message being label
+end paragraph
+
+same receives actual as array of text, expected as array of text, label as text returns nothing begin paragraph
+    evaluate require with ok being ((the length of actual) equals (the length of expected)), label being label
+    repeat for index from 0 to (the length of actual)
+        evaluate require with ok being ((actual at index) equals (expected at index)), label being label
+    end repeat
+end paragraph
+
+check-case receives source as text, input as text, matches as array of text, fields as array of text, replacement as text, replaced as text, label as text returns nothing begin paragraph
+    value compiled is (compile-pattern with source).unwrap with nothing
+    evaluate same with actual being ((find-all-matches with compiled, input).unwrap with nothing), expected being matches, label being (label plus ": matches")
+    evaluate same with actual being ((split-matches with compiled, input).unwrap with nothing), expected being fields, label being (label plus ": split")
+    evaluate require with ok being (((replace-matches with compiled, input, replacement).unwrap with nothing) equals replaced), label being (label plus ": replacement")
+end paragraph
+
+main returns override integer begin paragraph
+    evaluate check-case with source being "([0-9]+)", input being "A12B003C", matches being ["12", "003"], fields being ["A", "B", "C"], replacement being "#", replaced being "A#B#C", label being "captures are whole matches"
+    evaluate check-case with source being "([a-z]+)([0-9]+)?", input being "a1 b", matches being ["a1", "b"], fields being ["", " ", ""], replacement being "#", replaced being "# #", label being "absent optional captures do not change results"
+    evaluate check-case with source being "(a)|(b)", input being "ab", matches being ["a", "b"], fields being ["", "", ""], replacement being "#", replaced being "##", label being "alternative captures are excluded from split"
+    evaluate check-case with source being "(,)", input being ",a,,b,", matches being [",", ",", ",", ","], fields being ["", "a", "", "b", ""], replacement being "#", replaced being "#a##b#", label being "capturing delimiters are excluded from split"
+    evaluate check-case with source being "(?:ab)+", input being "xababzab", matches being ["abab", "ab"], fields being ["x", "z", ""], replacement being "#", replaced being "x#z#", label being "noncapture groups preserve whole matches"
+    evaluate check-case with source being "aa", input being "aaa", matches being ["aa"], fields being ["", "a"], replacement being "-", replaced being "-a", label being "search is nonoverlapping"
+    evaluate check-case with source being "a", input being "aaa", matches being ["a", "a", "a"], fields being ["", "", "", ""], replacement being "-", replaced being "---", label being "adjacent nonempty matches are all retained"
+    evaluate check-case with source being "x", input being "abc", matches being [], fields being ["abc"], replacement being "-", replaced being "abc", label being "no match returns the original input"
+    evaluate check-case with source being "x", input being "", matches being [], fields being [""], replacement being "-", replaced being "", label being "no match on empty input retains an empty field"
+    evaluate check-case with source being "", input being "ab", matches being ["", "", ""], fields being ["", "a", "b", ""], replacement being "-", replaced being "-a-b-", label being "empty pattern advances search without losing bytes"
+    evaluate check-case with source being "", input being "", matches being [""], fields being ["", ""], replacement being "-", replaced being "-", label being "empty pattern visits empty input once"
+    evaluate check-case with source being "a*", input being "a", matches being ["a", ""], fields being ["", "", ""], replacement being "-", replaced being "--", label being "greedy terminal empty match is retained"
+    evaluate check-case with source being "a*", input being "baac", matches being ["", "aa", "", ""], fields being ["", "b", "", "c", ""], replacement being "-", replaced being "-b--c-", label being "empty and nonempty matches share output cursor"
+    evaluate check-case with source being "a*?", input being "aa", matches being ["", "", ""], fields being ["", "a", "a", ""], replacement being "-", replaced being "-a-a-", label being "lazy empty matches progress one byte"
+    evaluate check-case with source being "a+", input being "caaaddaa", matches being ["aaa", "aa"], fields being ["c", "dd", ""], replacement being "-", replaced being "c-dd-", label being "nonempty match preserves trailing field"
+    evaluate check-case with source being "^", input being "ab", matches being [""], fields being ["", "ab"], replacement being "-", replaced being "-ab", label being "start anchor preserves all input"
+    evaluate check-case with source being "$", input being "ab", matches being [""], fields being ["ab", ""], replacement being "-", replaced being "ab-", label being "end anchor preserves all input"
+    evaluate check-case with source being "^|$", input being "ab", matches being ["", ""], fields being ["", "ab", ""], replacement being "-", replaced being "-ab-", label being "both endpoint anchors retain empties"
+    evaluate check-case with source being "a|$", input being "a", matches being ["a", ""], fields being ["", "", ""], replacement being "-", replaced being "--", label being "terminal alternative follows nonempty match"
+    evaluate check-case with source being "(?=b)", input being "ab", matches being [""], fields being ["a", "b"], replacement being "-", replaced being "a-b", label being "lookahead leaves matched position in output"
+    evaluate check-case with source being "(?=(b))", input being "ab", matches being [""], fields being ["a", "b"], replacement being "-", replaced being "a-b", label being "lookahead captures are not whole matches"
+    evaluate check-case with source being "b(?!c)", input being "bcb", matches being ["b"], fields being ["bc", ""], replacement being "-", replaced being "bc-", label being "negative lookahead filters nonempty matches"
+    evaluate check-case with source being "(?<word>cat|dog)", input being "cat dogs cat", matches being ["cat", "dog", "cat"], fields being ["", " ", "s ", ""], replacement being "#", replaced being "# #s #", label being "named captures preserve complete alternatives"
+    evaluate check-case with source being "é", input being "AééB", matches being ["é", "é"], fields being ["A", "", "B"], replacement being "-", replaced being "A--B", label being "literal multibyte pattern preserves adjacent matches"
+    evaluate check-case with source being "([0-9]+)", input being "A12B", matches being ["12"], fields being ["A", "B"], replacement being "$1\{name}", replaced being "A$1\{name}B", label being "replacement dollar slash and braces are literal"
+    evaluate check-case with source being "x", input being "xx", matches being ["x", "x"], fields being ["", "", ""], replacement being "$& $$", replaced being "$& $$$& $$", label being "replacement does not expand regex template tokens"
+    evaluate check-case with source being "a+", input being "cabd", matches being ["a"], fields being ["c", "bd"], replacement being "", replaced being "cbd", label being "empty replacement removes nonempty matches"
+    evaluate check-case with source being "", input being "ab", matches being ["", "", ""], fields being ["", "a", "b", ""], replacement being "", replaced being "ab", label being "empty replacement on empty matches preserves input"
+
+    !!! Byte progress is observable without printing malformed UTF-8 fragments.
+    value empty is (compile-pattern with "").unwrap with nothing
+    evaluate same with actual being ((find-all-matches with empty, "é").unwrap with nothing), expected being ["", "", ""], label being "UTF-8 empty search advances by byte"
+    value pieces is (split-matches with empty, "é").unwrap with nothing
+    evaluate require with ok being ((the length of pieces) equals 4), label being "UTF-8 split has byte fields and endpoint empties"
+    evaluate require with ok being ((pieces at 0) equals "" and (pieces at 3) equals ""), label being "UTF-8 split retains endpoint empties"
+    evaluate require with ok being ((the length of (pieces at 1)) equals 1 and (the length of (pieces at 2)) equals 1), label being "UTF-8 split retains individual bytes"
+    evaluate require with ok being ((pieces at 1) plus (pieces at 2) equals "é"), label being "UTF-8 split bytes reconstruct the input"
+    evaluate require with ok being (((replace-matches with empty, "é", "").unwrap with nothing) equals "é"), label being "empty replacement preserves UTF-8 bytes"
+
+    variable invalid is (compile-pattern with "x").unwrap with nothing
+    set invalid.source to "["
+    evaluate require with ok being ((find-all-matches with invalid, "abc").is-error with nothing), label being "invalid public Pattern fails find-all"
+    evaluate require with ok being ((split-matches with invalid, "abc").is-error with nothing), label being "invalid public Pattern fails split"
+    evaluate require with ok being ((replace-matches with invalid, "abc", "-").is-error with nothing), label being "invalid public Pattern fails replacement"
+
+    value words is (compile-pattern with "[A-Za-z]+").unwrap with nothing
+    variable input is "a bear cat ox dog ant"
+    value matches is (find-all-matches with words, input).unwrap with nothing
+    value fields is (split-matches with words, input).unwrap with nothing
+    value replaced is (replace-matches with words, input, "#").unwrap with nothing
+    set input to "changed"
+    evaluate same with actual being matches, expected being ["a", "bear", "cat", "ox", "dog", "ant"], label being "retained matches survive source reassignment"
+    evaluate same with actual being fields, expected being ["", " ", " ", " ", " ", " ", ""], label being "retained split survives source reassignment"
+    evaluate require with ok being (replaced equals "# # # # # #"), label being "retained replacement survives source reassignment"
+    value ranked is collect begin query
+        from each word in matches
+        where (the length of word) is greater than 2
+        order by (the length of word) descending
+        give word
+    end query
+    evaluate same with actual being ranked, expected being ["bear", "cat", "dog", "ant"], label being "found matches compose with stable filtered queries"
+    evaluate require with ok being ((query-count with ranked) equals 4), label being "query terminal counts found matches"
+    evaluate require with ok being (((query-first with ranked).unwrap with nothing) equals "bear"), label being "query terminal retains found text"
+    value page is collect begin query
+        from each word in matches
+        where (the length of word) is greater than 2
+        order by (the length of word) descending
+        skip 1
+        take 2
+        give word
+    end query
+    evaluate same with actual being page, expected being ["cat", "dog"], label being "found matches compose with ordered query pagination"
+    say "pattern operations PASS"
+    give 0
+end paragraph

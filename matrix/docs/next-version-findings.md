@@ -1830,8 +1830,9 @@ labels and exact contextual delimiters; a quoted/escaped label cannot inject
 regex syntax. Compiled programs are immutable and cached within fixed limits.
 
 **Follow-up:** Native text remains NUL-free and byte-oriented. Unicode properties,
-word/grapheme boundaries, alternate dialect parsers, reusable named fragments,
-replacement templates and split/find-all helpers need explicit contracts. Named
+word/grapheme boundaries, alternate dialect parsers, reusable named fragments and
+replacement templates need explicit contracts. Collection, splitting and literal
+replacement are now implemented with explicit bounds (F59). Named
 prose declarations currently produce immutable text sources; they do not infer a
 first-class compiled Pattern value. Engine cache/backtracking budgets account for
 native program/state storage rather than exact host RSS or Aperture allocations.
@@ -1867,6 +1868,11 @@ SQL translation remain separate work. Aggregate-array support is still needed
 for ordinary arrays of application records. The current snapshot and sorted
 query allocate temporary arrays; profiling and optimization should preserve
 once-only effects and stable ordering rather than silently changing semantics.
+Generic helper bodies also reject query sources such as `array<T>` before
+specialization, even when an actual call supplies a supported scalar type. A
+future implementation must validate the concrete element profile after
+specialization; current concrete-type support does not imply generic query
+composition.
 
 ### F58 — Nested enum constructors lost payload type context in native lowering
 
@@ -1887,3 +1893,35 @@ misreport each binding as the combined `(T, T)` payload, while code generation
 explicitly rejects multi-payload pattern lowering. Implement component typing,
 extraction and diagnostic consistency together; the current constructor fix does
 not imply that pattern support exists.
+
+### F59 — Pattern collection needs complete results and explicit empty-match behavior
+
+**Observation:** First/next matching provided the mechanism for text processing,
+but every caller had to rebuild collection, splitting and replacement loops.
+Using the advancing search offset as an output cursor would lose bytes after
+empty matches. Repeated text concatenation also copied the growing output prefix.
+
+**Implemented:** `find_all_matches`, `split_matches` and `replace_matches` share a
+checked whole-match scan. Empty matches remain observable; splitting preserves
+empty fields and excludes captures; replacement text is literal. Search and
+output positions remain separate. More than 4096 matches or a later search
+failure returns an error, never a partial successful result. Replacement checks
+its input and complete output against 1 MiB before balanced concatenation.
+
+**Follow-up:** Each match search retains its own engine work budget. A shared
+operation budget, streaming consumers, replacement callbacks/templates and
+Unicode-aware progress need separate contracts. Collection returns whole-match
+text because native arrays of `PatternMatch` records remain unsupported; callers
+needing per-match captures can continue using first/next matching.
+
+### F60 — Indexed values lost their checked element type before lowering
+
+**Observation:** Even `items[0] + items[1]` on a plain text array passed analysis
+but failed lowering as a numeric operation. Indexed text methods such as `.len()`
+could emit an unresolved call. Pattern-result composition exposed this broader
+gap; it did not depend on regex or generic Result types.
+
+**Implemented:** The index-expression checker now preserves its resolved result
+type on the AST for lowering. Regression coverage includes concatenation, text
+methods, comparisons, returned and unwrapped arrays, and once-only index effects.
+Ny and Matrix pattern fixtures also retain direct indexed operations.

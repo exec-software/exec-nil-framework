@@ -12,7 +12,8 @@ support requires separate evidence.
 ## Canonical layout
 
 The [text-pattern reference](text-patterns.md) defines readable declarations,
-bounded conventional regex, captures, byte spans and match iteration.
+bounded conventional regex, captures, byte spans, match iteration, whole-match
+collections, splitting and literal replacement.
 The [query reference](queries.md) defines eager filtering, stable ordering,
 pagination, projection and the Matrix-authored collection terminals.
 

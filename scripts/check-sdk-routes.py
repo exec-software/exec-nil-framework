@@ -46,6 +46,8 @@ FIXTURES = ("scalar-array-parity", "stl-array-primitives", "native-nested-refere
             "tuples", "tuples-matrix",
             "tuple-arrays", "tuple-arrays-matrix",
             "text-patterns", "text-patterns-matrix",
+            "pattern-operations", "pattern-operations-matrix",
+            "indexed-expression-types",
             "collected-queries", "collected-queries-matrix",
             "integer-literal-widths", "integer-literal-widths-matrix",
             "checked-text-spans", "checked-text-spans-matrix",

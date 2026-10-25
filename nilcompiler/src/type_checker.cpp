@@ -7066,6 +7066,10 @@ void type_checker::visit(ast_index_expr &e) {
     add_error(e.line, "Type '" + obj_type.name + "' cannot be indexed");
     last_expr_type_ = type_unknown;
   }
+  // Lowering and chained member calls inspect the expression's type, not the
+  // checker's transient result. Preserve the element type for text operators,
+  // indexed receivers, and concrete generic substitutions at those boundaries.
+  e.inferred_type = last_expr_type_->name;
 }
 
 void type_checker::visit(ast_struct_decl &p) {

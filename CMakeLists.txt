@@ -2412,6 +2412,8 @@ if(BUILD_TESTING)
                                         formatted-text formatted-text-matrix
                                         tuple-arrays tuple-arrays-matrix
                                         text-patterns text-patterns-matrix
+                                        pattern-operations pattern-operations-matrix
+                                        indexed-expression-types
                                         collected-queries collected-queries-matrix
                                         signed-numbers-matrix
                                         integer-literal-widths integer-literal-widths-matrix
@@ -2459,6 +2461,14 @@ if(BUILD_TESTING)
                     --runtime $<TARGET_FILE:nilruntime> --llvm "${NIL_ENABLE_LLVM}")
             set_tests_properties(nil.regex-contract PROPERTIES
                 LABELS "ny;matrix;patterns;native;interpreter" TIMEOUT 300)
+            add_test(NAME nil.pattern-operations-contract
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/pattern_operations_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                    --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                    --assembler $<TARGET_FILE:nilassembler> --linker $<TARGET_FILE:nillinker>
+                    --runtime $<TARGET_FILE:nilruntime> --llvm "${NIL_ENABLE_LLVM}")
+            set_tests_properties(nil.pattern-operations-contract PROPERTIES
+                LABELS "ny;patterns;native;interpreter;rc" TIMEOUT 300)
         endif()
         add_test(NAME nil.pattern-declaration-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/pattern_declaration_contract.py"

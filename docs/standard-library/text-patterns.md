@@ -103,6 +103,57 @@ Unicode grapheme iteration. Public records are ordinary values; matching
 revalidates pattern sources and capture APIs check span bounds even for records
 constructed by the caller.
 
+## Collection, splitting and replacement
+
+| API | Result |
+| --- | --- |
+| `find_all_matches(pattern, input)` | `Result<array<text>, text>` of whole matches |
+| `split_matches(pattern, input)` | `Result<array<text>, text>` of fields between matches |
+| `replace_matches(pattern, input, replacement)` | `Result<text, text>` with literal replacements |
+
+All three use the same non-overlapping sequence as `first_match`/`next_match`.
+Capturing groups do not change the shape of the result: collection always returns
+group zero, and splitting never inserts capture values. Splitting preserves
+leading, trailing and consecutive empty fields. With no matches, collection
+returns `[]`, splitting returns `[input]`, and replacement returns `input`.
+
+Replacement text has no template syntax. `$1`, backslashes and braces are
+inserted literally. Use the single-match capture APIs when captured values need
+custom processing.
+
+An empty match consumes no output bytes even though the next search advances
+one byte. For example, an empty pattern on `"ab"` collects `["", "", ""]`,
+splits into `["", "a", "b", ""]`, and replacing with `"-"` produces `"-a-b-"`.
+On empty input it collects `[""]`, splits into `["", ""]`, and replaces with
+`"-"`. These are byte operations: empty matches can fall inside UTF-8 characters.
+
+```matrix
+digits begin pattern
+    one or more ascii digits
+end pattern
+value pattern is (compile-pattern with digits).unwrap with nothing
+value numbers is (find-all-matches with pattern, "item 12, batch 300").unwrap with nothing
+value selected is collect begin query
+    from each item in numbers
+    where (the length of item) is greater than 2
+    give item
+end query
+value redacted is (replace-matches with pattern, "item 12", "#").unwrap with nothing
+```
+
+The collection helpers accept at most **4096 matches**, including empty matches;
+splitting can therefore return at most 4097 fields. A search beyond the last
+accepted match establishes completeness. More matches or any later search error
+return `Error`, never a partial successful result. Use first/next matching for
+incremental processing beyond this collection limit.
+
+Replacement text and the complete replacement output are each limited to
+**1 MiB** and the shared NUL-free text profile. Replacement text is validated
+even when no match exists. The complete output size is checked before allocating
+replacement pieces; balanced concatenation avoids repeatedly copying a growing
+prefix. These checks bound returned data, not exact host memory usage. Runtime
+allocation failures remain runtime failures.
+
 ## Resource and portability profile
 
 The engine limits pattern sources to 4096 bytes, input to 1 MiB, capture groups
@@ -115,10 +166,11 @@ by 32 entries and 8 MiB of accounted program storage. Container/allocator
 bookkeeping means these amounts are not exact process RSS bounds. These limits are part of this initial profile and can
 reject otherwise valid expressions. Cache storage is native engine memory,
 not a public managed allocation or an Aperture-attributed language object.
+Each search in a collection helper has its own execution budget; the helpers do
+not impose a single instruction budget across all matches.
 
 Pattern values retain their source text and require no explicit disposal. Match
 values retain input, source and a managed span array. The same engine is linked
 into the interpreter and native runtime, including standalone SDK executables.
-There is no external regex dependency. Replacement templates, split/find-all
-collections, reusable prose fragments and Unicode-aware matching are future
-library work; first/next matching is the current iteration API.
+There is no external regex dependency. Replacement templates, reusable prose
+fragments and Unicode-aware matching remain future library work.

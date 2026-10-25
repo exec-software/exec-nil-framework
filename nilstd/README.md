@@ -53,7 +53,8 @@ below.
 ### Active evidence boundary
 
 `nil.std.text` provides bounded conventional regex and readable pattern sources,
-named captures, byte spans, search/full-match and safe next-match iteration.
+named captures, byte spans, search/full-match, safe next-match iteration,
+whole-match collections, splitting and literal replacement.
 See the [text-pattern contract](../docs/standard-library/text-patterns.md).
 `nil.std.collections` provides terminals for the compiler's eager, typed array
 queries: count, any, first, last and single. See the

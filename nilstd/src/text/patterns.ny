@@ -109,3 +109,105 @@ pub fn next_match(found: PatternMatch) -> Result<Option<PatternMatch>, text>
     end if
     return search_pattern(Pattern { source: found.pattern }, found.input, next)
 end fn
+
+# Collect only whole-match byte windows. The private flat layout avoids arrays
+# of records, which are outside the current native array profile. A final
+# search establishes completeness even when exactly 4096 matches were found.
+fn _pattern_collect_spans(pattern: Pattern, input: text) -> Result<array<i64>, text>
+    let mut spans: array<i64> = []
+    let mut pending = first_match(pattern, input)
+    while true do
+        if pending.is_error() then return Result.Error(pending.unwrap_error()) end if
+        let maybe = pending.unwrap()
+        if maybe.is_none() then return Result.Ok(spans) end if
+        if spans.len() == 8192 then return Result.Error("pattern match count exceeds 4096") end if
+        let found = maybe.unwrap()
+        spans.push(capture_start(found, 0).unwrap())
+        spans.push(capture_length(found, 0).unwrap())
+        pending = next_match(found)
+    end while
+end fn
+
+# Whole matches are returned regardless of capturing groups. Empty matches are
+# retained; no match is a successful empty array. Failure never returns a prefix.
+pub fn find_all_matches(pattern: Pattern, input: text) -> Result<array<text>, text>
+    let scan = _pattern_collect_spans(pattern, input)
+    if scan.is_error() then return Result.Error(scan.unwrap_error()) end if
+    let spans = scan.unwrap()
+    let mut matches: array<text> = []
+    let mut index = 0
+    while index < spans.len() do
+        matches.push(input.substr(spans[index], spans[index + 1]))
+        index = index + 2
+    end while
+    return Result.Ok(matches)
+end fn
+
+# Keep every empty field, including at input boundaries. Captures are not
+# inserted into the result. A zero-width delimiter moves the search cursor in
+# next_match, but consumes no bytes from this independent output cursor.
+pub fn split_matches(pattern: Pattern, input: text) -> Result<array<text>, text>
+    let scan = _pattern_collect_spans(pattern, input)
+    if scan.is_error() then return Result.Error(scan.unwrap_error()) end if
+    let spans = scan.unwrap()
+    let mut parts: array<text> = []
+    let mut cursor: i64 = 0
+    let mut index = 0
+    while index < spans.len() do
+        let start = spans[index]
+        parts.push(input.substr(cursor, start - cursor))
+        cursor = start + spans[index + 1]
+        index = index + 2
+    end while
+    parts.push(input.substr(cursor, (input.len() as i64) - cursor))
+    return Result.Ok(parts)
+end fn
+
+# Balanced concatenation copies each byte at most once per tree level instead
+# of repeatedly copying a growing prefix. The bounded scan gives depth <= 14.
+fn _pattern_join_parts(parts: array<text>, first: i32, limit: i32) -> text
+    if first == limit then return "" end if
+    if limit - first == 1 then return parts[first] end if
+    let middle = first + (limit - first) / 2
+    let left = _pattern_join_parts(parts, first, middle)
+    let right = _pattern_join_parts(parts, middle, limit)
+    return left + right
+end fn
+
+# Replacement is literal text: dollar signs, backslashes and braces have no
+# template meaning. Check the complete output size before allocating pieces.
+pub fn replace_matches(pattern: Pattern, input: text, replacement: text) -> Result<text, text>
+    let scan = _pattern_collect_spans(pattern, input)
+    if scan.is_error() then return Result.Error(scan.unwrap_error()) end if
+    let spans = scan.unwrap()
+    # An empty-pattern search validates NUL-free text and its byte limit in
+    # both runtimes without scanning replacement as a regex or interpolating it.
+    let checked = first_match(Pattern { source: "" }, replacement)
+    if checked.is_error() then return Result.Error("pattern replacement must be NUL-free and at most 1048576 bytes") end if
+    let count = (spans.len() / 2) as i64
+    let replacement_size = replacement.len() as i64
+    let mut kept = input.len() as i64
+    let mut index = 0
+    while index < spans.len() do
+        kept = kept - spans[index + 1]
+        index = index + 2
+    end while
+    if replacement_size > 0 then
+        if count > (1048576 - kept) / replacement_size then
+            return Result.Error("pattern replacement output exceeds 1048576 bytes")
+        end if
+    end if
+    if count == 0 then return Result.Ok(input) end if
+    let mut parts: array<text> = []
+    let mut cursor: i64 = 0
+    index = 0
+    while index < spans.len() do
+        let start = spans[index]
+        parts.push(input.substr(cursor, start - cursor))
+        parts.push(replacement)
+        cursor = start + spans[index + 1]
+        index = index + 2
+    end while
+    parts.push(input.substr(cursor, (input.len() as i64) - cursor))
+    return Result.Ok(_pattern_join_parts(parts, 0, parts.len()))
+end fn
