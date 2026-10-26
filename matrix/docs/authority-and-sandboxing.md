@@ -1,16 +1,23 @@
 # Authority, sandboxing, and the kernel boundary
 
-Matrix's reason to exist beyond syntax: it is intended to become the default
-both-AI-and-human language for embedded and OS-level settings, with the NIL runtime
-integrated *inside* the kernel rather than running on top of it. The purpose is
-to sandbox agents, humans, and the kernel itself — and to sandbox the language
-at compile time against a kernel-enforced authority set, with the chain of
-trust starting at the boot loader.
+Matrix is intended for people and agents working in embedded and OS-level
+settings. The authority design bounds programs against kernel-enforced grants,
+with a chain of trust starting at the boot loader. The compiler can diagnose
+inadmissible effects, but enforcement must not depend on trusting the compiler
+or the submitted source.
 
 This document records the design rule that follows from that, and what it
 costs. Nothing here is implemented. The base surface in `samples/` does not
 depend on it, and the grammar reserves the syntax so adding it later is not a
 breaking change.
+
+Early sketches placed the executor inside the kernel; that is not the selected
+Anomalous route. Kernel enforcement does not require a kernel-resident executor. Anomalous ADR
+0092 instead selects an unprivileged native interpreter vessel, with the
+edition's authority bounded by admission and supervised service invocations.
+The [Matrix shell profile proposal](../../docs/design/NIL-0018-matrix-shell-profile.md)
+follows that direction. The hosted VM and executable-context inspection do not
+yet implement this general authority boundary.
 
 ## The rule: full power, zero ambient authority
 
@@ -34,10 +41,11 @@ and something other than you decides whether you may."
 
 ## Why the artifact, not the source, is the thing checked
 
-A kernel sees NIL. It does not see Matrix, and it has no reason to trust
-whatever produced the NIL — not `matrixc`, not `nilcompiler`, not a hand editor.
-Source-level checking is a developer convenience. Artifact-level verification
-is the security boundary.
+An artifact verifier sees NIL rather than Matrix and must not trust whatever
+produced it — not `matrixc`, not `nilcompiler`, not a hand editor. Source-level
+checking is a developer convenience. Artifact verification is an admission
+boundary. Where that verifier runs is part of the host architecture; this does
+not require the kernel itself to parse NIL.
 
 This is not a new mechanism to invent. **Ny already ships it, in narrow form.**
 `parallel_map` worker call graphs are verified against an explicit allowlist of
@@ -95,9 +103,12 @@ anything in reserved sections. Section 4 is currently `reserved u32 0` with
 nonzero records rejected — which is the correct fail-closed behaviour and
 exactly why it cannot simply be repurposed.
 
-The kernel's runtime check then reduces to: `declared ⊆ granted`, evaluated
-once, before the first instruction. Everything expensive happens at compile and
-load time.
+Admission must verify that the artifact's derived requirements fit its declared
+ceiling and the granted execution profile before the first instruction. That
+family-level check does not authorize every later operation. Each service call
+must still validate its principal, live grant, target, scope and revocation
+state; commits also validate the exact preview and its freshness. Compile/load
+checks and per-invocation authorization have different responsibilities.
 
 ## What this is not
 
@@ -130,8 +141,9 @@ one, and the review round trip that rejects it, are never spent.
 - `requires` is reserved in the grammar now, so adding it is additive.
 - Inline assembly **stays** in the surface (`samples/13`, `samples/15`). The
   VM-first focus already means interpreted routes reject `INLINE_ASM`, so
-  nothing in the VM path executes machine code today; that is a route fact, not
-  the security design.
+  that opcode is unavailable on those routes. Foreign calls and native-library
+  dispatch still exist in the hosted VM; rejecting inline assembly is not a
+  sandbox or a guarantee that a program cannot reach native code.
 - `note intrinsic` stays writable, but it is the authority surface in
   miniature: naming a provider is requesting a capability. Whether an ordinary
   area may declare intrinsics at all is the first real policy question to

@@ -29,7 +29,7 @@ which.
 | Front-end integration plan | [`docs/front-end-plan.md`](docs/front-end-plan.md) |
 | Next-version findings and validation notes | [`docs/next-version-findings.md`](docs/next-version-findings.md) — confirmed limitations, design friction, fixes, and acceptance checks |
 | Sample programs | [`samples/`](samples/) |
-| Shell subset — **extension, not core** | Grammar support ships; the design proposal and its sample corpus are not published yet |
+| Shell profile | [NIL-0018 proposal](../docs/design/NIL-0018-matrix-shell-profile.md) and ordinary hosted syntax example; submission parsing and restricted execution are not implemented |
 | Lexer, parser, lowering | **Implemented through stage 6** — see [`docs/front-end-plan.md`](docs/front-end-plan.md) for the stage-by-stage status and exit evidence |
 
 Source files use the `.matrix` extension, or `.mat` as the short form. Both
@@ -120,11 +120,11 @@ the capability, not before.
 ## Why this language, beyond syntax
 
 Matrix is intended to become a language for both AI agents and humans, including
-in embedded and OS-level settings. That design proposes a NIL runtime integrated
-inside a kernel, with a kernel-enforced authority set and a chain of trust
-starting at the boot loader. These kernel and sandboxing capabilities are a
-design goal,
-not a property of the current desktop toolchain. Today Matrix programs use
+in embedded and OS-level settings, with kernel-enforced authority and a chain of
+trust starting at the boot loader. Anomalous selects an unprivileged native
+interpreter vessel rather than a kernel-resident executor. These authority and
+sandboxing capabilities are a design goal, not a property of the current desktop
+toolchain. Today Matrix programs use
 both the interpreter and native compilation routes, subject to the shared
 runtime's supported-feature contracts.
 

@@ -1,0 +1,56 @@
+!!! Host-only syntax proof. Observations are fixed in-memory fixture data.
+!!! This is an ordinary Matrix page, not a shell, OS adapter, or permission model.
+!!! Tuple rows keep the example within both VM and native query support;
+!!! direct arrays of records are not in the current native array profile.
+book anomalous.shell.syntax-proof
+
+read everything from nil.std.core
+read everything from nil.std.collections
+
+show-help returns nothing begin paragraph
+    say "Matrix syntax proof: fixed observations only"
+end paragraph
+
+fixture-status receives vessel-name as text returns Result of text, text begin paragraph
+    when vessel-name equals "renderer" then
+        give Result.Ok holding "degraded"
+    end when
+    give Result.Error holding ("No fixture vessel named " plus vessel-name)
+end paragraph
+
+main returns number begin paragraph
+    evaluate show-help with nothing
+
+    !!! Each row is (name, healthy, observation count).
+    !!! 'value' prevents rebinding; it does not promise deep array immutability.
+    value vessels is [("desktop", true, 0), ("renderer", false, 3), ("indexer", false, 1)]
+    value unhealthy is collect begin query
+        from each vessel in vessels
+        where vessel.1 equals false
+        order by vessel.2 descending
+        take 10
+        give (vessel.0, vessel.2)
+    end query
+
+    say "Unhealthy fixture vessels:"
+    repeat for each vessel in unhealthy
+        say formatted "{vessel.0}: {vessel.1}"
+    end repeat
+
+    value observed is fixture-status with vessel-name being "renderer"
+    consider observed
+        when Result.Ok holding status then
+            say "renderer status: " plus status
+        when Result.Error holding message then
+            say message
+    end consider
+
+    value missing is fixture-status with vessel-name being "missing"
+    consider missing
+        when Result.Ok holding status then
+            say status
+        when Result.Error holding message then
+            say message
+    end consider
+    give 0
+end paragraph

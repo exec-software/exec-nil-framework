@@ -2081,3 +2081,31 @@ VSIX packaging pass. The packaging check blocks credential construction and
 network access; it does not claim validation of credentialed Azure publishing.
 Remove the temporary override once the upstream dependency range admits a
 patched version. See the [upstream advisory](https://github.com/AzureAD/microsoft-authentication-library-for-js/security/advisories/GHSA-xcx6-jx8p-x3h5).
+
+### F70 — A shell profile needs session semantics and named structured rows
+
+**Observation:** Matrix already supplies named calls, checked results and eager
+queries, but its parser accepts complete books/paragraphs rather than prompt
+submissions. The README previously implied that shell grammar support shipped;
+that status has been corrected. The VM's program load resets state, so replaying
+prior submissions to recreate bindings would also replay their effects.
+
+The shared query/native array profile accepts supported scalar, text and tuple
+elements, not direct record rows. Tuple field indexes work but obscure the intent
+of a human-facing query. Named record arrays should extend the shared language
+and runtime rather than become a second collection system inside the shell.
+`value` also prevents rebinding, not mutation through array aliases; session
+state needs explicit ownership and publication rules.
+
+**Design checkpoint:** [NIL-0018](../../docs/design/NIL-0018-matrix-shell-profile.md)
+proposes Matrix as the language surface for Anomalous's existing Canticle session
+model. A fixed-data example passes text NIL, binary NIL and LLVM AOT routes. It
+is an ordinary hosted Matrix program; submission parsing, profile verification,
+resource enforcement, real service adapters and native Anomalous execution are
+not implemented by this checkpoint.
+
+Anomalous already has newer program-descriptor scaffolding than its initial
+runtime handoff describes, but no live NIL execution in that profile. Its runtime
+refresh script still assumes the old Ny checkout/tool/library names; reconcile
+the copied SDK before adopting newer examples. Framework executable-context
+inspection also remains authored intent, not a derived authority grant.
