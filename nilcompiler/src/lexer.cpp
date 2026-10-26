@@ -33,7 +33,7 @@ std::vector<token> lexer::scan_tokens() {
   }
 
   while (true) {
-    skip_whitespace();
+    skip_whitespace(tokens);
     start = current;
 
     if (is_at_end()) {
@@ -247,7 +247,7 @@ std::vector<token> lexer::scan_tokens() {
   return tokens;
 }
 
-void lexer::skip_whitespace() {
+void lexer::skip_whitespace(std::vector<token> &tokens) {
   while (!is_at_end()) {
     char c = peek();
     switch (c) {
@@ -269,18 +269,26 @@ void lexer::skip_whitespace() {
           advance();
       } else if (peek_next() == '*') {
         // multi-line comment: consume until '*/'
+        const auto opening = current;
+        const int opening_line = line;
+        bool closed = false;
         advance(); // consume '/'
         advance(); // consume '*'
         while (!is_at_end()) {
           if (peek() == '*' && peek_next() == '/') {
             advance(); // '*'
             advance(); // '/'
+            closed = true;
             break;
           }
           if (peek() == '\n')
             ++line;
           advance();
         }
+        if (!closed)
+          tokens.push_back({token_kind::invalid,
+              "Unterminated block comment; expected '*/'", opening_line,
+              opening, 2});
       } else {
         // not a comment
         return;
@@ -293,6 +301,9 @@ void lexer::skip_whitespace() {
       // hash.
       if ((current + 2 < src.size()) && src[current] == '#' &&
           src[current + 1] == '#' && src[current + 2] == '#') {
+        const auto opening = current;
+        const int opening_line = line;
+        bool closed = false;
         // Consume the opening '###'
         advance(); // '#'
         advance(); // '#'
@@ -305,12 +316,17 @@ void lexer::skip_whitespace() {
             advance(); // '#'
             advance(); // '#'
             advance(); // '#'
+            closed = true;
             break;
           }
           if (peek() == '\n')
             ++line;
           advance();
         }
+        if (!closed)
+          tokens.push_back({token_kind::invalid,
+              "Unterminated block comment; expected '###'", opening_line,
+              opening, 3});
       } else {
         // Single-line '#' comment
         advance(); // consume '#'

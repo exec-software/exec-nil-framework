@@ -1945,6 +1945,18 @@ if(BUILD_TESTING)
             --xfail-stderr-contains "llvm-aot=passes 'array<i32>' to handle parameter 'values' of type 'array<i64>'"
         )
         add_ny_route_test(
+            ny.routes.native-rejects-struct-array-literal-mismatch
+            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/native-struct-array-literal-mismatch.ny"
+            --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/routes/empty.stdout"
+            --expected-exit 0
+            --routes llvm-jit,llvm-aot
+            --compiler-arg=--no-typecheck
+            --xfail "llvm-jit=array constructor fields retain their concrete element ABI"
+            --xfail "llvm-aot=array constructor fields retain their concrete element ABI"
+            --xfail-stderr-contains "llvm-jit=SET_FIELD 'values' in function 'main' expects native handle type 'array<i64>', got 'array<i32>'"
+            --xfail-stderr-contains "llvm-aot=SET_FIELD 'values' in function 'main' expects native handle type 'array<i64>', got 'array<i32>'"
+        )
+        add_ny_route_test(
             ny.routes.native-rejects-untyped-array-literal
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/native-array-untyped-literal.ny"
             --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/routes/empty.stdout"
@@ -2414,6 +2426,10 @@ if(BUILD_TESTING)
                                         text-patterns text-patterns-matrix
                                         pattern-operations pattern-operations-matrix
                                         indexed-expression-types
+                                        bugpass-allocation-types
+                                        bugpass-grouped-expressions
+                                        bugpass-constructor-context
+                                        bugpass-call-context
                                         collected-queries collected-queries-matrix
                                         signed-numbers-matrix
                                         integer-literal-widths integer-literal-widths-matrix
@@ -2451,6 +2467,16 @@ if(BUILD_TESTING)
                 set_tests_properties(ny.tools.${parity_fixture} PROPERTIES
                     LABELS "tools;native;rc" SKIP_RETURN_CODE 77 TIMEOUT 240)
             endif()
+        endforeach()
+        foreach(bugpass_contract IN ITEMS lexer argument)
+            add_test(NAME nil.bugpass-${bugpass_contract}-contract
+                COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/bugpass_${bugpass_contract}_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --llvm "${NIL_ENABLE_LLVM}")
+            set_tests_properties(nil.bugpass-${bugpass_contract}-contract PROPERTIES
+                LABELS "typecheck;analysis;native;interpreter;rc" TIMEOUT 300)
         endforeach()
         if(TARGET nilassembler AND TARGET nillinker)
             add_test(NAME nil.regex-contract

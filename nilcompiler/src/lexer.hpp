@@ -180,7 +180,7 @@ private:
     return src[current + 1];
   }
 
-  void skip_whitespace();
+  void skip_whitespace(std::vector<token> &tokens);
   token identifier();
   token number(bool tuple_position = false);
   token string();

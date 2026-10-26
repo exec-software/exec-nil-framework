@@ -3955,10 +3955,15 @@ public:
           // Now emit each arg and set the corresponding field
           if (struct_decl->fields.size() == ce.args.size()) {
             for (size_t i = 0; i < struct_decl->fields.size(); ++i) {
-              emit_expr(*ce.args[i]);
-              emit_scalar_boundary(struct_field_type(
-                  e.inferred_type.value_or(callee_name),
-                  struct_decl->fields[i].name), ce.line);
+              const auto field_type = struct_field_type(
+                  concrete_type, struct_decl->fields[i].name);
+              // Unit generic variants (Option.None) and nested enum payloads
+              // need their field context before emission. Other arguments
+              // retain their own storage type, including rejected array
+              // element types when compiling with --no-typecheck.
+              emit_expr(*ce.args[i], field_type && is_declared_enum_type(cg_, *field_type)
+                  ? field_type : std::nullopt);
+              emit_scalar_boundary(field_type, ce.line);
               push_instr("SET_FIELD", {struct_decl->fields[i].name}, ce.line);
             }
           } else {
@@ -3997,14 +4002,17 @@ public:
       // argument can have a different width from the declared parameter.
       // This is source lowering only; handwritten NIL must still satisfy the
       // native provider's exact operand and declaration contracts.
+      const ast_function_decl *call_declaration = nullptr;
       const ast_function_decl *native_call_declaration = nullptr;
       auto call_substitutions = substitutions;
       if (ce.callee && ce.callee->kind == ast_node_kind::identifier_expr_node) {
         const auto &id = static_cast<const ast_identifier_expr &>(*ce.callee);
         const auto name = cg_.lookup_function_fqn(id.name, current_module_);
         const auto *declaration = cg_.lookup_function_decl(name);
-        if (declaration && native_dispatch_annotation_count(*declaration) == 1) {
-          native_call_declaration = declaration;
+        if (declaration) {
+          call_declaration = declaration;
+          if (native_dispatch_annotation_count(*declaration) == 1)
+            native_call_declaration = declaration;
           for (std::size_t index = 0;
                index < declaration->generic_params.size() && index < ce.type_args.size();
                ++index)
@@ -4013,6 +4021,21 @@ public:
         }
       }
       const auto emit_call_argument = [&](std::size_t index) {
+        std::optional<std::string> argument_context;
+        if (call_declaration && native_dispatch_annotation_count(*call_declaration) == 0 &&
+            index < call_declaration->params.size()) {
+          const auto &parameter = call_declaration->params[index];
+          if (parameter.type_name && !parameter.is_variadic) {
+            const auto expected = substitute_nil_type_name(
+                *parameter.type_name, call_substitutions);
+            // Only enum construction needs this additional call context.
+            // In particular, a rejected array<i32> argument must retain its
+            // actual element ABI under --no-typecheck, not become array<i64>
+            // merely because that is the callee's declared parameter type.
+            if (is_declared_enum_type(cg_, expected))
+              argument_context = expected;
+          }
+        }
         std::optional<std::string> scalar_type;
         if (native_call_declaration && index < native_call_declaration->params.size() &&
             ce.args[index]->inferred_type) {
@@ -4042,7 +4065,10 @@ public:
             }
           }
         }
-        emit_expr(*ce.args[index], scalar_type);
+        // Ordinary functions provide enum construction context without adding
+        // a conversion: their parameter prologue owns scalar boundaries.
+        // Native providers retain the narrower conversion contract above.
+        emit_expr(*ce.args[index], scalar_type ? scalar_type : argument_context);
         emit_scalar_boundary(scalar_type, ce.args[index]->line);
       };
 
@@ -4992,7 +5018,8 @@ public:
         // Default to 1 element if no size specified
         push_instr("PUSH_CONST", {"1"}, alloc.line);
       }
-      push_instr("ALLOC", {alloc.type_name}, alloc.line);
+      push_instr("ALLOC", {substitute_nil_type_name(alloc.type_name, substitutions)},
+                 alloc.line);
       break;
     }
     case ast_node_kind::if_expr_node: {

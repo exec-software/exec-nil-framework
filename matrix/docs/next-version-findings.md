@@ -1943,3 +1943,76 @@ locations when analyzing imported NIL libraries. Test completion and semantic
 navigation against a copied binary-only dependency with its source removed,
 including both frontends and incomplete calls. Do not treat successful binary
 compilation as evidence that its editor metadata is available.
+
+### F62 — Calls need argument checks before execution
+
+**Observation:** Ordinary calls such as passing `42` to a `text` parameter
+passed analysis and could execute in the VM, while native compilation rejected
+the incompatible value. Explicit generic calls, methods, variadic tails and
+typed function values had related missing checks. Built-in array/text length
+calls also accepted unused extra arguments, silently dropping their effects.
+
+**Implemented:** Resolve and check each declared parameter boundary, including
+variadic elements and function-value signatures. Validate built-in array length,
+get/set and text-length signatures. Preserve supported integer-width and
+integer-to-floating parameter conversions. Resolve receiver and method generic
+parameters separately, and substitute structural callback signatures before
+checking their arguments. Rejection contracts check analysis
+and preservation of existing output artifacts; positive controls include both
+frontends, generic methods, variadics and interpreter function values.
+
+**Remaining gaps:** Calling a non-function variable can still pass analysis.
+Enum constructor payloads need their own complete argument contract: a declared
+`Value(text)` currently accepts `Value(42)` in analysis/VM but fails native
+lowering. Native indirect function calls are also still unsupported. These are
+separate follow-ups; the new checks do not establish complete call-boundary
+soundness.
+
+### F63 — Incomplete source must fail before artifact generation
+
+**Observation:** Unclosed `/*` and `###` comments after an otherwise complete
+program were silently accepted, including with checking disabled. Several Ny
+declarations and control-flow bodies also accepted end of file without their
+closing delimiter. This could turn an unfinished edit into a successful build.
+
+**Implemented:** Report unterminated comments at their opening location and
+require closing tokens for function, anonymous function, loop, struct, enum and
+class bodies. Preserve existing forward/intrinsic declarations, abstract
+signatures and supported bare-`end` forms. Tests cover editor diagnostics,
+checked/unchecked compilation, output preservation and valid forms.
+
+### F64 — Grouped expressions must use their ending source line
+
+**Observation:** `(1 + 2` followed by `) * 3` on the next line was interpreted
+as a pointer dereference rather than multiplication. The parser compared the
+operator's line with the expression's opening line.
+
+**Implemented:** Use the last consumed token's line to distinguish multiplication
+from a new statement beginning with a dereference. Regression coverage includes
+multiline groups and new-line pointer writes.
+
+### F65 — Allocation types must survive checking and specialization
+
+**Observation:** Direct pointer arithmetic on `allocate<T>(count)` lost the
+expression's pointer type. Aliases and generic parameters could also reach
+native `ALLOC` instructions without resolving to their concrete element type.
+
+**Implemented:** Preserve the checked pointer type and canonical allocation
+element name, then substitute the element type for each generated specialization.
+Runtime coverage checks direct allocation arithmetic, aliases, generic functions,
+byte/wide-integer storage and once-only size evaluation.
+
+### F66 — Constructor and call arguments need contextual enum types
+
+**Observation:** A positional generic struct constructor receiving `Option.None`
+worked in the VM but lacked the concrete enum schema required by native lowering.
+Equivalent named initialization worked. Ordinary function arguments had the same
+missing context.
+
+**Implemented:** Pass concrete field/parameter types into enum argument emission so
+unit variants and nested generic payloads retain their expected schemas.
+Regression cases compare positional/named construction and verify argument
+evaluation order. Array literals retain their checked element layout, including
+native rejection of mismatched layouts with checking disabled. This supplies
+emission context; it does not replace the
+remaining enum payload validation work recorded in F62.

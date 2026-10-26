@@ -18,7 +18,7 @@ fn main() -> i32
     println(Convert.from_base("z", 36))
     println(Convert.char_to_i32("λ"))
     println(Convert.i32_to_char(955))
-    println(Convert.bytes_to_hex([0, 15, 16, 255]))
+    println(Convert.bytes_to_hex([0 as u8, 15 as u8, 16 as u8, 255 as u8]))
     let decoded: array<u8> = Convert.hex_to_bytes("000f10ff")
     println(decoded.length())
     println(decoded[0])

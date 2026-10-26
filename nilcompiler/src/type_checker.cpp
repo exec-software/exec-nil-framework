@@ -40,6 +40,45 @@ static std::optional<std::string> promoted_scalar_join(const std::string &left,
          left == "i32" || right == "i32" ? "i32" : "u8";
 }
 
+// Function values carry structural signatures, including nested tuple/generic
+// and function parameters. Split only at the outer parameter-list boundary.
+static std::optional<std::pair<std::vector<std::string>, std::string>>
+parse_callable_signature(const std::string &type) {
+  if (type.rfind("fn(", 0) != 0) return std::nullopt;
+  const auto trim = [](const std::string &value) {
+    const auto first = value.find_first_not_of(" \t");
+    return first == std::string::npos ? std::string() :
+        value.substr(first, value.find_last_not_of(" \t") - first + 1);
+  };
+  std::vector<std::string> parameters;
+  std::size_t start = 3;
+  unsigned parentheses = 1, angles = 0;
+  for (std::size_t index = start; index < type.size(); ++index) {
+    const char value = type[index];
+    if (value == '(') ++parentheses;
+    else if (value == ')') {
+      if (--parentheses == 0) {
+        const auto last = trim(type.substr(start, index - start));
+        if (!last.empty()) parameters.push_back(last);
+        else if (!parameters.empty()) return std::nullopt;
+        const auto remainder = trim(type.substr(index + 1));
+        if (remainder.rfind("->", 0) != 0) return std::nullopt;
+        const auto result = trim(remainder.substr(2));
+        if (result.empty()) return std::nullopt;
+        return std::make_pair(std::move(parameters), result);
+      }
+    } else if (value == '<') ++angles;
+    else if (value == '>' && index && type[index - 1] != '-' && angles) --angles;
+    else if (value == ',' && parentheses == 1 && angles == 0) {
+      const auto parameter = trim(type.substr(start, index - start));
+      if (parameter.empty()) return std::nullopt;
+      parameters.push_back(parameter);
+      start = index + 1;
+    }
+  }
+  return std::nullopt;
+}
+
 type_checker::type_checker(bool collect_semantics,
                            std::optional<completion_request> completion,
                            std::optional<signature_request> signature)
@@ -600,6 +639,15 @@ type_info type_checker::resolve_type(const std::string &name) {
       // Recursively resolve the underlying type
       return resolve_type(*self_sym->type_name);
     }
+  }
+
+  if (const auto function = parse_callable_signature(name)) {
+    std::string canonical = "fn(";
+    for (std::size_t index = 0; index < function->first.size(); ++index) {
+      if (index) canonical += ", ";
+      canonical += resolve_type(function->first[index]).name;
+    }
+    return {canonical + ") -> " + resolve_type(function->second).name, true};
   }
 
   const auto structural_tuple = parse_generic_type_string(name);
@@ -4855,22 +4903,42 @@ void type_checker::visit(ast_call_expr &e) {
           const std::map<std::string, std::string> &substitutions,
           std::size_t parameter_offset = 0) {
         record_scalar_text_call(e, callee, substitutions);
-        for (std::size_t i = 0; i < e.args.size() && i + parameter_offset < callee.params.size(); ++i) {
-          const auto &parameter = callee.params[i + parameter_offset];
+        const bool variadic = !callee.params.empty() && callee.params.back().is_variadic;
+        for (std::size_t i = 0; i < e.args.size(); ++i) {
+          std::size_t parameter_index = i + parameter_offset;
+          if (parameter_index >= callee.params.size()) {
+            if (!variadic) break; // The arity diagnostic owns extra fixed arguments.
+            parameter_index = callee.params.size() - 1;
+          }
+          const auto &parameter = callee.params[parameter_index];
           if (!parameter.type_name) continue;
-          const auto expected = resolve_type(instantiate_generic_type(*parameter.type_name, substitutions));
-          // Aggregate boundaries require an explicit checked storage proof.
-          // A fresh tuple/array literal may receive element context; an
-          // existing tuple or array handle must retain its exact shape.
+          auto expected = resolve_type(instantiate_generic_type(*parameter.type_name, substitutions));
+          // Variadic parameters are represented as array<T> in the body, but
+          // every source argument in their tail must satisfy the element type.
+          if (parameter.is_variadic) {
+            const auto array = parse_generic_type_string(expected.name);
+            if (array.base_name != "array" || array.type_args.size() != 1) continue;
+            expected = resolve_type(array.type_args.front());
+          }
+          const auto actual = resolve_type(arg_types[i].name);
           const bool tuple_boundary = type_contains_tuple(expected.name) ||
-              type_contains_tuple(arg_types[i].name);
+              type_contains_tuple(actual.name);
           const bool class_boundary = type_contains_class(expected.name) ||
-              type_contains_class(arg_types[i].name);
-          if ((tuple_boundary || class_boundary) &&
-              !check_assignment_type(expected, arg_types[i], e.args[i].get())) {
+              type_contains_class(actual.name);
+          // Existing ordinary scalar parameter boundaries support integer
+          // widths and integer-to-floating conversion. Never extend that to
+          // floating-to-integer, text, pointers, or aggregate handles.
+          const auto integer = [](const std::string &name) {
+            return name == "i32" || name == "i64" || name == "u8";
+          };
+          const bool scalar_conversion = !tuple_boundary && !class_boundary &&
+              integer(actual.name) && (integer(expected.name) || expected.name == "f64");
+          if (!scalar_conversion &&
+              !check_assignment_type(expected, actual, e.args[i].get())) {
             add_error(e.line, "Function '" + callee.name + "' argument " +
                 std::to_string(i + 1) + " has incompatible " +
-                (tuple_boundary ? "tuple storage type" : "class type"));
+                (tuple_boundary ? "tuple storage type" : class_boundary ? "class type" : "type") +
+                ". Expected '" + expected.name + "', got '" + actual.name + "'");
             if (tuple_boundary)
               e.rejected_tuple_operation = "Function argument has incompatible tuple storage type";
           }
@@ -5339,6 +5407,8 @@ void type_checker::visit(ast_call_expr &e) {
         validate_call_arity(*s, e.args.size(), id->name);
         std::map<std::string, std::string> substitutions;
 
+        const auto generic_inference_errors = diagnostics_.size();
+
         // Check trait bounds on explicit type arguments, or infer function
         // generics structurally from parameter/argument type pairs. Inference
         // must descend through containers (`array<T>` with `array<u8>`) rather
@@ -5533,7 +5603,8 @@ void type_checker::visit(ast_call_expr &e) {
           }
         }
 
-        apply_argument_array_context(*s, substitutions);
+        if (diagnostics_.size() == generic_inference_errors)
+          apply_argument_array_context(*s, substitutions);
 
         if (s->type_name) {
           if (!substitutions.empty()) {
@@ -5557,23 +5628,26 @@ void type_checker::visit(ast_call_expr &e) {
         }
         if (s->checked_callable_parameters &&
             !order_named_arguments(*s->checked_callable_parameters)) return;
-        if (s->type_name && s->type_name->rfind("fn", 0) == 0) {
-          // Parse function type string "fn(T) -> U"
-          // For now, simple return type extraction
-          // This is a HACK. type_info should have structure info.
-          // Assuming type_info name contains the signature
-          std::string sig = *s->type_name;
-          size_t arrow = sig.find("->");
-          if (arrow != std::string::npos) {
-            std::string ret = sig.substr(arrow + 2);
-            // Trim
-            size_t first = ret.find_first_not_of(" ");
-            if (first != std::string::npos)
-              ret = ret.substr(first);
-            last_expr_type_ = resolve_type(ret);
-          } else {
-            last_expr_type_ = type_any;
+        const auto signature = s->type_name
+            ? parse_callable_signature(*s->type_name) : std::nullopt;
+        if (signature) {
+          if (signature->first.size() != e.args.size())
+            add_error(e.line, "Function value '" + id->name + "' expects " +
+                std::to_string(signature->first.size()) + " arguments, got " +
+                std::to_string(e.args.size()));
+          if (!e.type_args.empty())
+            add_error(e.line, "Function values do not accept type arguments");
+          std::vector<ast_param> parameters;
+          for (const auto &type : signature->first) {
+            ast_param parameter;
+            parameter.type_name = type;
+            parameters.push_back(std::move(parameter));
           }
+          symbol callable(id->name, symbol_kind::function_symbol, nullptr,
+              signature->second, false, visibility_kind::visibility_private,
+              s->module, {}, parameters);
+          apply_argument_array_context(callable, {});
+          last_expr_type_ = resolve_type(signature->second);
         } else {
           last_expr_type_ = type_any;
         }
@@ -5600,6 +5674,52 @@ void type_checker::visit(ast_call_expr &e) {
       // produce runtime stores with the wrong physical element type.
       const auto builtin_receiver =
           parse_generic_type_string(resolve_type(type_name).name);
+      const auto builtin_arity = [&](std::size_t count) {
+        if (e.args.size() != count)
+          add_error(e.line, "Built-in '" + builtin_receiver.base_name + "." +
+              method_name + "' expects " + std::to_string(count) +
+              " arguments, got " + std::to_string(e.args.size()));
+        if (!e.type_args.empty())
+          add_error(e.line, "Built-in '" + builtin_receiver.base_name + "." +
+              method_name + "' does not accept type arguments");
+      };
+      const bool builtin_array = builtin_receiver.base_name == "array";
+      const bool builtin_text = builtin_receiver.base_name == "String" ||
+                                builtin_receiver.base_name == "text";
+      if ((builtin_array || builtin_text) &&
+          (method_name == "len" || method_name == "length")) {
+        builtin_arity(0);
+        last_expr_type_ = type_i32;
+        ma->inferred_type = last_expr_type_->name;
+        e.inferred_type = last_expr_type_->name;
+        return;
+      }
+      if (builtin_array && (method_name == "get" || method_name == "set")) {
+        builtin_arity(method_name == "get" ? 1 : 2);
+        if (!arg_types.empty()) {
+          const auto index = resolve_type(arg_types.front().name).name;
+          if (index != "i32" && index != "i64" && index != "u8" &&
+              index != "any" && index != "<unknown>")
+            add_error(e.line, "Array." + method_name + " index must be an integer, got '" + index + "'");
+        }
+        auto element = builtin_receiver.type_args.size() == 1
+            ? resolve_type(builtin_receiver.type_args.front()) : type_any;
+        if (method_name == "set" && e.args.size() == 2) {
+          const auto actual = resolve_type(arg_types[1].name);
+          const bool integer = actual.name == "i32" || actual.name == "i64" ||
+                               actual.name == "u8" || actual.name == "bool";
+          const bool storage_conversion = integer &&
+              (element.name == "u8" || element.name == "bool");
+          if (!storage_conversion &&
+              !check_assignment_type(element, actual, e.args[1].get()))
+            add_error(e.line, "Array.set element type mismatch. Expected '" +
+                element.name + "', got '" + actual.name + "'");
+        }
+        last_expr_type_ = method_name == "get" ? element : type_void;
+        ma->inferred_type = last_expr_type_->name;
+        e.inferred_type = last_expr_type_->name;
+        return;
+      }
       // This runtime member has no source declaration, but its label contract
       // is public in nil.std.text and reflection's Matrix implementation.
       // Preserve that contract without pretending arbitrary heuristic members
@@ -5764,6 +5884,21 @@ void type_checker::visit(ast_call_expr &e) {
           }
         }
 
+        // Legacy container placeholders can hold a source method copied
+        // from its real declaration even when that module was imported only
+        // transitively. Recover that declaration from the selected method's
+        // owner, never by treating an unresolved T as a wildcard.
+        if ((!base_sym || !base_sym->defining_node) && s->module &&
+            obj_type_parts.base_name.find("::") == std::string::npos) {
+          const auto *declared = symbols_.lookup(*s->module + "::" + obj_type_parts.base_name);
+          if (declared && declared->kind == symbol_kind::type_symbol && declared->defining_node) {
+            const auto member = declared->members.find(method_name);
+            if (member != declared->members.end() &&
+                member->second.defining_node == s->defining_node)
+              base_sym = declared;
+          }
+        }
+
         if (base_sym && base_sym->kind == symbol_kind::type_symbol) {
           for (size_t i = 0; i < base_sym->generic_params.size() &&
                              i < obj_type_parts.type_args.size();
@@ -5772,19 +5907,76 @@ void type_checker::visit(ast_call_expr &e) {
                 obj_type_parts.type_args[i];
           }
 
-          // 2. Map explicit type args from the call (for static calls like
-          // vec::new<T>)
-          if (!e.type_args.empty()) {
-            for (size_t i = 0;
-                 i < base_sym->generic_params.size() && i < e.type_args.size();
-                 ++i) {
-              substitutions[base_sym->generic_params[i].name] = e.type_args[i];
+          // Static factory type arguments describe the receiver. An instance
+          // already has concrete receiver arguments; its explicit arguments
+          // belong only to the method's own generic parameters below.
+          if (!e.type_args.empty() && s->generic_params.empty()) {
+            if (has_receiver_parameter) {
+              add_error(e.line, "Method '" + method_name + "' is not generic but type arguments were provided");
+            } else {
+              validate_generic_args(base_sym->generic_params, e.type_args, e.line);
+              for (size_t i = 0;
+                   i < base_sym->generic_params.size() && i < e.type_args.size(); ++i)
+                substitutions[base_sym->generic_params[i].name] = e.type_args[i];
             }
           }
         }
 
-        apply_argument_array_context(*s, substitutions,
-                                     has_receiver_parameter ? 1U : 0U);
+        // Receiver parameters and method parameters are separate contracts:
+        // Option<T>.map<U>(fn(T) -> U) infers U from the callback result after
+        // T has been supplied by the concrete receiver.
+        const auto method_inference_errors = diagnostics_.size();
+        if (!s->generic_params.empty() && !e.type_args.empty()) {
+          if (e.type_args.size() > s->generic_params.size())
+            add_error(e.line, "Method '" + method_name + "' expects " +
+                std::to_string(s->generic_params.size()) + " type arguments, got " +
+                std::to_string(e.type_args.size()));
+          validate_generic_args(s->generic_params, e.type_args, e.line);
+          for (std::size_t index = 0;
+               index < s->generic_params.size() && index < e.type_args.size(); ++index)
+            substitutions[s->generic_params[index].name] = e.type_args[index];
+        } else if (!s->generic_params.empty()) {
+          std::set<std::string> method_parameters;
+          for (const auto &parameter : s->generic_params)
+            method_parameters.insert(parameter.name);
+          std::function<void(const std::string &, const std::string &)> infer_method;
+          infer_method = [&](const std::string &expected_name, const std::string &actual_name) {
+            if (method_parameters.count(expected_name)) {
+              if (actual_name == "any" || actual_name == "<unknown>") return;
+              const auto actual = resolve_type(actual_name).name;
+              const auto found = substitutions.find(expected_name);
+              if (found == substitutions.end()) substitutions[expected_name] = actual;
+              else if (resolve_type(found->second).name != actual)
+                add_error(e.line, "Conflicting types inferred for generic parameter '" + expected_name +
+                    "' in method '" + method_name + "'");
+              return;
+            }
+            const auto expected_function = parse_callable_signature(expected_name);
+            const auto actual_function = parse_callable_signature(actual_name);
+            if (expected_function && actual_function &&
+                expected_function->first.size() == actual_function->first.size()) {
+              for (std::size_t index = 0; index < expected_function->first.size(); ++index)
+                infer_method(expected_function->first[index], actual_function->first[index]);
+              infer_method(expected_function->second, actual_function->second);
+              return;
+            }
+            const auto expected = parse_generic_type_string(expected_name);
+            const auto actual = parse_generic_type_string(actual_name);
+            if (resolve_type(expected.base_name).name != resolve_type(actual.base_name).name ||
+                expected.type_args.size() != actual.type_args.size()) return;
+            for (std::size_t index = 0; index < expected.type_args.size(); ++index)
+              infer_method(expected.type_args[index], actual.type_args[index]);
+          };
+          const auto receiver_substitutions = substitutions;
+          const std::size_t offset = has_receiver_parameter ? 1U : 0U;
+          for (std::size_t index = 0; index < e.args.size() && index + offset < s->params.size(); ++index)
+            if (s->params[index + offset].type_name)
+              infer_method(instantiate_generic_type(*s->params[index + offset].type_name,
+                                                   receiver_substitutions), arg_types[index].name);
+        }
+        if (diagnostics_.size() == method_inference_errors)
+          apply_argument_array_context(*s, substitutions,
+                                       has_receiver_parameter ? 1U : 0U);
 
         if (s->type_name) {
           std::string inst_ret =
@@ -7952,6 +8144,18 @@ std::string type_checker::instantiate_generic_type(
     // '" << substitutions.at(generic_type_name) << "'\n";
   }
 
+  // A function signature is structural, not a generic base whose first
+  // '<' happens to occur in one of its parameters. Recurse through both sides
+  // so fn(T) -> T and nested callbacks retain concrete call contracts.
+  if (const auto function = parse_callable_signature(generic_type_name)) {
+    std::string result = "fn(";
+    for (std::size_t index = 0; index < function->first.size(); ++index) {
+      if (index) result += ", ";
+      result += instantiate_generic_type(function->first[index], substitutions);
+    }
+    return result + ") -> " + instantiate_generic_type(function->second, substitutions);
+  }
+
   auto parts = parse_generic_type_string(generic_type_name);
 
   if (parts.type_args.empty()) {
@@ -8334,6 +8538,8 @@ void type_checker::visit(ast_allocate_expr &e) {
   // Result type is ptr<T>
   std::string ptr_type = "ptr<" + target_type.name + ">";
   last_expr_type_ = resolve_type(ptr_type);
+  e.type_name = target_type.name;
+  e.inferred_type = last_expr_type_->name;
 }
 
 void type_checker::visit(ast_deallocate_stmt &s) {

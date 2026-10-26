@@ -48,6 +48,8 @@ FIXTURES = ("scalar-array-parity", "stl-array-primitives", "native-nested-refere
             "text-patterns", "text-patterns-matrix",
             "pattern-operations", "pattern-operations-matrix",
             "indexed-expression-types",
+            "bugpass-allocation-types", "bugpass-grouped-expressions",
+            "bugpass-constructor-context", "bugpass-call-context",
             "collected-queries", "collected-queries-matrix",
             "integer-literal-widths", "integer-literal-widths-matrix",
             "checked-text-spans", "checked-text-spans-matrix",
