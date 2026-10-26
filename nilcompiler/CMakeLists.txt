@@ -23,6 +23,7 @@ set(NILCOMPILER_CORE_SOURCES
     src/default_analyzer.cpp
     src/lexer.cpp
     src/parser.cpp
+    src/pattern_syntax.cpp
     # Matrix front end: a second surface over the same AST, type checker and
     # NIL generator. See matrix/docs/front-end-plan.md.
     src/matrix_lexer.cpp
@@ -51,6 +52,7 @@ add_library(nilruntime_objects OBJECT
     src/owned_runtime.cpp
     src/secure_file_io.cpp
     src/database_runtime.cpp
+    src/pattern_engine.cpp
 )
 target_compile_features(nilruntime_objects PUBLIC cxx_std_17)
 target_link_libraries(nilruntime_objects PUBLIC Threads::Threads ${CMAKE_DL_LIBS})

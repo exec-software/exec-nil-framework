@@ -133,6 +133,17 @@ if(BUILD_TESTING)
 
     add_test(NAME parser.inline-assembly COMMAND $<TARGET_FILE:ny_parser_tests>)
 
+    add_executable(nil_pattern_engine_tests tests/pattern_engine_tests.cpp)
+    target_link_libraries(nil_pattern_engine_tests PRIVATE nilruntime)
+    target_include_directories(nil_pattern_engine_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    target_compile_features(nil_pattern_engine_tests PRIVATE cxx_std_17)
+    add_test(NAME nil.pattern-engine COMMAND $<TARGET_FILE:nil_pattern_engine_tests>)
+
+    add_executable(nil_pattern_syntax_tests tests/pattern_syntax_tests.cpp)
+    target_link_libraries(nil_pattern_syntax_tests PRIVATE nilcompiler_core)
+    target_compile_features(nil_pattern_syntax_tests PRIVATE cxx_std_17)
+    add_test(NAME nil.pattern-syntax COMMAND $<TARGET_FILE:nil_pattern_syntax_tests>)
+
     add_executable(ny_inline_asm_contract_tests tests/inline_asm_contract_tests.cpp)
     target_include_directories(ny_inline_asm_contract_tests PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
@@ -1934,6 +1945,18 @@ if(BUILD_TESTING)
             --xfail-stderr-contains "llvm-aot=passes 'array<i32>' to handle parameter 'values' of type 'array<i64>'"
         )
         add_ny_route_test(
+            ny.routes.native-rejects-struct-array-literal-mismatch
+            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/native-struct-array-literal-mismatch.ny"
+            --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/routes/empty.stdout"
+            --expected-exit 0
+            --routes llvm-jit,llvm-aot
+            --compiler-arg=--no-typecheck
+            --xfail "llvm-jit=array constructor fields retain their concrete element ABI"
+            --xfail "llvm-aot=array constructor fields retain their concrete element ABI"
+            --xfail-stderr-contains "llvm-jit=SET_FIELD 'values' in function 'main' expects native handle type 'array<i64>', got 'array<i32>'"
+            --xfail-stderr-contains "llvm-aot=SET_FIELD 'values' in function 'main' expects native handle type 'array<i64>', got 'array<i32>'"
+        )
+        add_ny_route_test(
             ny.routes.native-rejects-untyped-array-literal
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/native-array-untyped-literal.ny"
             --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/routes/empty.stdout"
@@ -2400,6 +2423,14 @@ if(BUILD_TESTING)
         foreach(parity_fixture IN ITEMS scientific-literals scientific-literals-matrix
                                         formatted-text formatted-text-matrix
                                         tuple-arrays tuple-arrays-matrix
+                                        text-patterns text-patterns-matrix
+                                        pattern-operations pattern-operations-matrix
+                                        indexed-expression-types
+                                        bugpass-allocation-types
+                                        bugpass-grouped-expressions
+                                        bugpass-constructor-context
+                                        bugpass-call-context
+                                        collected-queries collected-queries-matrix
                                         signed-numbers-matrix
                                         integer-literal-widths integer-literal-widths-matrix
                                         checked-text-spans checked-text-spans-matrix
@@ -2437,6 +2468,46 @@ if(BUILD_TESTING)
                     LABELS "tools;native;rc" SKIP_RETURN_CODE 77 TIMEOUT 240)
             endif()
         endforeach()
+        foreach(bugpass_contract IN ITEMS lexer argument)
+            add_test(NAME nil.bugpass-${bugpass_contract}-contract
+                COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/bugpass_${bugpass_contract}_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --llvm "${NIL_ENABLE_LLVM}")
+            set_tests_properties(nil.bugpass-${bugpass_contract}-contract PROPERTIES
+                LABELS "typecheck;analysis;native;interpreter;rc" TIMEOUT 300)
+        endforeach()
+        if(TARGET nilassembler AND TARGET nillinker)
+            add_test(NAME nil.regex-contract
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/regex_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                    --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                    --assembler $<TARGET_FILE:nilassembler> --linker $<TARGET_FILE:nillinker>
+                    --runtime $<TARGET_FILE:nilruntime> --llvm "${NIL_ENABLE_LLVM}")
+            set_tests_properties(nil.regex-contract PROPERTIES
+                LABELS "ny;matrix;patterns;native;interpreter" TIMEOUT 300)
+            add_test(NAME nil.pattern-operations-contract
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/pattern_operations_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                    --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                    --assembler $<TARGET_FILE:nilassembler> --linker $<TARGET_FILE:nillinker>
+                    --runtime $<TARGET_FILE:nilruntime> --llvm "${NIL_ENABLE_LLVM}")
+            set_tests_properties(nil.pattern-operations-contract PROPERTIES
+                LABELS "ny;patterns;native;interpreter;rc" TIMEOUT 300)
+        endif()
+        add_test(NAME nil.pattern-declaration-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/pattern_declaration_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src" --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.pattern-declaration-contract PROPERTIES
+            LABELS "ny;matrix;patterns;imports;native;interpreter" TIMEOUT 180)
+        add_test(NAME nil.query-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/query_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src" --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.query-contract PROPERTIES
+            LABELS "ny;matrix;queries;native;interpreter" TIMEOUT 300)
         add_test(NAME nil.formatted-text-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/formatted_text_contract.py"
                 --compiler $<TARGET_FILE:nilcompiler> --llvm "${NIL_ENABLE_LLVM}")

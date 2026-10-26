@@ -1,7 +1,7 @@
 # Standard-library status
 
-Ny and Matrix share `nilstd`, one standard library compiled to NIL. Its 74 active
-sources (68 Ny and six Matrix) form 16 logical SDK modules, including `prelude`.
+Ny and Matrix share `nilstd`, one standard library compiled to NIL. Its 76 active
+sources (69 Ny and seven Matrix) form 16 logical SDK modules, including `prelude`.
 Support remains evidence-scoped. Focused fixtures exercise `nilstd` and `nillib`
 through textual/binary NIL, bundles, LLVM JIT and AOT, and standalone
 assembler/linker pipelines. Local SDK qualification records the exact source
@@ -10,6 +10,12 @@ is claimed only for the surfaces with focused route fixtures, and native
 support requires separate evidence.
 
 ## Canonical layout
+
+The [text-pattern reference](text-patterns.md) defines readable declarations,
+bounded conventional regex, captures, byte spans, match iteration, whole-match
+collections, splitting and literal replacement.
+The [query reference](queries.md) defines eager filtering, stable ordering,
+pagination, projection and the Matrix-authored collection terminals.
 
 The [vector norm reference](math-vectors.md) describes stable two- and
 three-component lengths, finite-value checks, and checked normalization shared

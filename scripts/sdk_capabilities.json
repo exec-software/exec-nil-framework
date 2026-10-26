@@ -12,8 +12,8 @@
     },
     {
       "id": "scalar-arrays",
-      "observed": "Integer, f64, and text arrays, including imported public primitive operations, agree for the tested construction, access, mutation, and lifetime cases.",
-      "tests": ["ny.routes.scalar-array-parity", "ny.routes.stl-array-primitives"],
+      "observed": "Integer, f64, and text arrays, including imported public primitive operations, agree for the tested construction, access, mutation, and lifetime cases. Indexed text retains its checked type through operators, methods, returned arrays and unwrapped Results, with index effects evaluated once in order.",
+      "tests": ["ny.routes.scalar-array-parity", "ny.routes.stl-array-primitives", "ny.routes.indexed-expression-types"],
       "limitations": ["Nested arrays and arbitrary aggregate element layouts are outside this proof.", "Typed default reads and no-op out-of-range writes are tested; this is not a general memory-safety or reclamation proof."]
     },
     {
@@ -77,6 +77,18 @@
       "limitations": ["Varints use i64 carriers; this is not unsigned 64-bit scalar support, signed LEB128, a general protobuf parser or a streaming cursor abstraction.", "CRC-32 detects accidental corruption, not malicious modification or authenticity. This bitwise baseline makes no throughput, hardware-acceleration or concurrent-mutation guarantee."]
     },
     {
+      "id": "bounded-text-patterns",
+      "observed": "Paired Ny/Matrix fixtures agree across six routes for prose pattern declarations, conventional ordered alternatives, named captures and byte spans, positive/negative lookahead, whole-input matching, no-match results and malformed-pattern errors through nil.std.text. Whole-match collection, splitting and literal replacement preserve empty-match byte progression and compose with collected queries.",
+      "tests": ["ny.routes.text-patterns", "ny.routes.text-patterns-matrix", "ny.routes.pattern-operations", "ny.routes.pattern-operations-matrix"],
+      "limitations": ["This is the NUL-free, case-sensitive NIL byte-pattern profile with ASCII character classes, not Unicode character matching or PCRE, ECMAScript, POSIX or RE2 compatibility. Captures can split UTF-8 sequences.", "Parsing, compilation, input, matching work, backtracking and cache storage have explicit limits; exhausted budgets return errors rather than no-match. These route fixtures do not exhaust those boundaries or establish linear-time execution, a process-memory bound, or throughput guarantees.", "Collection helpers permit at most 4096 matches and replacement output at most 1 MiB, returning errors rather than partial results. Search work budgets apply separately to each match search. Replacement templates, backreferences, lookbehind, dialect flags and reusable prose fragments remain outside this profile."]
+    },
+    {
+      "id": "eager-array-queries",
+      "observed": "Paired Ny/Matrix fixtures agree across six routes for eager scalar and tuple array queries with filtering, descending ordering, take, scalar/tuple projections and count/any/first/last/single terminals, including empty and multiple-result outcomes through nil.std.collections.",
+      "tests": ["ny.routes.collected-queries", "ny.routes.collected-queries-matrix"],
+      "limitations": ["The initial query profile accepts i32/i64/u8/bool/f64/text rows and structural tuples of those values. Text ordering, stable ties, NaNs, pagination boundaries, source snapshots and side-effect order have separate focused contracts; these route fixtures do not qualify every combination or sustained allocation workload.", "Queries eagerly snapshot array elements and collect results; this is not a full LINQ implementation, a lazy iterator, SQL translation or an implicit database provider. Record/enum/nested-array rows, grouping, joins, distinct and multiple order keys are outside this profile."]
+    },
+    {
       "id": "sleep",
       "observed": "The time contract fixture agrees for its clock and bounded sleep calls.",
       "tests": ["ny.routes.native-time-contract"],
@@ -88,6 +100,7 @@
     {"test": "ny.routes.scalar-array-handle-collision", "fixture": "scalar-array-handle-collision", "stdlib": false},
     {"test": "ny.routes.scalar-array-parity", "fixture": "scalar-array-parity", "stdlib": false},
     {"test": "ny.routes.stl-array-primitives", "fixture": "stl-array-primitives", "stdlib": true},
+    {"test": "ny.routes.indexed-expression-types", "fixture": "indexed-expression-types", "stdlib": true},
     {"test": "ny.routes.native-nested-reference", "fixture": "native-nested-reference", "stdlib": false},
     {"test": "ny.routes.native-scalar-fields", "fixture": "native-scalar-fields", "stdlib": false},
     {"test": "ny.routes.native-global-contract", "fixture": "native-global-contract", "stdlib": false},
@@ -105,7 +118,13 @@
     {"test": "ny.routes.checked-hex-runtime", "fixture": "checked-hex-runtime", "stdlib": true},
     {"test": "ny.routes.checked-binary-runtime", "fixture": "checked-binary-runtime", "stdlib": true},
     {"test": "ny.routes.checked-varint-runtime", "fixture": "checked-varint-runtime", "stdlib": true},
-    {"test": "ny.routes.checked-crc-runtime", "fixture": "checked-crc-runtime", "stdlib": true}
+    {"test": "ny.routes.checked-crc-runtime", "fixture": "checked-crc-runtime", "stdlib": true},
+    {"test": "ny.routes.text-patterns", "fixture": "text-patterns", "stdlib": true},
+    {"test": "ny.routes.text-patterns-matrix", "fixture": "text-patterns-matrix", "stdlib": true},
+    {"test": "ny.routes.pattern-operations", "fixture": "pattern-operations", "stdlib": true},
+    {"test": "ny.routes.pattern-operations-matrix", "fixture": "pattern-operations-matrix", "stdlib": true},
+    {"test": "ny.routes.collected-queries", "fixture": "collected-queries", "stdlib": true},
+    {"test": "ny.routes.collected-queries-matrix", "fixture": "collected-queries-matrix", "stdlib": true}
   ],
   "limitations": [
     "Only the supported Linux x86_64 Release LLVM host can receive technical rc-checks qualification.",

@@ -1,5 +1,7 @@
 #include "matrix_parser.hpp"
 #include "numeric_literal.hpp"
+#include "pattern_syntax.hpp"
+#include "pattern_engine.hpp"
 #include "standard_namespace.hpp"
 
 #include <algorithm>
@@ -8,6 +10,14 @@
 
 namespace matrix {
 namespace {
+
+bool exact_phrase_word(const token &value, const char *word) {
+  if ((value.kind != matrix::token_kind::identifier && value.kind != matrix::token_kind::keyword) ||
+      value.escaped_identifier) return false;
+  auto text = value.lexeme;
+  for (auto &c : text) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+  return text == word;
+}
 
 ny::source_span name_span(const token &name) {
   // Keep delimiters around escaped names out of the editable name range.
@@ -235,6 +245,8 @@ void parser::prescan_declarations() {
          here.is(kw::borrow)) && next.is_name())
       record(next);
     if (here.is(kw::for_) && next.reads("each") && i + 2 < tokens_.size())
+      record(tokens_[i + 2]);
+    if (here.is(kw::from) && next.reads("each") && i + 2 < tokens_.size())
       record(tokens_[i + 2]);
   }
 }
@@ -981,6 +993,44 @@ std::shared_ptr<ny::ast_decl> parser::parse_book_binding(bool is_public) {
   return decl;
 }
 
+std::shared_ptr<ny::ast_decl> parser::parse_text_pattern(const token &name, bool is_public) {
+  advance(); advance(); // 'begin pattern'
+  const auto begin = pos_;
+  std::vector<ny::patterns::prose_token> body;
+  int nesting = 1;
+  while (!at_end() && body.size() <= 16384) {
+    const auto current = advance();
+    auto spelling = current.lexeme;
+    if (current.kind != matrix::token_kind::string_literal) {
+      for (auto &c : spelling) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+    }
+    body.push_back({spelling, current.kind == matrix::token_kind::string_literal,
+                    current.kind == matrix::token_kind::statement_end,
+                    current.escaped_identifier});
+    if (exact_phrase_word(peek(), "pattern")) {
+      if (current.is(kw::begin)) ++nesting;
+      if (current.is(kw::end) && --nesting == 0) {
+        advance(); body.push_back({"pattern", false, false}); break;
+      }
+    }
+  }
+  auto parsed = ny::patterns::parse_prose(body);
+  if (!parsed.error.empty()) {
+    const auto index = std::min(begin + parsed.error_token, tokens_.size() - 1);
+    error(tokens_[index], parsed.error);
+  } else {
+    const auto problem = ny::patterns::validate(parsed.source);
+    if (!problem.empty()) error(name, "Invalid text pattern: " + problem);
+  }
+  skip_terminators();
+  auto decl = std::make_shared<ny::ast_variable_decl>(nil_symbol(name.lexeme),
+      std::make_shared<ny::ast_string_literal>(parsed.source, name.line),
+      std::string("text"), false, is_public, name.line);
+  decl->is_const = true;
+  decl->name_span = name_span(name);
+  return decl;
+}
+
 std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
   // Annotations: 'context "..."' is @ai_context; 'note <name> <args>' is a
   // general annotation. Both attach to the following declaration.
@@ -1090,6 +1140,11 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
   const token &name_token = peek();
   const int line = peek().line;
   const std::string name = advance().lexeme;
+
+  if (check(kw::begin) && exact_phrase_word(peek(1), "pattern")) {
+    refuse_annotations("a text pattern binding");
+    return parse_text_pattern(name_token, is_public);
+  }
 
   // 'of type T [meeting B]' applies to records, choices and paragraphs alike.
   std::vector<ny::ast_generic_param> generics;
@@ -2079,6 +2134,11 @@ std::shared_ptr<ny::ast_stmt> parser::parse_statement() {
   const token &start = peek();
   const int line = start.line;
 
+  if (peek().is_name() && peek(1).is(kw::begin) && exact_phrase_word(peek(2), "pattern")) {
+    const auto name = advance();
+    auto decl = parse_text_pattern(name, false);
+    return std::make_shared<ny::ast_decl_stmt>(decl, line);
+  }
   if (check(kw::value) || check(kw::variable) || check(kw::constant))
     return parse_binding_statement();
   if (check(kw::set)) return parse_set();
@@ -2545,6 +2605,9 @@ ny::ast_expr_ptr parser::parse_when_expression() {
 }
 
 ny::ast_expr_ptr parser::parse_primary() {
+  if (exact_phrase_word(peek(), "collect") && peek(1).is(kw::begin) &&
+      exact_phrase_word(peek(2), "query"))
+    return parse_query_expression();
   const token &start = peek();
   const int line = start.line;
 
@@ -2783,6 +2846,67 @@ ny::ast_expr_ptr parser::parse_primary() {
   error(start, "expected a value, found '" + start.lexeme + "'");
   advance();
   return std::make_shared<ny::ast_number_literal>("0", line);
+}
+
+ny::ast_expr_ptr parser::parse_query_expression() {
+  const token start = advance(); // contextual collect
+  advance(); // begin
+  advance(); // query
+  auto query = std::make_shared<ny::ast_query_expr>(start.line);
+  const auto query_word = [&](const char *word) { return exact_phrase_word(peek(), word); };
+  const auto take_query_word = [&](const char *word) {
+    if (!query_word(word)) return false;
+    advance(); return true;
+  };
+  const auto require_word = [&](const char *word) {
+    if (take_query_word(word)) return true;
+    error(peek(), std::string("expected '") + word + "' in collect query");
+    return false;
+  };
+  skip_terminators();
+  require_word("from");
+  require_word("each");
+  if (!peek().is_name()) {
+    expected_name("after 'from each'");
+  } else {
+    const token binder = advance();
+    query->binding.name = resolve_name(binder.lexeme);
+    query->binding.name_span = name_span(binder);
+    query->binding.line = binder.line;
+  }
+  require_word("in");
+  query->source = parse_expression();
+  int previous_clause = 0;
+  while (!at_end() && !check(kw::end)) {
+    skip_terminators();
+    if (check(kw::end)) break;
+    const int clause = query_word("where") ? 1 : query_word("order") ? 2 :
+                       query_word("skip") ? 3 : query_word("take") ? 4 : check(kw::give) ? 5 : 0;
+    if (!clause) {
+      error(peek(), "expected where, order by, skip, take, give, or end query");
+      advance();
+      continue;
+    }
+    if (clause <= previous_clause)
+      error(peek(), "query clauses must appear once in from, where, order by, skip, take, give order");
+    previous_clause = clause;
+    advance();
+    if (clause == 2) require_word("by");
+    auto expression = parse_expression();
+    if (clause == 1) query->predicate = expression;
+    if (clause == 2) {
+      query->order_key = expression;
+      if (take_query_word("descending")) query->descending = true;
+      else if (take_query_word("ascending")) {}
+    }
+    if (clause == 3) query->skip = expression;
+    if (clause == 4) query->take = expression;
+    if (clause == 5) query->projection = expression;
+  }
+  expect(kw::end, "after query projection");
+  require_word("query");
+  if (!query->projection) error(start, "collect query requires a final give expression");
+  return query;
 }
 
 

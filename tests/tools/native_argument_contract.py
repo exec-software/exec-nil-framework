@@ -152,11 +152,20 @@ def main() -> None:
                     execute(source, 'library-' + provider_language + '-' + dependency + '-' + language,
                             search, stdout='9\n')
 
+        def reject_checked_argument(source):
+            for flags in (['--no-bundle'], ['--no-bundle', '--emit-binary-nil'],
+                          *([['--native'], ['--native', '--jit']] if args.llvm == 'ON' else [])):
+                output = root / 'protected-checked-output'
+                output.write_bytes(b'previous artifact')
+                run([compiler, '--quiet', '--no-stdlib', *flags, '-o', output, source],
+                    status=1, diagnostic='has incompatible type')
+                assert output.read_bytes() == b'previous artifact'
+
         # Representation normalization must not become implicit numeric
-        # parsing, float truncation or pointer casts. Preserve provider checks
-        # on both checked and unchecked source paths. Raw VM pointers and
-        # booleans are integer words, so only native code can reject their
-        # exact ABI type.
+        # parsing, float truncation or pointer casts. Checked source now rejects
+        # incompatible arguments before emission; unchecked source still needs
+        # the provider's independent ABI checks. The existing bool/i32 source
+        # compatibility rule leaves bool's exact provider ABI check to native.
         invalid = [
             ('text', 'exit("7")', 'evaluate exit with code being "7"'),
             ('pointer', 'let p = allocate<i32>(1)\nexit(p)',
@@ -175,6 +184,9 @@ def main() -> None:
                 source.write_text(program(language, ny if language == 'ny' else matrix,
                                           declarations[language]))
                 for unchecked in ([], ['--no-typecheck']):
+                    if not unchecked and name != 'boolean':
+                        reject_checked_argument(source)
+                        continue
                     for encoding in ([], ['--emit-binary-nil']):
                         output = root / 'invalid.nil'
                         run([compiler, '--quiet', '--no-stdlib', '--no-bundle', *unchecked,
@@ -214,6 +226,9 @@ def main() -> None:
                        'evaluate sleep-ms with item being ' + value
                 source.write_text(program(language, body, declaration))
                 for unchecked in ([], ['--no-typecheck']):
+                    if not unchecked:
+                        reject_checked_argument(source)
+                        continue
                     for encoding in ([], ['--emit-binary-nil']):
                         output = root / 'invalid-duration.nil'
                         run([compiler, '--quiet', '--no-stdlib', '--no-bundle', *unchecked,

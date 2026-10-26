@@ -2794,6 +2794,177 @@ public:
       push_instr("CLASS_UPCAST", {*e.checked_class_upcast}, e.line);
   }
 
+  // Queries lower to ordinary typed NIL arrays and loops. Row expressions are
+  // evaluated here in the enclosing frame, so captures require no closures.
+  void emit_query(const ast_query_expr &query) {
+    if (!query.checked_query || !query.source || !query.projection) {
+      cg_.reject_codegen_construct(query.line,
+          "collect query requires checked source, clauses, and projection",
+          "enable type checking and use supported scalar, text, or tuple arrays");
+      return;
+    }
+    const int line = query.line;
+    const auto element = substitute_nil_type_name(query.element_type, substitutions);
+    const auto result_element = substitute_nil_type_name(query.result_element_type, substitutions);
+    const auto key_type = substitute_nil_type_name(query.key_type, substitutions);
+    auto instruction = [&](const std::string &op, std::vector<std::string> args = {}) {
+      push_instr(op, args, line);
+    };
+    auto load = [&](const std::string &slot) { instruction("LOAD_LOCAL", {slot}); };
+    auto store = [&](const std::string &slot) { instruction("STORE_LOCAL", {slot}); };
+    auto constant = [&](const std::string &value) {
+      instruction("PUSH_CONST", {value}); instruction("CAST", {"i64"});
+    };
+    auto initialize = [&](const std::string &slot, const std::string &value = "0") {
+      constant(value); store(slot);
+    };
+    auto increment = [&](const std::string &slot, const std::string &amount = "1") {
+      load(slot); constant(amount); instruction("ADD", {"i64"}); store(slot);
+    };
+    auto label = [&](const std::string &name) { instruction("LABEL", {name}); };
+    auto jump = [&](const std::string &name) { instruction("JMP", {name}); };
+    auto jump_if_not = [&](const std::string &name) { instruction("JMP_IF_NOT", {name}); };
+    auto array = [&](const std::string &slot, const std::string &type) {
+      if (is_array_tuple_type(type))
+        cg_.materialize_struct_schema(type, mod_, line, 0, true);
+      instruction("NEW_ARRAY_LITERAL", {"0", type}); store(slot);
+    };
+    auto at = [&](const std::string &values, const std::string &index) {
+      load(values); load(index); instruction("GET_INDEX");
+    };
+    auto append = [&]() { instruction("CALL", {"array__push", "2"}); };
+    auto length = [&](const std::string &values, const std::string &slot) {
+      load(values); instruction("LEN"); instruction("CAST", {"i64"}); store(slot);
+    };
+    const auto source = new_temp("query.source"), skip = new_temp("query.skip"),
+        take = new_temp("query.take"), count = new_temp("query.count"),
+        snapshot = new_temp("query.snapshot"), index = new_temp("query.index"),
+        result = new_temp("query.result"), produced = new_temp("query.produced");
+    emit_expr(*query.source); store(source);
+    // Bounds have outer lexical scope and are evaluated exactly once, even for
+    // an empty input. Invalid counts fail before any predicate or projection.
+    auto bound = [&](const ast_expr_ptr &expression, const std::string &slot,
+                     const std::string &fallback, const std::string &name) {
+      if (expression) { emit_expr(*expression); instruction("CAST", {"i64"}); store(slot); }
+      else initialize(slot, fallback);
+      const auto valid = new_label("L_query_bound");
+      load(slot); constant("0"); instruction("CMP_LT"); jump_if_not(valid);
+      instruction("PUSH_CONST_STR", {get_or_add_const_string_name(
+          "Query " + name + " count must be nonnegative")});
+      instruction("CALL", {"panic", "1"});
+      label(valid);
+    };
+    bound(query.skip, skip, "0", "skip");
+    bound(query.take, take, "9223372036854775807", "take");
+    // Snapshot the source before row evaluation: mutation through another
+    // alias cannot change which elements this eager query visits.
+    length(source, count); array(snapshot, element); initialize(index);
+    const auto copy = new_label("L_query_copy"), copied = new_label("L_query_copied");
+    label(copy); load(index); load(count); instruction("CMP_LT"); jump_if_not(copied);
+    load(snapshot); at(source, index); append(); increment(index); jump(copy); label(copied);
+    lexical_scope scope(*this);
+    declare_local(query.binding.name, element);
+    array(result, result_element); initialize(produced);
+    const auto finish = new_label("L_query_end");
+    auto project = [&]() {
+      load(result); emit_expr(*query.projection, result_element);
+      emit_scalar_boundary(result_element, query.projection->line); append();
+      increment(produced);
+    };
+    if (!query.order_key) {
+      initialize(index);
+      const auto visit = new_label("L_query_visit"), next = new_label("L_query_next"),
+          select = new_label("L_query_select");
+      label(visit);
+      load(index); load(count); instruction("CMP_LT"); jump_if_not(finish);
+      load(produced); load(take); instruction("CMP_LT"); jump_if_not(finish);
+      at(snapshot, index); store(query.binding.name);
+      if (query.predicate) { emit_expr(*query.predicate); jump_if_not(next); }
+      load(skip); constant("0"); instruction("CMP_GT"); jump_if_not(select);
+      load(skip); constant("1"); instruction("SUB", {"i64"}); store(skip); jump(next);
+      label(select); project();
+      label(next); increment(index); jump(visit);
+    } else {
+      const auto rows = new_temp("query.rows"), keys = new_temp("query.keys"),
+          order = new_temp("query.order"), buffer = new_temp("query.buffer"),
+          width = new_temp("query.width"), start = new_temp("query.start"),
+          middle = new_temp("query.middle"), stop = new_temp("query.stop"),
+          left = new_temp("query.left"), right = new_temp("query.right"),
+          output = new_temp("query.output"), chosen = new_temp("query.chosen"),
+          left_key = new_temp("query.left_key"), right_key = new_temp("query.right_key"),
+          swapped = new_temp("query.swapped");
+      array(rows, element); array(keys, key_type); array(order, "i64"); array(buffer, "i64");
+      initialize(index); initialize(chosen);
+      const auto visit = new_label("L_query_filter"), next = new_label("L_query_filter_next"),
+          filtered = new_label("L_query_filtered");
+      label(visit); load(index); load(count); instruction("CMP_LT"); jump_if_not(filtered);
+      at(snapshot, index); store(query.binding.name);
+      if (query.predicate) { emit_expr(*query.predicate); jump_if_not(next); }
+      load(rows); load(query.binding.name); append();
+      load(keys); emit_expr(*query.order_key, key_type);
+      emit_scalar_boundary(key_type, query.order_key->line); append();
+      load(order); load(chosen); append(); load(buffer); constant("0"); append();
+      increment(chosen);
+      label(next); increment(index); jump(visit); label(filtered);
+      length(rows, count); initialize(width, "1");
+      // Stable bottom-up merge sort uses O(n) extra indices and O(n log n)
+      // comparisons. Keys are evaluated once per matching input row.
+      const auto pass = new_label("L_query_sort_pass"), segment = new_label("L_query_sort_segment"),
+          merge = new_label("L_query_sort_merge"), segment_done = new_label("L_query_sort_segment_done"),
+          pass_done = new_label("L_query_sort_pass_done"), sorted = new_label("L_query_sorted"),
+          use_left = new_label("L_query_sort_left"), use_right = new_label("L_query_sort_right"),
+          write = new_label("L_query_sort_write"), has_left = new_label("L_query_sort_has_left"),
+          has_right = new_label("L_query_sort_has_right");
+      label(pass); load(width); load(count); instruction("CMP_LT"); jump_if_not(sorted);
+      initialize(start);
+      label(segment); load(start); load(count); instruction("CMP_LT"); jump_if_not(pass_done);
+      auto clamped_sum = [&](const std::string &a, const std::string &b, const std::string &target) {
+        load(a); load(b); instruction("ADD", {"i64"}); store(target);
+        const auto within = new_label("L_query_sort_clamp");
+        load(target); load(count); instruction("CMP_GT"); jump_if_not(within);
+        load(count); store(target); label(within);
+      };
+      clamped_sum(start, width, middle); clamped_sum(middle, width, stop);
+      load(start); store(left); load(middle); store(right); load(start); store(output);
+      label(merge); load(output); load(stop); instruction("CMP_LT"); jump_if_not(segment_done);
+      load(left); load(middle); instruction("CMP_GE"); jump_if_not(has_left); jump(use_right);
+      label(has_left); load(right); load(stop); instruction("CMP_GE"); jump_if_not(has_right); jump(use_left);
+      label(has_right);
+      load(keys); at(order, left); instruction("GET_INDEX"); store(left_key);
+      load(keys); at(order, right); instruction("GET_INDEX"); store(right_key);
+      if (key_type == "f64") {
+        // NaNs sort last in both directions; ties (including NaN pairs) keep
+        // source order rather than inheriting platform floating comparisons.
+        const auto left_number = new_label("L_query_sort_left_number");
+        load(left_key); load(left_key); instruction("CMP_NE"); jump_if_not(left_number);
+        load(right_key); load(right_key); instruction("CMP_NE"); jump_if_not(use_right); jump(use_left);
+        label(left_number);
+        load(right_key); load(right_key); instruction("CMP_NE"); jump_if_not(has_right + "_numbers"); jump(use_left);
+        label(has_right + "_numbers");
+      }
+      load(left_key);
+      if (key_type == "bool" || key_type == "u8") instruction("CAST", {"i64"});
+      load(right_key);
+      if (key_type == "bool" || key_type == "u8") instruction("CAST", {"i64"});
+      instruction(query.descending ? "CMP_GE" : "CMP_LE");
+      jump_if_not(use_right); jump(use_left);
+      label(use_left); at(order, left); store(chosen); increment(left); jump(write);
+      label(use_right); at(order, right); store(chosen); increment(right);
+      label(write); load(buffer); load(output); load(chosen); instruction("SET_INDEX");
+      increment(output); jump(merge);
+      label(segment_done); load(stop); store(start); jump(segment);
+      label(pass_done); load(order); store(swapped); load(buffer); store(order); load(swapped); store(buffer);
+      load(width); constant("2"); instruction("MUL", {"i64"}); store(width); jump(pass);
+      label(sorted); load(skip); store(index);
+      const auto select = new_label("L_query_ordered_select");
+      label(select); load(index); load(count); instruction("CMP_LT"); jump_if_not(finish);
+      load(produced); load(take); instruction("CMP_LT"); jump_if_not(finish);
+      load(rows); at(order, index); instruction("GET_INDEX"); store(query.binding.name);
+      project(); increment(index); jump(select);
+    }
+    label(finish); load(result);
+  }
+
   void emit_expr_impl(const ast_expr &e,
                       const std::optional<std::string> &contextual_type) {
     if (ny::is_debug_enabled()) {
@@ -2853,6 +3024,9 @@ public:
       push_instr("PUSH_CONST_STR", {name}, str.line);
       break;
     }
+    case ast_node_kind::query_expr_node:
+      emit_query(static_cast<const ast_query_expr &>(e));
+      break;
     case ast_node_kind::array_literal_expr_node: {
       const auto &arr = static_cast<const ast_array_literal_expr &>(e);
       for (const auto &elem : arr.elements) {
@@ -3314,13 +3488,11 @@ public:
                                        [&](const ast_enum_variant &variant) {
                                          return variant.name == ma.member_name;
                                        })) {
-            // This is enum variant construction: emit args then NEW_VARIANT
-            for (const auto &arg : ce.args)
-              emit_expr(*arg);
             std::string variant_fqn = obj_id.name + "::" + ma.member_name;
+            const auto enum_type = enum_type_for_expression(e, contextual_type);
+            emit_variant_arguments(ce.args, variant_fqn, enum_type, ce.line);
             emit_new_variant(variant_fqn, ce.args.size(),
-                             enum_type_for_expression(e, contextual_type),
-                             ce.line);
+                             enum_type, ce.line);
             break;
           }
 
@@ -3689,12 +3861,10 @@ public:
                                        [&](const ast_enum_variant &variant) {
                                          return variant.name == method_name;
                                        })) {
-            // This is enum variant construction: emit args then NEW_VARIANT
-            for (const auto &arg : ce.args)
-              emit_expr(*arg);
+            const auto enum_type = enum_type_for_expression(e, contextual_type);
+            emit_variant_arguments(ce.args, id.name, enum_type, ce.line);
             emit_new_variant(id.name, ce.args.size(),
-                             enum_type_for_expression(e, contextual_type),
-                             ce.line);
+                             enum_type, ce.line);
             break;
           }
 
@@ -3785,10 +3955,15 @@ public:
           // Now emit each arg and set the corresponding field
           if (struct_decl->fields.size() == ce.args.size()) {
             for (size_t i = 0; i < struct_decl->fields.size(); ++i) {
-              emit_expr(*ce.args[i]);
-              emit_scalar_boundary(struct_field_type(
-                  e.inferred_type.value_or(callee_name),
-                  struct_decl->fields[i].name), ce.line);
+              const auto field_type = struct_field_type(
+                  concrete_type, struct_decl->fields[i].name);
+              // Unit generic variants (Option.None) and nested enum payloads
+              // need their field context before emission. Other arguments
+              // retain their own storage type, including rejected array
+              // element types when compiling with --no-typecheck.
+              emit_expr(*ce.args[i], field_type && is_declared_enum_type(cg_, *field_type)
+                  ? field_type : std::nullopt);
+              emit_scalar_boundary(field_type, ce.line);
               push_instr("SET_FIELD", {struct_decl->fields[i].name}, ce.line);
             }
           } else {
@@ -3801,20 +3976,43 @@ public:
         }
       }
 
+      // Handle the Result/Option constructor aliases before their arguments
+      // are emitted, so nested constructors inherit the same payload context
+      // as qualified variants.
+      if (ce.callee && ce.callee->kind == ast_node_kind::identifier_expr_node) {
+        const auto &id = static_cast<const ast_identifier_expr &>(*ce.callee);
+        std::string bare = cg_.lookup_function_fqn(id.name, current_module_);
+        const auto separator = bare.rfind("::");
+        if (separator != std::string::npos)
+          bare = bare.substr(separator + 2);
+        if (bare == "ok" || bare == "error" || bare == "some" || bare == "none") {
+          const std::string variant = bare == "ok" ? "result::ok"
+              : bare == "error" ? "result::error"
+              : bare == "some" ? "option::some" : "option::none";
+          const auto enum_type = enum_type_for_expression(e, contextual_type);
+          emit_variant_arguments(ce.args, variant, enum_type, ce.line);
+          emit_new_variant(variant, ce.args.size(), enum_type, ce.line);
+          break;
+        }
+      }
+
       // Direct native dispatch bypasses the declared wrapper's parameter
       // boundary. Preserve scalar representation explicitly: PUSH_CONST uses a word
       // representation even for an i32 literal, and an accepted scalar
       // argument can have a different width from the declared parameter.
       // This is source lowering only; handwritten NIL must still satisfy the
       // native provider's exact operand and declaration contracts.
+      const ast_function_decl *call_declaration = nullptr;
       const ast_function_decl *native_call_declaration = nullptr;
       auto call_substitutions = substitutions;
       if (ce.callee && ce.callee->kind == ast_node_kind::identifier_expr_node) {
         const auto &id = static_cast<const ast_identifier_expr &>(*ce.callee);
         const auto name = cg_.lookup_function_fqn(id.name, current_module_);
         const auto *declaration = cg_.lookup_function_decl(name);
-        if (declaration && native_dispatch_annotation_count(*declaration) == 1) {
-          native_call_declaration = declaration;
+        if (declaration) {
+          call_declaration = declaration;
+          if (native_dispatch_annotation_count(*declaration) == 1)
+            native_call_declaration = declaration;
           for (std::size_t index = 0;
                index < declaration->generic_params.size() && index < ce.type_args.size();
                ++index)
@@ -3823,6 +4021,21 @@ public:
         }
       }
       const auto emit_call_argument = [&](std::size_t index) {
+        std::optional<std::string> argument_context;
+        if (call_declaration && native_dispatch_annotation_count(*call_declaration) == 0 &&
+            index < call_declaration->params.size()) {
+          const auto &parameter = call_declaration->params[index];
+          if (parameter.type_name && !parameter.is_variadic) {
+            const auto expected = substitute_nil_type_name(
+                *parameter.type_name, call_substitutions);
+            // Only enum construction needs this additional call context.
+            // In particular, a rejected array<i32> argument must retain its
+            // actual element ABI under --no-typecheck, not become array<i64>
+            // merely because that is the callee's declared parameter type.
+            if (is_declared_enum_type(cg_, expected))
+              argument_context = expected;
+          }
+        }
         std::optional<std::string> scalar_type;
         if (native_call_declaration && index < native_call_declaration->params.size() &&
             ce.args[index]->inferred_type) {
@@ -3852,7 +4065,10 @@ public:
             }
           }
         }
-        emit_expr(*ce.args[index], scalar_type);
+        // Ordinary functions provide enum construction context without adding
+        // a conversion: their parameter prologue owns scalar boundaries.
+        // Native providers retain the narrower conversion contract above.
+        emit_expr(*ce.args[index], scalar_type ? scalar_type : argument_context);
         emit_scalar_boundary(scalar_type, ce.args[index]->line);
       };
 
@@ -3898,31 +4114,6 @@ public:
         // partially-qualified names like "server_config::default" inside a
         // module, and cross-module references via the suffix search).
         fname = cg_.lookup_function_fqn(fname, current_module_);
-
-        // Intercept result/option constructors: ok/error/some/none →
-        // NEW_VARIANT
-        {
-          std::string bare = fname;
-          auto sep = bare.rfind("::");
-          if (sep != std::string::npos)
-            bare = bare.substr(sep + 2);
-          if (bare == "ok" || bare == "error" || bare == "some" ||
-              bare == "none") {
-            std::string vname;
-            if (bare == "ok")
-              vname = "result::ok";
-            else if (bare == "error")
-              vname = "result::error";
-            else if (bare == "some")
-              vname = "option::some";
-            else
-              vname = "option::none";
-            emit_new_variant(vname, effective_arg_count,
-                             enum_type_for_expression(e, contextual_type),
-                             ce.line);
-            break;
-          }
-        }
 
         // Check if this is a call to a generic function
         // We need to look up the symbol to know if it's generic
@@ -3996,7 +4187,9 @@ public:
               raw_ret = *fn_decl_for_intrinsic_check->return_type;
             }
             if (!raw_ret.empty() && raw_ret != "void") {
-              if (is_declared_enum_type(cg_, raw_ret)) {
+              if (intrinsic_name_from_decl.rfind("regex.", 0) == 0) {
+                ret_type_str = canonical_nil_type_name(raw_ret);
+              } else if (is_declared_enum_type(cg_, raw_ret)) {
                 // Intrinsics return typed managed enum values. Their register
                 // width is not a substitute for the concrete generic identity.
                 ret_type_str = canonical_nil_type_name(raw_ret);
@@ -4825,7 +5018,8 @@ public:
         // Default to 1 element if no size specified
         push_instr("PUSH_CONST", {"1"}, alloc.line);
       }
-      push_instr("ALLOC", {alloc.type_name}, alloc.line);
+      push_instr("ALLOC", {substitute_nil_type_name(alloc.type_name, substitutions)},
+                 alloc.line);
       break;
     }
     case ast_node_kind::if_expr_node: {
@@ -5190,6 +5384,32 @@ private:
         qualified_owner == "nil::std::core::Result")
       return canonicalize_variant_name(declaration->name + "::" + variant->name);
     return canonicalize_variant_name(qualified_owner + "::" + variant->name);
+  }
+
+  void emit_variant_arguments(const std::vector<ast_expr_ptr> &payloads,
+                              const std::string &variant_name,
+                              const std::optional<std::string> &enum_type,
+                              int debug_line) {
+    // Infer a fresh nested constructor from its destination payload before
+    // emitting it. Post-emission scalar casts cannot recover the schema of
+    // a nullary Option.None nested inside Result<Option<T>, E>::Ok(...).
+    std::vector<std::string> payload_types;
+    if (enum_type) {
+      const auto resolved = resolved_variant_name(variant_name, enum_type, debug_line);
+      if (const auto metadata = resolve_concrete_enum_variant(cg_, mod_, *enum_type, resolved)) {
+        const auto type = trim_type_name(metadata->payload_type);
+        if (type.size() >= 2 && type.front() == '(' && type.back() == ')') {
+          if (const auto tuple = parse_generic_type_name(
+                  "tuple<" + type.substr(1, type.size() - 2) + ">"))
+            payload_types = tuple->type_args;
+        } else if (type != "void") {
+          payload_types.push_back(type);
+        }
+      }
+    }
+    for (std::size_t index = 0; index < payloads.size(); ++index)
+      emit_expr(*payloads[index], payload_types.size() == payloads.size()
+          ? std::optional<std::string>(payload_types[index]) : std::nullopt);
   }
 
   void emit_new_variant(const std::string &variant_name,
@@ -6151,7 +6371,9 @@ codegen::assemble_module(const ast_program &program,
           call.args.push_back(std::to_string(fn_decl.params.size()));
 
           std::string ret_type_str = "void";
-          if (is_declared_enum_type(*this, fn.return_type)) {
+          if (intrinsic_name.rfind("regex.", 0) == 0) {
+            ret_type_str = canonical_nil_type_name(fn.return_type);
+          } else if (is_declared_enum_type(*this, fn.return_type)) {
             ret_type_str = canonical_nil_type_name(fn.return_type);
           } else if (fn_decl.return_type.has_value()) {
             ret_type_str = *fn_decl.return_type;

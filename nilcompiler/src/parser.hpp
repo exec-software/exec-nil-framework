@@ -94,6 +94,8 @@ private:
       visibility_kind visibility = visibility_kind::visibility_private,
       bool is_abstract = false,
       const std::vector<std::string> &annotations = {});
+  std::shared_ptr<ast_decl> parse_text_pattern_declaration(
+      visibility_kind visibility = visibility_kind::visibility_private);
   std::shared_ptr<ast_decl> parse_variable_declaration(
       visibility_kind visibility = visibility_kind::visibility_private);
   std::shared_ptr<ast_decl>
@@ -172,6 +174,7 @@ private:
   std::shared_ptr<ast_expr> parse_cast();
   std::shared_ptr<ast_expr> parse_call(std::shared_ptr<ast_expr> callee);
   std::shared_ptr<ast_expr> parse_primary();
+  std::shared_ptr<ast_expr> parse_query_expression();
   std::shared_ptr<ast_expr> parse_match_expression();
   std::shared_ptr<ast_expr> parse_if_expression();  // if cond then expr else expr end if
 

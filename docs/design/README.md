@@ -39,6 +39,7 @@ not assigned architecture identifiers.
 | NIL-0013 | [Project-scoped references and transactional rename](NIL-0013-project-semantic-editing.md) | Proposed |
 | NIL-0014 | [Explicit formatted text with original expression locations](NIL-0014-formatted-text.md) | Implemented initial scalar/text profile |
 | NIL-0015 | [Structural tuples](NIL-0015-structural-tuples.md) | Implemented nonempty typed values and local destructuring |
+| NIL-0016 | [Shared text patterns and collected queries](NIL-0016-patterns-and-queries.md) | Implemented initial byte-pattern and eager array-query profiles |
 | NIL-0093 | [Executable context is artifact self-description](NIL-0093-executable-context.md) | Implemented within the documented inspection profile |
 
 ## Retained Ny feature references

@@ -2874,6 +2874,37 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                     << operation << "' in function '" << fn.name << "'\n";
           return false;
         }
+      } else if (dispatch_name == "@intrinsic" && dispatch_provider.rfind("regex.", 0) == 0) {
+        const bool validation = dispatch_provider == "regex.validate";
+        const bool searching = dispatch_provider == "regex.search";
+        const bool group = dispatch_provider == "regex.group_index";
+        const std::vector<std::string> expected = validation ? std::vector<std::string>{"text"}
+            : searching ? std::vector<std::string>{"text", "text", "i64", "bool"}
+                        : std::vector<std::string>{"text", "text"};
+        const std::string result_type = validation ? "text" : searching ? "array<i64>" : "i64";
+        bool valid = (validation || searching || group) && fn.params.size() == expected.size() &&
+            impl_->current_function->arg_size() == expected.size() &&
+            normalize_nil_type(fn.return_type) == result_type;
+        for (std::size_t i = 0; valid && i < expected.size(); ++i)
+          valid = normalize_nil_type(nil_parameter_type(fn.params[i])) == expected[i];
+        if (!valid) {
+          std::cerr << "[NativeCodegen] " << dispatch_provider << " has an invalid native ABI\n";
+          return false;
+        }
+        auto *pointer = llvm::PointerType::getUnqual(ctx);
+        auto *word = llvm::Type::getInt64Ty(ctx);
+        std::vector<llvm::Type *> types;
+        std::vector<llvm::Value *> arguments;
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+          auto *value = impl_->current_function->getArg(i);
+          types.push_back(expected[i] == "text" ? static_cast<llvm::Type *>(pointer) : word);
+          arguments.push_back(expected[i] == "text" ? value : impl_->coerceToI64(value));
+        }
+        auto *type = llvm::FunctionType::get(group ? static_cast<llvm::Type *>(word) : pointer, types, false);
+        auto runtime = impl_->module->getOrInsertFunction(validation ? "nyrt_regex_validate" :
+            searching ? "nyrt_regex_search" : "nyrt_regex_group_index", type);
+        impl_->builder->CreateRet(impl_->builder->CreateCall(type, runtime.getCallee(), arguments));
+        annotation_handled = true;
       } else if (dispatch_name == "@intrinsic" &&
                  (dispatch_provider == "console.read_line" ||
                   dispatch_provider == "console.flush")) {
@@ -6545,6 +6576,41 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         // allowlist as strict as the wrapper lowering above; everything else
         // must fail closed instead of entering the legacy foreign-call path.
         if (lib_name == "intrinsic") {
+          if (func_name.rfind("regex.", 0) == 0) {
+            const bool validation = func_name == "regex.validate";
+            const bool searching = func_name == "regex.search";
+            const bool group = func_name == "regex.group_index";
+            const std::vector<std::string> expected = validation ? std::vector<std::string>{"text"}
+                : searching ? std::vector<std::string>{"text", "text", "i64", "bool"}
+                            : std::vector<std::string>{"text", "text"};
+            const std::string result_type = validation ? "text" : searching ? "array<i64>" : "i64";
+            if ((!validation && !searching && !group) || minstr.args.size() != 4 ||
+                minstr.args[2] != std::to_string(expected.size()) || minstr.args[3] != result_type ||
+                impl_->value_stack.size() < expected.size()) {
+              std::cerr << "[NativeCodegen] " << func_name << " has an invalid native ABI\n";
+              return false;
+            }
+            auto *pointer = llvm::PointerType::getUnqual(ctx);
+            auto *word = llvm::Type::getInt64Ty(ctx);
+            std::vector<llvm::Value *> arguments(expected.size());
+            std::vector<llvm::Type *> types(expected.size());
+            for (std::size_t i = expected.size(); i > 0; --i) {
+              auto *value = impl_->popValue();
+              if (normalize_nil_type(impl_->nilType(value)) != expected[i - 1] ||
+                  (expected[i - 1] == "text" ? !value->getType()->isPointerTy()
+                                             : !value->getType()->isIntegerTy())) {
+                std::cerr << "[NativeCodegen] " << func_name << " requires exact typed arguments\n";
+                return false;
+              }
+              types[i - 1] = expected[i - 1] == "text" ? static_cast<llvm::Type *>(pointer) : word;
+              arguments[i - 1] = expected[i - 1] == "text" ? value : impl_->coerceToI64(value);
+            }
+            auto *type = llvm::FunctionType::get(group ? static_cast<llvm::Type *>(word) : pointer, types, false);
+            auto runtime = impl_->module->getOrInsertFunction(validation ? "nyrt_regex_validate" :
+                searching ? "nyrt_regex_search" : "nyrt_regex_group_index", type);
+            impl_->pushValue(impl_->builder->CreateCall(type, runtime.getCallee(), arguments), result_type);
+            break;
+          }
           if (func_name == "console.read_line" || func_name == "console.flush") {
             const bool reading = func_name == "console.read_line";
             if (minstr.args.size() != 4 || minstr.args[2] != "0" ||
@@ -8531,6 +8597,9 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_write_stderr", &nyrt_write_stderr);
   expose_runtime_symbol("nyrt_read_line", &nyrt_read_line);
   expose_runtime_symbol("nyrt_flush_stdout", &nyrt_flush_stdout);
+  expose_runtime_symbol("nyrt_regex_validate", &nyrt_regex_validate);
+  expose_runtime_symbol("nyrt_regex_search", &nyrt_regex_search);
+  expose_runtime_symbol("nyrt_regex_group_index", &nyrt_regex_group_index);
   expose_runtime_symbol("nyrt_array_new", &nyrt_array_new);
   expose_runtime_symbol("nyrt_array_new_with_value",
                         &nyrt_array_new_with_value);

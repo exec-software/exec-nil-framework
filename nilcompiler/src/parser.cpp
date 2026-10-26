@@ -19,6 +19,8 @@ Design notes:
 #include <optional>
 #include "parser.hpp"
 #include "numeric_literal.hpp"
+#include "pattern_syntax.hpp"
+#include "pattern_engine.hpp"
 #include "standard_namespace.hpp"
 #include "diagnostics.hpp"
 
@@ -467,7 +469,8 @@ parser::parser(const std::string &source, const parser_options &opts)
   for (const auto &number : tokens_) {
     if (number.kind == token_kind::invalid &&
         (number.lexeme.find("interpolation") != std::string::npos ||
-         number.lexeme.find("formatted text") != std::string::npos))
+         number.lexeme.find("formatted text") != std::string::npos ||
+         number.lexeme.rfind("Unterminated block comment", 0) == 0))
       add_error(number, number.lexeme);
     if (number.kind == token_kind::number_literal &&
         is_floating_literal_spelling(number.lexeme)) {
@@ -887,6 +890,43 @@ std::vector<std::string> parser::parse_leading_annotations() {
   return collected_annotations;
 }
 
+std::shared_ptr<ast_decl> parser::parse_text_pattern_declaration(visibility_kind visibility) {
+  advance(); // contextual 'pattern'
+  const auto name = consume(token_kind::identifier, "Expected a text pattern name");
+  const auto begin = pos_;
+  std::vector<patterns::prose_token> body;
+  int nesting = 1;
+  while (!is_at_end() && body.size() <= 16384) {
+    const auto current = advance();
+    body.push_back({current.lexeme, current.kind == token_kind::string_literal,
+                    current.kind == token_kind::semicolon});
+    if (current.kind != token_kind::string_literal && peek().lexeme == "pattern" &&
+        peek().kind == token_kind::identifier) {
+      if (current.lexeme == "begin") ++nesting;
+      if (current.lexeme == "end" && --nesting == 0) {
+        body.push_back({advance().lexeme, false, false});
+        break;
+      }
+    }
+  }
+  auto parsed = patterns::parse_prose(body);
+  if (!parsed.error.empty()) {
+    const auto index = std::min(begin + parsed.error_token, tokens_.size() - 1);
+    add_error(tokens_[index], parsed.error);
+  } else {
+    const auto error = patterns::validate(parsed.source);
+    if (!error.empty()) add_error(name, "Invalid text pattern: " + error);
+  }
+  match(token_kind::semicolon);
+  auto decl = std::make_shared<ast_variable_decl>(name.lexeme,
+      std::make_shared<ast_string_literal>(parsed.source, name.line),
+      std::string("text"), false, visibility == visibility_kind::visibility_public, name.line);
+  decl->is_const = true;
+  decl->visibility = visibility;
+  decl->name_span = span_for_name(name);
+  return decl;
+}
+
 std::shared_ptr<ast_decl> parser::parse_declaration() {
   const auto collected_annotations = parse_leading_annotations();
 
@@ -914,6 +954,11 @@ std::shared_ptr<ast_decl> parser::parse_declaration() {
 
   // stream and maps to the enum values.
   visibility_kind visibility = parse_visibility_modifier();
+
+  if (check(token_kind::identifier) && peek().lexeme == "pattern" &&
+      pos_ + 1 < tokens_.size() && tokens_[pos_ + 1].kind == token_kind::identifier) {
+    return parse_text_pattern_declaration(visibility);
+  }
 
   if (match(token_kind::function_kw)) {
     return parse_function_declaration(visibility, false, collected_annotations);
@@ -1566,6 +1611,7 @@ parser::parse_function_declaration(visibility_kind vis, bool is_abstract,
   } else {
     // VB-style: parse statements until 'end function'
     block = std::make_shared<ast_block_stmt>(name_tok.line);
+    bool terminated = false;
     // Parse statements until we hit 'end function'
     while (!is_at_end()) {
       // Check for 'end function' / 'end fn' terminator
@@ -1575,6 +1621,7 @@ parser::parse_function_declaration(visibility_kind vis, bool is_abstract,
         if (check(token_kind::function_kw) || check(token_kind::fn_kw)) {
           advance(); // consume 'function' or 'fn'
         }
+        terminated = true;
         break;
       }
       // Handle annotations inside VB-style function bodies (e.g. @intrinsic("..."))
@@ -1612,6 +1659,8 @@ parser::parse_function_declaration(visibility_kind vis, bool is_abstract,
       else
         synchronize(); // recover from statement error
     }
+    if (!terminated)
+      add_error(name_tok, "Unterminated function body; expected 'end fn'");
   }
 
   fn->body = block;
@@ -2204,6 +2253,10 @@ std::shared_ptr<ast_stmt> parser::parse_statement() {
       add_error(peek(), "Expected 'asm' after 'end'");
     }
     result = assembly;
+  } else if (check(token_kind::identifier) && peek().lexeme == "pattern" &&
+             pos_ + 1 < tokens_.size() && tokens_[pos_ + 1].kind == token_kind::identifier) {
+    auto decl = parse_text_pattern_declaration();
+    result = std::make_shared<ast_decl_stmt>(decl, decl ? decl->line : previous().line);
   } else if (match(token_kind::let_kw)) {
     // std::cerr << "[parse_statement] matched 'let' token at pos=" << pos_
     //           << " line=" << previous().line << "\n";
@@ -2557,6 +2610,7 @@ std::shared_ptr<ast_stmt> parser::parse_while_statement() {
 
   // Parse body until 'end while'
   auto body_block = std::make_shared<ast_block_stmt>(while_tok.line);
+  bool terminated = false;
 
   while (!is_at_end()) {
     if (check(token_kind::end_kw)) {
@@ -2564,6 +2618,7 @@ std::shared_ptr<ast_stmt> parser::parse_while_statement() {
           tokens_[pos_ + 1].kind == token_kind::while_kw) {
         advance(); // consume 'end'
         advance(); // consume 'while'
+        terminated = true;
         break;
       }
     }
@@ -2575,6 +2630,8 @@ std::shared_ptr<ast_stmt> parser::parse_while_statement() {
       synchronize();
     }
   }
+  if (!terminated)
+    add_error(while_tok, "Unterminated while statement; expected 'end while'");
 
   return std::make_shared<ast_while_stmt>(cond, body_block, while_tok.line);
 }
@@ -2768,6 +2825,7 @@ std::shared_ptr<ast_stmt> parser::parse_for_statement() {
     }
 
     body_block = std::make_shared<ast_block_stmt>(for_tok.line);
+    bool terminated = false;
 
     while (!is_at_end()) {
       // Check for 'end for'
@@ -2776,6 +2834,7 @@ std::shared_ptr<ast_stmt> parser::parse_for_statement() {
             tokens_[pos_ + 1].kind == token_kind::for_kw) {
           advance(); // consume 'end'
           advance(); // consume 'for'
+          terminated = true;
           break;
         }
       }
@@ -2787,6 +2846,8 @@ std::shared_ptr<ast_stmt> parser::parse_for_statement() {
         synchronize();
       }
     }
+    if (!terminated)
+      add_error(for_tok, "Unterminated for statement; expected 'end for'");
 
     symbol_table_.leave_scope();
   }
@@ -2806,6 +2867,7 @@ std::shared_ptr<ast_stmt> parser::parse_loop_statement() {
 
   // Parse body until 'end loop'
   auto body_block = std::make_shared<ast_block_stmt>(tok.line);
+  bool terminated = false;
 
   while (!is_at_end()) {
     if (check(token_kind::end_kw)) {
@@ -2813,6 +2875,7 @@ std::shared_ptr<ast_stmt> parser::parse_loop_statement() {
           tokens_[pos_ + 1].kind == token_kind::loop_kw) {
         advance(); // consume 'end'
         advance(); // consume 'loop'
+        terminated = true;
         break;
       }
     }
@@ -2824,6 +2887,8 @@ std::shared_ptr<ast_stmt> parser::parse_loop_statement() {
       synchronize();
     }
   }
+  if (!terminated)
+    add_error(tok, "Unterminated loop statement; expected 'end loop'");
 
   return std::make_shared<ast_loop_stmt>(body_block, tok.line);
 }
@@ -3010,12 +3075,13 @@ std::shared_ptr<ast_expr> parser::parse_comparison() {
 std::shared_ptr<ast_expr> parser::parse_factor() {
   auto expr = parse_cast();
   while (true) {
-    // `*` as binary multiply is only valid on the same line as the left
-    // operand.  A `*` at the start of a new line is a dereference prefix for
+    // `*` as binary multiply is only valid on the line where the left
+    // operand ends. Grouped operands can end after their AST source line.
+    // A `*` at the start of a new line is a dereference prefix for
     // the next statement (e.g. `*ptr = val`), not a continuation of the
     // current expression.  `/` and `%` have no prefix meaning so they are
     // safe to consume across lines.
-    if (check(token_kind::star) && peek().line != expr->line) break;
+    if (check(token_kind::star) && peek().line != previous().line) break;
     if (match(token_kind::star) || match(token_kind::slash) ||
         match(token_kind::percent) || match(token_kind::mod_kw)) {
       auto op = previous();
@@ -3250,6 +3316,10 @@ std::shared_ptr<ast_expr> parser::parse_call(std::shared_ptr<ast_expr> callee) {
 }
 
 std::shared_ptr<ast_expr> parser::parse_primary() {
+  if (check(token_kind::identifier) && peek().lexeme == "collect" &&
+      pos_ + 1 < tokens_.size() && tokens_[pos_ + 1].kind == token_kind::identifier &&
+      tokens_[pos_ + 1].lexeme == "query")
+    return parse_query_expression();
   // Debug helper to print the token at peek (for parser debugging)
   auto debug_peek = [&](const std::string &label) {
     // if (!is_at_end()) {
@@ -3368,18 +3438,22 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
 
     // Parse body until 'end function' / 'end fn'
     std::vector<std::shared_ptr<ast_stmt>> stmts;
+    bool terminated = false;
     while (!is_at_end()) {
       if (check(token_kind::end_kw)) {
         size_t save = pos_;
         advance(); // consume 'end'
         if (check(token_kind::function_kw) || check(token_kind::fn_kw)) {
           advance(); // consume 'function'/'fn'
+          terminated = true;
           break;
         }
         pos_ = save; // not 'end function', restore
       }
       stmts.push_back(parse_statement());
     }
+    if (!terminated)
+      add_error(fn_tok, "Unterminated anonymous function; expected 'end function'");
 
     auto body = std::make_shared<ast_block_stmt>(fn_tok.line);
     body->statements = std::move(stmts);
@@ -3705,6 +3779,59 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
   // Fallback: treat as identifier usage
   token t = advance();
   return std::make_shared<ast_string_literal>(t.lexeme, t.line);
+}
+
+std::shared_ptr<ast_expr> parser::parse_query_expression() {
+  const auto start = advance(); // contextual collect
+  advance(); // query
+  auto query = std::make_shared<ast_query_expr>(start.line);
+  const auto word = [&](const char *spelling) {
+    return (check(token_kind::identifier) || check(token_kind::where_kw)) && peek().lexeme == spelling;
+  };
+  const auto require_word = [&](const char *spelling) {
+    if (word(spelling)) { advance(); return true; }
+    add_error(peek(), std::string("Expected '") + spelling + "' in collect query");
+    return false;
+  };
+  while (match(token_kind::semicolon)) {}
+  require_word("from");
+  const auto binder = consume(token_kind::identifier, "Expected query binding after 'from'");
+  query->binding.name = binder.lexeme;
+  query->binding.name_span = span_for_name(binder);
+  query->binding.line = binder.line;
+  consume(token_kind::in_kw, "Expected 'in' after query binding");
+  query->source = parse_expression();
+  int previous_clause = 0;
+  while (!is_at_end() && !check(token_kind::end_kw)) {
+    while (match(token_kind::semicolon)) {}
+    if (check(token_kind::end_kw)) break;
+    const int clause = word("where") ? 1 : word("order") ? 2 :
+                       word("skip") ? 3 : word("take") ? 4 : word("select") ? 5 : 0;
+    if (!clause) {
+      add_error(peek(), "Expected where, order by, skip, take, select, or end query");
+      advance();
+      continue;
+    }
+    if (clause <= previous_clause)
+      add_error(peek(), "Query clauses must appear once in from, where, order by, skip, take, select order");
+    previous_clause = clause;
+    advance();
+    if (clause == 2) require_word("by");
+    auto expression = parse_expression();
+    if (clause == 1) query->predicate = expression;
+    if (clause == 2) {
+      query->order_key = expression;
+      if (word("descending")) { query->descending = true; advance(); }
+      else if (word("ascending")) advance();
+    }
+    if (clause == 3) query->skip = expression;
+    if (clause == 4) query->take = expression;
+    if (clause == 5) query->projection = expression;
+  }
+  consume(token_kind::end_kw, "Expected 'end query' after query projection");
+  require_word("query");
+  if (!query->projection) add_error(start, "Collect query requires a final select expression");
+  return query;
 }
 
 std::shared_ptr<ast_expr> parser::parse_match_expression() {
@@ -4261,10 +4388,12 @@ parser::parse_struct_declaration(visibility_kind vis) {
 
   // Parse struct fields
   std::vector<ast_struct_field> fields;
+  bool terminated = false;
   while (!is_at_end()) {
     // C-style: check for closing brace
     if (uses_braces && check(token_kind::right_brace)) {
       advance(); // consume '}'
+      terminated = true;
       break;
     }
     // VB-style: check for `end struct` terminator
@@ -4272,6 +4401,7 @@ parser::parse_struct_declaration(visibility_kind vis) {
       advance(); // consume 'end'
       if (check(token_kind::struct_kw)) {
         advance(); // consume 'struct'
+        terminated = true;
         break;
       } else {
         add_error(peek(), "Expected 'struct' after 'end'");
@@ -4325,6 +4455,10 @@ parser::parse_struct_declaration(visibility_kind vis) {
     // Optional comma between fields (not required in VB-style)
     match(token_kind::comma);
   }
+  if (!terminated)
+    add_error(name_tok, uses_braces
+        ? "Unterminated struct declaration; expected '}'"
+        : "Unterminated struct declaration; expected 'end struct'");
 
   // Create AST node
   bool is_pub_bool = (vis == visibility_kind::visibility_public);
@@ -4365,12 +4499,14 @@ std::shared_ptr<ast_decl> parser::parse_enum_declaration(visibility_kind vis) {
 
   // VB-style: enum variants terminated by `end enum`
   std::vector<ast_enum_variant> variants;
+  bool terminated = false;
   while (!is_at_end()) {
     // Check for `end enum` terminator
     if (check(token_kind::end_kw)) {
       advance(); // consume 'end'
       if (check(token_kind::enum_kw)) {
         advance(); // consume 'enum'
+        terminated = true;
         break;
       } else {
         add_error(peek(), "Expected 'enum' after 'end'");
@@ -4410,6 +4546,8 @@ std::shared_ptr<ast_decl> parser::parse_enum_declaration(visibility_kind vis) {
     // Optional comma between variants (not required in VB-style)
     match(token_kind::comma);
   }
+  if (!terminated)
+    add_error(name_tok, "Unterminated enum declaration; expected 'end enum'");
 
   // Create AST node
   bool is_pub_bool = (vis == visibility_kind::visibility_public);
@@ -4790,6 +4928,7 @@ parser::parse_class_declaration(visibility_kind visibility, bool is_abstract) {
 
   std::vector<ast_struct_field> fields;
   std::vector<std::shared_ptr<ast_function_decl>> methods;
+  bool terminated = false;
 
     int loop_safety = 0;
     while (!is_at_end()) {
@@ -4809,6 +4948,7 @@ parser::parse_class_declaration(visibility_kind visibility, bool is_abstract) {
     if (using_braces) {
       if (check(token_kind::right_brace)) {
         advance(); // consume '}'
+        terminated = true;
         break;
       }
     } else {
@@ -4824,6 +4964,7 @@ parser::parse_class_declaration(visibility_kind visibility, bool is_abstract) {
             tokens_[pos_ + 1].kind == token_kind::class_kw) {
           advance(); // consume 'end'
           advance(); // consume 'class'
+          terminated = true;
           break;
         }
 
@@ -4852,6 +4993,7 @@ parser::parse_class_declaration(visibility_kind visibility, bool is_abstract) {
         advance();
         if (check(token_kind::class_kw))
           advance();
+        terminated = true; // Preserve the existing bare 'end' short form.
         break;
       }
     }
@@ -4957,6 +5099,10 @@ parser::parse_class_declaration(visibility_kind visibility, bool is_abstract) {
       }
     }
   }
+  if (!terminated)
+    add_error(name_tok, using_braces
+        ? "Unterminated class declaration; expected '}'"
+        : "Unterminated class declaration; expected 'end class'");
 
   auto cls = std::make_shared<ast_class_decl>(name, base_classes, fields,
                                               methods, generic_params,

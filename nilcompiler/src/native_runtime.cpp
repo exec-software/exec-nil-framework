@@ -2,6 +2,7 @@
 #include "database_runtime.hpp"
 #include "integer_conversion.hpp"
 #include "memory_profile.hpp"
+#include "pattern_engine.hpp"
 #include "scalar_text.hpp"
 
 #include "secure_file_io.hpp"
@@ -1109,6 +1110,38 @@ const char *nyrt_read_line() noexcept {
 }
 
 void nyrt_flush_stdout() noexcept { std::fflush(stdout); }
+
+const char *nyrt_regex_validate(const char *pattern) noexcept {
+  try {
+    const auto error = ny::patterns::validate(pattern ? pattern : "");
+    if (error.empty()) return "";
+    if (const auto *owned = own_string(error)) return owned;
+  } catch (...) {}
+  nyrt_fail("NIL native runtime error: regex validation failed\n");
+}
+
+void *nyrt_regex_search(const char *pattern, const char *input,
+                       std::int64_t start, std::int64_t full) noexcept {
+  try {
+    const auto found = ny::patterns::search(pattern ? pattern : "", input ? input : "", start, full != 0);
+    const auto count = 1 + found.spans.size() * 2;
+    auto *array = nyrt_array_new(NYRT_ARRAY_I64, static_cast<std::int64_t>(count));
+    if (!array) nyrt_fail("NIL native runtime error: regex result allocation failed\n");
+    nyrt_array_set(array, NYRT_ARRAY_I64, 0, static_cast<std::uint64_t>(found.code));
+    std::int64_t index = 1;
+    for (const auto &[start, length] : found.spans) {
+      nyrt_array_set(array, NYRT_ARRAY_I64, index++, static_cast<std::uint64_t>(start));
+      nyrt_array_set(array, NYRT_ARRAY_I64, index++, static_cast<std::uint64_t>(length));
+    }
+    return array;
+  } catch (...) {}
+  nyrt_fail("NIL native runtime error: regex search failed\n");
+}
+
+std::int64_t nyrt_regex_group_index(const char *pattern, const char *name) noexcept {
+  try { return ny::patterns::group_index(pattern ? pattern : "", name ? name : ""); }
+  catch (...) { return -1; }
+}
 
 void *nyrt_array_new(std::uint32_t kind, std::int64_t length) noexcept {
   if (length < 0)

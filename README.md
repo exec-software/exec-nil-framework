@@ -74,6 +74,10 @@ The framework includes:
 - **Shared language features.** Structural tuples provide typed multiple
   results and local destructuring. Explicit string interpolation supports
   expressions with consistent scalar formatting across execution routes.
+  [Collected queries](docs/standard-library/queries.md) compose filtering, stable
+  ordering and projection. [Text patterns](docs/standard-library/text-patterns.md)
+  offer readable declarations, bounded regex matching with named captures,
+  splitting and literal replacement.
 - **A shared standard library.** `nil.std.*` provides collections, text,
   mathematics, binary I/O, diagnostics, and reflection, alongside SQLite and
   PostgreSQL access. Existing `ny.lang.*` imports remain compatible aliases.

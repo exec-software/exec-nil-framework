@@ -67,7 +67,7 @@ name_list       = identifier { ',' identifier } ;
 declaration     = { annotation }
                   ( paragraph_decl | record_decl | choice_decl
                   | class_decl | contract_decl | impl_decl | extension_decl
-                  | test_decl | alias_decl | global_decl ) ;
+                  | test_decl | alias_decl | global_decl | pattern_decl ) ;
 
 annotation      = 'context' string_literal
                 | 'note' identifier { annotation_arg } ;
@@ -240,6 +240,7 @@ qualified_name  = dotted_name [ '::' identifier ] ;
 statement_terminator = ';' | '.' | end_of_line ;
 
 statement       = binding_decl
+                | pattern_decl
                 | assignment
                 | 'say' expression
                 | 'give' ( expression | 'nothing' )
@@ -355,6 +356,7 @@ argument_tail   = 'nothing'
 variadic_tail   = 'more' expression { ',' expression } ;
 
 primary         = literal
+                | query_expr
                 | identifier
                 | 'my' identifier
                 | nominal_type          (* also carries explicit type arguments:
@@ -479,3 +481,32 @@ word_after_hyphen = letter { letter | digit | '_' } ;
  * delimiter.  Writing samples/15-telemetry-relay.matrix produced 25 such lines
  * before the collision was noticed, which is the argument for dropping the
  * block form rather than for asking authors to avoid blank comment lines. *)
+
+(* NIL-0016 additions. collect/pattern and the query/prose clauses are contextual
+ * exact words, not new hard keywords. Names with separators and escaped names
+ * never become clause delimiters. See docs/standard-library for semantic limits. *)
+query_expr      = 'collect' 'begin' 'query' statement_terminator
+                  'from' 'each' identifier 'in' expression statement_terminator
+                  [ 'where' expression statement_terminator ]
+                  [ 'order' 'by' expression [ 'ascending' | 'descending' ] statement_terminator ]
+                  [ 'skip' expression statement_terminator ]
+                  [ 'take' expression statement_terminator ]
+                  'give' expression statement_terminator 'end' 'query' ;
+pattern_decl    = [ 'public' ] identifier 'begin' 'pattern'
+                  { pattern_atom } 'end' 'pattern' ;
+pattern_atom    = 'literal' ( string_literal | 'newline' | 'tab' | 'quote' )
+                | 'ascii' ( 'digit' | 'digits' | 'letter' | 'letters' | 'whitespace' )
+                | 'any' 'character'
+                | 'character' 'from' string_literal 'through' string_literal
+                | ( 'start' | 'end' ) 'of' 'input'
+                | 'capture' identifier 'matching' pattern_atom
+                | 'require' 'next' [ 'not' ] 'to' 'match' pattern_atom
+                | repetition_phrase pattern_atom
+                | 'fewest' lazy_repetition_phrase pattern_atom
+                | 'either' pattern_atom 'or' pattern_atom { 'or' pattern_atom }
+                | 'begin' 'pattern' { pattern_atom } 'end' 'pattern' ;
+repetition_phrase = lazy_repetition_phrase | 'exactly' decimal_count ;
+lazy_repetition_phrase = 'one' 'or' 'more' | 'zero' 'or' 'more' | 'optional'
+                      | 'between' decimal_count 'and' decimal_count ;
+(* decimal_count is a nonnegative decimal integer at most 1000. Newlines and
+ * explicit statement terminators may separate pattern phrases. *)

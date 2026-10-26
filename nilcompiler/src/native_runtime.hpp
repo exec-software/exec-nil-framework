@@ -116,6 +116,13 @@ void nyrt_write_stderr(const char *text, std::int32_t newline) noexcept;
 const char *nyrt_read_line() noexcept;
 void nyrt_flush_stdout() noexcept;
 
+// Regex results are [status, start0, length0, ...], with absent captures -1/-1.
+// Status: 0 no match, 1 match, 2 pattern, 3 offset, 4 budget, 5 engine error.
+const char *nyrt_regex_validate(const char *pattern) noexcept;
+void *nyrt_regex_search(const char *pattern, const char *input,
+                       std::int64_t start, std::int64_t full) noexcept;
+std::int64_t nyrt_regex_group_index(const char *pattern, const char *name) noexcept;
+
 void *nyrt_array_new(std::uint32_t kind, std::int64_t length) noexcept;
 void *nyrt_array_new_with_value(std::uint32_t kind, std::int64_t length,
                                 std::uint64_t value) noexcept;

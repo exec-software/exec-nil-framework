@@ -1,0 +1,204 @@
+book query_fixture
+traced-source returns array of override integer begin paragraph
+say "source"
+give [5,1,4,2,3]
+end paragraph
+traced-bound receives amount as number, label as text returns number begin paragraph
+say label
+give amount
+end paragraph
+accepted receives item as override integer returns boolean begin paragraph
+say formatted "where {item}"
+give item is greater than 1
+end paragraph
+keyed receives item as override integer returns override integer begin paragraph
+say formatted "key {item}"
+give item remainder 2
+end paragraph
+projected receives item as override integer returns override integer begin paragraph
+say formatted "give {item}"
+give item times 10
+end paragraph
+mutate receives items as array of override integer, item as override integer returns boolean begin paragraph
+set items at 1 to 99
+give true
+end paragraph
+note intrinsic "math.sqrt"
+root receives x as floating returns floating
+changed-bound receives items as array of override integer returns number begin paragraph
+set items at 1 to 44
+give 0
+end paragraph
+main returns override integer begin paragraph
+value ordered is collect begin query
+from each item in (traced-source with nothing)
+where accepted with item being item
+order by keyed with item being item ascending
+skip traced-bound with amount being 1, label being "skip"
+take traced-bound with amount being 2, label being "take"
+give projected with item being item
+end query
+say ordered at 0
+say ordered at 1
+value direct is collect begin query
+from each item in (traced-source with nothing)
+where accepted with item being item
+skip 1
+take 2
+give projected with item being item
+end query
+say direct at 0
+say direct at 1
+value zero is collect begin query
+from each item in [1,2]
+where accepted with item being item
+take 0
+give projected with item being item
+end query
+say the length of zero
+value empty as array of override integer is []
+value missing is collect begin query
+from each item in empty
+order by item
+skip traced-bound with amount being 0, label being "empty skip"
+take traced-bound with amount being 9, label being "empty take"
+give item
+end query
+say the length of missing
+value rows is [(2,"two-first"),(1,"one"),(2,"two-last")]
+value sorted is collect begin query
+from each item in rows
+order by item.0 ascending
+give (item.1,item.0)
+end query
+say (sorted at 0).0
+say (sorted at 1).0
+say (sorted at 2).0
+value reverse is collect begin query
+from each item in rows
+order by item.0 descending
+give item.1
+end query
+say reverse at 0
+say reverse at 1
+say reverse at 2
+value words is collect begin query
+from each word in ["z","a","ä","a"]
+order by word
+give word
+end query
+say words at 0
+say words at 1
+say words at 2
+say words at 3
+value flags is collect begin query
+from each flag in [true,false,true,false]
+order by flag
+give flag
+end query
+say flags at 0
+say flags at 1
+say flags at 2
+say flags at 3
+value bytes is collect begin query
+from each octet in [(255 becomes override byte),(1 becomes override byte),(128 becomes override byte)]
+order by octet
+give octet
+end query
+say bytes at 0
+say bytes at 1
+say bytes at 2
+value wide is collect begin query
+from each item in [9007199254740993,9007199254740992,-9007199254740993]
+order by item
+give item
+end query
+say wide at 0
+say wide at 1
+say wide at 2
+value singleton is collect begin query
+from each pair in [(9,),(2,)]
+order by pair.0
+give pair
+end query
+say (singleton at 0).0
+value nested is collect begin query
+from each pair in [((2,"b"),true),((1,"a"),false)]
+order by pair.0.0
+give pair
+end query
+say (nested at 0).0.1
+say (nested at 1).1
+value inputs is [1,2,3]
+value snapshot is collect begin query
+from each item in inputs
+where mutate with items being inputs, item being item
+give item
+end query
+say snapshot at 1
+say inputs at 1
+value item is 77
+value shadowed is collect begin query
+from each item in [10,20]
+give ((collect begin query
+from each item in [2,3]
+where item is greater than 2
+give item
+end query) at 0) plus item
+end query
+say shadowed at 0
+say shadowed at 1
+say item
+value row is 2
+value bound-scope is collect begin query
+from each row in [1,2,3]
+skip row
+take 1
+give row
+end query
+say bound-scope at 0
+say row
+value collect is 4
+value query is 5
+say collect plus query
+value nan is root with x being -1.0
+value samples is [(nan,0),(2.0,1),(-0.0,2),(0.0,3),(nan,4),(-1.0,5)]
+value floats is collect begin query
+from each pair in samples
+order by pair.0
+give pair.1
+end query
+value floats-desc is collect begin query
+from each pair in samples
+order by pair.0 descending
+give pair.1
+end query
+repeat for position from 0 to 6
+say floats at position
+end repeat
+repeat for position from 0 to 6
+say floats-desc at position
+end repeat
+value changed is [1,2]
+value after-bound is collect begin query
+from each row in changed
+skip changed-bound with items being changed
+give row
+end query
+say after-bound at 1
+value sorted-zero is collect begin query
+from each row in [1,2]
+where accepted with item being row
+order by keyed with item being row
+take 0
+give projected with item being row
+end query
+say the length of sorted-zero
+value huge-skip is collect begin query
+from each row in [1,2]
+skip 9223372036854775807
+give row
+end query
+say the length of huge-skip
+give 0
+end paragraph

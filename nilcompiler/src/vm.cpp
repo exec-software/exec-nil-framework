@@ -2,6 +2,7 @@
 #include "concurrency_contract.hpp"
 #include "owned_contract.hpp"
 #include "parallel_support.hpp"
+#include "pattern_engine.hpp"
 #include "codegen.hpp"
 #include "array_intrinsic.hpp"
 #include "matrix_hag_bridge.hpp"
@@ -2887,6 +2888,49 @@ void VM::executeInstruction(const Instruction &instr) {
         }
         return;
       }
+    }
+    if (lib_name == "intrinsic" && fn_name.rfind("regex.", 0) == 0) {
+      const bool validation = fn_name == "regex.validate";
+      const bool searching = fn_name == "regex.search";
+      const bool group = fn_name == "regex.group_index";
+      const std::size_t count = validation ? 1 : searching ? 4 : 2;
+      const std::string result_type = validation ? "text" : searching ? "array<i64>" : "i64";
+      if ((!validation && !searching && !group) || args.size() != count ||
+          instr.args.size() != 4 || instr.args[3] != result_type)
+        throw std::runtime_error("regex intrinsic has an invalid ABI");
+      const auto text = [&](std::size_t index) -> const std::string & {
+        const auto *value = std::get_if<std::string>(&args[index]);
+        if (!value) throw std::runtime_error("regex intrinsic requires text arguments");
+        return *value;
+      };
+      if (validation) { pushStack(patterns::validate(text(0))); return; }
+      if (group) { pushStack(patterns::group_index(text(0), text(1))); return; }
+      const auto *start = std::get_if<std::int64_t>(&args[2]);
+      const auto *full = std::get_if<std::int64_t>(&args[3]);
+      if (!start || !full || (*full != 0 && *full != 1))
+        throw std::runtime_error("regex.search requires an i64 offset and boolean full-match flag");
+      const auto found = patterns::search(text(0), text(1), *start, *full != 0);
+      HeapBlock block;
+      block.type_name = "array";
+      block.element_type = "i64";
+      block.element_count = 1 + found.spans.size() * 2;
+      block.data.reserve(block.element_count);
+      block.data.push_back(static_cast<std::int64_t>(found.code));
+      for (const auto &[begin, length] : found.spans) {
+        block.data.push_back(begin);
+        block.data.push_back(length);
+      }
+      const auto extent = block.element_count * 8U;
+      if (next_ptr_ < 0 || extent > static_cast<std::uint64_t>(
+              std::numeric_limits<std::int64_t>::max() - next_ptr_))
+        throw std::runtime_error("regex result allocation is too large");
+      const auto handle = next_ptr_;
+      next_ptr_ += static_cast<std::int64_t>(extent);
+      storeHeapBlock(handle, std::move(block));
+      pushStack(ArrayHandle{handle});
+      if (memory_mode_ == MemoryMode::SAFE_GC && gc_critical_depth_ == 0 &&
+          ++alloc_count_ >= gc_threshold_) gcCollect();
+      return;
     }
     // --- Console Intrinsics ---
     if (lib_name == "intrinsic" && (fn_name == "console.writeln" || fn_name == "console.write")) {

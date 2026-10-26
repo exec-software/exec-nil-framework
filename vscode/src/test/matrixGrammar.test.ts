@@ -38,6 +38,64 @@ function assertScope(grammar: IGrammar, line: string, fragment: string, scope: s
     `${fragment} should have ${scope} in ${line}`);
 }
 
+test("Matrix prose patterns fold keywords, preserve capture names and nest safely", async () => {
+  const grammar = await loadMatrixGrammar();
+  const opened = grammar.tokenizeLine("price-pattern BEGIN PATTERN", INITIAL);
+  assert.ok(scopesAt(opened, "price-pattern BEGIN PATTERN", "price-pattern").includes("entity.name.pattern.matrix"));
+  let state = opened.ruleStack;
+  const line = "CAPTURE amount-value MATCHING one or more ascii digits";
+  const capture = grammar.tokenizeLine(line, state);
+  assert.ok(scopesAt(capture, line, "amount-value").includes("entity.name.capture.matrix"));
+  assert.ok(scopesAt(capture, line, "MATCHING").includes("keyword.control.pattern.matrix"));
+  state = grammar.tokenizeLine("require next not to match begin pattern", capture.ruleStack).ruleStack;
+  const literal = grammar.tokenizeLine('literal "{amount-value} end pattern"', state);
+  assert.ok(literal.tokens.some(token => token.scopes.includes("string.quoted.double.pattern.matrix")));
+  assert.equal(literal.tokens.some(token => token.scopes.includes("meta.interpolation.matrix")), false);
+  state = grammar.tokenizeLine("END PATTERN", literal.ruleStack).ruleStack;
+  const outer = grammar.tokenizeLine("optional literal \" USD\"", state);
+  assert.ok(outer.tokens.some(token => token.scopes.includes("keyword.control.pattern.matrix")));
+  state = grammar.tokenizeLine("end pattern", outer.ruleStack).ruleStack;
+  const ordinary = grammar.tokenizeLine("value pattern is capture-value", state);
+  assert.equal(ordinary.tokens.some(token => token.scopes.includes("meta.pattern.matrix")), false);
+  for (const name of ["pattern", "capture", "capture-value", "begin-pattern", "collect-query", "take-value"]) {
+    const result = grammar.tokenizeLine("say " + name, INITIAL);
+    assert.ok(scopesAt(result, "say " + name, name).includes("variable.other.readwrite.matrix"));
+    assert.equal(scopesAt(result, "say " + name, name).some(scope => /keyword\.(control\.)?(pattern|query)/.test(scope)), false);
+  }
+});
+
+test("Matrix collection query scopes stay inside their block", async () => {
+  const grammar = await loadMatrixGrammar();
+  let state = grammar.tokenizeLine("value chosen is COLLECT BEGIN QUERY", INITIAL).ruleStack;
+  for (const line of ["from each item in items", "where item is greater than 0", "order by item ascending", "skip 1", "take 2", "give item plus 1"]) {
+    const result = grammar.tokenizeLine(line, state);
+    assert.ok(result.tokens.some(token => token.scopes.includes("keyword.control.query.matrix")), line);
+    state = result.ruleStack;
+  }
+  state = grammar.tokenizeLine("END QUERY", state).ruleStack;
+  const ordinary = grammar.tokenizeLine("value take is where-value", state);
+  assert.equal(ordinary.tokens.some(token => token.scopes.includes("meta.query.matrix")), false);
+  assert.equal(ordinary.tokens.some(token => token.scopes.includes("keyword.control.query.matrix")), false);
+  const snippets = JSON.parse(fs.readFileSync("snippets/matrix.code-snippets", "utf8")) as Record<string, { prefix: string; body: string[] }>;
+  assert.equal(snippets["Text pattern"]!.prefix, "pattern");
+  assert.equal(snippets["Collect query"]!.prefix, "query");
+  assert.equal(snippets["Text pattern"]!.body.at(-1), "end pattern");
+  assert.equal(snippets["Collect query"]!.body.at(-1), "end query");
+});
+
+test("Matrix query keywords match the compiler's projection and ordering vocabulary", async () => {
+  const grammar = await loadMatrixGrammar();
+  const state = grammar.tokenizeLine("collect begin query", INITIAL).ruleStack;
+  for (const word of ["give", "GIVE", "ascending", "ASCENDING", "descending", "DESCENDING"]) {
+    const result = grammar.tokenizeLine(word, state);
+    assert.ok(scopesAt(result, word, word).includes("keyword.control.query.matrix"), word);
+  }
+  for (const word of ["select", "SELECT", "asc", "ASC", "desc", "DESC", "ascending-value", "descending_value"]) {
+    const result = grammar.tokenizeLine(word, state);
+    assert.equal(scopesAt(result, word, word).includes("keyword.control.query.matrix"), false, word);
+  }
+});
+
 test("Matrix scopes subject-first declarations, modifiers, parameters, and type aliases", async () => {
   const grammar = await loadMatrixGrammar();
   const declaration = "PUBLIC replaces read-sensor receives variable sensor-id as number returns sensor-reading begin paragraph";

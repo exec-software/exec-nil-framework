@@ -1812,3 +1812,207 @@ accounting, and reclamation after frames depart.
 **Follow-up:** This preserves the public GC statistics' historical slot unit.
 Aperture's typed payload measurement remains independent; it must not be
 silently substituted for the GC API's byte counts.
+
+
+### F56 — Readable patterns need a precise profile and honest resource errors
+
+**Observation:** The old experimental regex declarations had no qualified runtime
+provider. Treating familiar regex dialects as interchangeable would hide real
+semantic differences, especially in lookahead, Unicode classes and captures.
+
+**Implemented:** NIL-0016 introduces one shared, bounded byte-pattern engine,
+consumed by conventional notation and Ny/Matrix prose declarations. Literals are
+escaped; captures, repetition and zero-width lookahead use an explicit grammar.
+The library separates no match from invalid input and exhausted budgets, and
+preserves absent versus participating empty captures. Next-match iteration makes
+progress after empty matches. The compiler checks declaration sources, capture
+labels and exact contextual delimiters; a quoted/escaped label cannot inject
+regex syntax. Compiled programs are immutable and cached within fixed limits.
+
+**Follow-up:** Native text remains NUL-free and byte-oriented. Unicode properties,
+word/grapheme boundaries, alternate dialect parsers, reusable named fragments and
+replacement templates need explicit contracts. Collection, splitting and literal
+replacement are now implemented with explicit bounds (F59). Named
+prose declarations currently produce immutable text sources; they do not infer a
+first-class compiled Pattern value. Engine cache/backtracking budgets account for
+native program/state storage rather than exact host RSS or Aperture allocations.
+
+Matrix's unparenthesized nominal generic type grammar makes a nested multi-argument
+shape such as `Result<Option<PatternMatch>, text>` difficult to express without
+ambiguity. The initial pattern wrapper is written in Ny and imported normally
+from Matrix. Add an unambiguous nested type surface rather than proliferating
+wrapper types to conceal this grammar friction.
+
+### F57 — Query composition needs evaluation, ordering and lifetime contracts
+
+**Observation:** Existing callback-based collection helpers and experimental LINQ
+sources did not establish native closure lifetimes or query semantics. Native
+arrays still exclude direct records, enums and nested arrays, so a broad generic
+Enumerable promise would overstate the supported storage model.
+
+**Implemented:** Collected queries share one checked AST and ordinary NIL loop
+lowering. Source and bounds execute once before a shallow snapshot. Filtering,
+stable one-key ordering, pagination and scalar/text/tuple projection work from
+both languages. NaNs sort last in either direction; ties preserve input order.
+Matrix-authored count/any/first/last/single terminals consume the resulting array.
+The binder has an exact source span and lexical scope for editor analysis.
+
+Repeated row expressions also need the ownership checker's loop invariant.
+Review found the query checker omitted it; the analyzer now rejects changes to
+outer owners across row evaluation, including empty sources and take zero.
+Current code generation already rejects the block-tail expression used to expose
+the analysis gap, so this was not evidence of an executable double-move path.
+
+**Follow-up:** Grouping, joins, distinct, multiple order keys, lazy iteration and
+SQL translation remain separate work. Aggregate-array support is still needed
+for ordinary arrays of application records. The current snapshot and sorted
+query allocate temporary arrays; profiling and optimization should preserve
+once-only effects and stable ordering rather than silently changing semantics.
+Generic helper bodies also reject query sources such as `array<T>` before
+specialization, even when an actual call supplies a supported scalar type. A
+future implementation must validate the concrete element profile after
+specialization; current concrete-type support does not imply generic query
+composition.
+
+### F58 — Nested enum constructors lost payload type context in native lowering
+
+**Observation:** `Result<Option<T>, text>.Ok(Option.None)` passed source checking
+but emitted a generic inner variant without a concrete enum schema. The VM could
+run it, while native lowering correctly refused the incomplete metadata. Pattern
+search's `Result<Option<PatternMatch>, text>` exposed the gap.
+
+**Implemented:** Enum constructor lowering resolves concrete payload types before
+emitting argument expressions. Member, qualified and built-in alias constructor
+paths retain the nested type context and source argument evaluation order. The
+native enum fixture now exercises absent/present nested options, a floating
+payload, multiple nested payloads, and side-effect ordering.
+
+**Follow-up:** Multi-payload enum construction is covered, but destructuring a
+multi-payload variant in a match is still unsupported. The current checker can
+misreport each binding as the combined `(T, T)` payload, while code generation
+explicitly rejects multi-payload pattern lowering. Implement component typing,
+extraction and diagnostic consistency together; the current constructor fix does
+not imply that pattern support exists.
+
+### F59 — Pattern collection needs complete results and explicit empty-match behavior
+
+**Observation:** First/next matching provided the mechanism for text processing,
+but every caller had to rebuild collection, splitting and replacement loops.
+Using the advancing search offset as an output cursor would lose bytes after
+empty matches. Repeated text concatenation also copied the growing output prefix.
+
+**Implemented:** `find_all_matches`, `split_matches` and `replace_matches` share a
+checked whole-match scan. Empty matches remain observable; splitting preserves
+empty fields and excludes captures; replacement text is literal. Search and
+output positions remain separate. More than 4096 matches or a later search
+failure returns an error, never a partial successful result. Replacement checks
+its input and complete output against 1 MiB before balanced concatenation.
+
+**Follow-up:** Each match search retains its own engine work budget. A shared
+operation budget, streaming consumers, replacement callbacks/templates and
+Unicode-aware progress need separate contracts. Collection returns whole-match
+text because native arrays of `PatternMatch` records remain unsupported; callers
+needing per-match captures can continue using first/next matching.
+
+### F60 — Indexed values lost their checked element type before lowering
+
+**Observation:** Even `items[0] + items[1]` on a plain text array passed analysis
+but failed lowering as a numeric operation. Indexed text methods such as `.len()`
+could emit an unresolved call. Pattern-result composition exposed this broader
+gap; it did not depend on regex or generic Result types.
+
+**Implemented:** The index-expression checker now preserves its resolved result
+type on the AST for lowering. Regression coverage includes concatenation, text
+methods, comparisons, returned and unwrapped arrays, and once-only index effects.
+Ny and Matrix pattern fixtures also retain direct indexed operations.
+
+### F61 — Binary-only library analysis lacks editor symbol data
+
+**Observation:** The sealed SDK's source-backed imports provide completion for
+all three new pattern helpers from Ny and Matrix. Restricting lookup to `nillib`
+still type-checks complete calls successfully, but semantic analysis returns no
+symbols and completion requests return no completion result. Runtime consumer
+tests with binary libraries pass, so this is an editor-analysis limitation.
+
+**Current boundary:** The SDK includes `nilstd` source and the normal editor
+workflow uses it; the real VS Code host checks pass with that layout. Binary-only
+third-party libraries cannot currently provide equivalent completion/navigation.
+
+**Follow-up:** Preserve declaration identities, types and navigable interface
+locations when analyzing imported NIL libraries. Test completion and semantic
+navigation against a copied binary-only dependency with its source removed,
+including both frontends and incomplete calls. Do not treat successful binary
+compilation as evidence that its editor metadata is available.
+
+### F62 — Calls need argument checks before execution
+
+**Observation:** Ordinary calls such as passing `42` to a `text` parameter
+passed analysis and could execute in the VM, while native compilation rejected
+the incompatible value. Explicit generic calls, methods, variadic tails and
+typed function values had related missing checks. Built-in array/text length
+calls also accepted unused extra arguments, silently dropping their effects.
+
+**Implemented:** Resolve and check each declared parameter boundary, including
+variadic elements and function-value signatures. Validate built-in array length,
+get/set and text-length signatures. Preserve supported integer-width and
+integer-to-floating parameter conversions. Resolve receiver and method generic
+parameters separately, and substitute structural callback signatures before
+checking their arguments. Rejection contracts check analysis
+and preservation of existing output artifacts; positive controls include both
+frontends, generic methods, variadics and interpreter function values.
+
+**Remaining gaps:** Calling a non-function variable can still pass analysis.
+Enum constructor payloads need their own complete argument contract: a declared
+`Value(text)` currently accepts `Value(42)` in analysis/VM but fails native
+lowering. Native indirect function calls are also still unsupported. These are
+separate follow-ups; the new checks do not establish complete call-boundary
+soundness.
+
+### F63 — Incomplete source must fail before artifact generation
+
+**Observation:** Unclosed `/*` and `###` comments after an otherwise complete
+program were silently accepted, including with checking disabled. Several Ny
+declarations and control-flow bodies also accepted end of file without their
+closing delimiter. This could turn an unfinished edit into a successful build.
+
+**Implemented:** Report unterminated comments at their opening location and
+require closing tokens for function, anonymous function, loop, struct, enum and
+class bodies. Preserve existing forward/intrinsic declarations, abstract
+signatures and supported bare-`end` forms. Tests cover editor diagnostics,
+checked/unchecked compilation, output preservation and valid forms.
+
+### F64 — Grouped expressions must use their ending source line
+
+**Observation:** `(1 + 2` followed by `) * 3` on the next line was interpreted
+as a pointer dereference rather than multiplication. The parser compared the
+operator's line with the expression's opening line.
+
+**Implemented:** Use the last consumed token's line to distinguish multiplication
+from a new statement beginning with a dereference. Regression coverage includes
+multiline groups and new-line pointer writes.
+
+### F65 — Allocation types must survive checking and specialization
+
+**Observation:** Direct pointer arithmetic on `allocate<T>(count)` lost the
+expression's pointer type. Aliases and generic parameters could also reach
+native `ALLOC` instructions without resolving to their concrete element type.
+
+**Implemented:** Preserve the checked pointer type and canonical allocation
+element name, then substitute the element type for each generated specialization.
+Runtime coverage checks direct allocation arithmetic, aliases, generic functions,
+byte/wide-integer storage and once-only size evaluation.
+
+### F66 — Constructor and call arguments need contextual enum types
+
+**Observation:** A positional generic struct constructor receiving `Option.None`
+worked in the VM but lacked the concrete enum schema required by native lowering.
+Equivalent named initialization worked. Ordinary function arguments had the same
+missing context.
+
+**Implemented:** Pass concrete field/parameter types into enum argument emission so
+unit variants and nested generic payloads retain their expected schemas.
+Regression cases compare positional/named construction and verify argument
+evaluation order. Array literals retain their checked element layout, including
+native rejection of mismatched layouts with checking disabled. This supplies
+emission context; it does not replace the
+remaining enum payload validation work recorded in F62.
