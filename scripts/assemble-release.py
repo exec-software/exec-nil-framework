@@ -175,7 +175,8 @@ def numeric_version(value: str) -> tuple[int, ...]:
 
 def elf_inventory(sdk: Path, readelf: str) -> dict[str, Any]:
     records = []
-    for name in (*TOOLS, "nillib/native/libnil.so"):
+    for name in (*sdk_validator.inventory_tools(path.name for path in sdk.iterdir()),
+                 "nillib/native/libnil.so"):
         tool = sdk / name
         with tool.open("rb") as stream:
             if stream.read(4) != b"\x7fELF":
@@ -246,6 +247,20 @@ def validate_dependency_policy(policy: dict[str, Any], notices: bytes,
         raise ReleaseError("this release dependency profile currently requires a reviewed GNU compiler build")
     if versions.get("LLVM") != build.get("llvm_version") or versions.get("GCC") != build.get("cxx_version"):
         raise ReleaseError("reviewed LLVM/GCC versions differ from qualified build evidence")
+
+
+def validate_tool_versions(sdk: Path, version: str) -> dict[str, str]:
+    for name in sdk_validator.LEGACY_TOOLS:
+        if capture([str(sdk / name), "--version"]).strip() != name + " " + version:
+            raise ReleaseError(name + " --version does not match committed VERSION")
+    auxiliary = {}
+    if (sdk / "aperture").is_file():
+        identity = capture([str(sdk / "aperture"), "--version"]).strip()
+        match = re.fullmatch(r"aperture ([^\s]+) \(NIL Framework\)", identity)
+        if match is None:
+            raise ReleaseError("aperture --version does not identify the Aperture preview")
+        auxiliary["aperture"] = match.group(1)
+    return auxiliary
 
 
 def validate_vsix(path: Path, version: str) -> str:
@@ -428,9 +443,7 @@ def assemble(args: argparse.Namespace) -> Path:
     validate_dependency_policy(policy, notices, inventory, manifest["qualification"]["evidence"]["build"])
     vsix_name = validate_vsix(args.vsix, version) if args.vsix else None
     vsix_digest = sha256(args.vsix) if args.vsix else None
-    for name in TOOLS:
-        if capture([str(sdk / name), "--version"]).strip() != name + " " + version:
-            raise ReleaseError(name + " --version does not match committed VERSION")
+    auxiliary_versions = validate_tool_versions(sdk, version)
     # Mandatory installed-tool execution, not merely trusted historical evidence.
     capture([sys.executable, str(SCRIPTS / "validate-sdk.py"), str(sdk), "--require-rc-checks",
              "--expected-revision", args.expected_revision], timeout=1800)
@@ -459,7 +472,8 @@ def assemble(args: argparse.Namespace) -> Path:
                     "manifestSha256": records["manifest.json"][1], "qualification": "rc-checks"},
             "assets": [{"name": path.name, "bytes": path.stat().st_size, "sha256": sha256(path)}
                        for path in sorted(stage.iterdir())],
-            "verification": {"installedSdkSmoke": "passed", "allToolVersions": version,
+            "verification": {"installedSdkSmoke": "passed", "frameworkToolVersions": version,
+                             "auxiliaryToolVersions": auxiliary_versions,
                              "archiveNormalization": "nil.sdk-tar.v1",
                              "dependencyReview": "explicit policy assertion; not automatic legal or transitive dependency verification",
                              "builddCompatibility": "not yet qualified; local assembly is not publication"},

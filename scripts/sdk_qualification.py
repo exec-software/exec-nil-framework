@@ -18,8 +18,11 @@ from typing import Any
 from sdk_capabilities import capability_errors, collect_capabilities, record_capabilities
 from sdk_runtime import STATIC_NAMES, SHARED_NAMES, RUNTIME_PAIRS
 
-TOOLS = ("nilcompiler", "nilinterpreter", "nilassembler", "nillinker", "nillsp",
-         "nildebugger", "nilschema", "nilagent", "nilbuild")
+LEGACY_TOOLS = ("nilcompiler", "nilinterpreter", "nilassembler", "nillinker", "nillsp",
+                "nildebugger", "nilschema", "nilagent", "nilbuild")
+# New packages include the separately versioned Aperture preview. Historical
+# sealed SDKs retain their original nine-tool manifest/evidence contract.
+TOOLS = LEGACY_TOOLS + ("aperture",)
 DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
@@ -289,7 +292,7 @@ def qualification_errors(manifest: dict[str, Any], require_rc: bool = False,
     tools = manifest.get("tools") if isinstance(manifest.get("tools"), list) else []
     expected_tools = {tool.get("name"): tool.get("sha256") for tool in tools
                       if isinstance(tool, dict) and isinstance(tool.get("name"), str)}
-    if evidence.get("tools") != expected_tools or set(expected_tools) != set(TOOLS):
+    if evidence.get("tools") != expected_tools or set(expected_tools) not in (set(LEGACY_TOOLS), set(TOOLS)):
         errors.append("qualification tool hashes differ from the packaged tools")
     if evidence.get("runtime_sha256") != runtime.get("sha256"):
         errors.append("qualification runtime hash differs from the packaged runtime")

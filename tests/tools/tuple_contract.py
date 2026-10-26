@@ -122,6 +122,11 @@ def main():
              'repeat for each (a,b,c) in [(1,2)]\nsay a\nend repeat', 'arity'),
             ('named-loop-arity', 'let items = [(1,2)]\nfor (a,b,c) in items\nprintln(a)\nend for',
              'value items is [(1,2)]\nrepeat for each (a,b,c) in items\nsay a\nend repeat', 'arity'),
+            ('duplicate-loop', 'for (same,same) in [(1,2)]\nprintln(same)\nend for',
+             'repeat for each (same,same) in [(1,2)]\nsay same\nend repeat', 'already declared'),
+            ('array-wildcard-alias', 'let unknown = []\nlet items: array<(i32,text)> = unknown',
+             'value unknown is []\nvalue items as array of tuple of (override integer,text) is unknown',
+             'Type mismatch'),
         ]
         for name, ny, matrix, message in invalid:
             for language, body in [('ny', ny), ('matrix', matrix)]:
@@ -170,46 +175,101 @@ def main():
                     assert output.read_bytes() == b'unchanged'
                     checks += 1
 
-        # Tuple-array iteration uses typed field projection in the interpreter;
-        # native aggregate-array support remains a separate, explicit boundary.
+        # Every typed array expression uses index-based iteration. Exercise the
+        # same generated suite through the interpreter, bundles, JIT and AOT.
         for language in ('ny', 'matrix'):
-            for name, values, bindings, prints, expected in [
-                ('pair', '[(1,"a"),(2,"b")]', '(amount,label)',
-                 ['amount', 'label'], '1\na\n2\nb\n'),
-                ('singleton', '[(1,),(2,)]', '(amount,)', ['amount'], '1\n2\n'),
-            ]:
-                for named in (False, True):
-                    iterable = 'items' if named else values
-                    if language == 'ny':
-                        declaration = f'let items = {values}\n' if named else ''
-                        body = declaration + f'for {bindings} in {iterable}\n'
-                        body += ''.join(f'println({value})\n' for value in prints)
-                        source = 'fn main() -> i32\n' + body + 'end for\nreturn 0\nend fn\n'
-                    else:
-                        declaration = f'value items is {values}\n' if named else ''
-                        body = declaration + f'repeat for each {bindings} in {iterable}\n'
-                        body += ''.join(f'say {value}\n' for value in prints)
-                        source = ('book tuple_loop\nmain returns override integer begin paragraph\n' +
-                                  body + 'end repeat\ngive 0\nend paragraph\n')
-                    path = root / f'loop-{name}-{named}.{language}'
-                    path.write_text(source)
-                    artifact = root / 'loop.nil'
-                    run([compiler, '--quiet', '--no-stdlib', '--no-bundle', '-o', artifact, path])
-                    result = run([interpreter, '--no-ai', artifact])
-                    assert result.stdout == expected and not result.stderr, result
-                    assert '__ritual_tuple_get' not in artifact.read_text()
-                    checks += 1
-        if args.llvm == 'ON':
-            # A direct construction isolates the layout boundary from the
-            # separately unsupported generic native iterator fallback.
-            path = root / 'tuple-array.ny'
-            path.write_text('fn main() -> i32\nlet items = [(1,"a"),(2,"b")]\nreturn 0\nend fn\n')
-            output = root / 'tuple-array.native'
-            output.write_bytes(b'keep previous executable')
-            result = run([compiler, '--quiet', '--no-stdlib', '--native', '-o', output, path], 1)
-            assert "array element type 'tuple<" in result.stderr.lower(), result.stderr
-            assert output.read_bytes() == b'keep previous executable'
-            checks += 1
+            ny = language == 'ny'
+            declarations = ['let mut calls: i32 = 0\n' if ny else
+                            'book tuple_loops\nvariable calls as override integer is 0\n']
+            body, expected = [], []
+            cases = [
+                ('pairs', '[(1,"a"),(2,"b")]', '(amount,label)',
+                 ['amount', 'label'], ['1', 'a', '2', 'b'],
+                 '(i32,text)', 'tuple of (override integer,text)'),
+                ('singles', '[(3,),(4,)]', '(amount,)', ['amount'], ['3', '4'],
+                 '(i32,)', 'tuple of (override integer)'),
+                ('whole', '[(5,"c"),(6,"d")]', 'item', ['item.0', 'item.1'],
+                 ['5', 'c', '6', 'd'], '(i32,text)', 'tuple of (override integer,text)'),
+                ('wildcards', '[(7,8,9),(10,11,12)]', '(_,amount,_)', ['amount'],
+                 ['8', '11'], '(i32,i32,i32)',
+                 'tuple of (override integer,override integer,override integer)'),
+                ('scalars', '[13,14]', 'amount', ['amount'], ['13', '14'],
+                 'i32', 'override integer'),
+            ]
+            for name, values, bindings, prints, output, ny_type, matrix_type in cases:
+                factory = 'make_' + name
+                declarations.append(
+                    f'fn {factory}() -> array<{ny_type}>\ncalls = calls + 1\n'
+                    f'return {values}\nend fn\n' if ny else
+                    f'{factory} returns array of {matrix_type} begin paragraph\n'
+                    f'set calls to calls plus 1\ngive {values}\nend paragraph\n')
+                for mode in ('direct', 'named', 'call'):
+                    if mode == 'named':
+                        body.append(f'let {name} = {values}\n' if ny else
+                                    f'value {name} is {values}\n')
+                    iterable = (values if mode == 'direct' else name if mode == 'named' else
+                                factory + ('()' if ny else ' with nothing'))
+                    body.append(f'for {bindings} in {iterable}\n' if ny else
+                                f'repeat for each {bindings} in {iterable}\n')
+                    body.extend(f'println({value})\n' if ny else f'say {value}\n' for value in prints)
+                    body.append('end for\n' if ny else 'end repeat\n')
+                    expected.extend(output)
+            # A call returning an array is evaluated once per loop, including
+            # singleton tuple destructuring and ordinary tuple value bindings.
+            body.append('println(calls)\n' if ny else 'say calls\n')
+            expected.append(str(len(cases)))
+            body.append(
+                'let items = [(15,"outer")]\n'
+                'for items in items\nprintln(items.0)\nend for\n'
+                'for (items,_) in items\nprintln(items)\nend for\n'
+                'println(items[0].0)\n'
+                'let mut source = [(16,),(17,)]\n'
+                'for (amount,) in source\nsource = [(90,),(91,)]\n'
+                'println(amount)\nend for\n'
+                'for (amount,label) in [(1,"first"),(2,"skip"),(3,"third"),(4,"stop")]\n'
+                'if amount == 2 then\ncontinue\nend if\n'
+                'if amount == 4 then\nbreak\nend if\n'
+                'let amount = amount + 100\nprintln(amount)\nprintln(label)\nend for\n'
+                if ny else
+                'value items is [(15,"outer")]\n'
+                'repeat for each items in items\nsay items.0\nend repeat\n'
+                'repeat for each (items,_) in items\nsay items\nend repeat\n'
+                'say (items at 0).0\n'
+                'variable source is [(16,),(17,)]\n'
+                'repeat for each (amount,) in source\nset source to [(90,),(91,)]\n'
+                'say amount\nend repeat\n'
+                'repeat for each (amount,label) in [(1,"first"),(2,"skip"),(3,"third"),(4,"stop")]\n'
+                'when amount equals 2 then\ncontinue repeating\nend when\n'
+                'when amount equals 4 then\nstop repeating\nend when\n'
+                'value amount is amount plus 100\nsay amount\nsay label\nend repeat\n')
+            expected.extend(['15', '15', '15', '16', '17', '101', 'first', '103', 'third'])
+            source = root / ('typed-loops.' + language)
+            source.write_text(''.join(declarations) +
+                              ('fn main() -> i32\n' if ny else
+                               'main returns override integer begin paragraph\n') + ''.join(body) +
+                              ('return 0\nend fn\n' if ny else 'give 0\nend paragraph\n'))
+            stdout = source.with_suffix('.stdout')
+            stdout.write_text('\n'.join(expected) + '\n')
+            run([sys.executable, REPOSITORY / 'tests/routes/ny_route_matrix.py',
+                 '--compiler', compiler, '--interpreter', interpreter, '--source', source,
+                 '--expected-stdout', stdout, '--expected-exit', '0',
+                 '--compiler-arg=--no-stdlib', '--routes',
+                 'all' if args.llvm == 'ON' else
+                 'text-interpreter,binary-interpreter,bundle-text,bundle-binary',
+                 '--work-dir', root / ('typed-loops-' + language), '--strict'])
+            checks += 6 if args.llvm == 'ON' else 4
+            # Unchecked mode must preserve exact array/tuple metadata too.
+            for encoding, flags in [('text', []), ('binary', ['--emit-binary-nil']),
+                                    *([('native', ['--native'])] if args.llvm == 'ON' else [])]:
+                artifact = root / ('typed-loops-' + language + '-' + encoding)
+                run([compiler, '--quiet', '--no-stdlib', '--no-typecheck', '--no-bundle',
+                     *flags, '-o', artifact, source])
+                result = run([artifact] if encoding == 'native' else [interpreter, '--no-ai', artifact])
+                assert result.stdout == stdout.read_text() and not result.stderr, result
+                if encoding == 'text':
+                    nil = artifact.read_text()
+                    assert '__ritual_iter' not in nil and '__ritual_tuple_get' not in nil, nil
+                checks += 1
     print(f'tuple contract: {checks} checks passed')
 
 
