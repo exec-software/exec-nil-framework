@@ -78,6 +78,15 @@ The active tree includes these deliberately scoped families:
 - Base64/hex encoding under `nil.std.security`
 - timed suspension on interpreted and native routes under `nil.std.threading`
 
+Console output, `nil.std.io.read_line`, and `flush` support the interpreter,
+native executables, and LLVM JIT. Line input preserves bytes except for the
+trailing LF; an empty line and a final nonempty line without LF are valid.
+EOF and input errors fault explicitly. On POSIX, CR is preserved. Native text
+uses a NUL-terminated ABI and rejects embedded NUL input; the interpreter can
+retain that byte. Input publishes pending console output before reading, and
+`flush` publishes standard output explicitly. Native input text is managed by
+the runtime and included in Aperture's text allocation measurements.
+
 For untrusted file/container input, `nil.std.io.read_regular_bytes` accepts an
 explicit byte ceiling and rejects the final-component symlink, special file,
 short/growing read, and observed metadata change before returning bytes.

@@ -1,0 +1,15 @@
+book nil.tests.console_input
+
+read everything from nil.std.io
+
+receive returns text begin paragraph
+    give read_line with nothing
+end paragraph
+
+main returns override integer begin paragraph
+    evaluate write with s being "input> "
+    evaluate flush with nothing
+    value line is receive with nothing
+    evaluate writeln with s being line
+    give 0
+end paragraph

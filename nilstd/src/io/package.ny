@@ -1,6 +1,6 @@
 @pragma once
 # =============================================================================
-# ny.lang.io — I/O Package
+# nil.std.io — I/O Package
 # =============================================================================
 # File system, streaming, path, and console I/O.
 #
@@ -15,12 +15,14 @@
 #   - Checksum: bounded and incremental CRC-32 (checksum.ny)
 #
 # The interpreter backs the file, stream, path, and console declarations.
-# Their native route is not certified yet. The unbuilt compression prototype
-# is preserved under experimental/ and is not part of the active SDK.
+# Console output, line input, and flushing also support native execution.
+# Other native I/O coverage is scoped by the standard-library documentation.
+# The unbuilt compression prototype is preserved under experimental/ and is
+# not part of the active SDK.
 #
 # Cross-refs:
-#   ny.lang.core  — Result<T,E>, IDisposable
-#   ny.lang.text  — StreamReader/Writer use text encoding
+#   nil.std.core  — Result<T,E>, IDisposable
+#   nil.std.text  — StreamReader/Writer use text encoding
 # =============================================================================
 
 package nil.std.io

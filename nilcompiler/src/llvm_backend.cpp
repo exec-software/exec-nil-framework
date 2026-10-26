@@ -2874,6 +2874,28 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                     << operation << "' in function '" << fn.name << "'\n";
           return false;
         }
+      } else if (dispatch_name == "@intrinsic" &&
+                 (dispatch_provider == "console.read_line" ||
+                  dispatch_provider == "console.flush")) {
+        const bool reading = dispatch_provider == "console.read_line";
+        if (!fn.params.empty() || impl_->current_function->arg_size() != 0 ||
+            normalize_nil_type(fn.return_type) != (reading ? "text" : "void") ||
+            (reading ? !impl_->current_function->getReturnType()->isPointerTy()
+                     : !impl_->current_function->getReturnType()->isVoidTy())) {
+          std::cerr << "[NativeCodegen] " << dispatch_provider
+                    << " requires the exact () -> "
+                    << (reading ? "text" : "void") << " ABI\n";
+          return false;
+        }
+        auto *runtime_type = llvm::FunctionType::get(
+            reading ? static_cast<llvm::Type *>(llvm::PointerType::getUnqual(ctx))
+                    : llvm::Type::getVoidTy(ctx), {}, false);
+        auto runtime = impl_->module->getOrInsertFunction(
+            reading ? "nyrt_read_line" : "nyrt_flush_stdout", runtime_type);
+        auto *value = impl_->builder->CreateCall(runtime_type, runtime.getCallee(), {});
+        if (reading) impl_->builder->CreateRet(value);
+        else impl_->builder->CreateRetVoid();
+        annotation_handled = true;
       } else if (console_write || console_writeln || console_error) {
         if (fn.params.size() != 1 ||
             native_handle_kind_for_nil_type(nil_parameter_type(fn.params[0])) !=
@@ -6523,6 +6545,24 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         // allowlist as strict as the wrapper lowering above; everything else
         // must fail closed instead of entering the legacy foreign-call path.
         if (lib_name == "intrinsic") {
+          if (func_name == "console.read_line" || func_name == "console.flush") {
+            const bool reading = func_name == "console.read_line";
+            if (minstr.args.size() != 4 || minstr.args[2] != "0" ||
+                minstr.args[3] != (reading ? "text" : "void")) {
+              std::cerr << "[NativeCodegen] " << func_name
+                        << " requires the exact () -> "
+                        << (reading ? "text" : "void") << " ABI\n";
+              return false;
+            }
+            auto *runtime_type = llvm::FunctionType::get(
+                reading ? static_cast<llvm::Type *>(llvm::PointerType::getUnqual(ctx))
+                        : llvm::Type::getVoidTy(ctx), {}, false);
+            auto runtime = impl_->module->getOrInsertFunction(
+                reading ? "nyrt_read_line" : "nyrt_flush_stdout", runtime_type);
+            auto *value = impl_->builder->CreateCall(runtime_type, runtime.getCallee(), {});
+            if (reading) impl_->pushValue(value, "text");
+            break;
+          }
           if (is_array_intrinsic(func_name) && minstr.args.size() == 5) {
             array_intrinsic_contract contract;
             try {
@@ -8489,6 +8529,8 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_exit", &nyrt_exit);
   expose_runtime_symbol("nyrt_write_stdout", &nyrt_write_stdout);
   expose_runtime_symbol("nyrt_write_stderr", &nyrt_write_stderr);
+  expose_runtime_symbol("nyrt_read_line", &nyrt_read_line);
+  expose_runtime_symbol("nyrt_flush_stdout", &nyrt_flush_stdout);
   expose_runtime_symbol("nyrt_array_new", &nyrt_array_new);
   expose_runtime_symbol("nyrt_array_new_with_value",
                         &nyrt_array_new_with_value);
