@@ -471,6 +471,12 @@ is still available for the older synchronous JSON Lines automation interface.
 
 ## Extension development
 
+The scoped `@azure/identity` override pins `@azure/msal-node` to 7.1.1 to
+address [GHSA-xcx6-jx8p-x3h5](https://github.com/AzureAD/microsoft-authentication-library-for-js/security/advisories/GHSA-xcx6-jx8p-x3h5).
+This dependency belongs to VSIX packaging/publishing tools and is excluded
+from the extension bundle. Remove the override when the upstream dependency
+range includes a patched version, after checking local packaging again.
+
 ```sh
 cd vscode
 npm ci

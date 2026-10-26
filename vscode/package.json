@@ -586,5 +586,10 @@
         "url": "./schemas/nil.project.schema.json"
       }
     ]
+  },
+  "overrides": {
+    "@azure/identity": {
+      "@azure/msal-node": "7.1.1"
+    }
   }
 }

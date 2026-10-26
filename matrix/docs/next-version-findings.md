@@ -2067,3 +2067,17 @@ round trips on VM and native routes.
 NILData CLI conversion also now uses the existing bounded regular-file reader.
 A byte limit alone did not prevent opening a FIFO from blocking indefinitely;
 special files and symlinks now fail before reading.
+
+### F69 — Packaging tools need their own dependency checks
+
+**Observation:** GitHub reported GHSA-xcx6-jx8p-x3h5 in the VSIX packaging
+tool's transitive `@azure/msal-node` 5.6.0 dependency. This development dependency
+is excluded from the installed extension bundle, but still needs a patched
+version for packaging/publishing environments.
+
+**Implemented:** A scoped npm override selects MSAL 7.1.1 and its required common
+library. Clean installation, the dependency audit, extension tests and local
+VSIX packaging pass. The packaging check blocks credential construction and
+network access; it does not claim validation of credentialed Azure publishing.
+Remove the temporary override once the upstream dependency range admits a
+patched version. See the [upstream advisory](https://github.com/AzureAD/microsoft-authentication-library-for-js/security/advisories/GHSA-xcx6-jx8p-x3h5).
