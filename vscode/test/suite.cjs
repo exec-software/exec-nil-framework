@@ -54,6 +54,61 @@ exports.run = async function run() {
     const extension = vscode.extensions.getExtension("exec-software.ny-language-support");
     assert.ok(extension);
     await bounded(extension.activate(), "extension activation");
+    const runDataChecks = async () => {
+      let data;
+      await check("NILData: real file language detection", async () => {
+        data = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(workspace, "settings.nildata")));
+        await vscode.window.showTextDocument(data);
+        assert.equal(data.languageId, "nildata");
+        assert.ok((await vscode.languages.getLanguages()).includes("nildata"));
+      });
+      await check("NILData: language services remain limited to program sources", async () => {
+        // A positive control waits for the real language server to become ready;
+        // empty data results must not merely reflect a server still starting.
+        const source = await vscode.workspace.openTextDocument(path.join(workspace, "brief.mat"));
+        await vscode.window.showTextDocument(source);
+        await eventually(async () => {
+          const symbols = await vscode.commands.executeCommand("vscode.executeDocumentSymbolProvider", source.uri);
+          return symbols?.some(item => item.name === "main");
+        }, "Matrix language server ready before NILData isolation check");
+        await vscode.window.showTextDocument(data);
+        const position = positionIn(data, "enabled");
+        const completion = await vscode.commands.executeCommand("vscode.executeCompletionItemProvider", data.uri, position);
+        assert.equal(completion?.items.length || 0, 0);
+        for (const command of ["vscode.executeHoverProvider", "vscode.executeDefinitionProvider"]) {
+          const result = await vscode.commands.executeCommand(command, data.uri, position);
+          assert.equal(result?.length || 0, 0, command);
+        }
+        const symbols = await vscode.commands.executeCommand("vscode.executeDocumentSymbolProvider", data.uri);
+        assert.equal(symbols?.length || 0, 0);
+        assert.equal(await vscode.commands.executeCommand("ny.analyzeCurrentFile"), false);
+        assert.deepEqual(vscode.languages.getDiagnostics(data.uri), []);
+      });
+      await check("NILData: compiler and run commands start no source tasks", async () => {
+        await vscode.window.showTextDocument(data);
+        const started = [];
+        const subscription = vscode.tasks.onDidStartTask(event => started.push(event.execution.task.name));
+        try {
+          for (const command of ["ny.compileCurrentFile", "ny.compileNativeCurrentFile", "ny.runCurrentFile",
+            "ny.profileMemory", "ny.profileNativeMemory"]) {
+            await vscode.commands.executeCommand(command);
+          }
+          assert.deepEqual(started, []);
+          const sourceKinds = new Set(["compile", "run", "native", "profile-memory", "profile-memory-native"]);
+          const offered = await vscode.tasks.fetchTasks({ type: "ny" });
+          assert.deepEqual(offered.filter(task => sourceKinds.has(task.definition.task)).map(task => task.name), []);
+          const basename = data.fileName.replace(/\.nildata$/, "");
+          for (const artifact of [basename, `${basename}.nil`, `${basename}.exe`]) {
+            await assert.rejects(fs.stat(artifact), { code: "ENOENT" });
+          }
+        } finally { subscription.dispose(); }
+      });
+    };
+    if (process.env.NIL_VSCODE_NILDATA_ONLY) {
+      await runDataChecks();
+      report.status = "PASS";
+      return;
+    }
     if (process.env.NIL_VSCODE_LANGUAGE_VALUES_ONLY) {
       await require("./language-values-checks.cjs").run({ check, workspace });
       report.status = "PASS";
@@ -84,6 +139,7 @@ exports.run = async function run() {
       report.status = "PASS";
       return;
     }
+    await runDataChecks();
     const documents = [];
     for (const filename of ["editor.matrix", "brief.mat"]) {
       await check(`${filename}: language detection`, async () => {

@@ -16,6 +16,20 @@ fn main() -> i32
     check("\\f".len() == 2 and "\\v".len() == 2, "literal backslashes survive NIL")
     check("\\f" != form_feed and "\\v" != vertical_tab, "decode exactly once")
 
+    let quote = "\""
+    let quoted = "\"word\""
+    check(quote.len() == 1, "single escaped quote")
+    check(quoted == quote + "word" + quote and quoted.len() == 6, "quoted content keeps both quotes")
+    check("\"\"" == quote + quote, "two quotes are content, not empty delimiters")
+    check("\"left" == quote + "left" and "right\"" == "right" + quote, "one-sided quotes stay intact")
+    let wrapped: Option<text> = Option.Some("\"word\"")
+    check(wrapped.unwrap() == quote + "word" + quote, "enum payload retains quotes")
+    check((match quoted { "\"word\"" -> 1; _ -> 0; }) == 1, "expression pattern retains quotes")
+    match quoted
+        "\"word\"" -> println("text quoted content passed")
+        _ -> panic("statement pattern lost quotes")
+    end match
+
     check(not ny::lang::text::is_whitespace("f") and not ny::lang::text::is_whitespace("v"), "letters are not whitespace")
     check(not ny::lang::text::is_whitespace("five velvet"), "words are not whitespace")
     check(ny::lang::text::is_whitespace(form_feed) and ny::lang::text::is_whitespace(vertical_tab), "ASCII control whitespace")

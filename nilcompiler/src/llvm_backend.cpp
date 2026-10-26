@@ -2874,6 +2874,25 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                     << operation << "' in function '" << fn.name << "'\n";
           return false;
         }
+      } else if (dispatch_name == "@intrinsic" && dispatch_provider.rfind("nildata.", 0) == 0) {
+        const std::vector<std::string> expected{"text", "text", "text", "i64"};
+        bool valid = dispatch_provider == "nildata.request" && fn.params.size() == expected.size() &&
+            impl_->current_function->arg_size() == expected.size() &&
+            normalize_nil_type(fn.return_type) == "array<text>";
+        for (std::size_t i = 0; valid && i < expected.size(); ++i)
+          valid = normalize_nil_type(nil_parameter_type(fn.params[i])) == expected[i];
+        if (!valid) {
+          std::cerr << "[NativeCodegen] nildata.request requires (text, text, text, i64) -> array<text>\n";
+          return false;
+        }
+        auto *pointer = llvm::PointerType::getUnqual(ctx);
+        auto *type = llvm::FunctionType::get(pointer,
+            {pointer, pointer, pointer, llvm::Type::getInt64Ty(ctx)}, false);
+        auto runtime = impl_->module->getOrInsertFunction("nyrt_nildata_v1_request", type);
+        impl_->builder->CreateRet(impl_->builder->CreateCall(type, runtime.getCallee(),
+            {impl_->current_function->getArg(0), impl_->current_function->getArg(1),
+             impl_->current_function->getArg(2), impl_->coerceToI64(impl_->current_function->getArg(3))}));
+        annotation_handled = true;
       } else if (dispatch_name == "@intrinsic" && dispatch_provider.rfind("regex.", 0) == 0) {
         const bool validation = dispatch_provider == "regex.validate";
         const bool searching = dispatch_provider == "regex.search";
@@ -6576,6 +6595,30 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         // allowlist as strict as the wrapper lowering above; everything else
         // must fail closed instead of entering the legacy foreign-call path.
         if (lib_name == "intrinsic") {
+          if (func_name.rfind("nildata.", 0) == 0) {
+            const std::vector<std::string> expected{"text", "text", "text", "i64"};
+            if (func_name != "nildata.request" || minstr.args.size() != 4 || minstr.args[2] != "4" ||
+                minstr.args[3] != "array<text>" || impl_->value_stack.size() < 4) {
+              std::cerr << "[NativeCodegen] nildata.request has an invalid native ABI\n";
+              return false;
+            }
+            std::vector<llvm::Value *> arguments(4);
+            for (std::size_t i = 4; i > 0; --i) {
+              auto *value = impl_->popValue();
+              if (!value || normalize_nil_type(impl_->nilType(value)) != expected[i - 1] ||
+                  (i == 4 ? !value->getType()->isIntegerTy() : !value->getType()->isPointerTy())) {
+                std::cerr << "[NativeCodegen] nildata.request requires exact typed arguments\n";
+                return false;
+              }
+              arguments[i - 1] = i == 4 ? impl_->coerceToI64(value) : value;
+            }
+            auto *pointer = llvm::PointerType::getUnqual(ctx);
+            auto *type = llvm::FunctionType::get(pointer,
+                {pointer, pointer, pointer, llvm::Type::getInt64Ty(ctx)}, false);
+            auto runtime = impl_->module->getOrInsertFunction("nyrt_nildata_v1_request", type);
+            impl_->pushValue(impl_->builder->CreateCall(type, runtime.getCallee(), arguments), "array<text>");
+            break;
+          }
           if (func_name.rfind("regex.", 0) == 0) {
             const bool validation = func_name == "regex.validate";
             const bool searching = func_name == "regex.search";
@@ -8598,6 +8641,7 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_read_line", &nyrt_read_line);
   expose_runtime_symbol("nyrt_flush_stdout", &nyrt_flush_stdout);
   expose_runtime_symbol("nyrt_regex_validate", &nyrt_regex_validate);
+  expose_runtime_symbol("nyrt_nildata_v1_request", &nyrt_nildata_v1_request);
   expose_runtime_symbol("nyrt_regex_search", &nyrt_regex_search);
   expose_runtime_symbol("nyrt_regex_group_index", &nyrt_regex_group_index);
   expose_runtime_symbol("nyrt_array_new", &nyrt_array_new);

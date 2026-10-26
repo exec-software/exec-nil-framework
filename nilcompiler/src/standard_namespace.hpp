@@ -16,6 +16,15 @@ inline std::string canonical_std_namespace(std::string name) {
       break;
     }
   }
+  // NyData's import spelling remains an alias, but the data grammar and API
+  // are versioned NILData. Legacy documents require explicit import_nydata.
+  for (const auto &separator : {std::string("::"), std::string(".")}) {
+    const std::string old_module = "nil" + separator + "std" + separator + "nydata";
+    if (name == old_module || name.rfind(old_module + separator, 0) == 0) {
+      name.replace(0, old_module.size(), "nil" + separator + "std" + separator + "nildata");
+      break;
+    }
+  }
   return name;
 }
 

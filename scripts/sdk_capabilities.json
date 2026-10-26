@@ -89,6 +89,12 @@
       "limitations": ["The initial query profile accepts i32/i64/u8/bool/f64/text rows and structural tuples of those values. Text ordering, stable ties, NaNs, pagination boundaries, source snapshots and side-effect order have separate focused contracts; these route fixtures do not qualify every combination or sustained allocation workload.", "Queries eagerly snapshot array elements and collect results; this is not a full LINQ implementation, a lazy iterator, SQL translation or an implicit database provider. Record/enum/nested-array rows, grouping, joins, distinct and multiple order keys are outside this profile."]
     },
     {
+      "id": "nildata-values",
+      "observed": "Ny and Matrix consumers share versioned NILData loading, exact numeric tokens, one nested array kind, checked typed access, functional updates, JSON interchange and explicit legacy import on VM and native routes.",
+      "tests": ["ny.routes.nildata-roundtrip", "ny.routes.nildata-roundtrip-matrix"],
+      "limitations": ["Values are bounded to 1 MiB per input/output, 65536 tree values and depth 32; operations parse and copy documents rather than providing streaming or constant-time access.", "Encoded U+0000 round-trips but extraction to runtime text fails explicitly. Legacy import preserves ambiguous fields as text and numbered objects as objects; lost historical type information cannot be recovered."]
+    },
+    {
       "id": "sleep",
       "observed": "The time contract fixture agrees for its clock and bounded sleep calls.",
       "tests": ["ny.routes.native-time-contract"],
@@ -119,6 +125,8 @@
     {"test": "ny.routes.checked-binary-runtime", "fixture": "checked-binary-runtime", "stdlib": true},
     {"test": "ny.routes.checked-varint-runtime", "fixture": "checked-varint-runtime", "stdlib": true},
     {"test": "ny.routes.checked-crc-runtime", "fixture": "checked-crc-runtime", "stdlib": true},
+    {"test": "ny.routes.nildata-roundtrip", "fixture": "nildata-roundtrip", "stdlib": true},
+    {"test": "ny.routes.nildata-roundtrip-matrix", "fixture": "nildata-roundtrip-matrix", "stdlib": true},
     {"test": "ny.routes.text-patterns", "fixture": "text-patterns", "stdlib": true},
     {"test": "ny.routes.text-patterns-matrix", "fixture": "text-patterns-matrix", "stdlib": true},
     {"test": "ny.routes.pattern-operations", "fixture": "pattern-operations", "stdlib": true},

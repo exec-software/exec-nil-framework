@@ -52,7 +52,7 @@ The manifest format is not yet frozen. The current direction uses a Ny-readable
 artifact, and native-build metadata. Before implementation, the design must
 settle:
 
-- whether manifests are executable Ny, declarative NyData, or a restricted
+- whether manifests are executable Ny, declarative NILData, or a restricted
   manifest grammar;
 - the canonical package and module naming rules;
 - semantic-version constraint behavior;

@@ -24,6 +24,7 @@ command-line help, and executable tests as bugs.
   sequence toward shared workspace semantics.
 - [Standard-library status](standard-library/index.md) — layout, maturity, and
   what is deliberately outside the core library.
+- [NILData](standard-library/nildata.md) — structured data, JSON interchange and explicit NyData migration.
 - [Examples](../examples/README.md) — small examples tied to repository fixtures.
 - [Matrix](../matrix/README.md) — prose-oriented frontend, syntax, and examples.
 - [Ny](../ny/README.md) — systems-language frontend and reference entry point.

@@ -1,0 +1,5 @@
+NILData typed round trips passed
+NILData functional construction passed
+NILData NUL representation passed
+NILData errors passed
+NILData explicit legacy import passed
