@@ -69,12 +69,18 @@ exports.run = async function run() {
         await vscode.window.showTextDocument(source);
         await eventually(async () => {
           const symbols = await vscode.commands.executeCommand("vscode.executeDocumentSymbolProvider", source.uri);
-          return symbols?.some(item => item.name === "main");
+          const names = [];
+          const visit = (items) => { for (const item of items) { names.push(item.name); visit(item.children || []); } };
+          visit(symbols || []);
+          return names.includes("main");
         }, "Matrix language server ready before NILData isolation check");
         await vscode.window.showTextDocument(data);
         const position = positionIn(data, "enabled");
         const completion = await vscode.commands.executeCommand("vscode.executeCompletionItemProvider", data.uri, position);
-        assert.equal(completion?.items.length || 0, 0);
+        // VS Code's built-in word provider also runs for data. Source language
+        // providers must not add typed symbols, keywords, or code snippets.
+        assert.ok((completion?.items || []).every(item => item.kind === vscode.CompletionItemKind.Text || item.kind === undefined),
+          JSON.stringify((completion?.items || []).map(item => ({ label: label(item), kind: item.kind, detail: item.detail }))));
         for (const command of ["vscode.executeHoverProvider", "vscode.executeDefinitionProvider"]) {
           const result = await vscode.commands.executeCommand(command, data.uri, position);
           assert.equal(result?.length || 0, 0, command);
