@@ -118,21 +118,9 @@ AgentResponse AgentInterface::ask_call_graph(const std::string& target, const st
 }
 
 AgentResponse AgentInterface::ask_memory(const std::string& target) {
-    Logger::info("Agent query: memory analysis");
-    
-    MemoryEngine engine;
-    auto leaks = engine.detect_leaks(target);
-    
+    (void)target;
     AgentResponse response;
-    response.analysis = "Memory scan complete";
-    
-    if (leaks.empty()) {
-        response.analysis += " — no leaks detected";
-    } else {
-        response.analysis += " — " + std::to_string(leaks.size()) + " leaks found";
-        response.recommendations.push_back("Review " + std::to_string(leaks.size()) + " allocation sites for leaks");
-    }
-    
+    response.analysis = "Automated memory analysis is not implemented; use aperture memory to record a runtime profile.";
     return response;
 }
 

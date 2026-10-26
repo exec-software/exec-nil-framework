@@ -57,7 +57,9 @@
     "onCommand:ny.buildNativeProject",
     "onCommand:ny.runProject",
     "onCommand:ny.runNativeProject",
-    "workspaceContains:**/nil.project.json"
+    "workspaceContains:**/nil.project.json",
+    "onCommand:ny.profileMemory",
+    "onCommand:ny.profileNativeMemory"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -290,6 +292,14 @@
       {
         "command": "ny.runNativeProject",
         "title": "NIL Framework: Build and Run Project (Native)"
+      },
+      {
+        "command": "ny.profileMemory",
+        "title": "NIL Framework: Profile Current File Memory (VM)"
+      },
+      {
+        "command": "ny.profileNativeMemory",
+        "title": "NIL Framework: Profile Current File Memory (Native)"
       }
     ],
     "configuration": {
@@ -404,6 +414,12 @@
           "default": "",
           "scope": "machine-overridable",
           "description": "Absolute path or command name for nilbuild. Overrides SDK and PATH discovery."
+        },
+        "ny.aperture.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Absolute path or command name for Aperture. Overrides SDK and PATH discovery."
         }
       }
     },
@@ -424,7 +440,9 @@
               "ctest",
               "project-check",
               "project-build",
-              "project-run"
+              "project-run",
+              "profile-memory",
+              "profile-memory-native"
             ],
             "description": "NIL Framework task to execute."
           },

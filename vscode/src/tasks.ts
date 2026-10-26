@@ -18,7 +18,7 @@ import {
   resolveConfiguredTool
 } from "./vscodeToolchain";
 
-export type NyTaskKind = "compile" | "run" | "native" | "project-check" | "project-build" | "project-run" | "build-sdk" | "ctest";
+export type NyTaskKind = "compile" | "run" | "native" | "profile-memory" | "profile-memory-native" | "project-check" | "project-build" | "project-run" | "build-sdk" | "ctest";
 
 export interface NyTaskDefinition extends vscode.TaskDefinition {
   readonly type: "ny";
@@ -127,6 +127,21 @@ export class NyTaskProvider implements vscode.TaskProvider {
     // and deriving a default output require a source document.
     if (!source && !(definition.task === "run" && definition.output && !definition.source)) return undefined;
     const resource = resourceForSource(source ?? definition.output);
+    if (definition.task === "profile-memory" || definition.task === "profile-memory-native") {
+      if (!source || !definition.output) return undefined;
+      const aperture = resolveConfiguredTool("aperture", resource);
+      if (!aperture.executable) return undefined;
+      const sdkPath = definition.sdkPath ?? configuredSdkPath(resource);
+      const args = ["memory", "--output", definition.output,
+        ...(definition.task === "profile-memory-native" ? ["--native"] : []),
+        ...(sdkPath ? ["--sdk-path", sdkPath] : []), source];
+      const task = new vscode.Task({ ...definition, source }, taskScope(resource),
+        `Profile memory (${definition.task === "profile-memory-native" ? "native" : "VM"}): ${path.basename(source)}`,
+        "NIL Framework", new vscode.ProcessExecution(aperture.executable, args,
+          { cwd: workspaceRoot(resource) ?? path.dirname(source) }));
+      task.detail = "Record runtime allocations for the saved source file with Aperture.";
+      return presentation(task);
+    }
     const mode: CompileMode = definition.task === "native" ? "native" : "nil";
     const output =
       definition.output ??

@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { randomUUID } from "node:crypto";
 
 import { NyLanguageClientManager } from "./languageClient";
 import { NyDebugIntegration } from "./debugger";
@@ -150,6 +151,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         await runToolTask(provider, "native", source);
       }
     }),
+    ...([ ["ny.profileMemory", "profile-memory"], ["ny.profileNativeMemory", "profile-memory-native"] ] as const)
+      .map(([command, kind]) => vscode.commands.registerCommand(command, async () => {
+        if (!(await requireTrustedWorkspace())) return undefined;
+        const source = await currentSource();
+        if (!source) return undefined;
+        const directory = vscode.Uri.joinPath(context.storageUri ?? context.globalStorageUri, "memory-profiles");
+        await vscode.workspace.fs.createDirectory(directory);
+        const report = vscode.Uri.joinPath(directory, `${Date.now()}-${randomUUID()}.json`);
+        await runToolTask(provider, kind, source, { output: report.fsPath });
+        try {
+          await vscode.workspace.fs.stat(report);
+          await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(report), { preview: false });
+          return report;
+        } catch {
+          return undefined;
+        }
+      })),
     vscode.commands.registerCommand("ny.runCurrentFile", async () => {
       const source = await currentSource();
       if (!source) {

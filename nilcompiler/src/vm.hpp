@@ -16,6 +16,7 @@
 #include <vector>
 #include "source_debug.hpp"
 #include "database_runtime.hpp"
+#include "memory_profile.hpp"
 
 namespace ny {
 
@@ -484,6 +485,19 @@ private:
   std::uint64_t total_allocated_bytes_ = 0;
   std::uint64_t gc_critical_depth_ = 0;
   std::unordered_set<const StructData *> gc_marked_structs_;
+
+  // One capture belongs to the VM's first execution. It is finalized while
+  // heap blocks are still live, so retained bytes describe the program at its
+  // execution boundary rather than the VM destructor's housekeeping.
+  memory_profile::Session memory_profile_;
+  bool memory_profile_started_ = false;
+  bool memory_profile_finished_ = false;
+  bool memory_profile_allowed_ = true;
+  void beginMemoryProfile();
+  bool finishMemoryProfile(const char *status, bool completed) noexcept;
+  std::uint64_t profileHeapBlockBytes(const HeapBlock &block) const;
+  std::uint64_t profileHeapBytes() const;
+  void releaseHeapBlock(int64_t pointer);
 
   // Interpreter-owned streams never expose host descriptors to Ny code. A
   // monotonically increasing token indexes the stream and its access rights;

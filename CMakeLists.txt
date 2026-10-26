@@ -1008,6 +1008,35 @@ if(BUILD_TESTING)
             --compiler-arg=--sdk-path
             --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
         )
+        if(TARGET aperture)
+            add_executable(nil_vm_memory_profile_tests tests/vm_memory_profile_tests.cpp)
+            target_link_libraries(nil_vm_memory_profile_tests PRIVATE nilcompiler_core)
+            target_compile_features(nil_vm_memory_profile_tests PRIVATE cxx_std_17)
+            foreach(profile_mode IN ITEMS restart failure stepping abandoned)
+                add_test(NAME aperture.vm-profile-${profile_mode}
+                    COMMAND $<TARGET_FILE:nil_vm_memory_profile_tests> ${profile_mode})
+                set_tests_properties(aperture.vm-profile-${profile_mode}
+                    PROPERTIES LABELS "aperture;memory;interpreter" TIMEOUT 30)
+            endforeach()
+            add_executable(nil_memory_profile_probe tests/tools/memory_profile_probe.cpp nilcompiler/src/memory_profile.cpp)
+            target_include_directories(nil_memory_profile_probe PRIVATE nilcompiler/src)
+            target_compile_features(nil_memory_profile_probe PRIVATE cxx_std_17)
+            target_link_libraries(nil_memory_profile_probe PRIVATE Threads::Threads)
+            add_test(NAME aperture.memory-collector-contract
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/memory_profile_contract.py"
+                    --probe $<TARGET_FILE:nil_memory_profile_probe>)
+            set_tests_properties(aperture.memory-collector-contract PROPERTIES LABELS "aperture;memory" TIMEOUT 30)
+            if(UNIX)
+                add_test(NAME aperture.memory-contract
+                    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/aperture_memory_contract.py"
+                        --aperture $<TARGET_FILE:aperture>
+                        --compiler $<TARGET_FILE:nilcompiler>
+                        --interpreter $<TARGET_FILE:nilinterpreter>
+                        --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                        --llvm "${NIL_ENABLE_LLVM}")
+                set_tests_properties(aperture.memory-contract PROPERTIES LABELS "aperture;memory;routes" TIMEOUT 180)
+            endif()
+        endif()
         add_test(
             NAME nil.analysis
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/analysis_contract.py"

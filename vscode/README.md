@@ -111,6 +111,8 @@ Open the Command Palette and run:
 - **NIL Framework: Compile Current File to NIL**
 - **NIL Framework: Compile and Run Current File**
 - **NIL Framework: Compile Current File Natively**
+- **NIL Framework: Profile Current File Memory (VM)**
+- **NIL Framework: Profile Current File Memory (Native)**
 - **NIL Framework: Build and Install Workspace SDK**
 - **NIL Framework: Run Workspace CTest Suite**
 
@@ -121,6 +123,16 @@ only starts `nilinterpreter` after a successful compiler exit.
 These source commands accept saved `.ny`, `.matrix`, and `.mat` files in the
 matching language mode. Matrix selects the same shared compiler pipeline and
 supports both NIL/VM execution and the optional LLVM native backend.
+
+The memory commands save the current source, run it through Aperture, and open
+a fresh JSON report in the editor. Reports are stored in extension workspace
+storage; program output and the profile summary appear in the task terminal.
+These commands use a single source file and the configured SDK. Project-specific
+dependencies and compiler argument settings are not yet applied. Aperture uses
+the toolchain installed beside its executable; `ny.aperture.path` can select it.
+Profiles measure runtime logical allocations rather than process RSS, and live
+objects at exit are not classified as leaks. See the
+[Aperture guide](../aperture/README.md) for accounting scope and CLI options.
 
 The SDK and CTest commands target a NIL Framework repository checkout. The SDK command
 runs `scripts/build-sdk.sh`; the CTest command uses `ny.buildDirectory`, which
@@ -222,6 +234,7 @@ editor builds.
 | `ny.interpreter.path` | empty | Explicit `nilinterpreter` path or command. |
 | `ny.debugger.path` | empty | Explicit `nildebugger` path or command. |
 | `ny.projectTool.path` | empty | Explicit `nilbuild` path or command. |
+| `ny.aperture.path` | empty | Explicit `aperture` path or command for memory profiling. |
 | `ny.compiler.noStdlib` | `false` | Add `--no-stdlib` to compiler tasks and editor checks. |
 | `ny.compiler.extraArgs` | `[]` | Extra arguments for every compiler task. |
 | `ny.native.extraArgs` | `[]` | Extra arguments for native compiler tasks. |

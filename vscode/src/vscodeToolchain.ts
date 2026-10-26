@@ -12,7 +12,8 @@ const settingForTool: Record<NyTool, string> = {
   nilinterpreter: "interpreter.path",
   nillsp: "server.path",
   nildebugger: "debugger.path",
-  nilbuild: "projectTool.path"
+  nilbuild: "projectTool.path",
+  aperture: "aperture.path"
 };
 
 function orderedWorkspaceFolders(resource?: vscode.Uri): string[] {
