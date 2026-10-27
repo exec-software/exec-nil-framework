@@ -12,9 +12,10 @@ depend on it, and the grammar reserves the syntax so adding it later is not a
 breaking change.
 
 Early sketches placed the executor inside the kernel; that is not the selected
-Anomalous route. Kernel enforcement does not require a kernel-resident executor. Anomalous ADR
-0092 instead selects an unprivileged native interpreter vessel, with the
-edition's authority bounded by admission and supervised service invocations.
+Anomalous route. Kernel enforcement does not require a kernel-resident executor.
+Anomalous decision record 0092 instead selects an unprivileged native interpreter
+vessel, with the edition's authority bounded by admission and supervised service
+invocations.
 The [Matrix shell profile proposal](../../docs/design/NIL-0018-matrix-shell-profile.md)
 follows that direction. The hosted VM and executable-context inspection do not
 yet implement this general authority boundary.

@@ -12,14 +12,15 @@ immutable values, explicit blocks, checked results and typed queries. Reuse the
 Matrix lexer/parser, shared type checker, NIL representation and language tools.
 
 Anomalous already proposes **Canticle** as a shell/session environment in its
-ADR 0010 and `docs/architecture/canticle.md`. Its syntax is still proposed. The
-recommendation is to make Matrix the language surface of that environment while
+decision record 0010 and `docs/architecture/canticle.md`. Its syntax is still
+proposed. The recommendation is to make Matrix the language surface of that environment while
 preserving its shared human/machine invocation model, explicit authority,
 structured results and preview/commit requirements. This framework proposal
-does not amend or accept an Anomalous ADR.
+does not amend or accept an Anomalous decision record.
 
-Anomalous ADR 0092 selects an unprivileged native interpreter vessel. ADR 0093
-requires artifact-derived authority bounded by that interpreter's ceiling.
+Anomalous decision record 0092 selects an unprivileged native interpreter vessel.
+Its decision record 0093 requires artifact-derived authority bounded by that
+interpreter's ceiling.
 Running the current hosted C++ VM on Linux does not establish either property.
 The newer `ANPG` startup descriptor and program arena are scaffolding: the
 current native program profile explicitly supplies no NIL execution, edition
@@ -170,8 +171,8 @@ sharing a result is a separate operation.
   output, native calls or the work performed inside one intrinsic. Give each
   phase explicit budgets, cancellation behavior and host resource containment.
 - Existing `ny.context.v2` inspection reports authored intent. It is not the
-  authority manifest required by Anomalous ADR 0093. Reserved NIL format fields
-  must not be repurposed without their own version/compatibility decision.
+  authority manifest required by Anomalous decision record 0093. Reserved NIL
+  format fields must not be repurposed without their own version/compatibility decision.
 - Anomalous's copied runtime and refresh script still use old Ny SDK layout
   assumptions. Reconcile that consumer with `exec-nil-framework`, `nilcompiler`,
   `nilinterpreter`, `nilstd` and `nillib` before adopting the new fixtures.
@@ -218,8 +219,8 @@ are required before selecting a deployable profile.
    idempotency and attributable failure behavior.
 
 Source references reviewed: `matrix_parser.*`, `vm.*`,
-`concurrency_contract.cpp`, the query and array contracts, and Anomalous ADRs
-0010/0092/0093/0094, Canticle architecture, `program_startup.rs`,
+`concurrency_contract.cpp`, the query and array contracts, Anomalous decision
+records 0010/0092/0093/0094, Canticle architecture, `program_startup.rs`,
 `native_program_profile.rs` and `refresh-ny-runtime.sh` (2026-10-26).
 
 ## Reproducing the syntax proof
