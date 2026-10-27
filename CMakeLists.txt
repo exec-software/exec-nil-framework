@@ -133,6 +133,24 @@ if(BUILD_TESTING)
 
     add_test(NAME parser.inline-assembly COMMAND $<TARGET_FILE:ny_parser_tests>)
 
+    add_executable(nil_matrix_submission_parser_tests tests/matrix_submission_parser_tests.cpp)
+    target_link_libraries(nil_matrix_submission_parser_tests PRIVATE nilcompiler_core)
+    target_compile_features(nil_matrix_submission_parser_tests PRIVATE cxx_std_17)
+    add_test(NAME matrix.submission-parser COMMAND $<TARGET_FILE:nil_matrix_submission_parser_tests>)
+    set_tests_properties(matrix.submission-parser PROPERTIES LABELS "matrix;shell;rc" TIMEOUT 30)
+
+    add_executable(nil_submission_profile_tests tests/submission_profile_tests.cpp)
+    target_link_libraries(nil_submission_profile_tests PRIVATE nilcompiler_core)
+    target_compile_features(nil_submission_profile_tests PRIVATE cxx_std_17)
+    add_test(NAME nil.submission-profile COMMAND $<TARGET_FILE:nil_submission_profile_tests>)
+    set_tests_properties(nil.submission-profile PROPERTIES LABELS "shell;contracts;rc" TIMEOUT 30)
+
+    add_executable(nil_submission_request_tests tests/submission_request_tests.cpp)
+    target_link_libraries(nil_submission_request_tests PRIVATE nilcompiler_core)
+    target_compile_features(nil_submission_request_tests PRIVATE cxx_std_17)
+    add_test(NAME matrix.submission-request COMMAND $<TARGET_FILE:nil_submission_request_tests>)
+    set_tests_properties(matrix.submission-request PROPERTIES LABELS "matrix;shell;rc" TIMEOUT 30)
+
     add_executable(nil_pattern_engine_tests tests/pattern_engine_tests.cpp)
     target_link_libraries(nil_pattern_engine_tests PRIVATE nilruntime)
     target_include_directories(nil_pattern_engine_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
@@ -612,6 +630,10 @@ if(BUILD_TESTING)
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/compiler_inputs.py"
                 --compiler $<TARGET_FILE:nilcompiler>)
         set_tests_properties(nilcompiler.input-contract PROPERTIES LABELS "tools;rc" TIMEOUT 60)
+        add_test(NAME matrix.submission-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix_submission_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler>)
+        set_tests_properties(matrix.submission-contract PROPERTIES LABELS "matrix;shell;rc" TIMEOUT 90)
         add_test(
             NAME ny.scalar-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/scalar_contract.py"

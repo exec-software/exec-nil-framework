@@ -3679,6 +3679,7 @@ void type_checker::visit(ast_if_stmt &s) {
 }
 
 void type_checker::visit(ast_member_access_expr &e) {
+  diagnostic_source_scope source_scope(diagnostic_source_file_, e.source_file);
   // std::cerr << "[type_checker] visit(member_access) member='" <<
   // e.member_name << "'" << std::endl; Check if object is a type (e.g. Enum
   // name)
@@ -3783,6 +3784,7 @@ void type_checker::visit(ast_member_access_expr &e) {
 }
 
 void type_checker::visit(ast_struct_literal_expr &e) {
+  diagnostic_source_scope source_scope(diagnostic_source_file_, e.source_file);
   if (e.tuple_literal) {
     const auto before = diagnostics_.size();
     std::string type = "tuple<";
@@ -6010,6 +6012,7 @@ void type_checker::visit(ast_call_expr &e) {
 }
 
 void type_checker::visit(ast_binary_expr &e) {
+  diagnostic_source_scope source_scope(diagnostic_source_file_, e.source_file);
   if (e.left)
     e.left->accept(*this);
   type_info left_type = last_expr_type_.value_or(type_unknown);
@@ -6121,6 +6124,7 @@ void type_checker::visit(ast_binary_expr &e) {
 }
 
 void type_checker::visit(ast_cast_expr &e) {
+  diagnostic_source_scope source_scope(diagnostic_source_file_, e.source_file);
   e.checked_identity = false;
   if (e.operand)
     e.operand->accept(*this);
@@ -6216,6 +6220,7 @@ bool type_checker::check_reference_handle(ast_expr &reference, ast_expr &operand
 }
 
 void type_checker::visit(ast_unary_expr &e) {
+  diagnostic_source_scope source_scope(diagnostic_source_file_, e.source_file);
   if (e.operand)
     e.operand->accept(*this);
 
@@ -6521,6 +6526,7 @@ void type_checker::visit(ast_assignment_expr &e) {
 }
 
 void type_checker::visit(ast_identifier_expr &e) {
+  diagnostic_source_scope source_scope(diagnostic_source_file_, e.source_file);
   capture_completion(e);
   e.resolved_global_name.reset();
   e.checked_callable_parameters.reset();
@@ -6843,11 +6849,13 @@ void type_checker::visit(ast_identifier_expr &e) {
 }
 
 void type_checker::visit(ast_string_literal &e) {
+  diagnostic_source_scope source_scope(diagnostic_source_file_, e.source_file);
   last_expr_type_ = type_string;
   e.inferred_type = last_expr_type_->name;
 }
 
 void type_checker::visit(ast_number_literal &e) {
+  diagnostic_source_scope source_scope(diagnostic_source_file_, e.source_file);
   if (is_floating_literal_spelling(e.value)) {
     last_expr_type_ = type_f64;
   } else {
@@ -6864,6 +6872,7 @@ void type_checker::visit(ast_number_literal &e) {
 }
 
 void type_checker::visit(ast_char_literal &e) {
+  diagnostic_source_scope source_scope(diagnostic_source_file_, e.source_file);
   last_expr_type_ = resolve_type("u8");
   e.inferred_type = last_expr_type_->name;
 }
@@ -7141,6 +7150,7 @@ void type_checker::visit(ast_query_expr &e) {
 }
 
 void type_checker::visit(ast_array_literal_expr &e) {
+  diagnostic_source_scope source_scope(diagnostic_source_file_, e.source_file);
   if (e.inferred_type) {
     const auto context_type = resolve_type(*e.inferred_type);
     const auto context = parse_generic_type_string(context_type.name);
@@ -7213,6 +7223,7 @@ void type_checker::visit(ast_array_literal_expr &e) {
 }
 
 void type_checker::visit(ast_index_expr &e) {
+  diagnostic_source_scope source_scope(diagnostic_source_file_, e.source_file);
   e.object->accept(*this);
   type_info obj_type = last_expr_type_.value_or(type_unknown);
 
@@ -9057,6 +9068,7 @@ void type_checker::visit(ast_hotreload_expr &e) {
 }
 
 void type_checker::visit(ast_if_expr &e) {
+  diagnostic_source_scope source_scope(diagnostic_source_file_, e.source_file);
   // Conditions and both value arms are checked, even when the condition is a
   // constant. A dead arm cannot silently turn an unrelated value into zero.
   if (e.condition) {
@@ -9208,6 +9220,7 @@ void type_checker::validate_scalar_text_calls() {
 }
 
 void type_checker::visit(ast_interpolated_string_expr &e) {
+  diagnostic_source_scope source_scope(diagnostic_source_file_, e.source_file);
   for (const auto &part : e.parts) {
     if (!part.is_literal && part.expression) {
       part.expression->accept(*this);
@@ -9230,6 +9243,7 @@ void type_checker::visit(ast_interpolated_string_expr &e) {
 }
 
 void type_checker::visit(ast_boolean_literal &e) {
+  diagnostic_source_scope source_scope(diagnostic_source_file_, e.source_file);
   last_expr_type_ = type_bool;
   e.inferred_type = "bool";
 }

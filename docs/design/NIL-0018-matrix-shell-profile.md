@@ -1,8 +1,9 @@
 # NIL-0018: A Matrix profile for interactive shell work
 
-Status: proposed; the companion example runs as an ordinary hosted Matrix
-program. No shell command, interactive evaluator, restricted VM, or Anomalous
-execution route is implemented by this record.
+Status: admission prototype implemented. The compiler checks Matrix submissions
+and versioned NILData requests through a shared pure profile. An interactive
+evaluator, retained session, host commands and Anomalous execution remain proposed.
+The companion syntax example runs as an ordinary hosted Matrix program.
 
 ## Purpose and existing direction
 
@@ -67,10 +68,36 @@ uses tuples and explicit `Result` handling under the existing contract.
 The prompt should accept a submission containing statements and a final
 expression. Saved programs retain ordinary `.mat`/`.matrix` pages. Exporting a
 session creates a normal book/paragraph with explicit inputs, rather than a
-different script grammar. The current parser requires those declarations;
-submission parsing and final-value return are work to implement.
+different script grammar. The compiler now has a separate submission entry point
+using the existing statement/expression parser. It checks local statements and
+an optional final expression without requiring a book or paragraph declaration.
 
-## Initial profile
+## Implemented admission slice
+
+`nilcompiler --check-submission <path|->` and
+`nilcompiler --check-submission-request <path|->` inspect a submission without
+executing it. Both pass an AST allowlist, the ordinary shared type checker and
+a separate generated-NIL verifier. The latter admits one synthetic function,
+validates stack/local shapes and fresh tuple initialization, and rejects calls,
+unknown operations and backward branches. Neither command imports a library or
+enters the VM/native execution paths. See the [command and request contract](../tools/matrix-submissions.md).
+
+Profile `matrix.pure.v1` admits immutable local bindings, concrete scalar/text,
+supported tuple/array expressions, numeric casts, formatting and conditionals.
+All calls, imports, mutation, loops, queries, annotations, pointers and assembly
+are excluded, including in dead branches. `Option`/`Result`, command catalogs,
+retained bindings and runtime quotas require later work. Parsing distinguishes
+complete, incomplete and invalid input; a complete parse can still fail type or
+profile checks. Limits bound input, syntax depth, AST size and generated NIL;
+they do not establish execution-time or heap bounds.
+
+Structured requests use schema `nil.matrix.submission-request.v1`, with exact
+fields, a closed expression vocabulary and no authority-bearing fields. They
+construct shared AST nodes directly. They cannot supply source, arbitrary AST
+objects or serialized NIL to bypass admission. Differential tests compare typed
+NIL from source and request inputs.
+
+## Planned hosted profile
 
 | Area | First hosted prototype | Follow-up |
 | --- | --- | --- |
@@ -158,9 +185,9 @@ sharing a result is a separate operation.
 
 ## Runtime gaps to close
 
-- The Matrix parser has no submission entry point or incremental completeness
-  result. Add it using existing expression/statement parsing and original source
-  locations. Do not create a second shell parser by rewriting source strings.
+- Submission parsing and check-only admission are implemented. A prompt still
+  needs line collection, result rendering and an evaluator; parsing is not
+  incremental across calls and each check is independent.
 - `VM::loadProgram` resets globals, heap and execution state. Recompiling and
   replaying the complete session would repeat effects. Define a retained binding
   contract and transactional publication of new bindings instead.
@@ -198,15 +225,16 @@ visible through typed catalog declarations and inspected operations.
 
 This is an architectural comparison, not measured usability or security
 evidence. The companion program demonstrates existing Matrix syntax and hosted
-execution only. Actual submission, hostile-input, resource and authority tests
-are required before selecting a deployable profile.
+execution only. The implemented tests cover submission admission and hostile
+inputs; execution resource limits and authority behavior remain qualification
+requirements before selecting a deployable profile.
 
 ## Implementation sequence
 
 1. Reconcile the copied SDK and document the Anomalous consumer baseline.
-2. Add Matrix submission parsing and a pure, default-deny profile verifier.
-   Exercise complete/incomplete/error input and text/request equivalence without
-   a live executor or host effects.
+2. **Implemented:** Matrix submission parsing and a pure, default-deny profile
+   verifier. Exercise complete/incomplete/error input and text/request equivalence
+   without a live executor or host effects.
 3. Add a bounded hosted evaluator with typed mock observations, final-value
    rendering and explicit session binding ownership. Test no effect replay,
    forged handles, unknown operations, budget exhaustion and cancellation.
@@ -243,4 +271,4 @@ All three routes passed with identical expected output, exit zero and empty
 stderr on 2026-10-26 using SDK source revision `9e33415`. The proof calls only
 fixed in-memory fixture paragraphs. It includes a finite display loop and local
 `say` statements as a normal program; this does not establish admission under
-the proposed restricted shell profile.
+the implemented pure submission profile.

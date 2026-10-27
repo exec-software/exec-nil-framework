@@ -30,6 +30,9 @@ set(NILCOMPILER_CORE_SOURCES
     src/matrix_parser.cpp
     src/matrix_diagnostics.cpp
     src/matrix_hag_bridge.cpp
+    src/matrix_submission.cpp
+    src/submission_profile.cpp
+    src/submission_request.cpp
     src/codegen.cpp
     src/vm.cpp
     src/preprocessor.cpp

@@ -63,8 +63,14 @@ project process execution is currently qualified on Linux.
 
 ## `nilcompiler`
 
-`nilcompiler` parses and type-checks one or more `.ny` inputs. It can generate
+`nilcompiler` parses and type-checks Ny and Matrix inputs. It can generate
 NIL or use the optional LLVM backend.
+
+For Matrix prompt-style input, `--check-submission <path|->` checks local
+statements and a final expression against the initial pure shell profile.
+`--check-submission-request <path|->` checks the equivalent structured NILData
+request. Both return JSON without execution or retained session state. See
+[Matrix submission inspection](matrix-submissions.md).
 
 ```text
 nilcompiler [options] --output <output> <input.ny> [more-inputs.ny ...]

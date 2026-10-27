@@ -29,7 +29,7 @@ which.
 | Front-end integration plan | [`docs/front-end-plan.md`](docs/front-end-plan.md) |
 | Next-version findings and validation notes | [`docs/next-version-findings.md`](docs/next-version-findings.md) — confirmed limitations, design friction, fixes, and acceptance checks |
 | Sample programs | [`samples/`](samples/) |
-| Shell profile | [NIL-0018 proposal](../docs/design/NIL-0018-matrix-shell-profile.md) and ordinary hosted syntax example; submission parsing and restricted execution are not implemented |
+| Shell profile | [Pure submission checking](../docs/tools/matrix-submissions.md) for Matrix and NILData requests is implemented; execution, sessions and Anomalous adapters remain [proposed](../docs/design/NIL-0018-matrix-shell-profile.md) |
 | Lexer, parser, lowering | **Implemented through stage 6** — see [`docs/front-end-plan.md`](docs/front-end-plan.md) for the stage-by-stage status and exit evidence |
 
 Source files use the `.matrix` extension, or `.mat` as the short form. Both

@@ -2100,12 +2100,47 @@ state needs explicit ownership and publication rules.
 **Design checkpoint:** [NIL-0018](../../docs/design/NIL-0018-matrix-shell-profile.md)
 proposes Matrix as the language surface for Anomalous's existing Canticle session
 model. A fixed-data example passes text NIL, binary NIL and LLVM AOT routes. It
-is an ordinary hosted Matrix program; submission parsing, profile verification,
-resource enforcement, real service adapters and native Anomalous execution are
-not implemented by this checkpoint.
+is an ordinary hosted Matrix program. The subsequent admission slice implements
+submission parsing and pure AST/NIL profile verification (F71); execution
+resource enforcement, real service adapters and native Anomalous execution
+remain open.
 
 Anomalous already has newer program-descriptor scaffolding than its initial
 runtime handoff describes, but no live NIL execution in that profile. Its runtime
 refresh script still assumes the old Ny checkout/tool/library names; reconcile
 the copied SDK before adopting newer examples. Framework executable-context
 inspection also remains authored intent, not a derived authority grant.
+
+### F71 — Interactive completeness and admission need explicit contracts
+
+**Observation:** Full-page error recovery cannot tell a prompt whether more
+input could complete a statement. Page-wide declaration prescanning also treated
+column-one local bindings as types, and folded tuple/local spellings could
+disagree with the shared AST's exact symbol names. Wrapping text in a synthetic
+book would obscure source locations without resolving either problem.
+
+**Implemented:** A dedicated submission entry point reuses the existing Matrix
+statement/expression parser and preserves original spans. Structured lexical
+EOF information distinguishes incomplete input from malformed input, including
+unfinished interpolation containing an earlier error. Submission local and
+tuple names resolve consistently under Matrix folding. A strict versioned
+NILData request decoder constructs the same shared AST, with node paths retained
+through profile and type diagnostics.
+
+The compiler's [submission commands](../../docs/tools/matrix-submissions.md)
+check a pure profile at both AST and generated NIL levels without execution.
+The NIL gate checks all instructions, forward control flow, initialized locals,
+stack shapes and fresh tuple initialization. Source/request equivalence,
+forbidden effects (including dead branches), malformed metadata, resource
+bounds and command isolation have regression coverage. Standard input uses
+binary mode on Windows to prevent control-character truncation and CRLF byte
+offset changes; Windows runtime qualification still belongs to its platform CI.
+
+**Remaining friction:** A checked expression can still fail at runtime, and
+bounded syntax/instruction counts do not bound allocation or work inside an
+operation. The first profile therefore excludes all calls and queries, even
+otherwise pure library operations. A bounded evaluator, typed value projection,
+retained-binding ownership and command catalogs are the next steps. The request
+schema initially covers expression bindings and a final value, not every Matrix
+statement or formatting shorthand. Adding either route must preserve the shared
+profile and diagnostic contract.

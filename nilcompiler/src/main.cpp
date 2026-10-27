@@ -17,6 +17,7 @@
 
 #include "matrix_diagnostics.hpp"
 #include "matrix_parser.hpp"
+#include "matrix_submission.hpp"
 #include "parser.hpp"
 #include "type_checker.hpp"
 #include "executable_context.hpp"
@@ -386,6 +387,8 @@ static void print_usage(std::ostream &out = std::cerr) {
       << "              [--emit-reflection <analysis_snapshot.ny>]\n"
       << "              [--disable-rule <code>] [--warnings-as-errors]\n"
       << "  nilcompiler --list-analysis-rules  List built-in analyzer rules as JSON\n"
+      << "  nilcompiler --check-submission <path|->  Check a pure Matrix submission; no execution\n"
+      << "  nilcompiler --check-submission-request <path|->  Check a NILData submission request\n"
       << "  nilcompiler --to-nildata <input.json>\n"
       << "  nilcompiler --to-json <input.nildata>\n"
       << "  nilcompiler --import-nydata <legacy.nydata>\n"
@@ -648,6 +651,20 @@ static int convert_nildata(const std::string &operation, const std::string &path
 }
 
 static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) {
+  // Submission inspection never enters ordinary import discovery, compilation
+  // output handling, bundling, JIT, or execution. Refuse mixed command modes.
+  for (int i = 1; i < argc; ++i) {
+    const std::string option = argv[i];
+    if (option == "--") break;
+    if (option != "--check-submission" &&
+        option != "--check-submission-request") continue;
+    if (argc != 3 || i != 1 || analysis) {
+      std::cerr << "Error: use nilcompiler " << option << " <path|-> alone\n";
+      return 1;
+    }
+    return matrix::run_submission_check_cli(
+        option == "--check-submission-request", argv[2]);
+  }
   // Inspection is a separate, read-only command. Do not partially process a
   // compilation or accept extra output/execute options around its input.
   for (int i = 1; i < argc; ++i) {
