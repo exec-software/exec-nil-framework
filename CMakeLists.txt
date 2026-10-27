@@ -151,6 +151,24 @@ if(BUILD_TESTING)
     add_test(NAME matrix.submission-request COMMAND $<TARGET_FILE:nil_submission_request_tests>)
     set_tests_properties(matrix.submission-request PROPERTIES LABELS "matrix;shell;rc" TIMEOUT 30)
 
+    add_executable(nil_submission_vm_tests tests/submission_vm_tests.cpp)
+    target_link_libraries(nil_submission_vm_tests PRIVATE nilcompiler_core)
+    target_compile_features(nil_submission_vm_tests PRIVATE cxx_std_17)
+    add_test(NAME nil.submission-vm COMMAND $<TARGET_FILE:nil_submission_vm_tests>)
+    set_tests_properties(nil.submission-vm PROPERTIES LABELS "matrix;shell;rc" TIMEOUT 30)
+
+    add_executable(nil_submission_session_compile_tests tests/submission_session_compile_tests.cpp)
+    target_link_libraries(nil_submission_session_compile_tests PRIVATE nilcompiler_core)
+    target_compile_features(nil_submission_session_compile_tests PRIVATE cxx_std_17)
+    add_test(NAME matrix.session-compile COMMAND $<TARGET_FILE:nil_submission_session_compile_tests>)
+    set_tests_properties(matrix.session-compile PROPERTIES LABELS "matrix;shell;rc" TIMEOUT 30)
+
+    add_executable(nil_submission_session_tests tests/submission_session_tests.cpp)
+    target_link_libraries(nil_submission_session_tests PRIVATE nilcompiler_core)
+    target_compile_features(nil_submission_session_tests PRIVATE cxx_std_17)
+    add_test(NAME matrix.session COMMAND $<TARGET_FILE:nil_submission_session_tests>)
+    set_tests_properties(matrix.session PROPERTIES LABELS "matrix;shell;rc" TIMEOUT 30)
+
     add_executable(nil_pattern_engine_tests tests/pattern_engine_tests.cpp)
     target_link_libraries(nil_pattern_engine_tests PRIVATE nilruntime)
     target_include_directories(nil_pattern_engine_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
@@ -634,6 +652,10 @@ if(BUILD_TESTING)
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix_submission_contract.py"
                 --compiler $<TARGET_FILE:nilcompiler>)
         set_tests_properties(matrix.submission-contract PROPERTIES LABELS "matrix;shell;rc" TIMEOUT 90)
+        add_test(NAME matrix.session-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix_session_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler>)
+        set_tests_properties(matrix.session-contract PROPERTIES LABELS "matrix;shell;rc" TIMEOUT 90)
         add_test(
             NAME ny.scalar-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/scalar_contract.py"

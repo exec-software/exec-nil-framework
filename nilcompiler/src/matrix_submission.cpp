@@ -215,8 +215,8 @@ std::string submission_report_json(const submission_report &report) {
     auto item = json::map();
     item.object["stage"] = json::str(diagnostic.stage);
     item.object["code"] = json::str(diagnostic.code);
-    item.object["message"] = json::str(diagnostic.message);
-    item.object["location"] = json::str(diagnostic.location);
+    item.object["message"] = json::str(diagnostic_text(diagnostic.message));
+    item.object["location"] = json::str(diagnostic_text(diagnostic.location));
     for (const auto &entry : {std::make_pair("line", diagnostic.line),
                              std::make_pair("column", diagnostic.column),
                              std::make_pair("length", diagnostic.length)}) {

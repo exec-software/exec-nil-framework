@@ -1,4 +1,6 @@
 #include "vm.hpp"
+#include "submission_profile.hpp"
+#include "../../common/strict_json.hpp"
 #include "concurrency_contract.hpp"
 #include "owned_contract.hpp"
 #include "parallel_support.hpp"
@@ -702,6 +704,344 @@ int64_t invoke_native(void *fn_ptr, const std::vector<int64_t> &args) {
 }
 // ----------------------------
 
+namespace {
+[[noreturn]] void pure_budget(const std::string &message) {
+  throw pure_execution_error(pure_execution_error::kind::budget,
+                             "pure execution budget: " + message);
+}
+[[noreturn]] void pure_invalid(const std::string &message) {
+  throw std::runtime_error("pure execution: " + message);
+}
+const char *pure_operation(Opcode opcode) {
+#define PURE_OP(name) case Opcode::name: return #name
+  switch (opcode) {
+  PURE_OP(PUSH_CONST); PURE_OP(PUSH_CONST_STR); PURE_OP(LOAD_LOCAL);
+  PURE_OP(STORE_LOCAL); PURE_OP(POP); PURE_OP(RET); PURE_OP(LABEL);
+  PURE_OP(JMP); PURE_OP(JMP_IF); PURE_OP(JMP_IF_NOT);
+  PURE_OP(CMP_EQ); PURE_OP(CMP_NE); PURE_OP(CMP_LT); PURE_OP(CMP_LE);
+  PURE_OP(CMP_GT); PURE_OP(CMP_GE); PURE_OP(NOT); PURE_OP(ADD);
+  PURE_OP(SUB); PURE_OP(MUL); PURE_OP(DIV); PURE_OP(MOD); PURE_OP(NEG);
+  PURE_OP(BIT_AND); PURE_OP(BIT_OR); PURE_OP(BIT_XOR); PURE_OP(SHL);
+  PURE_OP(SHR); PURE_OP(NEW_STRUCT); PURE_OP(GET_FIELD); PURE_OP(SET_FIELD);
+  PURE_OP(NEW_ARRAY_LITERAL); PURE_OP(GET_INDEX); PURE_OP(STR_CONCAT);
+  PURE_OP(TO_STRING); PURE_OP(CAST);
+  default: pure_invalid("forbidden opcode");
+  }
+#undef PURE_OP
+}
+void pure_cancel(const pure_execution_limits &limits) {
+  if (limits.cancelled && limits.cancelled())
+    throw pure_execution_error(pure_execution_error::kind::cancelled,
+                               "pure execution cancelled");
+}
+} // namespace
+
+void VM::configurePureExecution(pure_execution_limits limits) {
+  if (!program_.empty() || memory_profile_started_ || pure_limits_)
+    pure_invalid("configure limits on a fresh VM before loading a program");
+  if (!limits.max_instructions || !limits.max_work_bytes || !limits.max_text_bytes ||
+      !limits.max_snapshot_nodes || !limits.max_snapshot_depth || !limits.max_snapshot_bytes)
+    throw std::invalid_argument("pure execution limits must be positive");
+  // Hosts may lower or moderately raise limits, but cannot accidentally remove
+  // structural recursion/size guards or overflow the accounting arithmetic.
+  if (limits.max_instructions > 1024 * 1024 ||
+      limits.max_work_bytes > 1024ULL * 1024 * 1024 ||
+      limits.max_text_bytes > 16 * 1024 * 1024 ||
+      limits.max_snapshot_nodes > 65536 || limits.max_snapshot_depth > 64 ||
+      limits.max_snapshot_bytes > 16 * 1024 * 1024)
+    throw std::invalid_argument("pure execution limits exceed supported maximums");
+  pure_limits_ = std::move(limits);
+  memory_profile_allowed_ = false;
+  memory_mode_ = MemoryMode::UNSAFE_MANUAL;
+  trap_process_exit_ = true;
+}
+
+void VM::validatePureProgram(const std::vector<Instruction> &program,
+    const std::unordered_map<std::string, Value> &constants) const {
+  if (program.size() < 4 || program.size() > 4099)
+    pure_invalid("expected one bounded synthetic function");
+  const auto &skip = program.front(), &entry = program[1], &end = program.back();
+  if (skip.op != Opcode::JMP || skip.args.size() != 1 ||
+      entry.op != Opcode::LABEL || !entry.is_function_entry || entry.is_function_end ||
+      entry.args != std::vector<std::string>{"__nil_submission"} ||
+      entry.function_param_count || !entry.function_parameter_types.empty() ||
+      !entry.function_annotations.empty() || end.op != Opcode::LABEL ||
+      !end.is_function_end || end.is_function_entry || end.args != skip.args ||
+      skip.is_function_entry || skip.is_function_end)
+    pure_invalid("invalid synthetic function boundaries");
+  nil_module module;
+  if (skip.module_metadata) module = *skip.module_metadata;
+  module.module_name = "root"; // Flattened VM metadata omits the module header.
+  module.functions.clear();
+  module.string_constants.clear();
+  nil_function function;
+  function.name = entry.args.front();
+  function.return_type = entry.function_return_type;
+  for (std::size_t i = 2; i + 1 < program.size(); ++i) {
+    const auto &instruction = program[i];
+    if (instruction.is_function_entry || instruction.is_function_end ||
+        instruction.function_param_count || !instruction.function_return_type.empty() ||
+        !instruction.function_parameter_types.empty() || !instruction.function_annotations.empty() ||
+        instruction.module_metadata)
+      pure_invalid("unexpected function or module metadata");
+    nil_instruction copied;
+    copied.opname = pure_operation(instruction.op);
+    copied.args = instruction.args;
+    copied.debug_line = instruction.line;
+    copied.source_file = instruction.source_file;
+    copied.debug_locals = instruction.debug_locals;
+    function.body.push_back(std::move(copied));
+  }
+  module.functions.push_back(std::move(function));
+  for (const auto &[name, value] : constants) {
+    const auto *text = std::get_if<std::string>(&value);
+    if (!text) pure_invalid("only text constants are admitted");
+    if (text->size() > pure_limits_->max_text_bytes) pure_budget("text limit exceeded");
+    module.string_constants.emplace_back(name, *text);
+  }
+  validate_nil_submission_profile(module);
+}
+
+void VM::chargePureWork(std::size_t bytes) {
+  if (bytes > pure_limits_->max_work_bytes - pure_work_bytes_)
+    pure_budget("work byte limit exceeded");
+  pure_work_bytes_ += bytes;
+}
+
+void VM::chargePureValue(const Value &value, unsigned depth, std::size_t &nodes) {
+  // Charge before descending or copying. Repeated aliases deliberately count
+  // repeatedly: their later materialization must fit the same logical budget.
+  if (depth > pure_limits_->max_snapshot_depth ||
+      ++nodes > pure_limits_->max_snapshot_nodes)
+    pure_budget("value shape limit exceeded");
+  chargePureWork(8 * sizeof(Value));
+  const auto copy_cost = [&](const std::string &text) {
+    if (text.size() > pure_limits_->max_work_bytes / 8) pure_budget("work byte limit exceeded");
+    chargePureWork(8 * text.size());
+  };
+  const auto text_cost = [&](const std::string &text) {
+    if (text.size() > pure_limits_->max_text_bytes) pure_budget("text limit exceeded");
+    copy_cost(text);
+  };
+  if (const auto *text = std::get_if<std::string>(&value)) text_cost(*text);
+  else if (const auto *tuple = std::get_if<StructValue>(&value)) {
+    if (!tuple->data || !tuple->static_class_view.empty() ||
+        tuple->type_name.rfind("tuple<", 0) != 0 || !tuple->enum_fields().empty())
+      pure_invalid("unsupported aggregate value");
+    copy_cost(tuple->type_name);
+    const auto &data = *tuple->data;
+    for (const auto &[name, scalar] : data.fields) { (void)scalar; copy_cost(name); chargePureWork(64); }
+    for (const auto &[name, scalar] : data.double_fields) { (void)scalar; copy_cost(name); chargePureWork(64); }
+    for (const auto &[name, text] : data.string_fields) { copy_cost(name); text_cost(text); }
+    for (const auto &[name, nested] : data.struct_fields) {
+      copy_cost(name);
+      if (!nested) pure_invalid("null tuple field");
+      chargePureValue(*nested, depth + 1, nodes);
+    }
+    for (const auto &[name, array] : data.array_fields) {
+      copy_cost(name); chargePureValue(array, depth + 1, nodes);
+    }
+  } else if (const auto *array = std::get_if<ArrayHandle>(&value)) {
+    const auto found = heap_.find(array->address);
+    if (found == heap_.end() || found->second.type_name != "array")
+      pure_invalid("invalid array handle");
+    copy_cost(found->second.element_type);
+    for (const auto &element : found->second.data)
+      chargePureValue(element, depth + 1, nodes);
+  } else if (!std::holds_alternative<int64_t>(value) && !std::holds_alternative<double>(value))
+    pure_invalid("unsupported runtime value");
+}
+
+void VM::preflightPureInstruction(const Instruction &instruction) {
+  (void)pure_operation(instruction.op); // Defense in depth after whole-artifact admission.
+  pure_cancel(*pure_limits_);
+  if (pure_instructions_ == pure_limits_->max_instructions)
+    pure_budget("instruction limit exceeded");
+  // Reserve fixed instruction/container overhead and charge all dynamic work
+  // before the ordinary interpreter can copy values or allocate a result.
+  chargePureWork(256);
+  std::size_t nodes = 0;
+  const auto operand = [&](std::size_t from_top) -> const Value & {
+    requireStackValues(from_top + 1, "pure preflight");
+    return stack_[stack_.size() - 1 - from_top];
+  };
+  const auto charge = [&](const Value &value) { chargePureValue(value, 0, nodes); };
+  for (const auto &arg : instruction.args) chargePureWork(8 * arg.size());
+  switch (instruction.op) {
+  case Opcode::PUSH_CONST_STR: charge(constants_.at(instruction.args.at(0))); break;
+  case Opcode::LOAD_LOCAL: {
+    if (call_stack_.empty()) pure_invalid("local load without frame");
+    const auto found = call_stack_.back().locals.find(instruction.args.at(0));
+    if (found == call_stack_.back().locals.end()) pure_invalid("uninitialized local");
+    charge(found->second); break;
+  }
+  case Opcode::STR_CONCAT: {
+    const auto *right = std::get_if<std::string>(&operand(0));
+    const auto *left = std::get_if<std::string>(&operand(1));
+    if (!left || !right) pure_invalid("concatenation requires text");
+    if (right->size() > pure_limits_->max_text_bytes ||
+        left->size() > pure_limits_->max_text_bytes - right->size())
+      pure_budget("concatenated text limit exceeded");
+    charge(operand(1)); charge(operand(0)); break;
+  }
+  case Opcode::NEW_ARRAY_LITERAL: {
+    const auto count = static_cast<std::size_t>(std::stoull(instruction.args.at(0)));
+    requireStackValues(count, "pure array construction");
+    if (count > 256) pure_budget("array element limit exceeded");
+    chargePureWork(256 + count * sizeof(Value));
+    for (std::size_t i = 0; i < count; ++i) charge(operand(i));
+    break;
+  }
+  case Opcode::NEW_STRUCT: chargePureWork(512); break;
+  case Opcode::GET_FIELD: charge(operand(0)); break;
+  case Opcode::SET_FIELD: charge(operand(0)); chargePureWork(256); break;
+  case Opcode::GET_INDEX: charge(operand(0)); charge(operand(1)); break;
+  case Opcode::TO_STRING: {
+    charge(operand(0));
+    // Probe the same bounded scalar formatter before the VM consumes its
+    // operand. Its fixed scratch/output capacity is covered even when a host
+    // chooses a text limit smaller than one formatted scalar.
+    chargePureWork(512);
+    std::size_t length = 0;
+    const auto &source = operand(0);
+    if (const auto *integer = std::get_if<int64_t>(&source))
+      length = instruction.args.at(0) == "bool" ? (*integer ? 4 : 5)
+                                                : scalar_text(*integer).size();
+    else if (const auto *floating = std::get_if<double>(&source))
+      length = scalar_text(*floating).size();
+    else pure_invalid("formatting requires a scalar operand");
+    if (length > pure_limits_->max_text_bytes) pure_budget("formatted text limit exceeded");
+    break;
+  }
+  case Opcode::STORE_LOCAL: case Opcode::POP: case Opcode::NOT:
+  case Opcode::NEG: case Opcode::JMP_IF: case Opcode::JMP_IF_NOT:
+  case Opcode::CAST:
+    charge(operand(0)); chargePureWork(512); break;
+  case Opcode::RET:
+    if (availableStackValues()) charge(operand(0));
+    break;
+  case Opcode::CMP_EQ: case Opcode::CMP_NE: case Opcode::CMP_LT:
+  case Opcode::CMP_LE: case Opcode::CMP_GT: case Opcode::CMP_GE:
+  case Opcode::ADD: case Opcode::SUB: case Opcode::MUL: case Opcode::DIV:
+  case Opcode::MOD: case Opcode::BIT_AND: case Opcode::BIT_OR: case Opcode::BIT_XOR:
+  case Opcode::SHL: case Opcode::SHR:
+    charge(operand(0)); charge(operand(1)); break;
+  case Opcode::PUSH_CONST: case Opcode::LABEL: case Opcode::JMP: break;
+  default: pure_invalid("forbidden opcode");
+  }
+  ++pure_instructions_;
+}
+
+submission_value VM::snapshotPureValue(const Value &value, const std::string &type) const {
+  if (!pure_limits_) pure_invalid("snapshot requires pure execution mode");
+  const auto &limits = *pure_limits_;
+  std::size_t nodes = 0, bytes = 0;
+  const auto reserve = [&](std::size_t count) {
+    if (count > limits.max_snapshot_bytes - bytes) pure_budget("snapshot byte limit exceeded");
+    bytes += count;
+  };
+  const auto text_check = [&](const std::string &text) {
+    if (text.size() > limits.max_text_bytes) pure_budget("text limit exceeded");
+    nil::detail::valid_utf8(text);
+  };
+  const auto visit = [&](const auto &self, const Value &current,
+                         const std::string &expected, unsigned depth) -> submission_value {
+    pure_cancel(limits);
+    if (depth > limits.max_snapshot_depth || ++nodes > limits.max_snapshot_nodes)
+      pure_budget("snapshot shape limit exceeded");
+    if (expected.empty() || expected.size() > 4096) pure_invalid("invalid snapshot type");
+    reserve(64 + expected.size());
+    submission_value out;
+    out.type = expected;
+    if (expected == "text") {
+      const auto *text = std::get_if<std::string>(&current);
+      if (!text) pure_invalid("text snapshot type mismatch");
+      text_check(*text); reserve(text->size()); out.scalar = *text;
+    } else if (expected == "bool" || expected == "i32" || expected == "i64" || expected == "u8") {
+      const auto *integer = std::get_if<int64_t>(&current);
+      if (!integer || (expected == "bool" && *integer != 0 && *integer != 1) ||
+          (expected == "u8" && (*integer < 0 || *integer > 255)) ||
+          (expected == "i32" && (*integer < INT32_MIN || *integer > INT32_MAX)))
+        pure_invalid("integer snapshot type mismatch");
+      out.scalar = expected == "bool" ? (*integer ? "true" : "false") : std::to_string(*integer);
+      reserve(out.scalar.size());
+    } else if (expected == "f64") {
+      const auto *floating = std::get_if<double>(&current);
+      if (!floating || !std::isfinite(*floating))
+        pure_invalid("snapshot requires a finite f64 value");
+      std::ostringstream text;
+      text.imbue(std::locale::classic());
+      text << std::setprecision(std::numeric_limits<double>::max_digits10) << *floating;
+      out.scalar = text.str();
+      if (out.scalar.find_first_of(".eE") == std::string::npos) out.scalar += ".0";
+      reserve(out.scalar.size());
+    } else if (expected.rfind("array<", 0) == 0 && expected.back() == '>') {
+      const auto *handle = std::get_if<ArrayHandle>(&current);
+      if (!handle) pure_invalid("array snapshot type mismatch");
+      const auto found = heap_.find(handle->address);
+      if (found == heap_.end() || found->second.type_name != "array" ||
+          "array<" + found->second.element_type + ">" != expected ||
+          found->second.element_count != found->second.data.size())
+        pure_invalid("array snapshot metadata mismatch");
+      const auto &block = found->second;
+      if (block.data.size() > limits.max_snapshot_nodes - nodes)
+        pure_budget("snapshot node limit exceeded");
+      out.elements.reserve(block.data.size());
+      for (const auto &element : block.data)
+        out.elements.push_back(self(self, element, block.element_type, depth + 1));
+    } else if (expected.rfind("tuple<", 0) == 0) {
+      const auto *tuple = std::get_if<StructValue>(&current);
+      if (!tuple || !tuple->data || tuple->type_name != expected ||
+          !tuple->static_class_view.empty() || !class_metadata_)
+        pure_invalid("tuple snapshot type mismatch");
+      const auto fields = array_tuple_elements(expected);
+      const nil_struct_def *schema = nullptr;
+      for (const auto &candidate : class_metadata_->structs)
+        if (candidate.name == expected) {
+          if (schema) pure_invalid("duplicate tuple schema");
+          schema = &candidate;
+        }
+      if (!fields || !schema || schema->annotations != std::vector<std::string>{"@nil_tuple"} ||
+          schema->fields.size() != fields->size()) pure_invalid("invalid tuple schema");
+      const auto &data = *tuple->data;
+      if (data.fields.size() + data.string_fields.size() + data.double_fields.size() +
+          data.array_fields.size() + data.struct_fields.size() != fields->size() ||
+          !data.enum_fields.empty()) pure_invalid("incomplete tuple snapshot");
+      if (fields->size() > limits.max_snapshot_nodes - nodes)
+        pure_budget("snapshot node limit exceeded");
+      out.elements.reserve(fields->size());
+      for (std::size_t i = 0; i < fields->size(); ++i) {
+        const auto name = std::to_string(i);
+        if (schema->fields[i] != std::make_pair(name, (*fields)[i]))
+          pure_invalid("tuple schema does not match its structural type");
+        std::optional<Value> field;
+        const auto take = [&](const auto &map) {
+          const auto found = map.find(name);
+          if (found == map.end()) return;
+          if (field) pure_invalid("duplicate tuple field");
+          using Stored = std::decay_t<decltype(found->second)>;
+          if constexpr (std::is_same_v<Stored, std::shared_ptr<StructValue>>) {
+            if (!found->second) pure_invalid("null tuple field");
+            field = *found->second;
+          } else if constexpr (std::is_same_v<Stored, std::string>) {
+            text_check(found->second);
+            // The temporary VM Value copy must also fit before it allocates.
+            if (found->second.size() > limits.max_snapshot_bytes - bytes)
+              pure_budget("snapshot byte limit exceeded");
+            field = found->second;
+          } else field = found->second;
+        };
+        take(data.fields); take(data.string_fields); take(data.double_fields);
+        take(data.array_fields); take(data.struct_fields);
+        if (!field) pure_invalid("missing tuple field");
+        out.elements.push_back(self(self, *field, (*fields)[i], depth + 1));
+      }
+    } else pure_invalid("unsupported snapshot type");
+    return out;
+  };
+  return visit(visit, value, type, 0);
+}
+
 VM::VM() : pc_(0) {}
 
 void VM::beginMemoryProfile() {
@@ -739,6 +1079,8 @@ void VM::resetRuntimeState(const std::string &root_function) {
   file_handles_.clear();
   next_file_handle_ = 1;
   stack_.clear();
+  pure_instructions_ = 0;
+  pure_work_bytes_ = 0;
   globals_.clear();
   gc_marked_structs_.clear();
   heap_.clear();
@@ -759,6 +1101,7 @@ void VM::resetRuntimeState(const std::string &root_function) {
 
 void VM::loadProgram(const std::vector<Instruction> &program,
                      const std::unordered_map<std::string, Value> &constants) {
+  if (pure_limits_) validatePureProgram(program, constants);
   validate_nil_parallel_contract(program);
   validate_nil_owned_contract(program);
   validate_nil_fault_contract(program);
@@ -928,6 +1271,7 @@ catch (...) {
 }
 
 void VM::executeInstruction(const Instruction &instr) {
+  if (pure_limits_) preflightPureInstruction(instr);
   if (memory_profile_.enabled())
     memory_profile_.site(instr.source_file,
                          call_stack_.empty() ? "" : call_stack_.back().fn_name,

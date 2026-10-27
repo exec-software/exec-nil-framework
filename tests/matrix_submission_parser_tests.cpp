@@ -99,6 +99,21 @@ void values_and_statements() {
 }
 
 void text_and_interpolation() {
+  for (const auto &source : {std::string("begin text\n:reset\n:quit\n"),
+                             std::string("value payload is begin text\n:submit\n")}) {
+    matrix::lexer scanner(source, 0, true);
+    scanner.scan();
+    require(scanner.errors().size() == 1 && scanner.errors().front().incomplete &&
+                scanner.errors().front().open_text_block,
+            "raw block EOF exposes structured literal context");
+  }
+  for (const auto &source : {std::string("\"unfinished"), std::string("formatted \"unfinished"),
+                             std::string("begin text\n:reset\nend text\n")}) {
+    matrix::lexer scanner(source, 0, true);
+    scanner.scan();
+    for (const auto &error : scanner.errors())
+      require(!error.open_text_block, "only an unterminated raw block opens multiline literal context");
+  }
   require(cast<ny::ast_string_literal>(parse("\"C:\\dir\\file\"").value)->value == "C:\\dir\\file",
           "quoted Matrix text is raw");
   require(cast<ny::ast_string_literal>(parse("begin text\n  hello \"world\"\n  C:\\dir\nend text\n").value)->value ==

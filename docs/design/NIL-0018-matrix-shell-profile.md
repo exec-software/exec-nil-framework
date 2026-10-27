@@ -1,8 +1,9 @@
 # NIL-0018: A Matrix profile for interactive shell work
 
-Status: admission prototype implemented. The compiler checks Matrix submissions
-and versioned NILData requests through a shared pure profile. An interactive
-evaluator, retained session, host commands and Anomalous execution remain proposed.
+Status: pure hosted prototype implemented. The compiler checks and evaluates
+Matrix submissions and versioned NILData requests through a shared profile. The
+interactive shell retains immutable owned values with transactional publication.
+Host commands, command catalogs and native Anomalous execution remain proposed.
 The companion syntax example runs as an ordinary hosted Matrix program.
 
 ## Purpose and existing direction
@@ -67,8 +68,8 @@ uses tuples and explicit `Result` handling under the existing contract.
 
 The prompt should accept a submission containing statements and a final
 expression. Saved programs retain ordinary `.mat`/`.matrix` pages. Exporting a
-session creates a normal book/paragraph with explicit inputs, rather than a
-different script grammar. The compiler now has a separate submission entry point
+session would create a normal book/paragraph with explicit inputs; session
+export and persistent history are not implemented. The compiler now has a separate submission entry point
 using the existing statement/expression parser. It checks local statements and
 an optional final expression without requiring a book or paragraph declaration.
 
@@ -85,11 +86,11 @@ enters the VM/native execution paths. See the [command and request contract](../
 Profile `matrix.pure.v1` admits immutable local bindings, concrete scalar/text,
 supported tuple/array expressions, numeric casts, formatting and conditionals.
 All calls, imports, mutation, loops, queries, annotations, pointers and assembly
-are excluded, including in dead branches. `Option`/`Result`, command catalogs,
-retained bindings and runtime quotas require later work. Parsing distinguishes
-complete, incomplete and invalid input; a complete parse can still fail type or
-profile checks. Limits bound input, syntax depth, AST size and generated NIL;
-they do not establish execution-time or heap bounds.
+are excluded, including in dead branches. `Option`/`Result` and command catalogs
+remain outside this profile. Parsing distinguishes complete, incomplete and
+invalid input; a complete parse can still fail type or profile checks. Admission
+limits bound input, syntax depth, AST size and generated NIL. The evaluator adds
+separate execution and publication limits described below.
 
 Structured requests use schema `nil.matrix.submission-request.v1`, with exact
 fields, a closed expression vocabulary and no authority-bearing fields. They
@@ -97,26 +98,59 @@ construct shared AST nodes directly. They cannot supply source, arbitrary AST
 objects or serialized NIL to bypass admission. Differential tests compare typed
 NIL from source and request inputs.
 
-## Planned hosted profile
+## Implemented hosted evaluator and session
 
-| Area | First hosted prototype | Follow-up |
+`--evaluate-submission` and `--evaluate-submission-request` execute an admitted
+submission in a fresh shared VM and return `nil.matrix.submission-evaluation.v1`
+JSON. `--matrix-shell` adds line collection, complete/incomplete detection,
+explicit `:begin`/`:submit` transactions, typed results and binding inspection.
+The shared C++ session API accepts both source and request input against the
+same retained values. The single-evaluation CLI commands use fresh sessions.
+
+Retained bindings are owned data snapshots with exact types. Compilation restores
+those values as typed literal AST data, then compiles only the new computation;
+previous source and expressions are never replayed. New top-level bindings are
+returned with the final value in a generated tuple. The host validates the
+snapshot, cumulative state, compiler restorability and serialized result before
+publishing the entire transaction. Failure or cancellation leaves existing
+bindings unchanged. Nested locals and destructuring discards do not persist.
+
+The loaded program is independently revalidated, and the VM checks its admitted
+operations before executing them. Default limits allow 16,384 instructions,
+16 MiB of charged work, 1 MiB text/snapshot payloads, 4,096 snapshot nodes and
+32 levels of snapshot depth. Sessions allow 64 bindings, 1,024 retained nodes,
+1 MiB retained state and 1 MiB successful result reports. A one-second deadline
+covers execution and publication after compilation/loading, with cooperative
+checks at instructions and publication checkpoints. These limits do not measure
+process RSS or provide hard preemption. API cancellation is checked between
+instructions, during export and before publication.
+
+Typed scalar payloads are JSON strings, preserving `i64` precision, finite float
+round trips and negative zero. Arrays and tuples contain typed child values.
+Nonfinite results fail publication. The shell writes no persistent history and
+provides no host operations. Its `:cancel` command discards pending input;
+host callbacks provide cancellation during evaluation. Native submission
+execution and Anomalous integration remain unimplemented.
+
+| Area | Implemented hosted profile | Follow-up |
 | --- | --- | --- |
-| Values | Existing scalar/text, supported tuples and arrays; `Option`/`Result` | Named record arrays and checked domain values |
-| Computation | Immutable bindings, arithmetic, comparison, explicit formatted text, conditionals, collected queries | User paragraphs and bounded iteration after transitive validation |
-| Commands | Typed, versioned mock `help` and system observations | Real observation adapters admitted by Anomalous |
-| Imports | A fixed, explicitly admitted module catalog | Versioned user modules after effect/operation verification |
-| Session | Explicit inputs and outputs; new code never replays prior effects | Retained bindings with managed ownership and deterministic cleanup |
-| Effects | No live external operations in the syntax proof | Observation, then preview/commit, cancellation and recovery |
+| Values | Scalar/text, supported tuples and concrete arrays | `Option`/`Result`, named record arrays and checked domain values |
+| Computation | Immutable bindings, arithmetic, comparison, formatted text and conditionals | Collected queries, user paragraphs and bounded iteration after transitive validation |
+| Commands | Session controls only; no language-level host commands | Typed catalog, mock observations, then Anomalous adapters |
+| Imports | Rejected | Fixed admitted catalog, then versioned modules after effect/operation verification |
+| Session | Owned typed values; atomic publication; no computation replay | Persistence/export policy and more efficient typed data import |
+| Effects | Rejected | Observation, then preview/commit, cancellation and recovery |
 
 The execution profile excludes raw memory, assembly, arbitrary foreign calls,
 user intrinsic declarations, general recursion, unbounded loops, unrestricted
 parallelism and dynamic evaluation. The full Matrix language retains its systems
 features; this is an admitted workload profile with its own limits.
 
-`value` prevents rebinding but does not make an array deeply immutable. Session
-publication must account for aliases: a failed submission must not leave earlier
-bindings changed through a shared array. Admit read-only operations first, then
-define ownership/copy rules before permitting updates to retained values.
+`value` in ordinary Matrix prevents rebinding but does not make arrays deeply
+immutable. The current shell profile rejects mutation and copies owned values
+across VM boundaries, so a failed submission cannot change earlier arrays through
+a retained VM alias. Any future update operations need an explicit ownership and
+publication contract.
 
 Do not introduce command search through `PATH`, implicit environment expansion,
 word splitting, globbing, command substitution or execution of unknown names.
@@ -130,11 +164,12 @@ Matrix submission -> Matrix parser -> shared AST/type checker -> typed NIL
 structured request -> checked schema/resolver ----------------------^
                                                               profile verifier
                                                                     |
-                                                              bounded executor
+                                                         bounded shared VM
                                                                     |
-                                                         typed host command adapter
-                                                                    |
-                                                  Anomalous invocation/policy boundary
+                                                    owned typed result / session
+
+Future effectful extension:
+checked command catalog -> typed host adapter -> Anomalous invocation/policy
 ```
 
 Both entry paths must produce equivalent resolved operations and pass the same
@@ -143,7 +178,7 @@ Use a small schema for the admitted profile, rather than accepting arbitrary
 internal compiler AST objects. Retain source spans or request-node identities
 for equivalent diagnostic attribution.
 
-The host catalog binds each command to an exact operation identity, schema
+A future host catalog must bind each command to an exact operation identity, schema
 version, argument slots, result type and effect summary. Generated declarations
 allow ordinary Matrix named-call checking and completion. Runtime dispatch must
 reject an unregistered command; it must not fall through to native-library
@@ -185,18 +220,23 @@ sharing a result is a separate operation.
 
 ## Runtime gaps to close
 
-- Submission parsing and check-only admission are implemented. A prompt still
-  needs line collection, result rendering and an evaluator; parsing is not
-  incremental across calls and each check is independent.
-- `VM::loadProgram` resets globals, heap and execution state. Recompiling and
-  replaying the complete session would repeat effects. Define a retained binding
-  contract and transactional publication of new bindings instead.
-- The VM has host callbacks, injectable streams, exit trapping and instruction
-  stepping, but no general sandbox/profile enforcement. External dispatch can
-  reach native-library loading. An allowlisted host adapter needs a closed path.
-- Instruction stepping alone does not bound allocations, parsing/type checking,
-  output, native calls or the work performed inside one intrinsic. Give each
-  phase explicit budgets, cancellation behavior and host resource containment.
+- The implemented shell uses the hosted shared VM. Anomalous still needs its
+  native interpreter/console integration and consumer qualification; there is no
+  native submission evaluator in this framework slice.
+- Retained values are restored as typed literal AST data. This avoids executable
+  history replay but adds work proportional to retained data and consumes the
+  compiler's AST/instruction/text budgets. A future direct data import must
+  preserve exact types, ownership and default-deny admission.
+- General VM host callbacks and foreign dispatch are outside the pure profile.
+  Calls remain rejected. An admitted host catalog needs a closed dispatch path,
+  exact schemas, transitive operation checks and live authorization.
+- Logical VM budgets and cooperative deadlines do not bound process RSS or
+  preempt compiler/runtime operations. Production embedding needs its own host
+  containment and lifecycle policy. Initial compilation has structural bounds
+  but is outside the execution/publication deadline.
+- Scalar/text array reads currently produce defaults out of range, while tuple
+  array reads fail. Define a shared checked indexing contract rather than a
+  shell-only interpretation; see F73 in the findings log.
 - Existing `ny.context.v2` inspection reports authored intent. It is not the
   authority manifest required by Anomalous decision record 0093. Reserved NIL
   format fields must not be repurposed without their own version/compatibility decision.
@@ -226,8 +266,9 @@ visible through typed catalog declarations and inspected operations.
 This is an architectural comparison, not measured usability or security
 evidence. The companion program demonstrates existing Matrix syntax and hosted
 execution only. The implemented tests cover submission admission and hostile
-inputs; execution resource limits and authority behavior remain qualification
-requirements before selecting a deployable profile.
+inputs; additional suites exercise bounded evaluation, owned snapshots and
+transactional sessions. Native consumer qualification and authority behavior
+remain requirements before selecting a deployable Anomalous profile.
 
 ## Implementation sequence
 
@@ -235,12 +276,13 @@ requirements before selecting a deployable profile.
 2. **Implemented:** Matrix submission parsing and a pure, default-deny profile
    verifier. Exercise complete/incomplete/error input and text/request equivalence
    without a live executor or host effects.
-3. Add a bounded hosted evaluator with typed mock observations, final-value
-   rendering and explicit session binding ownership. Test no effect replay,
-   forged handles, unknown operations, budget exhaustion and cancellation.
+3. **Implemented:** A bounded pure hosted evaluator, typed value projection,
+   input collection and owned retained bindings. Regression suites cover rollback,
+   restoration, malformed values, budget exhaustion and cancellation; typed mock
+   observations remain future catalog work.
 4. Generate command signatures for completion/help from the same versioned
-   catalog used by checking and dispatch. Add native named record-row support
-   through the shared language implementation.
+   catalog used by checking and dispatch, starting with typed mock observations.
+   Add native named record-row support through the shared language implementation.
 5. Qualify Anomalous interpreter execution and its observation adapters under
    its existing ADRs; run the shared language corpus and profile rejection cases.
 6. Add mutations only with verified preview, commit, freshness, revocation,

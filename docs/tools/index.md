@@ -69,8 +69,12 @@ NIL or use the optional LLVM backend.
 For Matrix prompt-style input, `--check-submission <path|->` checks local
 statements and a final expression against the initial pure shell profile.
 `--check-submission-request <path|->` checks the equivalent structured NILData
-request. Both return JSON without execution or retained session state. See
-[Matrix submission inspection](matrix-submissions.md).
+request. Both return JSON without execution or retained session state.
+`--evaluate-submission <path|->` and `--evaluate-submission-request <path|->`
+run the same pure profile in a bounded hosted VM and return typed JSON values.
+`--matrix-shell` retains immutable values across interactive submissions, with
+atomic publication and explicit input blocks. No host commands or native shell
+evaluator are included. See [Matrix submissions and pure sessions](matrix-submissions.md).
 
 ```text
 nilcompiler [options] --output <output> <input.ny> [more-inputs.ny ...]

@@ -250,7 +250,12 @@ class decoder {
   }
 
 public:
-  decoded_submission_request decode(const json &root) {
+  decoded_submission_request decode(const json &root, const std::vector<std::string> &existing_names) {
+    for (const auto &existing : existing_names) {
+      const auto spelling = identifier(json::str(existing), "$session.bindings");
+      if (!symbols_.emplace(fold_key(spelling), nil_symbol(spelling)).second)
+        fail("$session.bindings", "duplicate existing binding after Matrix name normalization");
+    }
     reject_nul(root, "$");
     fields(root, "$", {"schema", "profile", "bindings", "value"});
     if (text(root.at("schema"), "$.schema") != "nil.matrix.submission-request.v1")
@@ -283,7 +288,8 @@ public:
 };
 } // namespace
 
-decoded_submission_request decode_submission_request(const std::string &source) {
+decoded_submission_request decode_submission_request(
+    const std::string &source, const std::vector<std::string> &existing_names) {
   if (source.size() > max_source_bytes) fail("$", "request exceeds 64 KiB");
   if (source.find('\0') != std::string::npos) fail("$", "embedded NUL is not supported");
   json root;
@@ -293,6 +299,6 @@ decoded_submission_request decode_submission_request(const std::string &source) 
   } catch (const std::runtime_error &error) {
     fail("$", error.what());
   }
-  return decoder{}.decode(root);
+  return decoder{}.decode(root, existing_names);
 }
 } // namespace matrix

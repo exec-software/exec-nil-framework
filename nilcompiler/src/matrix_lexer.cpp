@@ -187,9 +187,9 @@ char lexer::advance() {
 }
 
 void lexer::error(int line, int col, std::string message, std::string hint,
-                  bool incomplete) {
+                  bool incomplete, bool open_text_block) {
   errors_.push_back({line, col, std::move(message), std::move(hint), incomplete,
-                     token_start_});
+                     token_start_, open_text_block});
 }
 
 token lexer::make(token_kind kind, const std::string &lexeme, int line,
@@ -482,7 +482,7 @@ token lexer::scan_text_block(int line, int col) {
   }
   if (!terminated) {
     error(line, col, "unterminated 'begin text' block",
-          "close it with a line whose only content is 'end text'", true);
+          "close it with a line whose only content is 'end text'", true, true);
     return make(token_kind::invalid, "", line, col);
   }
 

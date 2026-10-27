@@ -170,6 +170,8 @@ struct lex_error {
   // True only when appending input can complete the lexical construct.
   bool incomplete = false;
   std::size_t start = 0;
+  // At EOF inside raw text, subsequent lines are payload, not shell commands.
+  bool open_text_block = false;
 };
 
 // Fold one identifier to its lookup key: ASCII-lowercase, with every '-' and
@@ -229,7 +231,7 @@ private:
   bool text_block_follows() const;
   token scan_backtick_identifier();
   void error(int line, int col, std::string message, std::string hint = {},
-             bool incomplete = false);
+             bool incomplete = false, bool open_text_block = false);
 };
 
 } // namespace matrix

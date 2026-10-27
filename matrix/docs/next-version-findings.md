@@ -2085,8 +2085,8 @@ patched version. See the [upstream advisory](https://github.com/AzureAD/microsof
 ### F70 — A shell profile needs session semantics and named structured rows
 
 **Observation:** Matrix already supplies named calls, checked results and eager
-queries, but its parser accepts complete books/paragraphs rather than prompt
-submissions. The README previously implied that shell grammar support shipped;
+queries, but its parser initially accepted complete books/paragraphs rather than
+prompt submissions. The README previously implied that shell grammar support shipped;
 that status has been corrected. The VM's program load resets state, so replaying
 prior submissions to recreate bindings would also replay their effects.
 
@@ -2101,9 +2101,9 @@ state needs explicit ownership and publication rules.
 proposes Matrix as the language surface for Anomalous's existing Canticle session
 model. A fixed-data example passes text NIL, binary NIL and LLVM AOT routes. It
 is an ordinary hosted Matrix program. The subsequent admission slice implements
-submission parsing and pure AST/NIL profile verification (F71); execution
-resource enforcement, real service adapters and native Anomalous execution
-remain open.
+submission parsing and pure AST/NIL profile verification (F71), followed by
+bounded hosted evaluation and owned retained bindings (F72). Real service
+adapters and native Anomalous execution remain open.
 
 Anomalous already has newer program-descriptor scaffolding than its initial
 runtime handoff describes, but no live NIL execution in that profile. Its runtime
@@ -2139,8 +2139,80 @@ offset changes; Windows runtime qualification still belongs to its platform CI.
 **Remaining friction:** A checked expression can still fail at runtime, and
 bounded syntax/instruction counts do not bound allocation or work inside an
 operation. The first profile therefore excludes all calls and queries, even
-otherwise pure library operations. A bounded evaluator, typed value projection,
-retained-binding ownership and command catalogs are the next steps. The request
+otherwise pure library operations. F72 adds bounded evaluation, typed projection
+and owned retained bindings; command catalogs remain future work. The request
 schema initially covers expression bindings and a final value, not every Matrix
 statement or formatting shorthand. Adding either route must preserve the shared
 profile and diagnostic contract.
+
+
+### F72 — Session state needs owned values and atomic publication
+
+**Observation:** The VM resets its heap and globals when loading a program.
+Replaying earlier submissions would recompute their expressions, and retaining
+VM handles would couple old values to a discarded heap. A successful type check
+also cannot guarantee that execution, result export or retained-state budgets
+will succeed.
+
+**Implemented:** The hosted pure session exports exact typed, owned data and
+restores it as literal AST initializers in the next submission. It preserves
+scalar widths, finite float round trips, negative zero, concrete empty arrays
+and nested tuple/array shapes. Matrix and NILData input use the same session
+bindings with Matrix folded-name resolution. Prior computation is never replayed,
+and no source text is reconstructed from values.
+
+Only new top-level bindings are returned for publication. The host checks the
+complete result, cumulative state, compiler restorability and serialized report
+before swapping in the new state. Parse/type/profile errors, runtime failure,
+nonfinite results, exhausted budgets and cancellation publish nothing. The VM
+revalidates admitted programs and applies instruction, logical work, text and
+snapshot limits. Shell `:begin`/`:submit` blocks make several input lines one
+transaction; `:cancel` discards pending input.
+
+**Remaining friction:** Restoring data through literal AST nodes increases
+compilation cost with retained state and consumes admission budgets. Successful
+state publication therefore checks that the whole candidate remains restorable.
+A direct typed data import could reduce this work but must preserve the same
+ownership and exact-shape checks. Limits are cooperative logical bounds, not
+process RSS limits or hard preemption; initial compilation is outside the
+execution/publication deadline. The CLI stores no persistent history. Host
+catalogs, observations, queries/calls in the pure profile and Anomalous native
+execution remain absent. See the [session contract](../../docs/tools/matrix-submissions.md).
+
+### F73 — Array indexing needs one checked failure contract
+
+**Observation:** Existing shared array indexing has inconsistent failure
+semantics: an out-of-range scalar/text array read returns its default value
+(zero, false or empty text), while a tuple-array read reports an error. For
+example, `[1] at 2` evaluates to zero, but `[(1, true)] at 2` fails. This behavior
+predates the shell; introducing the evaluator made the inconsistency visible at
+an interactive boundary.
+
+**Current handling:** The pure evaluator preserves the shared language behavior.
+A tuple-array failure rolls back the complete submission, including any earlier
+new bindings in that submission. No shell-specific indexing rule has been added.
+
+**Follow-up:** Establish a shared checked indexing API or language contract with
+explicit success/failure values and consistent VM/native behavior. Test negative
+indexes, exact-end indexes, empty arrays and each admitted element shape. Avoid
+silently replacing a missing row with a valid-looking default while documenting
+how existing default-returning indexing remains compatible or migrates.
+
+### F74 — Nested generic resolution repeated work exponentially
+
+**Observation:** The session corpus exposed a compiler stall on a small nested
+array expression. Shared `type_checker::resolve_type()` recursively resolved
+each generic argument once to build the canonical name, then resolved it again
+for instantiation. Built-in arrays do not cache a nominal instantiation, so each
+additional nesting level doubled that repeated work. The issue affected normal
+checking as well as submission compilation; input-size and nesting ceilings did
+not make this implementation cost reasonable.
+
+**Fixed:** Generic instantiation reuses the arguments already resolved while
+forming the canonical name. The change preserves type semantics and existing
+profile depth ceilings. A 24-level nested-array regression exercises check-only
+admission, session compilation and retained-data restoration; the CLI corpus
+also exercises 20 levels. A local 20-level check fell from approximately 9.8
+seconds before the fix to 0.03 seconds afterward. This is a regression
+observation, not a portable benchmark guarantee; the tests guard the algorithmic
+path without asserting a machine-specific latency target.

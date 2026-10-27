@@ -149,7 +149,7 @@ std::string nil_path(const std::string &written) {
 } // namespace
 
 parser::parser(const std::string &source, const parser_options &opts)
-    : filename_(opts.filename), signature_cursor_(opts.signature_cursor),
+    : filename_(opts.filename), external_names_(opts.external_names), signature_cursor_(opts.signature_cursor),
       source_size_(source.size()), submission_requested_(opts.submission) {
   if (opts.submission && source.size() > submission_source_limit) {
     token eof;
@@ -1437,6 +1437,8 @@ submission_parse_result parser::parse_submission() {
   // heuristics for book declarations must not turn those bindings into types.
   declared_.clear();
   declared_types_.clear();
+  for (const auto &name : external_names_)
+    declared_.emplace(fold_key(name), nil_symbol(name));
   prescan_declarations(true);
   signature_cursor_.reset();
   signature_blank_start_.reset();

@@ -17,6 +17,7 @@
 #include "source_debug.hpp"
 #include "database_runtime.hpp"
 #include "memory_profile.hpp"
+#include "submission_value.hpp"
 
 namespace ny {
 
@@ -283,6 +284,16 @@ public:
                    const std::unordered_map<std::string, Value> &constants);
   void execute(bool reset = true);
 
+  // Opt-in admission and logical resource bounds for a fresh pure submission.
+  // Limits cover VM work and owned snapshots, not process RSS. Configure before
+  // loading a program; ambient profiling and effectful opcodes are disabled.
+  void configurePureExecution(pure_execution_limits limits = {});
+  submission_value snapshotPureValue(const Value &value,
+                                      const std::string &type) const;
+  std::size_t pureInstructionsExecuted() const { return pure_instructions_; }
+  std::size_t pureWorkBytesCharged() const { return pure_work_bytes_; }
+
+
   // Memory mode configuration
   void setMemoryMode(MemoryMode mode) { memory_mode_ = mode; }
   MemoryMode getMemoryMode() const { return memory_mode_; }
@@ -379,6 +390,15 @@ public:
   bool hasGlobal(const std::string &name) const { return globals_.count(name) > 0; }
 
 private:
+  std::optional<pure_execution_limits> pure_limits_;
+  std::size_t pure_instructions_ = 0;
+  std::size_t pure_work_bytes_ = 0;
+  void preflightPureInstruction(const Instruction &instruction);
+  void chargePureWork(std::size_t bytes);
+  void chargePureValue(const Value &value, unsigned depth, std::size_t &nodes);
+  void validatePureProgram(const std::vector<Instruction> &program,
+                           const std::unordered_map<std::string, Value> &constants) const;
+
   MemoryMode memory_mode_ = MemoryMode::UNSAFE_MANUAL;  // Default to unsafe
   std::vector<std::string> args_;
 

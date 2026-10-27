@@ -5,6 +5,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace matrix {
 
@@ -28,7 +29,8 @@ struct submission_request_error : std::runtime_error {
 // NILData's own document nesting limit also applies. Names are one unescaped
 // Matrix identifier, with ordinary Matrix case/separator-folded lookup. A node's
 // source_file is its request path; line 0 denotes the absence of source lines.
-decoded_submission_request decode_submission_request(const std::string &source);
+decoded_submission_request decode_submission_request(
+    const std::string &source, const std::vector<std::string> &existing_names = {});
 
 } // namespace matrix
 #endif

@@ -744,7 +744,12 @@ type_info type_checker::resolve_type(const std::string &name) {
      * base_info.name.c_str()); */
     /* fflush(stderr); */
 
-    // Resolve args - use 'any' fallback if arg resolution returns error type
+    // Resolve each argument once. Built-in containers such as array do not
+    // create a cached nominal instantiation; resolving their arguments again
+    // below doubles the recursive work at every level of a nested type.
+    std::vector<std::string> resolved_args;
+    resolved_args.reserve(parts.type_args.size());
+    // Use 'any' in the display name if argument resolution returns an error.
     std::string resolved_name = base_info.name + "<";
     for (size_t i = 0; i < parts.type_args.size(); ++i) {
       if (i > 0)
@@ -754,6 +759,7 @@ type_info type_checker::resolve_type(const std::string &name) {
       // arg[" << i << "]='" << parts.type_args[i] << "'\n";
       /* fflush(stderr); */
       type_info arg_info = resolve_type(parts.type_args[i]);
+      resolved_args.push_back(arg_info.name);
       // CASCADING ERROR FIX: If the resolved arg is an error/unknown type
       // marker, substitute 'any' to prevent the error from infecting the entire
       // module. Error markers start with '<' (e.g. "<error>", "<unknown>")
@@ -830,11 +836,7 @@ type_info type_checker::resolve_type(const std::string &name) {
       }
 
       if (!base_for_instantiation.empty()) {
-        std::vector<std::string> args;
-        for (const auto &arg : parts.type_args) {
-          args.push_back(resolve_type(arg).name);
-        }
-        instantiate_generic_node(base_for_instantiation, resolved_name, args);
+        instantiate_generic_node(base_for_instantiation, resolved_name, resolved_args);
       }
     }
     return {resolved_name, true};

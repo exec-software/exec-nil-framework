@@ -33,6 +33,9 @@ set(NILCOMPILER_CORE_SOURCES
     src/matrix_submission.cpp
     src/submission_profile.cpp
     src/submission_request.cpp
+    src/submission_session.cpp
+    src/submission_session_compile.cpp
+    src/submission_session_cli.cpp
     src/codegen.cpp
     src/vm.cpp
     src/preprocessor.cpp

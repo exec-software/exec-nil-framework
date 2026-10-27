@@ -64,6 +64,8 @@ struct parser_options {
   // Set before construction for untrusted interactive input: unlike a page,
   // a submission is bounded before the constructor starts lexing it.
   bool submission = false;
+  // Existing immutable session names, in their original NIL spelling.
+  std::vector<std::string> external_names;
 };
 
 inline constexpr std::size_t submission_source_limit = 64 * 1024;
@@ -114,6 +116,7 @@ private:
   std::vector<ny::diagnostic> diagnostics_;
   std::vector<matrix::diagnostic> rich_;
   std::string filename_;
+  std::vector<std::string> external_names_;
   std::optional<std::size_t> signature_cursor_, signature_blank_start_;
   bool recovered_signature_call_ = false;
   std::size_t source_size_ = 0, submission_depth_ = 0;
