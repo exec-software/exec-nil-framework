@@ -525,7 +525,8 @@ class Indexer {
                     const auto next = significant(cursor + 1);
                     if (cursor < tokens.size() && tokens[cursor].name && next < tokens.size() &&
                         (tokens[next].word == "then" || tokens[next].word == "give" || tokens[next].word == "provided") &&
-                        tokens[cursor].word != "true" && tokens[cursor].word != "false") {
+                        tokens[cursor].word != "true" && tokens[cursor].word != "false" &&
+                        tokens[cursor].word != "yes" && tokens[cursor].word != "no") {
                         const auto name = tokens[cursor++];
                         add(name, symbol_kind::Variable, scope, outline_parent, name.start, name.end);
                     }
@@ -611,7 +612,7 @@ class Indexer {
                 continue;
             }
             if (stop == pending.end && (first.word == "<text>" || first.word == "quote" || first.word == "newline" || first.word == "tab")) symbol.type = "text";
-            else if (stop == pending.end && (first.word == "true" || first.word == "false")) symbol.type = "boolean";
+            else if (stop == pending.end && (first.word == "true" || first.word == "false" || first.word == "yes" || first.word == "no")) symbol.type = "boolean";
             else if (stop == pending.end && first.word == "<number>") {
                 const auto magnitude = first.text.front() == '-' ? first.text.substr(1) : first.text;
                 const bool hex = magnitude.compare(0, 2, "0x") == 0 || magnitude.compare(0, 2, "0X") == 0;
@@ -720,7 +721,7 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
             auto previous = before.rbegin();
             while (previous != before.rend() && previous->word == "\n") ++previous;
             const auto value = previous == before.rend() ? "" : previous->word;
-            if (value == "=" || value == "being") words = {"true", "false"};
+            if (value == "=" || value == "being") words = {"true", "false", "yes", "no"};
             else if (value == "(" || value == "with" || value == ",") {
                 std::string spelling;
                 for (auto part = first; part != arguments; ++part) spelling += part->text;
@@ -730,6 +731,7 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
                 if (prose) for (auto& word : words) word += " being";
                 kind = 10; // Property names; custom annotations remain open-ended.
                 words.push_back("true"); words.push_back("false");
+                words.push_back("yes"); words.push_back("no");
             } else if (prose && previous != before.rend() && previous->name) words = {"being"};
         }
         std::vector<MatrixKeyword> result;
@@ -747,7 +749,7 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
     }
     if (last == "as" || last == "returns" || last == "becomes" || last == "means" ||
         last == "of" || last == "holding" || last == "to") {
-        words = {"number", "floating", "boolean", "text", "nothing", "override", "array of", "tuple of", "pointer to", "reference to", "ref to", "owned array of", "shared view of", "exclusive view of"};
+        words = {"number", "floating", "boolean", "flag", "anything", "text", "nothing", "override", "array of", "tuple of", "pointer to", "reference to", "ref to", "owned array of", "shared view of", "exclusive view of"};
         kind = 25; // TypeParameter: language type vocabulary
     } else if (last == "override") words = {"integer", "long", "byte", "double"};
     else if (last == "begin") words = {"paragraph", "record", "class", "choice", "contract", "implementation", "extension", "test", "text"};
@@ -771,7 +773,7 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
     }
     else if (last == "value" || last == "variable" || last == "mutable" || last == "constant" || last == "field" || last == "book") return {};
     else if (last.empty() || last == "\n") words = {"value", "variable", "constant", "set", "say", "give", "evaluate", "when", "otherwise", "repeat", "consider", "switch", "case", "attempt", "caught", "always", "raise", "append", "allocate", "release", "own", "borrow", "move", "stop repeating", "stop switching", "continue repeating", "book", "library", "read", "cite", "public", "note", "context", "end"};
-    else words = {"true", "false", "nothing", "build", "my", "the length of", "the paragraph", "anonymous", "formatted", "switch", "quote", "newline", "tab", "negative", "plus", "minus", "times", "over", "remainder", "equals", "does not equal", "is less than", "is greater than", "is at least", "is at most", "and", "or", "not", "bitwise", "shifted", "becomes", "with", "receives", "returns", "begin"};
+    else words = {"true", "false", "yes", "no", "nothing", "build", "my", "the length of", "the paragraph", "anonymous", "formatted", "switch", "quote", "newline", "tab", "negative", "plus", "minus", "times", "over", "remainder", "equals", "does not equal", "is less than", "is greater than", "is at least", "is at most", "and", "or", "not", "bitwise", "shifted", "becomes", "with", "receives", "returns", "begin"};
     std::vector<MatrixKeyword> result;
     const Range edit{NyParser::position_at(text, offsets, begin), NyParser::position_at(text, offsets, end)};
     for (const auto& word : words)

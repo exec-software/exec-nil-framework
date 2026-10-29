@@ -97,8 +97,12 @@ annotation_arguments_result parse_annotation_arguments(const std::string &raw,
     } else {
       while (cursor < raw.size() && raw[cursor] != ',' && !space(raw[cursor])) ++cursor;
       argument.value = raw.substr(value_start, cursor - value_start);
-      if (argument.value == "true" || argument.value == "false") argument.kind = "boolean";
-      else if (!argument.value.empty() &&
+      if (argument.value == "true" || argument.value == "false" ||
+          argument.value == "yes" || argument.value == "no") {
+        argument.kind = "boolean";
+        argument.value = argument.value == "true" || argument.value == "yes"
+                             ? "true" : "false";
+      } else if (!argument.value.empty() &&
                ((argument.value.front() >= '0' && argument.value.front() <= '9') ||
                 argument.value.front() == '-' || argument.value.front() == '+')) {
         const char *error = nullptr;

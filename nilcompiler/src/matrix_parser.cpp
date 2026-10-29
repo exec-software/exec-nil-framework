@@ -599,6 +599,17 @@ void parser::recover_to_declaration() {
 std::optional<std::string> parser::parse_type() {
   const token &start = peek();
 
+  if (match(kw::anything)) return "anything";
+
+  // 'flag' is a type spelling only in a type position. Existing parameters
+  // and variables called flag remain ordinary names, including named calls.
+  if (exact_phrase_word(start, "flag") &&
+      peek(1).kind != matrix::token_kind::dot &&
+      peek(1).kind != matrix::token_kind::double_colon) {
+    advance();
+    return "bool";
+  }
+
   if (match(kw::tuple)) {
     if (!expect(kw::of, "after 'tuple'") ||
         !expect(matrix::token_kind::left_paren, "'('", "before tuple element types"))
@@ -734,7 +745,7 @@ std::optional<std::string> parser::parse_type() {
   }
 
   error(start, "expected a type, found '" + start.lexeme + "'",
-        "tier one is text, number, floating, boolean, nothing; a machine type "
+        "tier one is text, number, floating, boolean (or flag), anything, nothing; a machine type "
         "needs 'override'");
   return std::nullopt;
 }
@@ -1240,9 +1251,9 @@ std::vector<ny::ast_annotation> parser::parse_annotations() {
       if (argument.kind != "symbol") continue;
       std::string word = argument.value;
       for (auto &letter : word) if (letter >= 'A' && letter <= 'Z') letter += 'a' - 'A';
-      if (word == "true" || word == "false") {
+      if (word == "true" || word == "false" || word == "yes" || word == "no") {
         argument.kind = "boolean";
-        argument.value = std::move(word);
+        argument.value = word == "true" || word == "yes" ? "true" : "false";
       }
     }
     if (!parsed.error.empty()) error(opening, "invalid annotation arguments: " + parsed.error);
@@ -3354,7 +3365,7 @@ ny::ast_pattern parser::parse_pattern() {
   }
   if (check(kw::true_) || check(kw::false_)) {
     pattern.kind = ny::ast_pattern_kind::literal_pattern;
-    pattern.literal_value = advance().lexeme;
+    pattern.literal_value = advance().is(kw::true_) ? "true" : "false";
     pattern.literal_kind = ny::ast_node_kind::boolean_literal_node;
     return pattern;
   }

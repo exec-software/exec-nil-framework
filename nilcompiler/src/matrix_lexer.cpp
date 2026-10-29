@@ -119,6 +119,7 @@ const keyword_entry keyword_table[] = {
   {"xor", kw::xor_, "xor"},
   {"becomes", kw::becomes, "becomes"},
   {"true", kw::true_, "true"}, {"false", kw::false_, "false"},
+  {"yes", kw::true_, "true"}, {"no", kw::false_, "false"},
   // Named characters replace escape sequences entirely. They are ordinary
   // text values, concatenated with 'plus', which is already text
   // concatenation -- so no escaping syntax exists to get wrong.

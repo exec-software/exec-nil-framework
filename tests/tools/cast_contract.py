@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check fail-closed cast boundaries and the interpreted text conversion contract."""
+"""Check cast boundaries, text Boolean parity, and interpreted numeric text conversions."""
 
 from __future__ import annotations
 
@@ -216,8 +216,23 @@ def main() -> None:
         for text in ('""', '"truthy"', '"2"', '" true"', '"false "'):
             invalid_text.append((text + " as bool", "CAST: text is not a recognized bool value"))
         for index, (expression, diagnostic) in enumerate(invalid_text):
-            interpreted(source(f"invalid_text_{index}", "println(" + expression + ")"),
-                        diagnostic=diagnostic)
+            invalid = source(f"invalid_text_{index}", "println(" + expression + ")")
+            interpreted(invalid, diagnostic=diagnostic)
+            if native and expression.endswith(" as bool"):
+                executable = root / f"invalid_text_native_{index}"
+                success(run([*base, "--native", "--output", executable, invalid]))
+                rejection(run([executable]), "text is not a recognized bool value")
+
+        boolean_spellings = ("true", "TRUE", "Yes", "1", "on",
+                             "false", "FALSE", "No", "0", "off")
+        boolean_text = source("valid_boolean_text", "\n".join(
+            f'println("{text}" as bool)' for text in boolean_spellings))
+        boolean_expected = "1\n" * 5 + "0\n" * 5
+        interpreted(boolean_text, boolean_expected)
+        if native:
+            executable = root / "valid_boolean_text_native"
+            success(run([*base, "--native", "--output", executable, boolean_text]))
+            success(run([executable]), boolean_expected)
 
         # Bypass source checking deliberately to exercise the VM's independent
         # fail-closed behavior in textual, binary, and bundled executable NIL.
@@ -258,7 +273,7 @@ def main() -> None:
           f"{len(invalid_text)} malformed text conversions, "
           f"{len(runtime_rejections)} unchecked runtime rejections, "
           "3 raw NIL operand rejections, concrete generic member controls, "
-          "and valid interpreted text controls" +
+          "valid Boolean text controls, and interpreted numeric text controls" +
           ("; native boundaries tested" if native else "; native routes unavailable"))
 
 

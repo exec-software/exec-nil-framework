@@ -251,7 +251,8 @@ def main():
                 if annotations == ["@intrinsic(\"convert.try_to_i32\")"]:
                     success(result, "1\n")
                 else:
-                    assert result.returncode > 0 and not result.stdout and "tuple" in result.stderr, result
+                    assert result.returncode > 0 and not result.stdout, result
+                    assert "expected a fully initialized value of exact type 'Result<i32,text>'" in result.stderr, result
                 checks += 1
             if args.llvm == "ON":
                 native(path, "valid", expected)
@@ -269,7 +270,8 @@ def main():
                 path = source(name, body, schemas, binary)
                 result = run([paths["interpreter"], "--no-ai", path])
                 assert result.returncode > 0 and not result.stdout, (name, result)
-                assert "tuple" in result.stderr.lower() or "array intrinsic" in result.stderr, (name, result)
+                assert ("tuple" in result.stderr.lower() or "array intrinsic" in result.stderr or
+                        "expected a fully initialized value of exact type" in result.stderr), (name, result)
                 checks += 1
                 if args.llvm == "ON":
                     obj = root / "protected.o"

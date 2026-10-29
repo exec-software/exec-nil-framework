@@ -19,6 +19,8 @@ inline std::string canonical_array_scalar(std::string type) {
   std::transform(type.begin(), type.end(), type.begin(), [](unsigned char ch) {
     return static_cast<char>(std::tolower(ch));
   });
+  if (type == "boolean" || type == "flag")
+    return "bool";
   if (type == "string" || type == "str")
     return "text";
   return type;
@@ -49,7 +51,7 @@ inline std::string canonical_array_type(std::string type) {
     const auto scalar = canonical_array_scalar(name);
     if (scalar == "i32" || scalar == "i64" || scalar == "u8" ||
         scalar == "bool" || scalar == "f64" || scalar == "f32" ||
-        scalar == "text" || scalar == "void")
+        scalar == "text" || scalar == "void" || scalar == "anything")
       name = scalar;
     if (position < type.size() && type[position] == '<') {
       ++position;
@@ -125,7 +127,7 @@ inline array_intrinsic_contract parse_array_intrinsic(
   const auto &name = operands[1];
   const std::string element = canonical_array_type(operands[4]);
   if (element != "i32" && element != "i64" && element != "u8" &&
-      element != "bool" && element != "f64" && element != "text" &&
+      element != "bool" && element != "f64" && element != "text" && element != "anything" &&
       !is_array_tuple_type(element))
     throw std::runtime_error("array intrinsic has unsupported element type '" + element + "'");
   if ((name.find("_u8") != std::string::npos && element != "u8") ||

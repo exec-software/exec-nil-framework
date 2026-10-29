@@ -524,6 +524,8 @@ parser::parser(const std::string &source, const parser_options &opts)
 
     // Primitive types
     reg_type("bool");
+    reg_type("boolean", std::optional<std::string>("bool"));
+    reg_type("flag", std::optional<std::string>("bool"));
     reg_type("char");
     reg_type("any");
     reg_type("String");
@@ -3144,6 +3146,9 @@ std::shared_ptr<ast_expr> parser::parse_unary() {
 }
 
 std::shared_ptr<ast_expr> parser::parse_call(std::shared_ptr<ast_expr> callee) {
+  // A failed primary already has a diagnostic. Keep error recovery from
+  // dereferencing it while parsing postfix operators.
+  if (!callee) return nullptr;
   std::vector<std::string> pending_type_args;
 
   while (true) {
@@ -4263,7 +4268,7 @@ ast_pattern parser::parse_pattern() {
   if (match(token_kind::true_kw) || match(token_kind::false_kw)) {
     pat.kind = ast_pattern_kind::literal_pattern;
     pat.literal_kind = ast_node_kind::boolean_literal_node;
-    pat.literal_value = previous().lexeme;
+    pat.literal_value = previous().kind == token_kind::true_kw ? "true" : "false";
     return pat;
   }
 

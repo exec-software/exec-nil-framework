@@ -82,7 +82,7 @@ annotation_arg  = [ identifier '=' ] annotation_value ;
 prose_annotation_args = prose_annotation_arg { ',' prose_annotation_arg } ;
 prose_annotation_arg = [ identifier 'being' ] annotation_value ;
 annotation_value = string_literal | number_literal | signed_number
-                 | 'true' | 'false' | annotation_name ;
+                 | 'true' | 'false' | 'yes' | 'no' | annotation_name ;
 
 (* 'replaces' is the class-method override marker.  It is not spelled
  * 'override' because 'override' is the machine-type escape hatch, and two
@@ -220,14 +220,16 @@ type            = ergonomic_type
 
 (* TIER ONE: what a program says unless it has a reason not to.  Width,
  * precision and encoding are not among its concerns. *)
-ergonomic_type  = 'text' | 'number' | 'floating' | 'boolean' | 'nothing' ;
+ergonomic_type  = 'text' | 'number' | 'floating' | 'boolean' | 'flag' | 'anything' | 'nothing' ;
 
 (* TIER TWO: the machine representation, legal ONLY after 'override', so that
  * every drop to an exact width is marked and greppable.  'as byte' is an
  * error; 'as override byte' is the spelling.
  *
- * number -> i64, floating -> f64, boolean -> bool, text -> text,
- * nothing -> void.  override integer -> i32, override long -> i64,
+ * number -> i64, floating -> f64, boolean/flag -> bool, text -> text,
+ * anything -> checked dynamic value, nothing -> void.
+ * 'flag' is contextual in type positions and remains a valid binding name.
+ * override integer -> i32, override long -> i64,
  * override byte -> u8 (wrapping), override double -> f64.
  *
  * 'short', 'unsigned', 'decimal', 'single' and 'letter' are RESERVED and
@@ -322,7 +324,7 @@ switch_stmt     = 'switch' expression { switch_case } 'end' 'switch' ;
 switch_expr     = 'switch' expression { switch_case } 'end' 'switch' ;
 switch_case     = 'case' switch_label 'then' { statement }
                 | 'otherwise' { statement } ;
-switch_label    = integer_literal | string_literal | 'true' | 'false'
+switch_label    = integer_literal | string_literal | 'true' | 'false' | 'yes' | 'no'
                 | ( '-' | 'negative' | 'minus' ) integer_literal
                 | type_name '.' identifier ; (* payload-free choice variants *)
 integer_literal = digit { digit } | ('0x' | '0X') hex_digit { hex_digit } ;
@@ -432,7 +434,7 @@ anonymous_function = 'anonymous' [ 'receives' param_list ] [ 'returns' type ]
 (* ------------------------------------------------------------------ *)
 
 literal         = number_literal | text_literal | formatted_text | named_character
-                | 'true' | 'false' ;
+                | 'true' | 'false' | 'yes' | 'no' ;
 number_literal  = digit { digit } [ '.' digit { digit } ]
                   [ ('e' | 'E') [ '+' | '-' ] digit { digit } ]
                 | ('0x' | '0X') hex_digit { hex_digit } ;

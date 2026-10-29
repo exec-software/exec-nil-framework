@@ -42,13 +42,13 @@ inline bool binary_nil_annotates_types(std::uint32_t flags) {
   return (flags & binary_nil_type_annotation_flag) != 0U;
 }
 
-// LOAD_GLOBAL/STORE_GLOBAL accept a trailing storage type. The historical
+// LOAD_GLOBAL/STORE_GLOBAL accept a trailing scalar, text, or anything storage type. The historical
 // one-operand form remains readable, but a module may not mix typed/untyped
 // accesses to one name. Operands already have extensible text/binary encoding;
 // this contract does not change the binary section layout or version.
 inline bool is_typed_global_storage_type(std::string_view type) {
   return type == "text" || type == "bool" || type == "u8" ||
-         type == "i32" || type == "i64" || type == "f64";
+         type == "i32" || type == "i64" || type == "f64" || type == "anything";
 }
 
 // Compiler-generated non-void fallthrough is represented explicitly in NIL.
@@ -70,6 +70,10 @@ struct nil_class_method_resolution {
   std::string owner;
   const nil_class_method *method = nullptr;
 };
+// Dynamic metadata is exact and never admits borrowed/affine storage. Nested
+// aggregate fields and enum payloads are checked too, including hidden cells.
+void validate_nil_dynamic_type(const nil_module &module, const std::string &type,
+                               bool allow_anything = false);
 bool is_reserved_nil_class_name(const std::string &name);
 const nil_class_def *find_nil_class(const nil_module &module,
                                   const std::string &name);

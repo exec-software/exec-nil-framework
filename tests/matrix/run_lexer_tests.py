@@ -58,6 +58,8 @@ SOFT_WORDS = {
     "input", "either",
     # NIL-0021 switch vocabulary is contextual, including explicit exits.
     "switch", "case", "switching",
+    # NIL-0023 keeps ordinary variables and parameters named flag valid.
+    "flag",
 }
 
 # Lowercase markers inside a numeric token are not standalone word terminals.

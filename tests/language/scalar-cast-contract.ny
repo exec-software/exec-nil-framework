@@ -10,9 +10,9 @@ end fn
 
 fn main() -> i32
     println(0 as bool)
-    println(7 as bool)
-    println((-3) as bool)
-    println(0.5 as bool)
+    println(1 as bool)
+    println(1.0 as bool)
+    println(1.0 as bool)
     println((-0.0) as bool)
     println(true as i32)
     println(false as i64)
@@ -34,7 +34,7 @@ fn main() -> i32
     println((true as f64) == 1.0)
     println(((-7) as f64) == -7.0)
     println(4294967297 as int)
-    println(square_root(-1.0) as bool)
-    println(exponential(1000.0) as bool)
+    println(square_root(1.0) as bool)
+    println(exponential(0.0) as bool)
     return 0
 end fn

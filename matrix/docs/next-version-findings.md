@@ -2308,3 +2308,54 @@ and the host linker installation must remain stable during a build; dependency
 digests do not create a filesystem snapshot. NILData conversion also discards
 comments and formatting; schema-aware completion and comment-preserving edits
 remain useful follow-up work for human project authoring.
+
+## Dynamic values and Boolean vocabulary — 2026-10-29
+
+### F80 — Dynamic storage needs a value contract across every boundary
+
+**Observation:** The internal `any` spelling erased static checks without
+providing runtime type identity. Reusing it for public dynamic values would make
+later extraction unsafe, particularly for pointers, classes, and borrowed
+storage. Several existing Boolean conversions also normalized arbitrary nonzero
+numbers, contrary to the intended two-value numeric contract. Boolean patterns
+retained their source spelling, which would misinterpret `yes` and uppercase
+Matrix literals during lowering.
+
+**Implementation:** A distinct `anything` box carries a canonical concrete type
+and an initialized value. Assignment changes the binding's box; extraction and
+type tests check identity. `nil.std.core.try_as` expresses an expected mismatch
+through `Option`, while explicit extraction reports expected and actual types.
+The ownership checker, NIL loader, VM, native runtime, and debugger share the
+same boundaries. `boolean`/`flag` and `yes`/`no` use the existing Boolean type,
+with numeric conversion restricted to zero and one. Patterns, annotations,
+preprocessing, completion, and highlighting need the same vocabulary.
+See [NIL-0023](../../docs/design/NIL-0023-dynamic-values-and-booleans.md).
+
+**Bugs fixed during validation:** Native caller-reference cells now keep their
+current managed payload rooted after a callee replaces it and returns. Dynamic
+reference cells start from their real initializer rather than a fabricated zero.
+Parallel workers report invalid Boolean conversions through the joined worker
+error protocol. Malformed Ny call syntax now produces a parse error instead of
+dereferencing a missing expression.
+
+**Remaining friction:** Type recovery and value conversion are separate steps:
+recovering text from a dynamic box does not also parse a number. This keeps
+failure explicit but deserves clear examples in the language guide. Native
+source function values still need their own callable ABI before they can be
+boxed. Raw-pointer boxes retain existing manual lifetime obligations. General
+runtime member dispatch would require a separate checked reflection contract.
+
+### F81 — Preprocessed diagnostics need original-source line maps
+
+**Observation:** A Matrix parse error after `@define`/`@if` can render at line
+zero without a source excerpt. The same malformed expression in an ordinary
+page has its line and caret. The current parser deliberately suppresses spans
+after transformations it cannot map; includes and multiline macro expansion can
+otherwise point diagnostics or editor actions at unrelated source.
+
+**Next-version work:** Add original-file and line provenance to preprocessor
+output, independently of editable byte spans. Diagnostics can then identify the
+origin and expansion chain while rename/fix operations continue to require exact
+source ranges. Simply retaining transformed offsets would make the message look
+more precise while risking incorrect editor edits, so the existing suppression
+remains until that mapping is available.

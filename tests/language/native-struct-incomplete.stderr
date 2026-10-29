@@ -1,2 +1,2 @@
 Type checking failed:
-  {{SOURCE}}:7: Struct literal for 'native_record' is missing required field 'label'
+  {{SOURCE}}:7: Struct literal for 'native_record' is missing required field 'label' of type 'String'

@@ -1067,8 +1067,9 @@ class ConditionEvaluator {
 public:
   ConditionEvaluator(const std::string &expr,
                      const std::unordered_map<std::string, macro_def> &macros,
-                     std::string &err)
-      : expr_(expr), macros_(macros), err_(err), pos_(0) {}
+                     std::string &err, bool matrix_surface)
+      : expr_(expr), macros_(macros), err_(err), pos_(0),
+        matrix_surface_(matrix_surface) {}
 
   bool evaluate() {
     try {
@@ -1089,6 +1090,17 @@ private:
   const std::unordered_map<std::string, macro_def> &macros_;
   std::string &err_;
   size_t pos_;
+  bool matrix_surface_;
+
+  std::optional<bool> boolean_atom(std::string value) const {
+    value = trim(value);
+    if (matrix_surface_)
+      for (auto &character : value)
+        if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
+    if (value == "true" || value == "yes") return true;
+    if (value == "false" || value == "no") return false;
+    return std::nullopt;
+  }
 
   void skip_whitespace() {
     while (pos_ < expr_.size() &&
@@ -1258,10 +1270,7 @@ private:
 
     // Identifier / Keyword
     std::string id = parse_identifier();
-    if (id == "true")
-      return "1";
-    if (id == "false")
-      return "0";
+    if (const auto boolean = boolean_atom(id)) return *boolean ? "1" : "0";
 
     // If it's a macro, we should probably expand it?
     // For now, if it's an identifier in a condition, treat as 0 unless it's a
@@ -1271,6 +1280,8 @@ private:
     // simple).
     auto it = macros_.find(id);
     if (it != macros_.end() && !it->second.function_like) {
+      if (const auto boolean = boolean_atom(it->second.replacement))
+        return *boolean ? "1" : "0";
       return it->second.replacement;
     }
 
@@ -1312,10 +1323,7 @@ private:
   }
 
   bool is_truthy(const std::string &val) {
-    if (val == "true")
-      return true;
-    if (val == "false")
-      return false;
+    if (const auto boolean = boolean_atom(val)) return *boolean;
     try {
       return std::stoi(val) != 0;
     } catch (...) {
@@ -1329,7 +1337,7 @@ std::optional<bool>
 preprocessor::evaluate_condition(const std::string &expr,
                                  const std::string &filename, int line,
                                  std::string &err_message) const {
-  ConditionEvaluator eval(expr, macro_table_, err_message);
+  ConditionEvaluator eval(expr, macro_table_, err_message, options_.matrix_surface);
   bool result = eval.evaluate();
   if (!err_message.empty())
     return std::nullopt;

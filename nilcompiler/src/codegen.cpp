@@ -8,6 +8,7 @@
 #include "binding_reference.hpp"
 #include "inline_asm.hpp"
 #include "diagnostics.hpp"
+#include "dynamic_type.hpp"
 #include "nil_contract.hpp"
 #include "numeric_literal.hpp"
 #include "scalar_text.hpp"
@@ -283,6 +284,8 @@ static std::string canonical_nil_type_name(const std::string &raw_type_name) {
       return "text";
     if (type_name == "int")
       return "i32";
+    if (type_name == "boolean" || type_name == "flag")
+      return "bool";
     return type_name;
   }
 
@@ -452,7 +455,7 @@ static void lower_binding_references(nil_module &module) {
     std::size_t next_storage = 0;
     for (auto &[slot, cell] : cells) {
       if (!supported_binding_scalar(cell.type))
-        throw std::runtime_error("Binding reference requires i32, i64, u8, bool, f64, or text");
+        throw std::runtime_error("Binding reference requires i32, i64, u8, bool, f64, text, or anything");
       if (!cell.reference_parameter)
         cell.storage = "$nil.binding.storage." + std::to_string(next_storage++);
       const auto schema_name = binding_cell_name(cell.type);
@@ -489,8 +492,15 @@ static void lower_binding_references(nil_module &module) {
     // original parameter slots remain valid until each cell is initialized.
     nil_instruction setup;
     setup.source_file = function.source_file;
+    std::set<std::string> pending_dynamic_cells;
     for (const auto &[slot, cell] : cells) {
       if (cell.reference_parameter) continue;
+      // Anything has no default value. Build a local cell at its initializer,
+      // after evaluating that actual value, instead of manufacturing a box.
+      if (cell.type == "anything" && !cell.value_parameter) {
+        pending_dynamic_cells.insert(slot);
+        continue;
+      }
       append(setup, "NEW_STRUCT", {binding_cell_name(cell.type)});
       if (cell.value_parameter) {
         append(setup, "LOAD_LOCAL", {slot});
@@ -503,7 +513,7 @@ static void lower_binding_references(nil_module &module) {
       } else {
         append(setup, "PUSH_CONST", {cell.type == "f64" ? "0.0" : "0"});
       }
-      if (cell.type != "text") append(setup, "CAST", {cell.type});
+      if (cell.type != "text" && cell.type != "anything") append(setup, "CAST", {cell.type});
       append(setup, "SET_FIELD", {"value"});
       append(setup, "STORE_LOCAL", {cell.storage});
     }
@@ -521,19 +531,28 @@ static void lower_binding_references(nil_module &module) {
       if (instruction.opname == "BINDING_REF_LOCAL") {
         if (cell == cells.end())
           throw std::runtime_error("Binding reference has no storage cell");
+        if (pending_dynamic_cells.count(cell->first))
+          throw std::runtime_error("Anything reference requires an initialized local binding");
         append(instruction, cell->second.reference_parameter ? "LOAD_LOCAL" : "REF_LOCAL",
                {cell->second.storage});
       } else if (instruction.opname == "LOAD_LOCAL" && cell != cells.end()) {
+        if (pending_dynamic_cells.count(cell->first))
+          throw std::runtime_error("Anything reference requires an initialized local binding");
         append(instruction, "LOAD_LOCAL", {cell->second.storage});
         append(instruction, "GET_FIELD", {"value"});
       } else if (instruction.opname == "STORE_LOCAL" && cell != cells.end()) {
         const auto temporary = "$nil.binding.value." + std::to_string(scratch++);
         // Re-establish the checked source storage type even when the ordinary
         // producer (for example an array index) has no precise CFG category.
-        // CAST preserves text identity and cannot erase cell provenance.
-        append(instruction, "CAST", {cell->second.type});
+        // Anything already carries a checked box: CAST cannot fabricate or
+        // erase that provenance. Preserve the box exactly through the cell.
+        if (cell->second.type != "anything")
+          append(instruction, "CAST", {cell->second.type});
         append(instruction, "STORE_LOCAL", {temporary});
-        append(instruction, "LOAD_LOCAL", {cell->second.storage});
+        if (pending_dynamic_cells.erase(cell->first))
+          append(instruction, "NEW_STRUCT", {binding_cell_name(cell->second.type)});
+        else
+          append(instruction, "LOAD_LOCAL", {cell->second.storage});
         append(instruction, "LOAD_LOCAL", {temporary});
         append(instruction, "SET_FIELD", {"value"});
         append(instruction, "STORE_LOCAL", {cell->second.storage});
@@ -1634,6 +1653,44 @@ public:
     return std::nullopt;
   }
 
+  bool dynamic_default_requires_initializer(const std::string &written) {
+    std::set<std::string> active;
+    std::function<bool(const std::string &)> contains = [&](const std::string &name) {
+      const auto type = canonical_dynamic_type(substitute_nil_type_name(name, substitutions));
+      if (type == "anything") return true;
+      if (!active.insert(type).second || type.rfind("fn(", 0) == 0) return false;
+      const auto parsed = parse_generic_type_name(type);
+      const auto base = parsed ? parsed->base_name : type;
+      if (base == "ptr" || base == "ref") return false;
+      if (parsed)
+        for (const auto &argument : parsed->type_args)
+          if (contains(argument)) return true;
+      if (const auto *declaration = cg_.lookup_struct_decl(base)) {
+        for (const auto &field : declaration->fields) {
+          const auto actual = struct_field_type(type, field.name);
+          if (actual && contains(*actual)) return true;
+        }
+      } else if (const auto *declaration = cg_.lookup_class_decl(base)) {
+        for (const auto &field : declaration->checked_fields)
+          if (contains(field.type_name)) return true;
+      } else if (const auto *declaration = cg_.lookup_enum_decl(base)) {
+        auto concrete = substitutions;
+        if (parsed)
+          for (std::size_t i = 0; i < declaration->generic_params.size() && i < parsed->type_args.size(); ++i)
+            concrete[declaration->generic_params[i].name] = parsed->type_args[i];
+        for (const auto &variant : declaration->variants)
+          if (variant.associated_type) {
+            auto payload = substitute_nil_type_name(*variant.associated_type, concrete);
+            if (!payload.empty() && payload.front() == '(' && payload.back() == ')')
+              payload = "tuple<" + payload.substr(1, payload.size() - 2) + ">";
+            if (contains(payload)) return true;
+          }
+      }
+      return false;
+    };
+    return contains(written);
+  }
+
   void emit_arithmetic(const std::string &opcode, const ast_expr &expression) {
     if (!expression.inferred_type) {
       // Explicit --no-typecheck retains legacy numeric-word NIL semantics.
@@ -1870,6 +1927,12 @@ public:
           if (local_var_types[vd.name].rfind("owned<", 0) == 0)
             push_instr("OWN_BIND", {vd.name}, ds.line);
         } else {
+          if (vd.rejected_dynamic_initializer ||
+              (vd.type_name && dynamic_default_requires_initializer(*vd.type_name))) {
+            cg_.reject_codegen_construct(vd.line, "an anything binding requires an initial value",
+                "initialize it or use Option<anything> for absence");
+            break;
+          }
           declare_local(vd.name, vd.type_name.value_or("__local"));
         }
         // Record declared/annotated type for local variable if available.
@@ -3098,6 +3161,17 @@ public:
   void
   emit_expr(const ast_expr &e,
             const std::optional<std::string> &contextual_type = std::nullopt) {
+    if (e.rejected_dynamic_operation) {
+      cg_.reject_codegen_construct(e.line, *e.rejected_dynamic_operation,
+          "enable type checking and extract a concrete type before using anything");
+      return;
+    }
+    if (contextual_type && canonical_dynamic_type(*contextual_type) == "anything" &&
+        e.inferred_type.value_or("") != "anything" && !e.checked_any_box_type) {
+      cg_.reject_codegen_construct(e.line, "anything boxing requires a checked source type",
+          "enable type checking");
+      return;
+    }
     if (e.rejected_tuple_operation) {
       cg_.reject_codegen_construct(e.line, *e.rejected_tuple_operation,
           "correct the tuple's shape and preserve immutable positions");
@@ -3109,9 +3183,20 @@ public:
           "enable type checking and keep owners and borrows local");
       return;
     }
-    emit_expr_impl(e, contextual_type);
+    emit_expr_impl(e, e.checked_any_box_type ? e.checked_any_box_type : contextual_type);
     if (e.checked_class_upcast)
       push_instr("CLASS_UPCAST", {*e.checked_class_upcast}, e.line);
+    if (e.checked_any_box_type) {
+      const auto source = canonical_dynamic_type(substitute_nil_type_name(*e.checked_any_box_type, substitutions));
+      if (!dynamic_type_syntax_supported(source)) {
+        cg_.reject_codegen_construct(e.line, "anything boxing has an unavailable concrete source type '" + source + "'",
+            "use a non-borrowed concrete value");
+        return;
+      }
+      cg_.materialize_struct_schema(source, mod_, e.line);
+      emit_scalar_boundary(source, e.line);
+      push_instr("BOX_ANY", {source}, e.line);
+    }
   }
 
   // Queries lower to ordinary typed NIL arrays and loops. Row expressions are
@@ -3668,6 +3753,23 @@ public:
       const auto &ce = static_cast<const ast_call_expr &>(e);
       const auto direct_name = ce.callee && ce.callee->kind == ast_node_kind::identifier_expr_node
           ? static_cast<const ast_identifier_expr &>(*ce.callee).name : "";
+      if (direct_name == "anything_is") {
+        if (!ce.checked_any_type_test || ce.args.size() != 1) {
+          cg_.reject_codegen_construct(ce.line, "anything_is requires a checked target type and anything argument",
+              "enable type checking and pass one type and one value");
+          break;
+        }
+        const auto target = canonical_dynamic_type(substitute_nil_type_name(*ce.checked_any_type_test, substitutions));
+        if (!dynamic_type_syntax_supported(target)) {
+          cg_.reject_codegen_construct(ce.line, "anything_is target '" + target + "' is unavailable",
+              "use a non-borrowed concrete type");
+          break;
+        }
+        cg_.materialize_struct_schema(target, mod_, ce.line);
+        emit_expr(*ce.args.front());
+        push_instr("IS_ANY_TYPE", {target}, ce.line);
+        break;
+      }
       const bool owned_call = direct_name == "owned" || direct_name == "owned_move" ||
           direct_name == "owned_borrow" || direct_name == "owned_borrow_mut";
       if (owned_call) {
@@ -4861,14 +4963,35 @@ public:
     }
     case ast_node_kind::cast_expr_node: {
       const auto &ce = static_cast<const ast_cast_expr &>(e);
-      if (ce.operand)
-        emit_expr(*ce.operand);
       const std::string target = substitute_nil_type_name(
           ce.inferred_type.value_or(ce.target_type), substitutions);
       const std::string source = ce.operand
           ? substitute_nil_type_name(ce.operand->inferred_type.value_or(""),
                                      substitutions)
           : "";
+      if (canonical_dynamic_type(target) == "anything" || canonical_dynamic_type(source) == "anything") {
+        if (!ce.checked_any_cast || !ce.operand) {
+          cg_.reject_codegen_construct(ce.line, "anything conversion requires a checked source and target",
+              "enable type checking");
+          break;
+        }
+        const auto concrete = canonical_dynamic_type(target == "anything" ? source : target);
+        if (!dynamic_type_syntax_supported(concrete, true)) {
+          cg_.reject_codegen_construct(ce.line, "anything conversion has an unavailable concrete type '" + concrete + "'",
+              "use a non-borrowed concrete value");
+          break;
+        }
+        cg_.materialize_struct_schema(concrete, mod_, ce.line);
+        emit_expr(*ce.operand);
+        if (target == "anything" && source != "anything") {
+          emit_scalar_boundary(source, ce.line);
+          push_instr("BOX_ANY", {canonical_dynamic_type(source)}, ce.line);
+        } else if (source == "anything" && target != "anything")
+          push_instr("UNBOX_ANY", {canonical_dynamic_type(target)}, ce.line);
+        break;
+      }
+      if (ce.operand)
+        emit_expr(*ce.operand);
       // A checked nominal/handle identity cast needs no runtime conversion.
       // In particular, interpreter pointer and array values do not retain
       // enough runtime type metadata to prove such identity in a CAST opcode.
@@ -5194,6 +5317,26 @@ public:
       const std::string concrete_type = struct_construction_type(
           e.inferred_type.value_or(struct_name), contextual_type);
       struct_name = cg_.materialize_struct_schema(concrete_type, mod_, sl.line);
+      const auto require_field = [&](const std::string &name) {
+        const auto expected = struct_field_type(concrete_type, name);
+        if (!expected || !dynamic_default_requires_initializer(*expected)) return false;
+        const bool supplied = std::any_of(sl.fields.begin(), sl.fields.end(),
+            [&](const auto &field) { return field.first == name && field.second; });
+        if (!supplied)
+          cg_.reject_codegen_construct(sl.line, "field '" + name + "' requires an initialized value",
+              "provide a value for every field containing anything");
+        return !supplied;
+      };
+      bool missing_dynamic = false;
+      const auto nominal = parse_generic_type_name(concrete_type);
+      const auto base = nominal ? nominal->base_name : concrete_type;
+      if (const auto *declaration = cg_.lookup_struct_decl(base))
+        for (const auto &field : declaration->fields)
+          missing_dynamic = require_field(field.name) || missing_dynamic;
+      if (const auto *declaration = cg_.lookup_class_decl(base))
+        for (const auto &field : declaration->checked_fields)
+          missing_dynamic = require_field(field.name) || missing_dynamic;
+      if (missing_dynamic) break;
       // Every nominal schema retains its exact punctuation. Sanitizing a
       // module name aliases left::Problem with unrelated left__Problem just
       // as sanitizing a generic aliases Box<i64> with Box_i64_.
@@ -5364,6 +5507,11 @@ public:
     case ast_node_kind::allocate_expr_node: {
       // allocate<T>(size) -> push size, emit ALLOC type_name
       const auto &alloc = static_cast<const ast_allocate_expr &>(e);
+      if (dynamic_default_requires_initializer(alloc.type_name)) {
+        cg_.reject_codegen_construct(alloc.line, "allocation requires initialized anything storage",
+            "construct an array with explicit initial values");
+        break;
+      }
       if (alloc.size) {
         emit_expr(*alloc.size);
       } else {
@@ -6325,6 +6473,11 @@ codegen::assemble_module(const ast_program &program,
           declaration->kind != ast_node_kind::variable_decl_node)
         continue;
       const auto *vd = static_cast<const ast_variable_decl *>(declaration.get());
+      if (!vd->initializer && (vd->rejected_dynamic_initializer ||
+          (vd->type_name && canonical_dynamic_type(*vd->type_name) == "anything"))) {
+        reject_codegen_construct(vd->line, "an anything global requires an initial value",
+            "initialize it or use Option<anything> for absence");
+      }
       if (vd->initializer) {
         // Use a temporary emitter to emit the initializer expression
         const auto &storage = global_storage_names_.at(vd);
@@ -7145,6 +7298,10 @@ codegen::assemble_module(const ast_program &program,
     // types must share the exact schema key: String/text and spacing cannot
     // produce distinct native ABI identities for the same qualified enum.
     function.return_type = canonical_nil_type_name(function.return_type);
+    for (const auto &instruction : function.body)
+      if ((instruction.opname == "BOX_ANY" || instruction.opname == "UNBOX_ANY" ||
+           instruction.opname == "IS_ANY_TYPE") && instruction.args.size() == 1)
+        materialize_enum_signature(instruction.args.front(), 0);
     materialize_struct_schema(function.return_type, *mod, function.source_line,
                               0, false);
     materialize_enum_signature(function.return_type, 0);

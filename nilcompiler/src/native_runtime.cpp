@@ -1,4 +1,5 @@
 #include "native_runtime.hpp"
+#include "dynamic_type.hpp"
 #include "database_runtime.hpp"
 #include "integer_conversion.hpp"
 #include "memory_profile.hpp"
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <charconv>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -69,12 +71,19 @@ struct nyrt_buffer {
   }
 };
 
+struct nyrt_any_box {
+  std::uint64_t payload;
+  std::uint64_t type_length;
+  // The exact descriptor follows this header in the same managed allocation.
+};
+
 struct runtime_context {
   ny::memory_profile::Session profile;
   ny::database::Context databases;
   struct allocation {
     void *data;
     std::size_t size;
+    bool dynamic_box = false;
   };
   struct roots {
     const void *const *slots;
@@ -142,6 +151,7 @@ std::uint64_t stride_for_kind(std::uint32_t kind) noexcept {
   case NYRT_ARRAY_F64:
   case NYRT_ARRAY_TEXT:
   case NYRT_ARRAY_TUPLE:
+  case NYRT_ARRAY_ANYTHING:
     return sizeof(std::int64_t);
   case NYRT_ARRAY_BOOL:
   case NYRT_ARRAY_U8:
@@ -403,7 +413,7 @@ void *allocate_owned(std::uint64_t requested_size,
   if (storage == nullptr)
     return nullptr;
   try {
-    context.allocations.push_back({storage, size});
+    context.allocations.push_back({storage, size, kind == "anything"});
     account_managed_bytes(size);
     context.profile.allocate(storage, size, kind);
   } catch (...) {
@@ -424,6 +434,35 @@ const char *own_string(std::string_view value) noexcept {
     std::memcpy(storage, value.data(), value.size());
   storage[value.size()] = '\0';
   return storage;
+}
+
+std::string checked_dynamic_descriptor(const char *type, std::uint64_t length) {
+  if (!type || !length || length > 1024U * 1024U)
+    nyrt_fail("NIL native runtime error: invalid anything type descriptor\n");
+  std::string descriptor(type, static_cast<std::size_t>(length));
+  if (descriptor.find('\0') != std::string::npos ||
+      ny::canonical_dynamic_type(descriptor) != descriptor ||
+      !ny::dynamic_type_syntax_supported(descriptor))
+    nyrt_fail("NIL native runtime error: invalid anything type descriptor\n");
+  return descriptor;
+}
+
+const nyrt_any_box &checked_dynamic_box(const void *box) noexcept {
+  for (const auto &allocation : context.allocations) {
+    if (allocation.data != box || !allocation.dynamic_box) continue;
+    if (allocation.size < sizeof(nyrt_any_box)) break;
+    const auto &value = *static_cast<const nyrt_any_box *>(box);
+    if (!value.type_length || value.type_length != allocation.size - sizeof(value)) break;
+    return value;
+  }
+  nyrt_fail("NIL native runtime error: invalid, absent, or foreign anything box\n");
+}
+
+void validate_array_value(std::uint32_t kind, std::uint64_t value) noexcept {
+  if (kind == NYRT_ARRAY_BOOL && value > 1)
+    nyrt_fail("NIL native runtime error: boolean requires 0 or 1\n");
+  if (kind == NYRT_ARRAY_ANYTHING)
+    (void)checked_dynamic_box(reinterpret_cast<const void *>(static_cast<std::uintptr_t>(value)));
 }
 
 void set_error(const char **error_out, std::string_view message) noexcept {
@@ -471,6 +510,7 @@ std::uint64_t load_value(const nyrt_array &array,
   case NYRT_ARRAY_F64:
   case NYRT_ARRAY_TEXT:
   case NYRT_ARRAY_TUPLE:
+  case NYRT_ARRAY_ANYTHING:
     return static_cast<const std::uint64_t *>(array.data)[index];
   case NYRT_ARRAY_BOOL:
   case NYRT_ARRAY_U8:
@@ -499,11 +539,13 @@ void store_value(nyrt_array &array, std::uint64_t index,
     break;
   }
   case NYRT_ARRAY_BOOL:
-    static_cast<std::uint8_t *>(array.data)[index] = value == 0 ? 0 : 1;
+    validate_array_value(array.kind, value);
+    static_cast<std::uint8_t *>(array.data)[index] = static_cast<std::uint8_t>(value);
     break;
   case NYRT_ARRAY_F64:
   case NYRT_ARRAY_TEXT:
   case NYRT_ARRAY_TUPLE:
+  case NYRT_ARRAY_ANYTHING:
     // f64 is an IEEE bit pattern; text is a context/static-lifetime address.
     // Neither is an integer conversion, nor does array growth own/free text.
     static_cast<std::uint64_t *>(array.data)[index] = value;
@@ -760,7 +802,93 @@ const char *nyrt_text_f64(double value) noexcept {
 }
 
 const char *nyrt_text_bool(std::int64_t value) noexcept {
-  return value == 0 ? "false" : "true";
+  return nyrt_bool_i64(value) == 0 ? "false" : "true";
+}
+
+std::int64_t nyrt_bool_i64(std::int64_t value) noexcept {
+  if (value != 0 && value != 1)
+    nyrt_fail("NIL native runtime error: boolean requires 0 or 1\n");
+  return value;
+}
+
+std::int64_t nyrt_bool_f64(double value) noexcept {
+  if (value != 0.0 && value != 1.0)
+    nyrt_fail("NIL native runtime error: boolean requires 0 or 1\n");
+  return value == 1.0 ? 1 : 0;
+}
+
+std::int64_t nyrt_bool_text(const char *value) noexcept {
+  if (value) {
+    char normalized[6] = {};
+    std::size_t length = 0;
+    while (length < sizeof(normalized) - 1 && value[length]) {
+      normalized[length] = static_cast<char>(std::tolower(
+          static_cast<unsigned char>(value[length])));
+      ++length;
+    }
+    if (value[length] == '\0') {
+      const std::string_view text(normalized, length);
+      if (text == "true" || text == "yes" || text == "1" || text == "on") return 1;
+      if (text == "false" || text == "no" || text == "0" || text == "off") return 0;
+    }
+  }
+  nyrt_fail("NIL native runtime error: text is not a recognized bool value; expected true/false, yes/no, 1/0, or on/off (case-insensitive, no surrounding whitespace)\n");
+}
+
+void *nyrt_any_v1_box(const char *type, std::uint64_t length,
+                      std::uint64_t payload) noexcept {
+  try {
+    const auto descriptor = checked_dynamic_descriptor(type, length);
+    if (descriptor == "bool") (void)nyrt_bool_i64(static_cast<std::int64_t>(payload));
+    if ((descriptor == "u8" && payload > 255) ||
+        (descriptor == "i32" &&
+         (static_cast<std::int64_t>(payload) < std::numeric_limits<std::int32_t>::min() ||
+          static_cast<std::int64_t>(payload) > std::numeric_limits<std::int32_t>::max())))
+      nyrt_fail("NIL native runtime error: anything scalar payload does not match its declared type\n");
+    const bool scalar = descriptor == "bool" || descriptor == "i32" ||
+        descriptor == "i64" || descriptor == "u8" || descriptor == "f64";
+    if (!scalar && descriptor.rfind("ptr<", 0) != 0 && payload == 0)
+      nyrt_fail("NIL native runtime error: anything requires an initialized value; absent handles cannot be boxed\n");
+    if (descriptor.rfind("fn(", 0) == 0)
+      nyrt_fail("NIL native runtime error: native function values cannot be boxed\n");
+    auto *box = static_cast<nyrt_any_box *>(allocate_owned(sizeof(nyrt_any_box) + length, "anything"));
+    if (!box) nyrt_fail("NIL native runtime error: could not allocate anything box\n");
+    box->payload = payload;
+    box->type_length = length;
+    std::memcpy(box + 1, descriptor.data(), descriptor.size());
+    return box;
+  } catch (...) {
+    nyrt_fail("NIL native runtime error: could not allocate anything descriptor\n");
+  }
+}
+
+std::int32_t nyrt_any_v1_is_type(const void *box, const char *type,
+                                std::uint64_t length) noexcept {
+  try {
+    const auto &value = checked_dynamic_box(box);
+    const auto descriptor = checked_dynamic_descriptor(type, length);
+    return value.type_length == length &&
+           std::memcmp(&value + 1, descriptor.data(), descriptor.size()) == 0;
+  } catch (...) {
+    nyrt_fail("NIL native runtime error: could not inspect anything descriptor\n");
+  }
+}
+
+std::uint64_t nyrt_any_v1_unbox(const void *box, const char *type,
+                                std::uint64_t length) noexcept {
+  if (!nyrt_any_v1_is_type(box, type, length)) {
+    try {
+      const auto &value = checked_dynamic_box(box);
+      const std::string actual(reinterpret_cast<const char *>(&value + 1), value.type_length);
+      const std::string expected(type, length);
+      const auto message = "NIL native runtime error: anything type mismatch: expected '" +
+          expected + "', got '" + actual + "'\n";
+      nyrt_fail(message.c_str());
+    } catch (...) {
+      nyrt_fail("NIL native runtime error: anything type mismatch\n");
+    }
+  }
+  return checked_dynamic_box(box).payload;
 }
 
 [[noreturn]] void nyrt_panic(const char *message) noexcept {
@@ -1006,7 +1134,8 @@ void nyrt_collect() noexcept {
       const auto &item = objects[index];
       if (item.array) {
         if (item.array->kind == NYRT_ARRAY_TEXT ||
-            item.array->kind == NYRT_ARRAY_TUPLE)
+            item.array->kind == NYRT_ARRAY_TUPLE ||
+            item.array->kind == NYRT_ARRAY_ANYTHING)
           scan(item.array->data, item.array->length * item.array->stride);
       } else {
         // Object/enum layouts use aligned word slots. Conservatively retaining
@@ -1166,12 +1295,16 @@ std::int64_t nyrt_regex_group_index(const char *pattern, const char *name) noexc
 void *nyrt_array_new(std::uint32_t kind, std::int64_t length) noexcept {
   if (length < 0)
     return nullptr;
+  if (kind == NYRT_ARRAY_ANYTHING && length > 0)
+    nyrt_fail("NIL native runtime error: nonempty array<anything> requires an initial value\n");
   return make_array(kind, static_cast<std::uint64_t>(length));
 }
 
 void *nyrt_array_new_with_value(std::uint32_t kind, std::int64_t length,
                                 std::uint64_t value) noexcept {
-  auto *array = static_cast<nyrt_array *>(nyrt_array_new(kind, length));
+  validate_array_value(kind, value);
+  if (length < 0) return nullptr;
+  auto *array = make_array(kind, static_cast<std::uint64_t>(length));
   if (array == nullptr)
     return nullptr;
   for (std::uint64_t index = 0; index < array->length; ++index)
@@ -1194,11 +1327,14 @@ std::uint64_t nyrt_array_get(const void *value, std::uint32_t expected_kind,
   const auto *array = checked_array(value, expected_kind);
   if (array == nullptr || index < 0 ||
       static_cast<std::uint64_t>(index) >= array->length) {
+    if (expected_kind == NYRT_ARRAY_ANYTHING)
+      nyrt_fail("NIL native runtime error: anything array read is out of bounds or has an invalid handle\n");
     if (expected_kind == NYRT_ARRAY_TUPLE)
       nyrt_fail("NIL native runtime error: tuple array read is out of bounds or has an invalid handle\n");
     return 0;
   }
   const auto result = load_value(*array, static_cast<std::uint64_t>(index));
+  validate_array_value(expected_kind, result);
   if (expected_kind == NYRT_ARRAY_TUPLE && result == 0)
     nyrt_fail("NIL native runtime error: tuple array read encountered an uninitialized element\n");
   return result;
@@ -1206,6 +1342,7 @@ std::uint64_t nyrt_array_get(const void *value, std::uint32_t expected_kind,
 
 std::int32_t nyrt_array_set(void *value, std::uint32_t expected_kind,
                             std::int64_t index, std::uint64_t item) noexcept {
+  validate_array_value(expected_kind, item);
   auto *array = checked_array(value, expected_kind);
   if (array == nullptr)
     return 0;
@@ -1217,6 +1354,7 @@ std::int32_t nyrt_array_set(void *value, std::uint32_t expected_kind,
 
 std::int32_t nyrt_array_push(void *value, std::uint32_t expected_kind,
                              std::uint64_t item) noexcept {
+  validate_array_value(expected_kind, item);
   auto *array = checked_array(value, expected_kind);
   if (array == nullptr ||
       array->length == std::numeric_limits<std::uint64_t>::max())
@@ -1309,11 +1447,13 @@ std::uint64_t nyrt_buffer_get(const void *value, std::uint32_t expected_kind,
       load_value(view, resolved);
   // Prevent the non-owning view from freeing buffer storage.
   view.data = nullptr;
+  validate_array_value(expected_kind, result);
   return result;
 }
 
 std::int32_t nyrt_buffer_set(void *value, std::uint32_t expected_kind,
                              std::int64_t index, std::uint64_t item) noexcept {
+  validate_array_value(expected_kind, item);
   std::uint64_t current = 0;
   auto *buffer = checked_buffer(value, expected_kind, &current);
   std::uint64_t resolved = 0;

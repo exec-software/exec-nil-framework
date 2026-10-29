@@ -8,6 +8,7 @@
 #include "array_intrinsic.hpp"
 #include "matrix_hag_bridge.hpp"
 #include "nil_contract.hpp"
+#include "dynamic_type.hpp"
 #include "numeric_literal.hpp"
 #include "scalar_text.hpp"
 #include "integer_conversion.hpp"
@@ -235,7 +236,7 @@ Value callNyForeignFunc(const ny::NyForeignFunc &ff, const std::vector<Value> &a
 }
 
 // Helper: convert ArrayValue element (narrow variant without NyForeignFunc) to Value
-using ArrayElem = std::variant<std::string, int64_t, double, StructValue, ArrayValue, EnumValue, ArrayHandle>;
+using ArrayElem = std::variant<std::string, int64_t, double, StructValue, ArrayValue, EnumValue, ArrayHandle, BoxedValue>;
 static inline Value array_elem_to_value(const ArrayElem &e) {
   return std::visit([](auto &&v) -> Value { return v; }, e);
 }
@@ -741,6 +742,7 @@ void VM::resetRuntimeState(const std::string &root_function) {
   stack_.clear();
   globals_.clear();
   gc_marked_structs_.clear();
+  gc_marked_boxes_.clear();
   heap_.clear();
   next_ptr_ = 0x400000000LL;
   alloc_count_ = 0;
@@ -939,6 +941,8 @@ void VM::executeInstruction(const Instruction &instr) {
            std::holds_alternative<ArrayValue>(value);
   };
   const auto array_default_value = [](const HeapBlock &block) -> Value {
+    if (block.element_type == "anything")
+      throw std::runtime_error("anything array read is out of bounds or uninitialized");
     if (is_array_tuple_type(block.element_type))
       throw std::runtime_error("tuple array read is out of bounds or has an invalid handle");
     // Match intrinsic metadata normalization for supported scalar types.
@@ -1005,11 +1009,31 @@ void VM::executeInstruction(const Instruction &instr) {
                                          const std::string &type,
                                          const std::string &operation,
                                          unsigned depth) -> void {
-    const auto expected = canonical_array_type(type);
+    const auto expected = canonical_dynamic_type(type);
     const auto reject = [&]() {
-      throw std::runtime_error(operation + ": expected a fully initialized tuple element of exact type '" + type + "'");
+      throw std::runtime_error(operation + ": expected a fully initialized value of exact type '" + type + "'");
     };
-    if (depth >= 64 || !class_metadata_) reject();
+    if (depth >= 64) reject();
+    if (expected == "anything") {
+      const auto *boxed = std::get_if<BoxedValue>(&value);
+      if (!boxed || !boxed->box || !class_metadata_) reject();
+      validate_nil_dynamic_type(*class_metadata_, boxed->box->type_name);
+      self(self, boxed->box->value, boxed->box->type_name, operation, depth + 1);
+      return;
+    }
+    if (expected.rfind("fn(", 0) == 0) {
+      const auto *name = std::get_if<std::string>(&value);
+      const auto function = name ? functions_.find(*name) : functions_.end();
+      if (function == functions_.end()) reject();
+      std::string actual = "fn(";
+      for (const auto &parameter : function->second.parameter_types) {
+        if (actual.size() != 3) actual += ',';
+        actual += canonical_dynamic_type(parameter);
+      }
+      actual += ")->" + canonical_dynamic_type(function->second.return_type);
+      if (actual != canonical_dynamic_type(type)) reject();
+      return;
+    }
     if (expected == "text") {
       if (!std::holds_alternative<std::string>(value)) reject();
       return;
@@ -1032,6 +1056,10 @@ void VM::executeInstruction(const Instruction &instr) {
       const auto location = findHeapPointer(*pointer, true);
       const auto element = expected.substr(4, expected.size() - 5);
       if (!location || canonical_array_type(location->block->type_name) != element) reject();
+      for (const auto &scope : owned_scopes_)
+        for (const auto &slot : scope.slots)
+          if (slot.second == location->base)
+            throw std::runtime_error(operation + ": affine owned pointers cannot escape through anything");
       return;
     }
     if (expected.rfind("array<", 0) == 0) {
@@ -1042,6 +1070,7 @@ void VM::executeInstruction(const Instruction &instr) {
           "array<" + canonical_array_type(found->second.element_type) + ">" != expected) reject();
       return;
     }
+    if (!class_metadata_) reject();
     if (const auto *enumeration = resolve_storage_schema(class_metadata_->enums, expected)) {
       const auto *item = std::get_if<EnumValue>(&value);
       if (!item) reject();
@@ -1102,7 +1131,8 @@ void VM::executeInstruction(const Instruction &instr) {
     if (!validated_storage_objects.insert(object->data.get()).second) return;
     const auto &data = *object->data;
     if (data.fields.size() + data.array_fields.size() + data.string_fields.size() +
-        data.double_fields.size() + data.struct_fields.size() + data.enum_fields.size() != schema->fields.size()) reject();
+        data.double_fields.size() + data.struct_fields.size() + data.enum_fields.size() +
+        data.anything_fields.size() != schema->fields.size()) reject();
     for (const auto &[field, field_type] : schema->fields) {
       std::optional<Value> stored;
       const auto take = [&](const auto &fields) {
@@ -1116,7 +1146,7 @@ void VM::executeInstruction(const Instruction &instr) {
         }
       };
       take(data.fields); take(data.array_fields); take(data.string_fields);
-      take(data.double_fields); take(data.struct_fields); take(data.enum_fields);
+      take(data.double_fields); take(data.struct_fields); take(data.enum_fields); take(data.anything_fields);
       if (!stored) reject();
       self(self, *stored, field_type, operation, depth + 1);
     }
@@ -1124,7 +1154,7 @@ void VM::executeInstruction(const Instruction &instr) {
   const auto canonical_pointer_value =
       [&](const HeapBlock &block, const Value &value,
          const std::string &operation) -> Value {
-    if (block.type_name == "array" && is_array_tuple_type(block.element_type)) {
+    if (block.type_name == "array" && (is_array_tuple_type(block.element_type) || block.element_type == "anything")) {
       validate_tuple_value(validate_tuple_value, value, block.element_type, operation, 0);
       return value;
     }
@@ -1150,8 +1180,11 @@ void VM::executeInstruction(const Instruction &instr) {
       throw std::runtime_error(operation + ": expected an integer value");
     if (storage_type == "bytes" || storage_type == "u8")
       return static_cast<int64_t>(static_cast<std::uint8_t>(*integer));
-    if (storage_type == "bool")
-      return int64_t(*integer != 0 ? 1 : 0);
+    if (storage_type == "bool") {
+      if (*integer != 0 && *integer != 1)
+        throw std::runtime_error(operation + ": boolean values must be exactly 0 or 1");
+      return *integer;
+    }
     if (storage_type == "i32") {
       const std::uint64_t low_word =
           static_cast<std::uint64_t>(*integer) & 0xffff'ffffULL;
@@ -1165,6 +1198,10 @@ void VM::executeInstruction(const Instruction &instr) {
     if (instr.args.size() != 2)
       return;
     const auto &type = instr.args[1];
+    if (type == "anything") {
+      validate_tuple_value(validate_tuple_value, value, type, "global storage", 0);
+      return;
+    }
     const auto *integer = std::get_if<int64_t>(&value);
     bool valid = type == "text" ? std::holds_alternative<std::string>(value)
                  : type == "f64" ? std::holds_alternative<double>(value)
@@ -1225,6 +1262,35 @@ void VM::executeInstruction(const Instruction &instr) {
     auto value = popStack();
     validate_global_value(value);
     globals_[instr.args[0]] = std::move(value);
+    break;
+  }
+  case Opcode::BOX_ANY: {
+    if (instr.args.size() != 1 || !class_metadata_)
+      throw std::runtime_error("BOX_ANY requires exact module type metadata");
+    validate_nil_dynamic_type(*class_metadata_, instr.args[0]);
+    const auto value = popStack();
+    validate_tuple_value(validate_tuple_value, value, instr.args[0], "BOX_ANY", 0);
+    pushStack(BoxedValue{std::make_shared<const DynamicBox>(instr.args[0], value)});
+    break;
+  }
+  case Opcode::UNBOX_ANY:
+  case Opcode::IS_ANY_TYPE: {
+    if (instr.args.size() != 1 || !class_metadata_)
+      throw std::runtime_error("dynamic extraction requires exact module type metadata");
+    validate_nil_dynamic_type(*class_metadata_, instr.args[0]);
+    const auto value = popStack();
+    const auto *boxed = std::get_if<BoxedValue>(&value);
+    if (!boxed || !boxed->box)
+      throw std::runtime_error("dynamic operation requires an initialized anything value");
+    validate_tuple_value(validate_tuple_value, value, "anything", "dynamic operation", 0);
+    const bool matches = boxed->box->type_name == instr.args[0];
+    if (instr.op == Opcode::IS_ANY_TYPE) pushStack(int64_t(matches));
+    else {
+      if (!matches)
+        throw std::runtime_error("anything contains '" + boxed->box->type_name +
+                                 "', cannot extract '" + instr.args[0] + "'");
+      pushStack(boxed->box->value);
+    }
     break;
   }
   case Opcode::CLASS_UPCAST: {
@@ -2321,8 +2387,9 @@ void VM::executeInstruction(const Instruction &instr) {
       const bool in_bounds = index >= 0 &&
           static_cast<std::uint64_t>(index) < block.data.size();
       if (contract.operation == array_intrinsic_operation::get) {
-        pushStack(in_bounds ? block.data[static_cast<std::size_t>(index)]
-                            : array_default_value(block));
+        const auto value = in_bounds ? block.data[static_cast<std::size_t>(index)]
+                                     : array_default_value(block);
+        pushStack(contract.element == "anything" ? canonical_pointer_value(block, value, fn_name) : value);
       } else {
         const auto value = canonical_pointer_value(block, args[2], fn_name);
         if (in_bounds)
@@ -5415,7 +5482,14 @@ void VM::executeInstruction(const Instruction &instr) {
     Value sv = popStack();
     if (std::holds_alternative<StructValue>(sv)) {
       auto &s = std::get<StructValue>(sv);
-      (void)classFieldType(s, field_name);
+      const auto field_type = classFieldType(s, field_name);
+      if (field_type == "anything") {
+        const auto boxed = s.anything_fields().find(field_name);
+        if (boxed == s.anything_fields().end() || !boxed->second.box)
+          throw std::runtime_error("GET_FIELD: anything field is uninitialized");
+        pushStack(boxed->second);
+        break;
+      }
       if (const auto array = s.array_fields().find(field_name);
           array != s.array_fields().end()) {
         pushStack(array->second);
@@ -5486,6 +5560,14 @@ void VM::executeInstruction(const Instruction &instr) {
       auto &s = std::get<StructValue>(sv_ref);
       const auto field_type = classFieldType(s, field_name);
       if (!field_type.empty()) validateClassValue(val, field_type);
+      if (field_type == "anything")
+        validate_tuple_value(validate_tuple_value, val, field_type, "SET_FIELD", 0);
+      if (std::holds_alternative<BoxedValue>(val) && field_type != "anything")
+        throw std::runtime_error("SET_FIELD: boxed value requires an anything field");
+      if (field_type == "anything") {
+        s.anything_fields()[field_name] = std::get<BoxedValue>(val);
+        break;
+      }
       if (!std::holds_alternative<ArrayHandle>(val))
         s.array_fields().erase(field_name);
 
@@ -5539,6 +5621,16 @@ void VM::executeInstruction(const Instruction &instr) {
           Value &slot = block.data[index];
           if (std::holds_alternative<StructValue>(slot)) {
             auto &s = std::get<StructValue>(slot);
+            const auto field_type = classFieldType(s, field_name);
+            if (!field_type.empty()) validateClassValue(val, field_type);
+            if (field_type == "anything") {
+              validate_tuple_value(validate_tuple_value, val, field_type, "SET_FIELD_PTR", 0);
+              s.anything_fields()[field_name] = std::get<BoxedValue>(val);
+              found = true;
+              break;
+            }
+            if (std::holds_alternative<BoxedValue>(val))
+              throw std::runtime_error("SET_FIELD_PTR: boxed value requires an anything field");
             if (!std::holds_alternative<ArrayHandle>(val))
               s.array_fields().erase(field_name);
             if (const auto *array = std::get_if<ArrayHandle>(&val)) {
@@ -5730,7 +5822,9 @@ void VM::executeInstruction(const Instruction &instr) {
       if (array && exact != heap_.end() && exact->second.type_name == "array") {
         if (idx >= 0 &&
             static_cast<std::size_t>(idx) < exact->second.data.size())
-          value = exact->second.data[static_cast<std::size_t>(idx)];
+          value = exact->second.element_type == "anything"
+              ? canonical_pointer_value(exact->second, exact->second.data[static_cast<std::size_t>(idx)], "GET_INDEX")
+              : exact->second.data[static_cast<std::size_t>(idx)];
         else
           value = array_default_value(exact->second);
       } else if (const auto current = findHeapPointer(ptr, true)) {
@@ -5842,6 +5936,9 @@ void VM::executeInstruction(const Instruction &instr) {
         payloads.push_back(std::get<double>(v));
       } else if (std::holds_alternative<StructValue>(v)) {
         payloads.push_back(std::get<StructValue>(v));
+      } else if (const auto *boxed = std::get_if<BoxedValue>(&v)) {
+        validate_tuple_value(validate_tuple_value, v, "anything", "NEW_VARIANT", 0);
+        payloads.push_back(*boxed);
       } else if (std::holds_alternative<EnumValue>(v)) {
         payloads.push_back(
             std::make_shared<EnumValue>(std::get<EnumValue>(v)));
@@ -5893,6 +5990,9 @@ void VM::executeInstruction(const Instruction &instr) {
           pushStack(std::get<double>(p));
         } else if (std::holds_alternative<StructValue>(p)) {
           pushStack(std::get<StructValue>(p));
+        } else if (const auto *boxed = std::get_if<BoxedValue>(&p)) {
+          if (!boxed->box) throw std::runtime_error("UNWRAP_VARIANT: anything payload is uninitialized");
+          pushStack(*boxed);
         } else if (std::holds_alternative<std::shared_ptr<EnumValue>>(p)) {
           const auto &nested = std::get<std::shared_ptr<EnumValue>>(p);
           if (!nested)
@@ -5938,6 +6038,8 @@ void VM::executeInstruction(const Instruction &instr) {
     if (const auto *integer = std::get_if<int64_t>(&a);
         integer && (type.empty() || type == "bool" || type == "i32" ||
                     type == "i64" || type == "u8")) {
+      if (type == "bool" && *integer != 0 && *integer != 1)
+        throw std::runtime_error("TO_STRING: boolean values must be exactly 0 or 1");
       pushStack(type == "bool" ? std::string(*integer ? "true" : "false")
                                : scalar_text(*integer));
     } else if (const auto *floating = std::get_if<double>(&a);
@@ -6047,13 +6149,19 @@ void VM::executeInstruction(const Instruction &instr) {
     // Bool cast - bools are represented as int64_t (0 or 1)
     else if (target_type == "bool") {
       if (std::holds_alternative<int64_t>(v)) {
-        pushStack(std::get<int64_t>(v) != 0 ? (int64_t)1 : (int64_t)0);
+        const auto integer = std::get<int64_t>(v);
+        if (integer != 0 && integer != 1)
+          throw std::runtime_error("CAST: boolean values must be exactly 0 or 1");
+        pushStack(integer);
       } else if (std::holds_alternative<double>(v)) {
-        pushStack(std::get<double>(v) != 0.0 ? (int64_t)1 : (int64_t)0);
+        const auto number = std::get<double>(v);
+        if (number != 0.0 && number != 1.0)
+          throw std::runtime_error("CAST: boolean values must be exactly 0 or 1");
+        pushStack(int64_t(number));
       } else if (std::holds_alternative<std::string>(v)) {
         const auto parsed = parse_bool_text(std::get<std::string>(v));
         if (!parsed)
-          throw std::runtime_error("CAST: text is not a recognized bool value");
+          throw std::runtime_error("CAST: text is not a recognized bool value; expected true/false, yes/no, 1/0, or on/off (case-insensitive, no surrounding whitespace)");
         pushStack(static_cast<int64_t>(*parsed));
       } else {
         throw std::runtime_error("CAST: value cannot be converted to 'bool'");
@@ -6416,6 +6524,19 @@ void VM::returnFromCall() {
 }
 
 void VM::validateClassValue(const Value &value, const std::string &expected) const {
+  if (expected == "anything") {
+    const auto *boxed = std::get_if<BoxedValue>(&value);
+    if (!boxed || !boxed->box)
+      throw std::runtime_error("anything storage requires an initialized boxed value");
+    return;
+  }
+  if (std::holds_alternative<BoxedValue>(value))
+    throw std::runtime_error("anything must be explicitly extracted before typed use");
+  if (expected == "bool") {
+    const auto *integer = std::get_if<int64_t>(&value);
+    if (!integer || (*integer != 0 && *integer != 1))
+      throw std::runtime_error("boolean values must be exactly 0 or 1");
+  }
   if (!class_metadata_) return;
   auto nominal = expected;
   if (nominal.rfind("ref<", 0) == 0 && nominal.back() == '>') nominal = nominal.substr(4, nominal.size() - 5);
@@ -6612,6 +6733,7 @@ void VM::gcCollect() {
     block.marked = false;
   }
   gc_marked_structs_.clear();
+  gc_marked_boxes_.clear();
 
   // Mark phase: mark all reachable objects from roots
   gcMarkRoots();
@@ -6664,7 +6786,10 @@ void VM::gcMarkRoots() {
 }
 
 void VM::gcMarkValue(const Value &val) {
-  if (std::holds_alternative<int64_t>(val) || std::holds_alternative<ArrayHandle>(val)) {
+  if (const auto *boxed = std::get_if<BoxedValue>(&val)) {
+    if (boxed->box && gc_marked_boxes_.insert(boxed->box.get()).second)
+      gcMarkValue(boxed->box->value);
+  } else if (std::holds_alternative<int64_t>(val) || std::holds_alternative<ArrayHandle>(val)) {
     const auto *array = std::get_if<ArrayHandle>(&val);
     int64_t ptr = array ? array->address : std::get<int64_t>(val);
     auto it = heap_.find(ptr);
@@ -6702,6 +6827,10 @@ void VM::gcMarkValue(const Value &val) {
       (void)name;
       if (field_value)
         gcMarkValue(*field_value);
+    }
+    for (const auto &[name, field_value] : sv.anything_fields()) {
+      (void)name;
+      gcMarkValue(field_value);
     }
     for (const auto &[name, field_value] : sv.enum_fields()) {
       (void)name;

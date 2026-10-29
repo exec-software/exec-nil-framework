@@ -169,7 +169,7 @@ private:
     static std::string format_enum(const EnumValue& ev);
     static std::string format_element(
         const std::variant<std::string,int64_t,double,
-                           StructValue,ArrayValue,EnumValue,ArrayHandle>& el);
+                           StructValue,ArrayValue,EnumValue,ArrayHandle,BoxedValue>& el);
 
     std::optional<Value> resolve_expression_value(
         const std::string& expr) const;

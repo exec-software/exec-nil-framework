@@ -30,7 +30,7 @@ main returns number begin paragraph
     !!! "converted to" is a cast. "as" is a type annotation. Ny spells both
     !!! "as", which hides whether a value changed representation.
     value widened  as number    is count becomes number
-    value truthy   as boolean is count becomes boolean
+    value truthy   as boolean is 1 becomes boolean
 
     !!! Word operators, conventional precedence: times/over/remainder bind
     !!! tighter than plus/minus. Parentheses group.

@@ -54,6 +54,17 @@ test("grammar compiles and scopes canonical declarations", async () => {
   assert.ok(scopesForFragment(grammar, "type UserId = i64", "UserId").includes("entity.name.type.ny"));
 });
 
+test("Ny Boolean aliases and dynamic types preserve binding names", async () => {
+  const grammar = await loadNyGrammar();
+  assert.ok(grammar);
+  for (const type of ["boolean", "bool", "flag", "anything"])
+    assert.ok(scopesForFragment(grammar, `let enabled: ${type} = yes`, type).includes("storage.type.builtin.ny"));
+  for (const literal of ["true", "false", "yes", "no"])
+    assert.ok(scopesForFragment(grammar, `@tag(enabled=${literal})`, literal).includes("constant.language.boolean.ny"));
+  assert.ok(scopesForFragment(grammar, "let flag: boolean = yes", "flag").includes("variable.other.readwrite.ny"));
+  assert.equal(scopesForFragment(grammar, "let yes_value = 1", "yes_value").includes("constant.language.boolean.ny"), false);
+});
+
 test("Ny short and long mutability/reference aliases retain keyword and binding scopes", async () => {
   const grammar = await loadNyGrammar();
   assert.ok(grammar);

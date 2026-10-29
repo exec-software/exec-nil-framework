@@ -38,6 +38,23 @@ def symbols(items: dict) -> dict:
 
 
 class MatrixProtocol(unittest.TestCase):
+    def test_boolean_vocabulary_and_literal_inference(self) -> None:
+        for source, expected in (
+            ('value flag as |', {'boolean', 'flag', 'anything'}),
+            ('value flag is |', {'yes', 'no', 'true', 'false'}),
+            ('note custom with enabled being |', {'yes', 'no'}),
+        ):
+            result, _ = completion('main begin paragraph\n' + source + '\nend paragraph\n')
+            self.assertTrue(expected <= set(result), result)
+        for literal in ('yes', 'no', 'YES', 'NO'):
+            result, _ = completion('boolean begin extension\n as-text returns text begin paragraph\n'
+                                   ' give "flag"\nend paragraph\nend extension\n'
+                                   'main begin paragraph\n value enabled is ' + literal +
+                                   '\n say enabled.|\nend paragraph\n')
+            self.assertEqual(set(result), {'as-text'})
+        result, _ = completion('main begin paragraph\n consider yes\n when YES then\n |\nend consider\nend paragraph\n')
+        self.assertNotIn('YES', symbols(result))
+
     def test_switch_cases_and_nested_value_forms_keep_lexical_scopes(self) -> None:
         source = '''main receives mode as number begin paragraph
  value answer is identity with input being (switch mode
