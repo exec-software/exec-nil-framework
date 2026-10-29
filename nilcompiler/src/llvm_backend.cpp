@@ -1,5 +1,6 @@
 #include "llvm_backend.hpp"
 #include "array_intrinsic.hpp"
+#include "binding_reference.hpp"
 #include "codegen.hpp"
 #include "concurrency_contract.hpp"
 #include "owned_contract.hpp"
@@ -5173,7 +5174,17 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         const std::uint64_t allocation_size =
             std::max<std::uint64_t>(1, type_size.getFixedValue());
         llvm::Value *pointer = nullptr;
-        if (impl_->memory_mode == MemoryMode::SAFE_GC) {
+        if (binding_cell_value_type(definition->name)) {
+          // The shared NIL provenance validator proves that binding cells
+          // stay within the active call chain and are constructed once in
+          // the invocation prologue. Stack storage therefore has the exact
+          // lifetime required by both memory modes, with no hidden manual-
+          // mode allocation for the user to release.
+          auto &entry = impl_->current_function->getEntryBlock();
+          llvm::IRBuilder<> storage(&entry, entry.begin());
+          pointer = storage.CreateAlloca(layout_it->second.llvm_type, nullptr,
+                                         "nil.binding.cell");
+        } else if (impl_->memory_mode == MemoryMode::SAFE_GC) {
           auto *runtime_type =
               llvm::FunctionType::get(llvm::PointerType::getUnqual(ctx),
                                       {llvm::Type::getInt64Ty(ctx)}, false);

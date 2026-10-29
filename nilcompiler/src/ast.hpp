@@ -351,6 +351,9 @@ struct ast_expr : public ast_node {
   // primitive stack reference. Only successful semantic checking grants this
   // proof, and any semantic error invalidates it before diagnostic continuation.
   bool checked_reference_handle = false;
+  // A direct argument borrowing a mutable caller binding. This proof is
+  // separate from an ordinary ref<T> aggregate handle and cannot escape a call.
+  bool checked_binding_reference = false;
   // Affine ownership proof. This is erased when any semantic check fails.
   bool checked_ownership = false;
   std::optional<callable_parameter_contract> checked_callable_parameters;
@@ -426,6 +429,8 @@ struct ast_param {
   bool is_mut =
       false; // optional mut marker for variable params (e.g., for mut x)
   bool is_variadic = false; // true for rest/varargs params (e.g., ..args: T)
+  bool is_ref = false; // aliases the caller's binding for this synchronous call
+  bool checked_binding_reference = false;
   int line = 0;
   std::optional<std::shared_ptr<ast_expr>> default_value; // default parameter expression
 

@@ -111,7 +111,7 @@
     "declarations": {
       "patterns": [
         {
-          "match": "((?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[rR][eE][cC][eE][iI][vV][eE][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+((?:(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][oO][rR][eE]|[vV][aA][rR][iI][aA][bB][lL][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+)*)((?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))(?=[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))",
+          "match": "((?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[rR][eE][cC][eE][iI][vV][eE][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+((?:(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][oO][rR][eE]|[mM][uU][tT][aA][bB][lL][eE]|[rR][eE][fF][eE][rR][eE][nN][cC][eE]|[vV][aA][rR][iI][aA][bB][lL][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+)*)((?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))(?=[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))",
           "captures": {
             "1": {
               "name": "keyword.other.modifier.matrix"
@@ -125,10 +125,39 @@
                   "include": "#keywords"
                 },
                 {
-                  "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[vV][aA][rR][iI][aA][bB][lL][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+                  "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[vV][aA][rR][iI][aA][bB][lL][eE]|[rR][eE][fF][eE][rR][eE][nN][cC][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
                   "name": "storage.modifier.matrix"
                 }
               ]
+            }
+          }
+        },
+        {
+          "match": "((?:,|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][nN][dD])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+)((?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][oO][rR][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+)?(?:(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][uU][tT][aA][bB][lL][eE]|[rR][eE][fF][eE][rR][eE][nN][cC][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[vV][aA][rR][iI][aA][bB][lL][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+)((?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))(?=[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))",
+          "captures": {
+            "1": {
+              "patterns": [
+                {
+                  "include": "#keywords"
+                },
+                {
+                  "include": "#punctuation"
+                }
+              ]
+            },
+            "2": {
+              "patterns": [
+                {
+                  "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][uU][tT][aA][bB][lL][eE]|[rR][eE][fF][eE][rR][eE][nN][cC][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])|(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[vV][aA][rR][iI][aA][bB][lL][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+                  "name": "storage.modifier.matrix"
+                },
+                {
+                  "include": "#keywords"
+                }
+              ]
+            },
+            "3": {
+              "name": "variable.parameter.matrix"
             }
           }
         },
@@ -286,6 +315,17 @@
     },
     "parameters-and-arguments": {
       "patterns": [
+        {
+          "match": "((?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][uU][tT][aA][bB][lL][eE]|[rR][eE][fF][eE][rR][eE][nN][cC][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))[ \\t]+((?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))(?=[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))",
+          "captures": {
+            "1": {
+              "name": "storage.modifier.matrix"
+            },
+            "2": {
+              "name": "variable.parameter.matrix"
+            }
+          }
+        },
         {
           "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:`[^`\\n]+`|[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)(?=[ \\t]+(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[aA][sS])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`]))",
           "name": "variable.parameter.matrix"

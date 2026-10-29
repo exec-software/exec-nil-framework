@@ -77,6 +77,15 @@ def completion(source: str, marker: str = "|", *, extra: list[dict] | None = Non
 
 
 class SemanticProtocol(unittest.TestCase):
+    def test_reference_parameter_name_and_definition(self) -> None:
+        source = 'fn update(ref amount: i64) -> i64\n amount = amount + 1\n return amo|unt\nend fn\n'
+        result, notes = completion(source)
+        self.assertEqual(set(result), {'amount'})
+        self.assertEqual(result['amount']['detail'], 'ref amount: i64')
+        replies, _ = session([opened(source.replace('|', '')), query('definition', source, '|')])
+        self.assertEqual(replies[2][0]['range']['start'], {'line': 0, 'character': 14})
+        self.assertEqual(notes[0]['params']['diagnostics'], [])
+
     def test_formatted_text_holes_and_nested_literals(self) -> None:
         prefix = 'fn main()\n let height: f64 = -1.6\n'
         for value in ('$"height: {hei|ght}"', '$"{height|}"',

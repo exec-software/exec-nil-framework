@@ -231,6 +231,10 @@ private:
   bool check_reference_handle(ast_expr &reference, ast_expr &operand,
                               const type_info &operand_type);
   std::vector<ast_expr *> checked_reference_handles_;
+  std::vector<ast_expr *> checked_binding_references_;
+  std::vector<ast_param *> checked_reference_parameters_;
+  bool check_binding_reference_argument(ast_ref_expr &argument,
+                                        const type_info &expected);
   std::vector<ast_call_expr *> checked_parallel_calls_;
   bool check_runtime_primitive(ast_call_expr &call);
 
@@ -263,6 +267,7 @@ private:
       active_impl_generic_bounds_;
   bool in_loop_ = false;
   bool checking_class_call_ = false;
+  const ast_expr *direct_call_callee_ = nullptr;
   std::vector<ast_attempt_stmt *> checked_attempts_;
   std::vector<ast_fault_handler *> checked_fault_handlers_;
   std::vector<ast_raise_stmt *> checked_raises_;

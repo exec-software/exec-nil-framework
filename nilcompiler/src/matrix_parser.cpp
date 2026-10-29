@@ -821,8 +821,10 @@ parser::parse_parameters(std::vector<std::string> &names) {
     const int line = peek().line;
     bool variadic = false;
     if (match(kw::more)) variadic = true;
-    // 'variable x as T' makes the callee's own binding mutable.
-    const bool mutable_binding = match(kw::variable);
+    // Mutable/variable change the callee's own binding; reference borrows the
+    // caller's binding and requires an explicit reference argument at the call.
+    const bool reference_binding = match(kw::reference);
+    const bool mutable_binding = reference_binding || match(kw::mutable_) || match(kw::variable);
 
     if (!peek().is_name()) {
       error(peek(), "expected a parameter name, found '" + peek().lexeme + "'",
@@ -854,13 +856,20 @@ parser::parse_parameters(std::vector<std::string> &names) {
     params.emplace_back(name, type, mutable_binding, line, default_value,
                         variadic);
     params.back().name_span = name_span(name_token);
+    params.back().is_ref = reference_binding;
     names.push_back(name);
 
     if (variadic) break; // a variadic tail is final
     if (match(matrix::token_kind::comma)) continue;
     // 'and' separates parameter declarations only, where '<name> as <type>'
     // keeps it unambiguous.
-    if (check(kw::and_) && peek(2).is(kw::as)) { advance(); continue; }
+    if (check(kw::and_)) {
+      std::size_t next = 1;
+      if (peek(next).is(kw::more)) ++next;
+      if (peek(next).is(kw::mutable_) || peek(next).is(kw::variable) ||
+          peek(next).is(kw::reference)) ++next;
+      if (peek(next).is_name() && peek(next + 1).is(kw::as)) { advance(); continue; }
+    }
     break;
   }
   return params;

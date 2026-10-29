@@ -264,6 +264,67 @@ end paragraph
         result, _ = completion("main begin paragraph\n consider 42\n when observed then\n say obs|\n end consider\nend paragraph")
         self.assertEqual(set(result), {"observed"})
 
+    def test_mutable_and_variadic_parameters_keep_names_types_and_locations(self) -> None:
+        source = """sample receives mutable current-value as number and variable old-value as text and
+ more mutable remaining-values as number
+ returns number begin paragraph
+ say |
+ give current-value
+end paragraph
+"""
+        result, notes = completion(source)
+        self.assertEqual(set(symbols(result)), {"sample", "current-value", "old-value", "remaining-values"})
+        self.assertEqual(result["current-value"]["detail"], "mutable current-value as number")
+        self.assertEqual(result["old-value"]["detail"], "variable old-value as text")
+        self.assertEqual(result["remaining-values"]["detail"], "more mutable remaining-values as number")
+        self.assertEqual(notes[0]["params"]["diagnostics"], [])
+        located = source.replace("say |", "say current-v|alue")
+        replies, _ = protocol.session([opened(located.replace("|", "")), request("definition", located),
+                                       request("hover", located, identifier=3)])
+        self.assertEqual(replies[2][0]["range"]["start"], {"line": 0, "character": 24})
+        self.assertIn("mutable current-value as number", replies[3]["contents"]["value"])
+        for modifiers in ("mutable", "variable", "more mutable", "more variable"):
+            with self.subTest(modifiers=modifiers):
+                result, _ = completion(f"sample receives\n {modifiers} input-value as number begin paragraph\n say input-|\nend paragraph\n")
+                self.assertEqual(set(result), {"input-value"})
+                self.assertEqual(result["input-value"]["detail"], f"{modifiers} input-value as number")
+                result, _ = completion(f"main begin paragraph\n value operation is anonymous receives {modifiers} input-value as number returns number begin paragraph\n  say input-|\n  give 0\n end paragraph\nend paragraph\n")
+                self.assertEqual(set(result), {"input-value"})
+
+    def test_parameter_modifier_keyword_completion(self) -> None:
+        for source, expected in (
+            ("sample receives |", {"mutable", "variable", "reference", "more"}),
+            ("sample receives more mu|", {"mutable"}),
+            ("sample receives first as number and mu|", {"mutable"}),
+            ("sample receives first as number,\n mu|", {"mutable"}),
+            ("sample receives first as number,\n more mu|", {"mutable"}),
+            ("sample receives mutable |", set()),
+            ("sample receives reference |", set()),
+            ("sample receives value-name as reference |", {"to"}),
+            ("main begin paragraph\n evaluate sample with reference |", {"to"}),
+            ("main begin paragraph\n say sample with more mu|", set()),
+        ):
+            with self.subTest(source=source):
+                result, _ = completion(source)
+                keywords = {name for name, item in result.items() if item.get("detail") == "Matrix language"}
+                self.assertEqual(keywords, expected)
+
+    def test_reference_parameters_preserve_referent_type_and_definition(self) -> None:
+        source = """update receives first-value as number and reference current-value as number
+ returns number begin paragraph
+ set current-value to current-value plus first-value
+ give current-v|alue
+end paragraph
+"""
+        result, notes = completion(source)
+        self.assertEqual(set(result), {"current-value"})
+        self.assertEqual(result["current-value"]["detail"], "reference current-value as number")
+        self.assertEqual(notes[0]["params"]["diagnostics"], [])
+        replies, _ = protocol.session([opened(source.replace("|", "")), request("definition", source)])
+        self.assertEqual(replies[2][0]["range"]["start"], {"line": 0, "character": source.index("current-value")})
+        result, _ = completion(source.replace("first-value as number and reference", "\n reference"))
+        self.assertEqual(set(result), {"current-value"})
+
     def test_non_capturing_paragraph_and_escaped_names_with_spaces(self) -> None:
         source = """value global-count is 1
 main receives outer-param as number begin paragraph

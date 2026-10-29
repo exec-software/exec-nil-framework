@@ -172,6 +172,14 @@ class Indexer {
         while (begin < tokens.size() && tokens[begin].word == "\n" && tokens[begin].text == "\n") ++begin;
         return begin;
     }
+    std::size_t parameter_name(std::size_t begin) const {
+        begin = significant(begin);
+        if (begin < tokens.size() && tokens[begin].word == "more") begin = significant(begin + 1);
+        if (begin < tokens.size() && (tokens[begin].word == "mutable" || tokens[begin].word == "variable" ||
+                                      tokens[begin].word == "reference"))
+            begin = significant(begin + 1);
+        return begin;
+    }
     std::size_t header_end(std::size_t begin) const {
         for (auto i = begin; i < tokens.size(); ++i) {
             if (tokens[i].word == "end" || tokens[i].word == "otherwise") return i;
@@ -179,7 +187,7 @@ class Indexer {
             if (tokens[i].text != "\n") return i;
             const auto next = significant(i);
             if (next == tokens.size()) return i;
-            const auto following = significant(next + 1);
+            const auto following = significant(parameter_name(next) + 1);
             const auto previous = i > begin ? tokens[i - 1].word : "";
             if (declaration_clause(tokens[next].word) || tokens[next].word == "meeting" ||
                 previous == "," || previous == "and" || previous == "as" ||
@@ -216,24 +224,26 @@ class Indexer {
         while (begin < end) {
             if (tokens[begin].word == "on" || tokens[begin].word == "without") break;
             if (tokens[begin].word == "," || tokens[begin].word == "and" || tokens[begin].word == "\n") { ++begin; continue; }
+            const auto declaration_begin = begin;
             const bool variadic = tokens[begin].word == "more";
-            if (variadic || tokens[begin].word == "variable") ++begin;
+            begin = parameter_name(begin);
             if (begin >= end) break;
             const auto name = begin++;
             if (begin >= end || tokens[begin].word != "as") break;
             const auto type_begin = ++begin;
             while (begin < end) {
                 const auto& word = tokens[begin].word;
-                auto next = significant(begin + 1);
-                if (next < end && tokens[next].word == "variable") next = significant(next + 1);
+                const auto next = parameter_name(begin + 1);
                 const auto after = significant(next + 1);
                 if (word == "on" || word == "without" || word == "defaulting" ||
                     ((word == "," || word == "and") && next < end && after < end && tokens[after].word == "as")) break;
                 ++begin;
             }
+            auto type_end = begin;
+            while (type_end > type_begin && tokens[type_end - 1].word == "\n") --type_end;
             const auto id = add(tokens[name], symbol_kind::Variable, scope, parent,
-                                tokens[name].start, begin > type_begin ? tokens[begin - 1].end : tokens[name].end);
-            out.symbols[id].type = (variadic ? "array of " : "") + joined(type_begin, begin);
+                                tokens[declaration_begin].start, type_end > type_begin ? tokens[type_end - 1].end : tokens[name].end);
+            out.symbols[id].type = (variadic ? "array of " : "") + joined(type_begin, type_end);
             if (begin < end && tokens[begin].word == "defaulting") {
                 while (begin < end && tokens[begin].word != "," && tokens[begin].word != "and") ++begin;
             }
@@ -635,13 +645,19 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
     if (begin < text.size() && text[begin] == '`') return {};
     if (begin > 0 && (text[begin - 1] == '.' || text[begin - 1] == ':' || text[begin - 1] == '`')) return {};
     ParseResult context;
-    const auto before = lex(text.substr(offsets[position.line], begin - offsets[position.line]), context);
+    const auto before = lex(text.substr(0, begin), context);
     const auto last = before.empty() ? "" : before.back().word;
     if (last == "my") return {};
     const auto prefix = lowercase(text.substr(begin, *at - begin));
     // These are language spellings, not speculative imported library symbols.
     std::vector<std::string> words;
     int kind = 14;
+    bool parameter_clause = false;
+    for (auto token = before.rbegin(); token != before.rend(); ++token) {
+        if (token->word == "receives") { parameter_clause = true; break; }
+        if (token->word == "begin" || token->word == "end" || token->word == "returns" ||
+            (token->word == "\n" && token->text != "\n")) break;
+    }
     if (last == "as" || last == "returns" || last == "becomes" || last == "means" ||
         last == "of" || last == "holding" || last == "to") {
         words = {"number", "floating", "boolean", "text", "nothing", "override", "array of", "tuple of", "pointer to", "reference to", "owned array of", "shared view of", "exclusive view of"};
@@ -654,7 +670,17 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
     else if (last == "shifted") words = {"left by", "right by"};
     else if (last == "the") words = {"length of", "paragraph"};
     else if (last == "with") words = {"nothing", "more"};
-    else if (last == "value" || last == "variable" || last == "constant" || last == "field" || last == "book") return {};
+    else if (last == "receives") words = {"mutable", "variable", "reference", "more"};
+    else if (parameter_clause && last == "more") words = {"mutable", "variable"};
+    else if (parameter_clause && (last == "," || last == "and" || last == "\n"))
+        words = {"mutable", "variable", "reference", "more"};
+    else if (last == "reference") {
+        const auto previous = before.size() > 1 ? before[before.size() - 2].word : "";
+        if (parameter_clause && (previous == "receives" || previous == "and" || previous == "," || previous == "\n"))
+            return {};
+        words = {"to"};
+    }
+    else if (last == "value" || last == "variable" || last == "mutable" || last == "constant" || last == "field" || last == "book") return {};
     else if (last.empty() || last == "\n") words = {"value", "variable", "constant", "set", "say", "give", "evaluate", "when", "otherwise", "repeat", "consider", "attempt", "caught", "always", "raise", "append", "allocate", "release", "own", "borrow", "move", "stop repeating", "continue repeating", "book", "library", "read", "cite", "public", "end"};
     else words = {"true", "false", "nothing", "build", "my", "the length of", "the paragraph", "anonymous", "formatted", "quote", "newline", "tab", "negative", "plus", "minus", "times", "over", "remainder", "equals", "does not equal", "is less than", "is greater than", "is at least", "is at most", "and", "or", "not", "bitwise", "shifted", "becomes", "with", "receives", "returns", "begin"};
     std::vector<MatrixKeyword> result;

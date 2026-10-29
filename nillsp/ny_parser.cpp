@@ -184,8 +184,10 @@ class Indexer {
     void parameters(std::size_t begin, std::size_t end, int scope, int parent,
                     const std::string& owner) {
         while (begin < end) {
-            while (begin < end && (tokens[begin].text == "mut" || tokens[begin].text == ".." ||
-                                   tokens[begin].text == "\n" || tokens[begin].text == ",")) ++begin;
+            while (begin < end && (tokens[begin].text == "\n" || tokens[begin].text == ",")) ++begin;
+            const auto declaration_begin = begin;
+            while (begin < end && (tokens[begin].text == "mut" || tokens[begin].text == "ref" ||
+                                   tokens[begin].text == ".." || tokens[begin].text == "\n")) ++begin;
             if (begin == end) break;
             const auto name = begin++;
             const auto type_begin = begin < end && tokens[begin].text == ":" ? ++begin : begin;
@@ -199,7 +201,7 @@ class Indexer {
             }
             if (!name_start(tokens[name].text.front())) continue;
             const auto id = add(tokens[name], symbol_kind::Variable, scope, parent,
-                                tokens[name].start, tokens[begin - 1].end);
+                                tokens[declaration_begin].start, tokens[begin - 1].end);
             out.symbols[id].type = joined(type_begin, begin);
             if (tokens[name].text == "self" && out.symbols[id].type.empty()) out.symbols[id].type = owner;
             if (out.symbols[id].type == "Self" || out.symbols[id].type == "ref<Self>")

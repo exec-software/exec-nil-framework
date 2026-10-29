@@ -11,9 +11,9 @@
  * lowercase is canonical, but 'BEGIN CHOICE' and 'Begin Choice' are the same
  * token pair.  Folding is ASCII-only (see the lexical section).
  *
- * Design constraint: the grammar is LL(1) except at the two places marked
- * LL(2), both of which are consequences of accepting the draft's 'and'
- * between parameter declarations. See README.md.
+ * Parameter separators use bounded lookahead past optional modifiers to
+ * distinguish 'and [more] [mode] identifier as' from a type/default clause.
+ * See README.md.
  *)
 
 (* ------------------------------------------------------------------ *)
@@ -110,14 +110,20 @@ receiver_clause = 'on' [ 'mutable' ] 'receiver'
                 | 'on' 'reference'
                 | 'without' 'receiver' ;   (* associated function: no 'my' *)
 
-(* LL(2): after a complete 'name as type', an 'and' is a further parameter
- * only when followed by 'identifier as'.  Parameter defaults are therefore
+(* After a complete parameter, an 'and' starts a further parameter only when
+ * followed by '[more] [mode] identifier as'. Parameter defaults are therefore
  * restricted to literal atoms, so no parameter can end in a boolean
- * expression. *)
-param_list      = param { ( ',' | 'and' ) param }
-                | 'more' identifier 'as' type ;
-param           = [ 'variable' ] identifier 'as' type
+ * expression. 'more' must be final. 'mutable' and legacy 'variable' allow
+ * callee-local assignment. 'reference' aliases the caller's binding and
+ * requires an explicit 'reference to name' argument of exactly the same type.
+ * Reference mode is checked only for ordinary non-generic named paragraphs
+ * with scalar/text parameters; defaults, variadics, methods, anonymous
+ * paragraphs and paragraph values cannot carry it. It is not the existing
+ * 'name as reference to Record' object-handle type. *)
+param_list      = param { ( ',' | 'and' ) param } ;
+param           = [ 'more' ] [ parameter_mode ] identifier 'as' type
                   [ 'defaulting' 'to' ( literal | signed_number | ( 'negative' | 'minus' ) unary ) ] ;
+parameter_mode  = 'mutable' | 'variable' | 'reference' ;
 
 generic_clause  = 'of' generic_param { ',' generic_param } ;
 (* Several bounds are joined with 'and'.  A bound is a type name, so 'and

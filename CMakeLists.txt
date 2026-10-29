@@ -88,6 +88,12 @@ if(BUILD_TESTING)
     target_compile_features(ny_class_vm_tests PRIVATE cxx_std_17)
     add_test(NAME nil.class-contract COMMAND $<TARGET_FILE:ny_class_vm_tests>)
 
+    add_executable(nil_binding_reference_contract_tests tests/binding_reference_contract_tests.cpp)
+    target_link_libraries(nil_binding_reference_contract_tests PRIVATE nilcompiler_core)
+    target_compile_features(nil_binding_reference_contract_tests PRIVATE cxx_std_17)
+    add_test(NAME nil.binding-reference-contract COMMAND $<TARGET_FILE:nil_binding_reference_contract_tests>)
+    set_tests_properties(nil.binding-reference-contract PROPERTIES LABELS "nil;references;rc" TIMEOUT 30)
+
     add_executable(ny_context_manifest_tests tests/context_manifest_tests.cpp)
     target_link_libraries(ny_context_manifest_tests PRIVATE nilcompiler_core)
     target_compile_features(ny_context_manifest_tests PRIVATE cxx_std_17)
@@ -1112,6 +1118,11 @@ if(BUILD_TESTING)
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
                 --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src" --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(matrix.named-arguments PROPERTIES LABELS "matrix;analysis;routes" TIMEOUT 120)
+        add_test(NAME matrix.parameters
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/parameter_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src" --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(matrix.parameters PROPERTIES LABELS "matrix;analysis;routes;references" TIMEOUT 240)
         add_test(NAME nil.reflection-consumer
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/reflection_contract.py"
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>

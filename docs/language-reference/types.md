@@ -154,20 +154,29 @@ default.
 Native nested structs and `ref<Struct>` use the same shared object-handle
 behavior as the interpreter. Updating an object through a field or reference
 is visible through its other aliases. This is not by-value C struct layout,
-automatic ownership, or Rust-style borrowing. Scalar references and recursive
-layouts are not implemented. Source `ref value` accepts only a local or
+automatic ownership, or Rust-style borrowing. Recursive layouts remain
+unsupported. Outside an explicit binding-reference call argument, source
+`ref value` accepts only a local or
 parameter with a nominal struct/class type (including a concrete generic
 struct). It creates an alias to that object, not to the variable's storage:
 rebinding the original local does not redirect an existing reference.
 
 Use `alias.field` and `alias.method()` directly. Explicit `*alias` reads/writes
 are rejected for `ref<T>`; dereference syntax belongs to raw `ptr<T>` operations.
-Scalar, array, enum, function, raw-pointer, erased `any`, nested-reference,
+General scalar, array, enum, function, raw-pointer, erased `any`, nested-reference,
 global and temporary/field-expression reference creation fail semantic
 checking. Emitted reference operations still require proof with `--no-typecheck`;
 diagnostic continuation cannot generate the unsupported operation. Uninstantiated
 generic bodies may not reach generation. Declaration-only `ref<T>` types and
 generic constraints do not imply an executable borrow/lifetime contract.
+
+[Reference parameters](functions.md#reference-parameters) provide a separate
+scalar/text calling convention: `fn update(ref amount: i64)` accepts an explicit
+`update(ref total)` argument naming an exactly typed mutable local or parameter.
+The callee reads and writes the caller's binding, and can forward it during the
+synchronous call. This mode does not introduce first-class `ref<i64>` values:
+the reference cannot be stored, returned, or captured. Existing `ref<Struct>`
+object identity and rebinding behavior are unchanged.
 
 ### Classes
 

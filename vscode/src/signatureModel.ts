@@ -11,7 +11,7 @@ export interface CompilerSignature {
   length: number;
   sources: SemanticSource[];
   label: string;
-  parameters: Array<{ name: string; type: string; label: string; variadic: boolean }>;
+  parameters: Array<{ name: string; type: string; label: string; variadic: boolean; mutable?: boolean; reference?: boolean }>;
   active_parameter: number | null;
   return_type: string;
 }
@@ -48,7 +48,9 @@ export function parseCompilerSignature(value: unknown): CompilerSignature | unde
     const parameter = value.parameters[index];
     if (!record(parameter) || !singleLine(parameter.name) || !parameter.name || !singleLine(parameter.type) ||
         !singleLine(parameter.label) || !parameter.label || !value.label.includes(parameter.label) ||
-        typeof parameter.variadic !== "boolean" || (parameter.variadic && index !== value.parameters.length - 1)) return fail();
+        typeof parameter.variadic !== "boolean" || (parameter.variadic && index !== value.parameters.length - 1) ||
+        (parameter.mutable !== undefined && typeof parameter.mutable !== "boolean") ||
+        (parameter.reference !== undefined && typeof parameter.reference !== "boolean")) return fail();
   }
   return value as unknown as CompilerSignature;
 }

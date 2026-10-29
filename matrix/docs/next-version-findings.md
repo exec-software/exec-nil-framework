@@ -2016,3 +2016,72 @@ evaluation order. Array literals retain their checked element layout, including
 native rejection of mismatched layouts with checking disabled. This supplies
 emission context; it does not replace the
 remaining enum payload validation work recorded in F62.
+
+### F75 — Parameter mutability needs a discoverable local and caller-binding distinction
+
+**Observation:** Writing Matrix by hand exposed a discoverability problem:
+ordinary parameters are immutable, and the existing `variable` parameter
+modifier was easy to miss. Reassigning a callee's local parameter and changing
+the caller's variable are separate operations that need separate spellings.
+
+**Decision and implementation:** `mutable amount as number` enables local
+reassignment; `variable amount as number` remains compatible. Caller writes use
+`reference amount as number` and an explicit `amount being reference to total`
+argument. Ny keeps `mut amount: i64` and adds `ref amount: i64` with `ref total`
+at the call. Both frontends share checking, typed cells, and direct-call
+lowering. The parameter remains a scalar/text value in source inspection.
+
+The parser and editor tooling also recognize modifiers after the `and`
+parameter separator and combined `more mutable` / `more variable` prefixes.
+Signature help exposes the selected mode, and debugger source inspection
+unwraps internal cells instead of showing implementation storage.
+Variadic signature labels also preserve each language's modifier order
+(`mut ..rest` in Ny, `more mutable rest` in Matrix) and show the declared
+element type rather than the array collected inside the function. Existing
+signature type metadata continues to describe that collected array.
+
+**Initial boundary:** References accept exactly typed mutable locals/parameters
+for `i32`, `i64`, `u8`, `bool`, `f64`, and `text`. Forwarding and repeated aliases
+share immediate writes, including writes before a fault. References cannot
+escape the synchronous call. Methods, anonymous functions, function values,
+generic functions, defaults, variadics, foreign/intrinsic calls, aggregate
+reference targets, globals, fields, and indexed targets are rejected. Existing
+object-handle reference semantics remain unchanged.
+
+**Next-version work:** Evaluate broader addressable places and callable forms
+only with explicit lifetime, aliasing, and ABI rules. Do not infer support from
+a parsed reference type or relax the current checked boundary. The detailed
+decision and acceptance scope are in
+[NIL-0019](../../docs/design/NIL-0019-binding-reference-parameters.md).
+
+### F76 — An imported type alias can override a local callable during Matrix lowering
+
+**Status: Unresolved; pre-existing behavior.** Importing a Ny function-type alias
+named `Callback` and declaring a Matrix local named `callback` creates a folded
+name collision. The local initializer is emitted correctly, but a later call
+can resolve to the imported type alias instead of the local callable:
+
+```matrix
+read Callback from parameter_callbacks
+!!! parameter_callbacks declares: pub type Callback = fn(i64) -> i64
+!!! Inside a paragraph, with an ordinary number-to-number paragraph in scope:
+value callback is the paragraph ordinary
+say callback with total
+```
+
+**Confirmed evidence:** A control program with no reference parameters emits
+`PUSH_FN_PTR reference_callbacks__ordinary` followed by `STORE_LOCAL callback`,
+then incorrectly emits `CALL reference_callbacks__parameter_callbacks__Callback 1`
+for the source call. The reference-parameter compatibility probe exposed this
+through the stricter NIL provenance check's unknown-callee diagnostic, but the
+incorrect call target is also present in the control program.
+
+**Workaround:** Rename the local callable to a name that does not fold to the
+imported alias, such as `operation`. That spelling passes the parameter
+compatibility fixture. The binding-reference change does not fix the underlying
+resolution defect.
+
+**Required follow-up:** Preserve the checker's lexical value binding when
+lowering calls, rather than allowing the imported type-alias map to replace it.
+Cover folded case/separator collisions, local shadowing, source imports, and
+binary-library imports in both analysis and executable-call regressions.

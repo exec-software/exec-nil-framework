@@ -5,6 +5,7 @@
  */
 #include "codegen.hpp"
 #include "array_intrinsic.hpp"
+#include "binding_reference.hpp"
 #include "inline_asm.hpp"
 #include "diagnostics.hpp"
 #include "nil_contract.hpp"
@@ -374,6 +375,23 @@ static std::vector<std::string> specialization_type_arguments(
   return parsed->type_args;
 }
 
+// Binding references are a calling convention, not a new source value type.
+// The reserved schema name cannot collide with a Ny/Matrix declaration. Its
+// handle is only exposed to another checked reference parameter; the source
+// binding continues to have the field's scalar type.
+static std::string binding_cell_name(const std::string &type) {
+  return std::string(nil_binding_cell_prefix) + canonical_nil_type_name(type);
+}
+
+static std::optional<std::string>
+binding_parameter_type(const std::string &type) {
+  return binding_reference_value_type(canonical_nil_type_name(type));
+}
+
+static bool supported_binding_scalar(const std::string &type) {
+  return is_binding_scalar_type(type);
+}
+
 static bool append_serialized_nil_parameter(
     nil_function &function, const ast_param &parameter,
     const std::map<std::string, std::string> &substitutions = {},
@@ -389,8 +407,142 @@ static bool append_serialized_nil_parameter(
   type = substitute_nil_type_name(type, substitutions);
   if (type.empty())
     return false;
+  if (parameter.is_ref && !parameter.checked_binding_reference)
+    return false;
+  if (parameter.is_ref)
+    type = "ref<" + binding_cell_name(type) + ">";
   function.params.push_back(parameter.name + ": " + type);
   return true;
+}
+
+// Use lexical NIL slots rather than source spellings: two nested declarations
+// called "amount" must never share storage. Every reference marker is collected
+// before any access is rewritten, including markers in a later branch. Cells
+// are initialized once per invocation, so two arguments addressing one binding
+// share it immediately and forwarding a reference never performs copy-back.
+static void lower_binding_references(nil_module &module) {
+  struct cell_binding {
+    std::string type;
+    std::string storage;
+    bool reference_parameter = false;
+    bool value_parameter = false;
+  };
+  for (auto &function : module.functions) {
+    std::map<std::string, cell_binding> cells;
+    std::set<std::string> parameters;
+    for (const auto &parameter : function.params) {
+      const auto colon = parameter.find(':');
+      if (colon == std::string::npos) continue;
+      const auto name = parameter.substr(0, colon);
+      parameters.insert(name);
+      if (const auto type = binding_parameter_type(parameter.substr(colon + 1)))
+        cells.emplace(name, cell_binding{*type, name, true, false});
+    }
+    for (const auto &instruction : function.body) {
+      if (instruction.opname != "BINDING_REF_LOCAL") continue;
+      if (instruction.args.size() != 2)
+        throw std::runtime_error("Invalid internal binding-reference marker");
+      auto [where, inserted] = cells.emplace(instruction.args[0],
+          cell_binding{instruction.args[1], {}, false,
+                       parameters.count(instruction.args[0]) != 0});
+      if (!inserted && where->second.type != instruction.args[1])
+        throw std::runtime_error("Binding reference has conflicting storage types");
+    }
+    if (cells.empty()) continue;
+    std::size_t next_storage = 0;
+    for (auto &[slot, cell] : cells) {
+      if (!supported_binding_scalar(cell.type))
+        throw std::runtime_error("Binding reference requires i32, i64, u8, bool, f64, or text");
+      if (!cell.reference_parameter)
+        cell.storage = "$nil.binding.storage." + std::to_string(next_storage++);
+      const auto schema_name = binding_cell_name(cell.type);
+      const auto existing = std::find_if(module.structs.begin(), module.structs.end(),
+          [&](const auto &schema) { return schema.name == schema_name; });
+      if (existing == module.structs.end())
+        module.structs.push_back({schema_name, {{"value", cell.type}}, {"@nil_binding_cell"}});
+      else if (existing->fields != std::vector<std::pair<std::string, std::string>>{{"value", cell.type}})
+        throw std::runtime_error("Conflicting internal binding-reference schema");
+    }
+
+    const auto parameter_count = function.params.size();
+    if (function.body.size() < parameter_count)
+      throw std::runtime_error("Binding-reference function lacks its parameter prologue");
+    for (std::size_t index = 0; index < parameter_count; ++index) {
+      const auto &parameter = function.params[parameter_count - index - 1];
+      const auto name = parameter.substr(0, parameter.find(':'));
+      const auto &instruction = function.body[index];
+      if (instruction.opname != "STORE_LOCAL" || instruction.args != std::vector<std::string>{name})
+        throw std::runtime_error("Binding-reference function has an invalid parameter prologue");
+    }
+
+    std::vector<nil_instruction> body;
+    const auto append = [&](const nil_instruction &original, const std::string &op,
+                            std::vector<std::string> args) {
+      auto generated = original;
+      generated.opname = op;
+      generated.args = std::move(args);
+      body.push_back(std::move(generated));
+    };
+    for (std::size_t index = 0; index < parameter_count; ++index)
+      body.push_back(function.body[index]);
+    // No user statement is attributed to the compiler's storage setup. The
+    // original parameter slots remain valid until each cell is initialized.
+    nil_instruction setup;
+    setup.source_file = function.source_file;
+    for (const auto &[slot, cell] : cells) {
+      if (cell.reference_parameter) continue;
+      append(setup, "NEW_STRUCT", {binding_cell_name(cell.type)});
+      if (cell.value_parameter) {
+        append(setup, "LOAD_LOCAL", {slot});
+      } else if (cell.type == "text") {
+        const std::string empty = "$nil.binding.empty-text";
+        if (std::none_of(module.string_constants.begin(), module.string_constants.end(),
+                        [&](const auto &entry) { return entry.first == empty; }))
+          module.string_constants.emplace_back(empty, "");
+        append(setup, "PUSH_CONST_STR", {empty});
+      } else {
+        append(setup, "PUSH_CONST", {cell.type == "f64" ? "0.0" : "0"});
+      }
+      if (cell.type != "text") append(setup, "CAST", {cell.type});
+      append(setup, "SET_FIELD", {"value"});
+      append(setup, "STORE_LOCAL", {cell.storage});
+    }
+
+    std::size_t scratch = 0;
+    for (std::size_t index = parameter_count; index < function.body.size(); ++index) {
+      auto instruction = function.body[index];
+      for (auto &debug : instruction.debug_locals) {
+        const auto cell = cells.find(debug.storage);
+        if (cell == cells.end()) continue;
+        debug.storage = cell->second.storage;
+        debug.type = "binding_ref<" + cell->second.type + ">";
+      }
+      const auto cell = instruction.args.empty() ? cells.end() : cells.find(instruction.args[0]);
+      if (instruction.opname == "BINDING_REF_LOCAL") {
+        if (cell == cells.end())
+          throw std::runtime_error("Binding reference has no storage cell");
+        append(instruction, cell->second.reference_parameter ? "LOAD_LOCAL" : "REF_LOCAL",
+               {cell->second.storage});
+      } else if (instruction.opname == "LOAD_LOCAL" && cell != cells.end()) {
+        append(instruction, "LOAD_LOCAL", {cell->second.storage});
+        append(instruction, "GET_FIELD", {"value"});
+      } else if (instruction.opname == "STORE_LOCAL" && cell != cells.end()) {
+        const auto temporary = "$nil.binding.value." + std::to_string(scratch++);
+        // Re-establish the checked source storage type even when the ordinary
+        // producer (for example an array index) has no precise CFG category.
+        // CAST preserves text identity and cannot erase cell provenance.
+        append(instruction, "CAST", {cell->second.type});
+        append(instruction, "STORE_LOCAL", {temporary});
+        append(instruction, "LOAD_LOCAL", {cell->second.storage});
+        append(instruction, "LOAD_LOCAL", {temporary});
+        append(instruction, "SET_FIELD", {"value"});
+        append(instruction, "STORE_LOCAL", {cell->second.storage});
+      } else {
+        body.push_back(std::move(instruction));
+      }
+    }
+    function.body = std::move(body);
+  }
 }
 
 static std::string canonical_builtin_enum_base(std::string base_name) {
@@ -1089,7 +1241,8 @@ public:
           "bind the value to a local before taking its reference");
       return;
     }
-    if (!expression.checked_reference_handle) {
+    if (!expression.checked_reference_handle &&
+        !expression.checked_binding_reference) {
       cg_.reject_codegen_construct(
           expression.line,
           "reference creation requires a checked aggregate handle",
@@ -1105,6 +1258,21 @@ public:
           expression.line,
           "reference target '" + identifier.name + "' is not a local binding",
           "bind the aggregate value to a local before taking its reference");
+      return;
+    }
+    if (expression.checked_binding_reference) {
+      const auto type = substitute_nil_type_name(
+          operand->inferred_type.value_or(""), substitutions);
+      if (!supported_binding_scalar(type)) {
+        cg_.reject_codegen_construct(expression.line,
+            "binding reference requires an exact supported scalar type",
+            "use i32, i64, u8, bool, f64, or text");
+        return;
+      }
+      // This compiler-only marker is removed after lexical slots have been
+      // assigned throughout the function. That pass sees references inside
+      // branches before rewriting the declaration and every earlier access.
+      push_instr("BINDING_REF_LOCAL", {identifier.name, type}, expression.line);
       return;
     }
     push_instr("REF_LOCAL", {identifier.name}, expression.line);
@@ -5244,6 +5412,7 @@ private:
          instruction.opname == "STORE_LOCAL" ||
          instruction.opname == "OWN_BIND" ||
          instruction.opname == "OWN_MOVE" ||
+         instruction.opname == "BINDING_REF_LOCAL" ||
          instruction.opname == "REF_LOCAL") && !instruction.args.empty()) {
       const auto binding = local_bindings.find(instruction.args.front());
       if (binding != local_bindings.end())
@@ -6898,6 +7067,10 @@ codegen::assemble_module(const ast_program &program,
   }
 
   try {
+    lower_binding_references(*mod);
+    if (std::any_of(mod->structs.begin(), mod->structs.end(),
+                    [](const auto &schema) { return binding_cell_value_type(schema.name).has_value(); }))
+      validate_nil_class_contract(*mod);
     validate_nil_parallel_contract(*mod);
     validate_nil_owned_contract(*mod);
   } catch (const std::exception &error) {

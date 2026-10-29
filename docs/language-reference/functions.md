@@ -46,8 +46,9 @@ arrays of supported structural tuples, `ptr<i32/i64/u8/bool>`, and validated
 concrete struct layouts. Generic struct
 schemas are materialized for supported field layouts, including `f64`/`u8`
 fields, nested struct handles and `ref<Struct>`. These references preserve shared object identity;
-they are not scalar stack references or a borrow checker. Scalar references,
-slices, unsupported scalar widths, and recursive layouts remain fail-closed in
+they are not references to the caller's variable binding. The explicit scalar
+binding-reference parameter mode below has a separate, nonescaping contract.
+Slices, unsupported scalar widths, and recursive layouts remain fail-closed in
 the native backend.
 
 ### Mutable parameters
@@ -66,12 +67,79 @@ let incremented = increment_local(original)
 # original is 5; incremented is 6
 ```
 
+Matrix spells this modifier `mutable`; the existing `variable` spelling remains
+an alias in parameter declarations. Ordinary local declarations still use
+`variable`.
+
+```matrix
+increment-local receives mutable amount as number returns number begin paragraph
+    set amount to amount plus 1
+    give amount
+end paragraph
+```
+
+Use either commas or `and` between parameter declarations. Modifiers remain
+part of the following parameter, as in `receives initial as number and mutable
+amount as number`. A variadic mutable binding uses `more mutable values as number`.
+
 An aggregate parameter or `ref<Struct>` shares object identity with its caller;
 field mutations are visible through aliases, while rebinding the parameter
-does not redirect the caller's binding. Scalar `ref` creation is rejected.
+does not redirect the caller's binding.
 These shared handles do not carry borrowing or lifetime proofs. Explicit
 [owned buffers](../advanced/owned-buffers.md) have a separate checked local
 ownership/borrowing contract; owners and loans cannot be function parameters.
+
+### Reference parameters
+
+`ref` before a Ny parameter name, or `reference` before a Matrix parameter name,
+allows the function to update the caller's binding. The call must explicitly
+identify the binding too.
+
+```ny
+fn increment(ref amount: i64)
+    amount = amount + 1
+end fn
+
+fn main() -> i32
+    let mut total: i64 = 5
+    increment(ref total)
+    println(total) # 6
+    return 0
+end fn
+```
+
+```matrix
+increment receives reference amount as number begin paragraph
+    set amount to amount plus 1
+end paragraph
+
+main returns number begin paragraph
+    variable total as number is 5
+    evaluate increment with amount being reference to total
+    say total !!! 6
+    give 0
+end paragraph
+```
+
+The initial profile supports `i32`, `i64`, `u8`, `bool`, `f64`, and `text`.
+The target must be a mutable local or mutable parameter of exactly the declared
+type. A reference parameter can forward its binding using the same explicit
+call syntax. Passing an immutable value, global, field, indexed element,
+temporary, or a numerically convertible but different type is rejected.
+
+Writes take effect immediately. Two reference arguments naming the same local
+observe the same storage, and a write remains visible if a later operation
+raises a fault. This is not copy-in/copy-out or a transaction. Reading or
+returning `amount` produces its scalar/text value; the binding reference itself
+cannot be saved, returned, captured, or placed in a collection or field.
+
+Reference parameters currently belong to ordinary non-generic named functions.
+Methods, anonymous functions, function values, foreign/intrinsic boundaries,
+defaulted reference parameters, and variadic reference parameters are rejected.
+`amount as reference to Record` remains the existing shared object-handle type;
+it does not acquire the caller-binding behavior of `reference amount as number`.
+See [NIL-0019](../design/NIL-0019-binding-reference-parameters.md) for the
+representation and scope of this parameter mode.
 
 ### Default parameters
 

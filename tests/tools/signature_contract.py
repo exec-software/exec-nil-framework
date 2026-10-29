@@ -120,6 +120,27 @@ def main():
         assert value['label'] == 'combine receives first as number, second-value as number returns number', value
         assert value['active_parameter'] == 1
         assert query(matrix.replace('|9', '9').replace('first being 7', 'first being |7'), name='first.matrix', status=0)['active_parameter'] == 0
+        for spelling in ('mutable', 'variable'):
+            mutable = matrix.replace('first as number', spelling + ' first as number')
+            value = query(mutable, name='mutable-' + spelling + '.matrix', status=0)
+            assert value['parameters'][0]['label'] == 'mutable first as number', value
+            assert value['parameters'][0]['mutable'] is True
+            assert value['parameters'][1]['mutable'] is False
+        value = query(ny.replace('first: i32', 'mut first: i32'), name='mutable.ny', status=0)
+        assert value['parameters'][0]['label'] == 'mut first: i32', value
+        assert value['parameters'][0]['mutable'] is True
+        reference_ny = ('fn update(ref amount: i64) -> i64\namount = amount + 1\nreturn amount\nend fn\n'
+                        'fn main() -> i64\nlet mut total: i64 = 4\nreturn update(ref |total)\nend fn\n')
+        reference_matrix = ('book references\nupdate receives reference amount as number returns number begin paragraph\n'
+                            'set amount to amount plus 1\ngive amount\nend paragraph\n'
+                            'main returns number begin paragraph\nvariable total as number is 4\n'
+                            'give update with amount being reference to |total\nend paragraph\n')
+        for name, source, label in (('reference.ny', reference_ny, 'ref amount: i64'),
+                                    ('reference.matrix', reference_matrix, 'reference amount as number')):
+            value = query(source, name=name, status=0)
+            assert value['parameters'][0]['label'] == label, value
+            assert value['parameters'][0]['reference'] is True, value
+            assert value['parameters'][0]['mutable'] is True, value
         assert query(matrix.replace('second_value being |9', 'unknown being |9'), name='unknown.matrix', status=1)['active_parameter'] is None
         assert query(matrix.replace('second_value being |9, first being 7', '|nothing'), name='empty.matrix', status=1)['active_parameter'] == 0
         bare = matrix_decl + 'main returns number begin paragraph\ngive combine with |\nend paragraph\n'
@@ -171,6 +192,25 @@ def main():
         variadic = 'fn values(first: i32, ..rest: i32) -> i32\nreturn first\nend fn\nfn main() -> i32\nreturn values(1, 2, |3)\nend fn\n'
         value = query(variadic, status=0)
         assert value['active_parameter'] == 1 and value['parameters'][1]['variadic'] is True
+        assert value['parameters'][1]['label'] == '..rest: i32', value
+        assert value['parameters'][1]['type'] == 'array<i32>', value
+        value = query(variadic.replace('..rest:', 'mut ..rest:'), name='mutable-variadic.ny', status=0)
+        assert value['parameters'][1]['label'] == 'mut ..rest: i32', value
+        assert value['parameters'][1]['type'] == 'array<i32>', value
+        assert value['parameters'][1]['mutable'] and value['parameters'][1]['variadic']
+        assert value['active_parameter'] == 1
+        for mode in ('', 'mutable ', 'variable '):
+            matrix_variadic = ('book signatures.variadic\n'
+                'combine receives first as override integer, more ' + mode + 'rest as override integer '
+                'returns override integer begin paragraph\ngive first\nend paragraph\n'
+                'main returns override integer begin paragraph\n'
+                'give combine with first being 1, more 2, |3\nend paragraph\n')
+            value = query(matrix_variadic, name='variadic-' + (mode.strip() or 'plain') + '.matrix', status=0)
+            assert value['parameters'][1]['label'] == ('more ' + ('mutable ' if mode else '') +
+                'rest as override integer'), value
+            assert value['parameters'][1]['type'] == 'array<override integer>', value
+            assert value['parameters'][1]['mutable'] == bool(mode) and value['parameters'][1]['variadic']
+            assert value['active_parameter'] == 1
         method = ('struct Counter\nvalue: i32\nend struct\nimpl Counter\n'
                   'fn add(self: Counter, amount: i32) -> i32\nreturn amount\nend fn\n'
                   'pub fn create(amount: i32) -> Counter\nreturn Counter { value: amount }\nend fn\nend impl\n'

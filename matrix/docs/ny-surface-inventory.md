@@ -132,7 +132,7 @@ about whether a value changed representation.
 | `allocate<i32>(2)` | `allocate values as pointer to integer sized 2` | executed |
 | `deallocate(p)` | `release values` | executed |
 | `ref<Struct>` | `reference to <Record>` | executed, shared object handle |
-| `ref value` | `reference to value` | executed; nominal struct/class locals and parameters only |
+| `ref value` | `reference to value` | shared object handles for nominal struct/class locals and parameters; explicit scalar/text binding-reference call arguments have the separate contract in §6 |
 | `*alias` on `ref<T>` | no spelling | rejected in Ny |
 | `owned<T>` | `owned array of <type>` | executed for `integer`, `long`, `byte` |
 | `borrow<T>` / `borrow_mut<T>` | `shared view of <type>` / `exclusive view of <type>` | executed |
@@ -231,33 +231,44 @@ unguarded `otherwise` and one value-producing expression per arm, as Ny does.
 
 | Ny | Matrix | Route state |
 | --- | --- | --- |
-| `fn f(a: i32) -> i32 ... end fn` | `f receives a as integer returns integer begin function ... end function` | executed |
-| `fn f(m: text)` (void) | `f receives m as text begin function ... end function` | executed |
-| `fn f() -> i32` | `f returns integer begin function ... end function` | executed |
+| `fn f(a: i32) -> i32 ... end fn` | `f receives a as override integer returns override integer begin paragraph ... end paragraph` | executed |
+| `fn f(m: text)` (void) | `f receives m as text begin paragraph ... end paragraph` | executed |
+| `fn f() -> i32` | `f returns override integer begin paragraph ... end paragraph` | executed |
 | `f(1, 2)` | `f with a being 1, b being 2` | executed |
 | `f()` | `f with nothing` | executed |
-| `mut value: i32` parameter | `variable value as integer` parameter | executed, callee-local |
-| `..values: i32` variadic | `receives more values as integer` | executed for `integer` |
+| `mut amount: i32` parameter | `mutable amount as override integer` parameter; `variable` remains an alias | callee-local mutation |
+| `ref amount: i64` parameter | `reference amount as number` parameter | explicit caller-binding mutation; ordinary non-generic named functions, exact scalar/text types only |
+| `f(ref total)` | `f with amount being reference to total` | mutable local/parameter target; immediate writes and forwarding, no escaping binding reference |
+| `..values: i32` variadic | `receives more values as override integer` | executed for `override integer` |
 | default parameter expressions | `defaulting to <literal>` | **parsed; omitted arguments rejected** |
 | `fn square(x) -> i32 => x * x` | no spelling | not implemented in Ny |
 | overload sets | **no spelling** | duplicate names produce duplicate NIL labels |
-| named function value | `the function f` | executed on interpreted routes |
-| noncapturing lambda | `anonymous receives ... begin function ... end function` | executed on interpreted routes |
+| named function value | `the paragraph f` | executed on interpreted routes; reference-parameter functions cannot become values |
+| noncapturing lambda | `anonymous receives ... begin paragraph ... end paragraph` | executed on interpreted routes; reference parameters rejected |
 | capturing closure | **no spelling** | rejected in Ny |
 
 `returns` terminates the parameter list. Omitting `returns` means
 `returns nothing`. In a parameter header `and` is accepted in place of `,`
-because each item has the fixed shape `<name> as <type>`:
+because each item has the fixed shape `[more] [mode] <name> as <type>`:
 
 ```text
-add_two receives left as integer and right as integer returns integer begin function
-add_two receives left as integer, right as integer returns integer begin function
+add-two receives left as number and mutable right as number returns number begin paragraph
+add-two receives left as number, mutable right as number returns number begin paragraph
 ```
 
 Both are the same declaration. Named call arguments lower to positional NIL
 arguments in declaration order; because Ny has no overload resolution, argument
 names are checked against the single declaration and are never used to select
 between candidates.
+
+`mutable` allows reassignment of the callee's parameter binding. `reference`
+allows writes to the caller's mutable local or parameter, and the call must
+say `reference to name`. Binding-reference parameters support `i32`, `i64`,
+`u8`, `bool`, `f64`, and `text`; they reject defaults, variadics, generic
+functions, methods, anonymous paragraphs, and function-value use. Reusing one
+target for two arguments aliases the same binding. Writes remain visible after
+a later fault, and only the referenced value can be returned or stored.
+See [NIL-0019](../../docs/design/NIL-0019-binding-reference-parameters.md).
 
 ---
 

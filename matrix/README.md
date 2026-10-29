@@ -117,6 +117,40 @@ trait objects, generic classes, postfix `?` or overload sets, because NIL
 cannot execute them today. Matrix gains those spellings when the runtime gains
 the capability, not before.
 
+## Parameter modes
+
+Ordinary parameters are immutable bindings inside the paragraph. Prefix a
+parameter with `mutable` to reassign its local value, or `reference` to update
+the caller's binding explicitly:
+
+```matrix
+increment-local receives mutable amount as number returns number begin paragraph
+    set amount to amount plus 1
+    give amount
+end paragraph
+
+increment receives reference amount as number begin paragraph
+    set amount to amount plus 1
+end paragraph
+
+main returns number begin paragraph
+    variable total as number is 5
+    say increment-local with amount being total !!! 6; total is still 5
+    evaluate increment with amount being reference to total
+    say total !!! 6
+    give 0
+end paragraph
+```
+
+`variable` remains an alias for `mutable` in a parameter header. Reference
+parameters initially support exact scalar/text types on ordinary non-generic
+named paragraphs, with mutable locals or parameters as their targets. Writes
+are immediate, aliases share the binding, and references cannot escape the
+call. Existing `reference to Record` types still refer to shared objects.
+See the [function reference](../docs/language-reference/functions.md#parameters)
+and [NIL-0019](../docs/design/NIL-0019-binding-reference-parameters.md) for the
+supported modes and their limits.
+
 ## Why this language, beyond syntax
 
 Matrix is intended to become a language for both AI agents and humans, including
@@ -381,8 +415,9 @@ feedback or a two-pass scan, diagnostics get harder to word, and the structural
 anchoring described above is exactly what would be given up.
 
 The surviving ambiguity is documented rather than hidden: in a parameter
-header, `and` requires two tokens of lookahead (`and <name> as`) to distinguish
-a further parameter from a boolean operand inside a parameter default. Matrix
+header, `and` uses bounded lookahead through optional `more` and parameter-mode
+modifiers to find `<name> as`. This distinguishes a further parameter from a
+boolean operand inside a parameter default. Matrix
 therefore restricts parameter defaults to literal atoms. Since Ny retains
 default expressions in the syntax tree but **rejects omitted arguments at the
 call site**, this costs nothing today.
