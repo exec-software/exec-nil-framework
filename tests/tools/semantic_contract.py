@@ -128,7 +128,9 @@ def main():
         assert not next(item for item in value['semantic']['symbols'] if item['kind'] == 'function').get('rename_safe')
         policy = value['semantic']['rename_policy']['sources'][0]
         assert {'compute', 'value', 'item', 'i32'} <= set(policy['identifier_keys'])
-        assert {'fn', 'function', 'fun', 'use', 'using', 'asm', 'and', 'or', '_', 'owned_move', 'parallel_map'} <= set(policy['reserved_keys'])
+        assert {'fn', 'function', 'fun', 'use', 'using', 'asm', 'and', 'or', '_', 'owned_move', 'parallel_map',
+                'mut', 'mutable', 'ref', 'reference'} <= set(policy['reserved_keys'])
+        assert not {'switch', 'case', 'default'} & set(policy['reserved_keys'])
         renamed = rename_local(value, 'main.ny', outer, 'updated_item')
         assert binding(renamed, 'main.ny', 'println(item)', 'item')['name'] == 'item'
         assert binding(renamed, 'main.ny', 'return updated_item', 'updated_item')['name'] == 'updated_item'
@@ -197,7 +199,9 @@ def main():
         policy = result['semantic']['rename_policy']['sources'][0]
         assert policy['language'] == 'matrix' and 'localitem' in policy['identifier_keys']
         assert 'local-item' not in policy['identifier_keys'] and 'LOCALITEM' not in policy['identifier_keys']
-        assert {'value', 'paragraph', 'receives', 'ownedmove', 'negative', 'tuple'} <= set(policy['reserved_keys'])
+        assert {'value', 'paragraph', 'receives', 'ownedmove', 'negative', 'tuple',
+                'mut', 'mutable', 'ref', 'reference'} <= set(policy['reserved_keys'])
+        assert not {'switch', 'case', 'switching'} & set(policy['reserved_keys'])
         rename_local(result, 'folded.matrix', target, 'updated-count')
         escaped = ('book escaped-check\ncompute receives `value` as number returns number begin paragraph\n'
                    ' give `value`\nend paragraph\n')

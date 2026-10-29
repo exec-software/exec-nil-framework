@@ -752,7 +752,12 @@ void nil_writer::emit_declaration_annotations(std::ostream &os,
     if (a.empty() || a.front() != '@' || a.find('\0') != std::string::npos ||
         a.size() > 16U * 1024U * 1024U)
       throw std::runtime_error("Textual NIL contains an invalid declaration annotation");
-    os << a << "\n";
+    if (a.find_first_of("\n\r\t") != std::string::npos || a.back() == ' ') {
+      const auto escaped = escape_string(a);
+      if (escaped.size() > 16U * 1024U * 1024U - 28U)
+        throw std::runtime_error("Textual NIL declaration annotation exceeds line safety limit");
+      os << "# declaration_annotation \"" << escaped << "\"\n";
+    } else os << a << "\n";
   }
 }
 
@@ -760,22 +765,19 @@ void nil_writer::emit_function_annotations(std::ostream &os,
                                            const nil_function &fn) {
   if (fn.annotations.size() > 65536U)
     throw std::runtime_error("Textual NIL function annotation count exceeds safety limit");
-  bool printed_inline = false;
-  if (fn.is_inline) {
+  const bool explicit_inline = std::any_of(fn.annotations.begin(), fn.annotations.end(),
+      [](const auto &annotation) { return annotation_name_matches(annotation, "inline"); });
+  if (fn.is_inline && !explicit_inline) {
     os << "@inline\n";
-    printed_inline = true;
   }
   for (const auto &a : fn.annotations) {
     if (a.empty() || a.front() != '@' || a.find('\0') != std::string::npos ||
         a.size() > 16U * 1024U * 1024U) {
       throw std::runtime_error("Textual NIL contains an invalid function annotation");
     }
-    // Avoid printing a duplicate `@inline` annotation if the inline flag
-    // already caused printing.
-    if (printed_inline) {
-      if (a.rfind("@inline", 0) == 0)
-        continue;
-    }
+    // Preserve the complete explicit metadata sequence, including inline
+    // properties and repeated annotations. Only a flag without an explicit
+    // inline annotation requires a synthesized marker above.
     // Source annotation strings are already decoded. Preserve embedded line
     // controls (and trailing whitespace) without making them physical NIL
     // records; ordinary annotations retain their legacy textual spelling.
@@ -1209,8 +1211,19 @@ public:
     std::string end_label;
     std::size_t cleanup_depth = 0;
     std::size_t ownership_depth = 0;
+    // Empty start_label denotes a switch, which continue must skip.
+    std::string result_slot;
+    std::optional<std::string> result_type;
   };
   std::vector<LoopContext> loop_stack;
+  // Physical expression emission remains active while recover temporarily
+  // restores an outer lexical control context.
+  std::size_t value_switch_emission_depth = 0;
+  std::vector<std::set<std::string>> value_switch_outer_targets;
+  bool exits_physical_value_switch(const LoopContext &target) const {
+    return std::any_of(value_switch_outer_targets.begin(), value_switch_outer_targets.end(),
+        [&](const auto &outer) { return outer.count(target.end_label) != 0; });
+  }
   std::size_t ownership_depth = 0;
   bool ownership_checked = false;
   struct CleanupContext {
@@ -1704,6 +1717,85 @@ public:
     return result.empty() ? "any" : result;
   }
 
+  void emit_switch(const ast_expr_ptr &target,
+                   const std::vector<ast_switch_arm> &arms,
+                   bool checked, int line,
+                   const std::optional<std::string> &result_type) {
+    if (!checked || !target) {
+      cg_.reject_codegen_construct(line,
+          "switch requires checked selector, case labels, and control flow",
+          "enable type checking and correct switch diagnostics");
+      return;
+    }
+    struct expression_scope {
+      emitter &owner;
+      bool active;
+      expression_scope(emitter &e, bool a) : owner(e), active(a) {
+        if (!active) return;
+        ++owner.value_switch_emission_depth;
+        std::set<std::string> outer;
+        for (const auto &context : owner.loop_stack) outer.insert(context.end_label);
+        owner.value_switch_outer_targets.push_back(std::move(outer));
+      }
+      ~expression_scope() {
+        if (!active) return;
+        --owner.value_switch_emission_depth;
+        owner.value_switch_outer_targets.pop_back();
+      }
+    } expression_context(*this, result_type.has_value());
+    lexical_scope scope(*this);
+    const auto selector = new_temp("switch_target");
+    const auto target_type = substitute_nil_type_name(target->inferred_type.value_or(""), substitutions);
+    local_var_types[selector] = target_type;
+    emit_expr(*target);
+    emit_scalar_boundary(target_type, line);
+    push_instr("STORE_LOCAL", {selector}, line);
+    const auto end = new_label("L_switch_end");
+    std::string result;
+    if (result_type) {
+      result = new_temp("switch_result");
+      local_var_types[result] = substitute_nil_type_name(*result_type, substitutions);
+    }
+    std::vector<std::string> labels;
+    labels.reserve(arms.size());
+    for (std::size_t index = 0; index < arms.size(); ++index)
+      labels.push_back(new_label("L_switch_case"));
+    std::string fallback = end;
+    const auto enum_type = enum_type_for_expression(*target);
+    // Dispatch precedes the bodies. Falling out of a body therefore executes
+    // the next body without testing its label again, including a default arm.
+    for (std::size_t index = 0; index < arms.size(); ++index) {
+      const auto &arm = arms[index];
+      if (!arm.label) { fallback = labels[index]; continue; }
+      push_instr("LOAD_LOCAL", {selector}, arm.line);
+      if (!arm.enum_variant.empty()) {
+        emit_is_variant(arm.enum_variant, enum_type, arm.line);
+      } else {
+        // Use i64 for integral dispatch so signed i32 and unsigned u8 labels
+        // have the same comparison interpretation on every execution route.
+        const bool integral = target_type == "i32" || target_type == "i64" || target_type == "u8";
+        if (integral) push_instr("CAST", {"i64"}, arm.line);
+        emit_expr(*arm.label);
+        emit_scalar_boundary(arm.label->inferred_type, arm.line);
+        if (integral) {
+          push_instr("CAST", {"i64"}, arm.line);
+        }
+        push_instr("CMP_EQ", {}, arm.line);
+      }
+      push_instr("JMP_IF", {labels[index]}, arm.line);
+    }
+    push_instr("JMP", {fallback}, line);
+    loop_stack.push_back({"", end, cleanup_stack.size(), ownership_depth, result, result_type});
+    for (std::size_t index = 0; index < arms.size(); ++index) {
+      push_instr("LABEL", {labels[index]}, arms[index].line);
+      lexical_scope arm_scope(*this);
+      if (arms[index].body) emit_stmt(*arms[index].body);
+    }
+    loop_stack.pop_back();
+    push_instr("LABEL", {end}, line);
+    if (result_type) push_instr("LOAD_LOCAL", {result}, line);
+  }
+
   void emit_stmt(const ast_stmt &s) {
     switch (s.kind) {
     case ast_node_kind::block_stmt_node: {
@@ -1859,6 +1951,8 @@ public:
         push_instr("LOAD_LOCAL", {*saved_return}, r.line);
       nil_instruction instr;
       instr.opname = "RET";
+      if (value_switch_emission_depth)
+        instr.args = {nil_switch_return_marker};
       instr.debug_line = r.line;
       push_instr(instr);
       break;
@@ -1889,27 +1983,85 @@ public:
     }
 
     case ast_node_kind::break_stmt_node: {
-      if (!loop_stack.empty()) {
-        const auto destination = loop_stack.back();
-        emit_exited_cleanups(destination.cleanup_depth, s.line, destination.ownership_depth);
-        push_instr("JMP", {destination.end_label}, s.line);
-      } else {
-        cg_.reject_codegen_construct(s.line,
-                                     "break cannot be lowered outside a loop",
-                                     "move this break statement inside a loop");
+      const auto &statement = static_cast<const ast_break_stmt &>(s);
+      auto destination = loop_stack.rbegin();
+      for (; destination != loop_stack.rend(); ++destination) {
+        const bool is_loop = !destination->start_label.empty();
+        if (statement.target == break_target_kind::nearest ||
+            (statement.target == break_target_kind::loop && is_loop) ||
+            (statement.target == break_target_kind::switch_ && !is_loop)) break;
       }
+      if (destination == loop_stack.rend()) {
+        cg_.reject_codegen_construct(s.line,
+            "break has no enclosing target loop or switch",
+            "put the break inside its targeted construct");
+        break;
+      }
+      if (exits_physical_value_switch(*destination) ||
+          std::any_of(loop_stack.rbegin(), destination,
+          [](const LoopContext &context) { return !context.result_slot.empty(); })) {
+        cg_.reject_codegen_construct(s.line,
+            "control exit cannot cross a switch expression with suspended operands",
+            "produce a switch result and exit the loop afterward");
+        break;
+      }
+      // Expressions and cleanup may push control contexts; retain by value.
+      const auto target = *destination;
+      if (statement.value) {
+        if (target.result_slot.empty() || !target.result_type) {
+          cg_.reject_codegen_construct(s.line,
+              "a break value requires a switch expression target",
+              "yield a value only from a switch expression");
+          break;
+        }
+        const auto first_instruction = out_fn.body.size();
+        emit_expr(*statement.value, target.result_type);
+        if (!expression_statement_produces_value(*statement.value, first_instruction)) {
+          cg_.reject_codegen_construct(s.line,
+              "switch break expression does not produce a value",
+              "provide a non-void result");
+          break;
+        }
+        emit_scalar_boundary(target.result_type, s.line);
+        // Capture before recover, as with return: cleanup cannot change the
+        // already evaluated result unless it explicitly replaces this exit.
+        push_instr("STORE_LOCAL", {target.result_slot}, s.line);
+      } else if (!target.result_slot.empty()) {
+        cg_.reject_codegen_construct(s.line,
+            "switch expression break is missing its value",
+            "provide a value when leaving this switch expression");
+        break;
+      }
+      emit_exited_cleanups(target.cleanup_depth, s.line, target.ownership_depth);
+      push_instr("JMP", {target.end_label}, s.line);
       break;
     }
     case ast_node_kind::continue_stmt_node: {
-      if (!loop_stack.empty()) {
-        const auto destination = loop_stack.back();
-        emit_exited_cleanups(destination.cleanup_depth, s.line, destination.ownership_depth);
-        push_instr("JMP", {destination.start_label}, s.line);
+      const auto destination = std::find_if(loop_stack.rbegin(), loop_stack.rend(),
+          [](const LoopContext &context) { return !context.start_label.empty(); });
+      if (destination != loop_stack.rend()) {
+        if (exits_physical_value_switch(*destination) ||
+            std::any_of(loop_stack.rbegin(), destination,
+            [](const LoopContext &context) { return !context.result_slot.empty(); })) {
+          cg_.reject_codegen_construct(s.line,
+              "continue cannot cross a switch expression with suspended operands",
+              "produce a switch result and continue the loop afterward");
+          break;
+        }
+        const auto target = *destination;
+        emit_exited_cleanups(target.cleanup_depth, s.line, target.ownership_depth);
+        push_instr("JMP", {target.start_label}, s.line);
       } else {
         cg_.reject_codegen_construct(
             s.line, "continue cannot be lowered outside a loop",
             "move this continue statement inside a loop");
       }
+      break;
+    }
+    case ast_node_kind::switch_stmt_node: {
+      const auto &statement = static_cast<const ast_switch_stmt &>(s);
+      emit_switch(statement.target, statement.arms, statement.checked_switch,
+                  statement.line, std::nullopt);
       break;
     }
     case ast_node_kind::while_stmt_node: {
@@ -4754,6 +4906,17 @@ public:
       }
       break;
     }
+    case ast_node_kind::switch_expr_node: {
+      const auto &expression = static_cast<const ast_switch_expr &>(e);
+      if (!expression.inferred_type || expression.inferred_type == "<unknown>") {
+        cg_.reject_codegen_construct(e.line, "switch expression has no checked result type",
+                                     "provide a compatible break value on every result path");
+        break;
+      }
+      emit_switch(expression.target, expression.arms, expression.checked_switch,
+                  expression.line, expression.inferred_type);
+      break;
+    }
     case ast_node_kind::match_expr_node: {
       const auto &match_e = static_cast<const ast_match_expr &>(e);
       // Expression matches must initialize one result on every path. Keep
@@ -5035,13 +5198,33 @@ public:
       // module name aliases left::Problem with unrelated left__Problem just
       // as sanitizing a generic aliases Box<i64> with Box_i64_.
 
-      push_instr("NEW_STRUCT", {struct_name}, sl.line);
-
+      // Finish field evaluation before allocating the aggregate. A value
+      // switch may return/raise while evaluating a later field; keeping a
+      // partially initialized object on the operand stack would then require
+      // abandoning an incomplete native object. Scratch locals preserve the
+      // source's left-to-right evaluation without weakening escape checks.
+      std::vector<std::string> field_values;
+      field_values.reserve(sl.fields.size());
       for (const auto &field : sl.fields) {
         const auto field_type = struct_field_type(concrete_type, field.first);
-        emit_expr(*field.second, field_type);
+        const auto first_instruction = out_fn.body.size();
+        if (field.second) emit_expr(*field.second, field_type);
+        if (!field.second || !expression_statement_produces_value(*field.second, first_instruction)) {
+          cg_.reject_codegen_construct(sl.line, "aggregate field initializer does not produce a value",
+                                       "provide one value for every field");
+          break;
+        }
         emit_scalar_boundary(field_type, sl.line);
-        push_instr("SET_FIELD", {field.first}, sl.line);
+        const auto value = new_temp("field_value");
+        if (field_type) local_var_types[value] = *field_type;
+        push_instr("STORE_LOCAL", {value}, sl.line);
+        field_values.push_back(value);
+      }
+      if (field_values.size() != sl.fields.size()) break;
+      push_instr("NEW_STRUCT", {struct_name}, sl.line);
+      for (std::size_t index = 0; index < sl.fields.size(); ++index) {
+        push_instr("LOAD_LOCAL", {field_values[index]}, sl.line);
+        push_instr("SET_FIELD", {sl.fields[index].first}, sl.line);
       }
       break;
     }
@@ -7070,6 +7253,7 @@ codegen::assemble_module(const ast_program &program,
 
   try {
     lower_binding_references(*mod);
+    finalize_nil_switch_returns(*mod);
     if (std::any_of(mod->structs.begin(), mod->structs.end(),
                     [](const auto &schema) { return binding_cell_value_type(schema.name).has_value(); }))
       validate_nil_class_contract(*mod);

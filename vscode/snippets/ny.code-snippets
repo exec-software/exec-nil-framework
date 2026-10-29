@@ -247,7 +247,7 @@
   },
   "Inline annotation": {
     "prefix": "@inline",
-    "description": "Request function inlining",
+    "description": "Mark a function with retained inline metadata",
     "body": [
       "@inline"
     ]
@@ -328,6 +328,29 @@
       "    order by ${1:item} ascending",
       "    select ${1:item}",
       "end query"
+    ]
+  },
+  "Switch statement": {
+    "prefix": "switch",
+    "description": "Dispatch once, then fall through until break or another exit",
+    "body": [
+      "switch ${1:subject}",
+      "    case ${2:1}:",
+      "        ${3:println(\"matched\")}",
+      "        break",
+      "    default:",
+      "        ${0}",
+      "end switch"
+    ]
+  },
+  "Switch expression": {
+    "prefix": "switch-value",
+    "description": "Produce a value with break value; every path must produce or exit",
+    "body": [
+      "switch ${1:subject} {",
+      "    case ${2:1}: break ${3:10}",
+      "    default: break ${4:0}",
+      "}"
     ]
   }
 }

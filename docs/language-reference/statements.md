@@ -52,6 +52,13 @@ match value
 end match
 ```
 
+### Switch Statement
+
+`switch` dispatches by equality and automatically falls through into later
+case bodies. Use `break` to leave it in Ny, or `stop switching` in Matrix.
+See [switch statements and expressions](switch.md) for labels, scopes,
+value-producing exits, and loop interactions.
+
 ### While Loop
 ```ny
 let mut i = 0
@@ -83,6 +90,11 @@ end loop
 ```
 
 ### Break and Continue
+
+`break` leaves the nearest loop or switch. `continue` always targets the
+nearest loop. Inside a switch expression, `break value` yields its result;
+an intervening loop prevents that value-bearing exit from reaching the switch.
+
 ```ny
 for item in items
     if skip then

@@ -2094,6 +2094,124 @@ lowering calls, rather than allowing the imported type-alias map to replace it.
 Cover folded case/separator collisions, local shadowing, source imports, and
 binary-library imports in both analysis and executable-call regressions.
 
+### F77 — Declaration metadata needs parity and editor discoverability
+
+**Observation:** Matrix already accepted `note` and `context`, but its flat
+arguments did not provide the named properties available in Ny annotations.
+The editor treated them as ordinary verbs, omitted annotation completion, and
+did not distinguish metadata names from code references.
+
+**Decision and implementation:** Both frontends accept stackable `@name` and
+`@name(value, key=value)` metadata. Matrix retains legacy `note`/`context` and
+adds `note name with value, key being value`. The initial structured values
+are text, booleans, signed integers, floating-point numbers, and symbols.
+Custom annotations are inert data. They do not execute decorators or add
+runtime behavior by name alone.
+
+The shared argument parser supplies typed scalar properties alongside retained
+raw arguments. Legacy Ny composite and nested metadata remains opaque for any
+annotation name, including custom names, and explicitly reports that its
+arguments were not parsed. Matrix annotations keep Matrix's
+raw strings and diagnose unsupported targets. Qualified names, ordered
+arguments, duplicate-key rejection, and numeric limits are part of the
+shared contract.
+
+**Backward compatibility correction:** The full test suite exposed an existing
+Ny fixture using `@custom(outer(inner("payload")))`. Limiting the opaque
+fallback to built-in annotation names would reject that accepted source. The
+fallback therefore preserves legacy composite/nested payloads for custom
+names too, as inert text with `arguments_parsed: false`. It does not execute
+the nested forms or extend Matrix beyond scalar arguments.
+
+**Binary VM compatibility fix:** The binary program loader did not pass the
+type-annotation header flag into class-schema decoding. Annotated class
+artifacts were therefore decoded using the layout without annotations, which
+misread subsequent class metadata. The VM loader now supplies the flag to the
+shared class reader, matching the other binary loading path. Annotation
+qualification includes binary VM class execution as well as text NIL so that
+metadata retention cannot silently change the decoded schema layout.
+
+The text writer also used to replace explicit `@inline` annotations with a
+bare marker, losing any properties and duplicate entries that binary output
+retained. It now preserves explicit annotations and synthesizes a marker only
+for a flag without source metadata. Prose metadata also shares signed minimum
+literal validation with expressions, so `negative`, `minus`, and `-` accept
+the same signed 64-bit range as the compact annotation form.
+
+Editor support highlights annotation names and properties, offers snippets
+and Matrix metadata completion, and excludes annotation payloads from ordinary
+symbol discovery and navigation. Multiline metadata must not invent
+declarations or move the following declaration's source range.
+
+Matrix now uses shared preprocessing with its own literal protection and exact
+macro-name boundaries. Inactive branches cannot apply directives or expand
+macros. Annotation payloads stay metadata rather than macro-expanded code.
+Source transformations still require conservative suppression of compiler edit
+locations and signature offsets because a complete original source map is
+not available.
+
+**Next-version work:** Structured arrays/maps, field and parameter metadata,
+analyzer-defined annotation schemas, and documentation in hover/signature help
+need separate contracts. Preprocessor directives remain distinct from
+declaration metadata. The detailed scope is in
+[NIL-0020](../../docs/design/NIL-0020-declaration-annotations.md).
+
+### F78 — Fallthrough needs explicit exits and consistent case scopes
+
+**Observation:** Ny `match` and Matrix `consider` provide independent pattern
+arms. Reusing those forms for sequential fallthrough would change existing
+control flow and make expression results ambiguous.
+
+**Decision and implementation:** A separate `switch` supports statement and
+value positions in both languages. The selector runs once; equality dispatch
+chooses a literal label or default, then case bodies execute in source order
+until an exit. The default may appear anywhere. Value switches require a
+default and a compatible result on every normal exit; they may fall through
+to a later result-producing body.
+
+Ny retains nearest-loop-or-switch `break` and adds `break value` for a switch
+expression. Matrix makes the target explicit with `stop switching` and
+`stop switching with value`; its `stop repeating` and `continue repeating`
+remain loop-specific. `give` in a switch body returns from the paragraph.
+Each case has its own lexical scope, including across fallthrough, and local
+owners/borrows are cleaned up at case boundaries and transfers of control.
+Outer-owner movement across switch paths remains conservatively rejected.
+
+**Control-flow boundary found during review:** A loop exit from a switch
+expression could abandon pending operands in the containing expression, such
+as the left operand of `100 plus switch ...`. This initial implementation
+rejects `continue`/`continue repeating` and Matrix `stop repeating` when their
+loop target lies outside an active value switch. Loops wholly inside the case
+still work, and `stop switching with` can yield across an inner loop. A future
+relaxation needs explicit operand-stack cleanup across every backend.
+
+**Editor requirements:** Fallback indexing must traverse switches nested in
+initializers and call arguments, keep case locals from leaking into later
+cases, and resume indexing after the switch ends. Completion, highlighting,
+indentation, and snippets expose both statement and value forms without
+turning similarly named members into control constructs.
+
+**Initial scope:** Integral, boolean, and text literal labels, Ny character
+literals, and qualified variants of payload-free enums/choices. Floating-point
+selectors, executable labels, guards, and payload patterns are unsupported.
+The entire enum/choice must be payload-free. Pattern matching remains unchanged.
+The shared decision is recorded in
+[NIL-0021](../../docs/design/NIL-0021-fallthrough-switch.md), with source examples
+in the [switch reference](../../docs/language-reference/switch.md).
+
+**Bugs found during qualification:** Braced Ny selectors needed a parsing
+boundary so a default-first case list was not mistaken for a record literal.
+Case identity now follows checked integer width, including hexadecimal masks,
+and enum cases resolve regardless of declaration order or frontend spelling.
+Early returns from value switches can abandon operands from an enclosing
+binary expression, call, or aggregate. Compiler finalization removes those
+operands after cleanup while retaining strict executable return validation.
+Tuple and record fields now evaluate before aggregate allocation, so an early
+exit cannot leave an incomplete object on the native operand stack.
+Case bodies, including those inside expressions and unused parameter defaults,
+are traversed by the default analyzer. Debugger coverage checks execution order
+and case-local visibility in text and binary NIL.
+
 ## NILData migration — 2026-10-26
 
 ### F67 — Serialization needs one model and full-input validation
@@ -2157,3 +2275,36 @@ VSIX packaging pass. The packaging check blocks credential construction and
 network access; it does not claim validation of credentialed Azure publishing.
 Remove the temporary override once the upstream dependency range admits a
 patched version. See the [upstream advisory](https://github.com/AzureAD/microsoft-authentication-library-for-js/security/advisories/GHSA-xcx6-jx8p-x3h5).
+
+## Project builds and configuration — 2026-10-29
+
+### F79 — Build reuse needs compiler input identities, not file extensions
+
+**Observation:** The initial driver recompiled every project after checking it.
+The analyzer's `sources` array contained only imported diagnostic snapshots, so
+it was not a usable build dependency inventory. Scanning only `.ny`/`.matrix`
+files would miss arbitrary-extension textual includes and binary libraries;
+tracking only previously resolved files would miss a newly shadowing import.
+The compiler also combines an executable's import graph into one program, so
+parallel source compilation cannot be added solely in the driver.
+
+**Implemented:** Fresh analysis now reports exact consumed-file SHA-256
+identities and explicit completeness. The driver keeps analysis fresh, then
+reuses a validated artifact when inputs, settings and tools agree. Independent
+project references and VM/native output targets provide bounded parallel work.
+NILData becomes the default project manifest, description and cache notation;
+JSON and a bounded YAML project reader/writer remain compatible. The standard
+library's serialization formats and editor/SDK protocols retain their contracts.
+Input protection remains active when cache reuse is unavailable, and reserved
+state paths cannot overlap project inputs or artifacts.
+See [NIL-0022](../../docs/design/NIL-0022-incremental-project-builds.md).
+
+**Remaining friction:** A warm build still parses and checks the complete graph,
+and a single executable remains one compilation job. Reusable library targets
+and finer-grained parallelism need a separate compilation contract. Dependency
+waves can leave workers idle while an unrelated slow project finishes. Output
+lock contention fails instead of waiting for another driver. Filesystem inputs
+and the host linker installation must remain stable during a build; dependency
+digests do not create a filesystem snapshot. NILData conversion also discards
+comments and formatting; schema-aware completion and comment-preserving edits
+remain useful follow-up work for human project authoring.

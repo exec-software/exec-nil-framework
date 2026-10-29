@@ -77,6 +77,77 @@ def completion(source: str, marker: str = "|", *, extra: list[dict] | None = Non
 
 
 class SemanticProtocol(unittest.TestCase):
+    def test_switch_cases_keep_independent_scopes_and_following_code(self) -> None:
+        for opening, closing in (('switch mode', 'end switch'), ('switch mode {', '}')):
+            source = ('fn main(mode: i64)\n' + opening + '\n'
+                      ' case 1:\n  let first: i64 = 1\n  println(first)\n'
+                      ' case 2:\n  let second: i64 = 2\n  |\n  break\n'
+                      ' default:\n  break\n' + closing + '\n let after: i64 = 3\n println(after)\nend fn\n')
+            result, notes = completion(source)
+            self.assertIn('second', result)
+            self.assertNotIn('first', result)
+            self.assertNotIn('after', result)
+            self.assertFalse([note for note in notes if note['params']['diagnostics']])
+            result, _ = completion(source.replace('  |', '').replace('println(after)', 'println(af|ter)'))
+            self.assertEqual(set(result), {'after'})
+
+    def test_nested_switch_expressions_are_traversed_inside_initializers(self) -> None:
+        source = '''fn main(mode: i64)
+ let answer = identity(switch mode {
+ case 1:
+  let outer: i64 = 1
+  break switch mode {
+   case 1:
+    let inner: i64 = 2
+    println(in|ner)
+    break inner
+   default: break outer
+  }
+ default: break 0
+ })
+ let following: i64 = 3
+ println(following)
+end fn
+'''
+        result, notes = completion(source)
+        self.assertEqual(set(result), {'inner'})
+        self.assertFalse([note for note in notes if note['params']['diagnostics']])
+        following = source.replace('in|ner', 'inner').replace('println(following)', 'println(fol|lowing)')
+        result, _ = completion(following)
+        self.assertEqual(set(result), {'following'})
+        outside = source.replace('in|ner', 'inner').replace('println(following)', '|')
+        result, _ = completion(outside)
+        self.assertIn('answer', result)
+        self.assertNotIn('outer', result)
+        self.assertNotIn('inner', result)
+
+    def test_switch_named_members_remain_fields(self) -> None:
+        source = 'struct Settings\n switch: i64\n default: i64\nend struct\nfn main(settings: Settings)\n println(settings.switch)\n println(settings.def|ault)\nend fn\n'
+        result, notes = completion(source)
+        self.assertEqual(set(result), {'default'})
+        self.assertFalse([note for note in notes if note['params']['diagnostics']])
+
+    def test_switch_named_values_and_calls_do_not_open_control_scopes(self) -> None:
+        for expression in ('switch', 'switch + 1', 'switch(1) + 2'):
+            source = ('fn main(switch: i64)\n let result = ' + expression +
+                      '\n let following: i64 = 3\n println(fol|lowing)\nend fn\n')
+            result, notes = completion(source)
+            self.assertEqual(set(result), {'following'})
+            self.assertFalse([note for note in notes if note['params']['diagnostics']])
+
+    def test_qualified_multiline_annotation_metadata_does_not_bind_names(self) -> None:
+        source = '@Company.review(\n summary="metadata",\n enabled=true\n)\nfn main(summary: text)\n println(sum|mary)\nend fn\n'
+        result, notes = completion(source)
+        self.assertEqual(set(result), {'summary'})
+        self.assertFalse([note for note in notes if note['params']['diagnostics']])
+        replies, _ = session([opened(source.replace('|', '')), query('definition', source, '|')])
+        self.assertEqual(replies[2][0]['range']['start'], {'line': 4, 'character': 8})
+        source = source.replace('sum|mary)', 'summary)').replace('summary="metadata"', 'sum|mary="metadata"')
+        result, _ = completion(source)
+        self.assertEqual(result, {})
+        replies, _ = session([opened(source.replace('|', '')), query('definition', source, '|')])
+        self.assertIsNone(replies[2])
+
     def test_reference_parameter_name_and_definition(self) -> None:
         for modifier in ('ref', 'reference', 'mut', 'mutable'):
             with self.subTest(modifier=modifier):

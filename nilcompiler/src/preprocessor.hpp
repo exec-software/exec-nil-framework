@@ -105,6 +105,10 @@ struct macro_def {
 
 // Preprocessor options to control behavior
 struct preprocessor_options {
+  // Respect Matrix raw text, escaped names, comments and identifier boundaries.
+  // Directive and macro names retain the preprocessor's exact spelling rules.
+  bool matrix_surface = false;
+
   // If set, macros will be expanded in textual output (default true).
   bool expand_macros = true;
 
@@ -125,6 +129,9 @@ struct preprocessor_options {
   // An installed callback is authoritative: failure never falls back to disk.
   std::function<std::optional<std::filesystem::path>(const std::filesystem::path &)> resolve_source;
   std::function<std::optional<std::string>(const std::filesystem::path &)> read_source;
+  // Observe successful reads without replacing normal include resolution or
+  // I/O. Analysis uses this to identify arbitrary-extension build inputs.
+  std::function<void(const std::filesystem::path &, const std::string &)> source_read;
   // Zero preserves the ordinary compiler's existing behavior.
   std::size_t max_output_bytes = 0;
   std::size_t max_include_depth = 0;

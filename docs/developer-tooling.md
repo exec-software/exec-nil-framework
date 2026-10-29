@@ -14,6 +14,12 @@ or running. VS Code consumes that configuration for live analysis and project
 tasks, displays matching imported-file diagnostics, and offers guarded style
 fixes. See [projects](tools/projects.md) and the [analysis API](analysis-api.md).
 
+Project manifests now default to NILData. Local project references establish
+dependency ordering, and bounded parallel jobs build independent projects and
+VM/native targets. SHA-256 input and artifact identities avoid redundant
+compilation while every invocation still performs fresh analysis. A single
+executable remains one compiler job over its complete import graph.
+
 Workspace source requests now let the compiler analyze open unsaved dependencies
 alongside the primary buffer. Import resolution and Ny textual includes consume
 those snapshots, and the editor invalidates results when any input changes.
@@ -63,7 +69,7 @@ not complete signatures or a stable type graph. See
 | Complete semantic coverage | Extend the implemented partial index to fields, methods, type uses, pattern bindings, precise generic/overload identities, and recoverable incomplete code. Add binary dependency identity and generated-source maps. | Mixed Ny/Matrix projects, dirty imports, deletion/rename, shadowing, overloads, generics and incomplete code cannot produce stale or guessed bindings. |
 | Semantic editing | Extend member/signature queries to unsupported contexts and general parser recovery; add explicitly scoped cross-file references and transactional rename. Extend existing compiler-backed definition navigation as coverage grows. | Real extension-host tests exercise edit/undo, Unicode offsets, cancellation and multi-root workspaces against an installed SDK. |
 | Analyzer extensions | Versioned read-only semantic queries and an explicit, bounded host for language-authored analyzers; shared diagnostics, configuration and fix protocol. | Malformed output, limits, analyzer failure and source-version mismatch cannot apply incorrect edits or corrupt compilation. |
-| Project graphs | Explicit local project references, library/executable targets and dependency ordering, followed by a content-based incremental cache. | Cycles, output collisions and changed dependencies fail or rebuild predictably; a failed build cannot run stale artifacts. |
+| Separate compilation | Extend the implemented local project graph and content cache with reusable library targets and a compiler-owned separate compilation contract. | Module interfaces, dependency changes and artifact reuse remain consistent across VM and native targets; a failed build cannot run stale artifacts. |
 | Integrated debugging | Project launch profiles, consistent source maps, richer variable inspection and native-debugger integration. | End-to-end stepping and breakpoint tests cover both languages and each claimed execution route. |
 
 [NIL-0013](design/NIL-0013-project-semantic-editing.md) proposes the entrypoint-graph

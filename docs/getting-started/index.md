@@ -135,7 +135,7 @@ combine it with an adjacent `nilinterpreter` executable.
 
 ## Work with a project
 
-For an application with imports, use a `nil.project.json` manifest and
+For an application with imports, use a `nil.project.nildata` manifest and
 `nilbuild check`, `nilbuild build` or `nilbuild run`. The
 [project guide](../tools/projects.md) includes the format and both execution
 targets. The same project context is used by the VS Code extension.

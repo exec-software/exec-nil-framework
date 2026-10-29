@@ -25,11 +25,13 @@ Design notes:
 #include "diagnostics.hpp"
 
 #include <cassert>
+#include <cctype>
 #include <algorithm>
 #include <iostream>
 #include <iterator>
 #include <optional>
 #include <string>
+#include <stdexcept>
 #include <vector>
 #include <cstdlib>
 
@@ -845,49 +847,81 @@ visibility_kind parser::parse_visibility_modifier() {
   return visibility_kind::visibility_public;
 }
 
-std::vector<std::string> parser::parse_leading_annotations() {
-  // Collect any leading annotations present before this declaration.
-  // Examples: @inline, @test, @deprecated, custom annotations.
-  // We accept multiple annotations in a row. Annotations are currently
-  // collected for diagnostics and future stages (semantic analysis/codegen).
-  std::vector<std::string> collected_annotations;
+std::vector<ast_annotation> parser::parse_leading_annotations() {
+  std::vector<ast_annotation> annotations;
   while (match(token_kind::annotation)) {
-    // Store full lexeme that includes the annotation text (e.g., "@test")
-    std::string ann_str = previous().lexeme;
-
-    // @pragma directives consume a bare word argument (e.g. `@pragma once`)
-    if (ann_str == "@pragma" && check(token_kind::identifier)) {
-      ann_str += " " + advance().lexeme;
-      collected_annotations.push_back(ann_str);
+    const auto origin = previous();
+    ast_annotation annotation(origin.lexeme.substr(1), std::nullopt, origin.line);
+    // Both surfaces use the same qualified identity. The Ny lexer keeps ::
+    // inside the annotation token; dotted segments arrive as ordinary tokens.
+    while (match(token_kind::dot)) {
+      const auto part = parse_annotation_arguments("scope::" + peek().lexeme);
+      if (!part.error.empty() || part.arguments.size() != 1 || part.arguments.front().kind != "symbol") {
+        add_error(peek(), "Expected an annotation name after '.'");
+        break;
+      }
+      annotation.name += "::" + advance().lexeme;
+    }
+    const auto name = parse_annotation_arguments("scope::" + annotation.name);
+    if (!name.error.empty()) add_error(origin, "Invalid qualified annotation name");
+    if (annotation.name == "nil_binding_cell")
+      add_error(origin, "@nil_binding_cell is reserved for compiler-owned storage metadata");
+    annotation.typed_arguments = std::vector<annotation_argument>{};
+    // Preprocessor directives retained by explicitly configured tools keep
+    // their historical opaque representation.
+    if (annotation.name == "pragma" && check(token_kind::identifier)) {
+      annotation.name += " " + advance().lexeme;
+      annotation.typed_arguments.reset();
+      annotations.push_back(std::move(annotation));
       continue;
     }
-    // Also consume any optional parenthesized arguments: @interop("ny_mimic")
     if (match(token_kind::left_paren)) {
-      ann_str += "(";
+      std::string legacy, canonical;
+      bool previous_atom = false, legacy_container = false;
       int depth = 1;
       while (!is_at_end() && depth > 0) {
-        if (check(token_kind::left_paren)) {
-          depth++;
-        } else if (check(token_kind::right_paren)) {
-          depth--;
-          if (depth == 0) {
-            advance(); // consume the final ')'
-            ann_str += ")";
-            break;
+        if (check(token_kind::left_paren)) ++depth;
+        else if (check(token_kind::right_paren) && --depth == 0) {
+          advance();
+          break;
+        }
+        const auto current = advance();
+        const bool atom = !current.lexeme.empty() &&
+            (current.kind == token_kind::string_literal ||
+             std::isalnum(static_cast<unsigned char>(current.lexeme.front())) ||
+             current.lexeme.front() == '_');
+        if (atom && previous_atom) canonical += ' ';
+        if (current.kind == token_kind::string_literal) {
+          legacy += "\"" + current.lexeme + "\"";
+          try { canonical += quote_annotation_text(current.lexeme); }
+          catch (const std::invalid_argument &error) {
+            add_error(current, error.what());
           }
-        }
-        // Append the current token to the annotation string
-        if (peek().kind == token_kind::string_literal) {
-          ann_str += "\"" + peek().lexeme + "\"";
         } else {
-          ann_str += peek().lexeme;
+          legacy += current.lexeme;
+          canonical += current.lexeme;
+          legacy_container = legacy_container || current.kind == token_kind::left_paren ||
+                             current.kind == token_kind::left_bracket ||
+                             current.kind == token_kind::left_brace;
         }
-        advance();
+        previous_atom = atom;
+      }
+      if (depth != 0) add_error(origin, "Unterminated annotation argument list; expected ')'");
+      annotation.args = std::move(legacy);
+      const auto parsed = parse_annotation_arguments(canonical);
+      if (parsed.error.empty()) annotation.typed_arguments = parsed.arguments;
+      else {
+        annotation.typed_arguments.reset();
+        // Ny historically retained composite payloads for every annotation
+        // name. Keep those opaque without parsing or executing their contents;
+        // the shared scalar profile still diagnoses malformed scalar lists.
+        if (!legacy_container)
+          add_error(origin, "Invalid @" + annotation.name + " arguments: " + parsed.error);
       }
     }
-    collected_annotations.push_back(ann_str);
+    annotations.push_back(std::move(annotation));
   }
-  return collected_annotations;
+  return annotations;
 }
 
 std::shared_ptr<ast_decl> parser::parse_text_pattern_declaration(visibility_kind visibility) {
@@ -1350,7 +1384,7 @@ std::shared_ptr<ast_decl> parser::parse_declaration() {
 
 std::shared_ptr<ast_decl>
 parser::parse_function_declaration(visibility_kind vis, bool is_abstract,
-                                   const std::vector<std::string> &annotations) {
+                                   const std::vector<ast_annotation> &annotations) {
   // The caller MAY have consumed the 'function' / 'fn' keyword already or may
   // call this helper with the keyword still present. To be tolerant of both
   // calling conventions, accept an optional leading 'function' or 'fn' token
@@ -2147,45 +2181,12 @@ parser::parse_module_declaration(visibility_kind vis) {
 // and handling are performed by the single `parse_statement()` definition.
 
 std::shared_ptr<ast_stmt> parser::parse_statement() {
-  // Collect any leading statement-level annotations that apply to the
-  // upcoming statement. This mirrors the top-level declaration annotation
-  // capture. For now we store them locally and emit a diagnostic entry.
-  std::vector<std::string> stmt_annotations;
-  while (match(token_kind::annotation)) {
-    // Store full lexeme that includes the annotation text (e.g., "@test")
-    std::string ann_str = previous().lexeme;
-
-    // Also consume any optional parenthesized arguments: @interop("ny_mimic")
-    if (match(token_kind::left_paren)) {
-      ann_str += "(";
-      int depth = 1;
-      while (!is_at_end() && depth > 0) {
-        if (check(token_kind::left_paren)) {
-          depth++;
-        } else if (check(token_kind::right_paren)) {
-          depth--;
-          if (depth == 0) {
-            advance(); // consume the final ')'
-            ann_str += ")";
-            break;
-          }
-        }
-        // Append the current token to the annotation string
-        if (peek().kind == token_kind::string_literal) {
-          ann_str += "\"" + peek().lexeme + "\"";
-        } else {
-          ann_str += peek().lexeme;
-        }
-        advance();
-      }
-    }
-    stmt_annotations.push_back(ann_str);
-  }
+  const auto stmt_annotations = parse_leading_annotations();
   if (!stmt_annotations.empty() && ny::is_debug_enabled()) {
     // Log for debugging; later phases will pick up annotations from the AST
     // or symbol table when we add those fields.
     for (const auto &a : stmt_annotations) {
-      std::cerr << "[parse_statement] found annotation: " << a << "\n";
+      std::cerr << "[parse_statement] found annotation: " << a.name << "\n";
     }
   }
 
@@ -2198,7 +2199,9 @@ std::shared_ptr<ast_stmt> parser::parse_statement() {
   // a concise summary right before returning - this aids debugging and tests.
   std::shared_ptr<ast_stmt> result = nullptr;
 
-  if (check(token_kind::left_brace)) {
+  if (is_switch_start()) {
+    result = parse_switch_statement();
+  } else if (check(token_kind::left_brace)) {
     result = parse_block_statement();
   } else if (match(token_kind::println_kw)) {
     result = parse_println_statement();
@@ -2898,9 +2901,17 @@ std::shared_ptr<ast_stmt> parser::parse_loop_statement() {
 std::shared_ptr<ast_stmt> parser::parse_break_statement() {
   // 'break' consumed
   token tok = previous(); // break token
+  auto statement = std::make_shared<ast_break_stmt>(tok.line);
+  // An explicit value exits a value-producing switch. A new source line,
+  // label, terminator or closing delimiter always keeps this a plain break.
+  if (!is_at_end() && peek().line == tok.line &&
+      !check(token_kind::semicolon) && !check(token_kind::right_brace) &&
+      !check(token_kind::end_kw) && !is_switch_label()) {
+    statement->value = parse_expression();
+  }
   // optional semicolon
   match(token_kind::semicolon);
-  return std::make_shared<ast_break_stmt>(tok.line);
+  return statement;
 }
 
 std::shared_ptr<ast_stmt> parser::parse_continue_statement() {
@@ -3202,6 +3213,7 @@ std::shared_ptr<ast_expr> parser::parse_call(std::shared_ptr<ast_expr> callee) {
     // is followed by `identifier :` (field assignment pattern) or is empty
     // `{}`. This avoids ambiguity with block statements.
     if (check(token_kind::left_brace) &&
+        switch_target_boundary_depth_ != expression_depth_ &&
         callee->kind == ast_node_kind::identifier_expr_node) {
       // if (ny::is_debug_enabled()) {
       //   ny::diag_debug(std::string("[parse_call] struct literal check
@@ -3369,6 +3381,8 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
     debug_peek("matched false_kw");
     return std::make_shared<ast_boolean_literal>(false, previous().line);
   }
+
+  if (is_switch_start()) return parse_switch_expression();
 
   // Support `match` as an expression-level form (MVP placeholder).
   // Will call a parse_match_expression stub which consumes the structure and
@@ -3833,6 +3847,190 @@ std::shared_ptr<ast_expr> parser::parse_query_expression() {
   require_word("query");
   if (!query->projection) add_error(start, "Collect query requires a final select expression");
   return query;
+}
+
+bool parser::is_switch_start() const {
+  if (!check(token_kind::identifier) || peek().lexeme != "switch" ||
+      pos_ + 1 >= tokens_.size() || tokens_[pos_ + 1].line != peek().line)
+    return false;
+  const auto next = tokens_[pos_ + 1].kind;
+  // `switch` remains an ordinary callable name. A parenthesized selector is
+  // distinguished from a call by a switch body following the complete
+  // selector, including operators after its initial parenthesized portion.
+  if (next == token_kind::left_paren) {
+    size_t depth = 0;
+    for (size_t i = pos_ + 1; i < tokens_.size(); ++i) {
+      if (tokens_[i].kind == token_kind::left_paren) ++depth;
+      if (tokens_[i].kind != token_kind::right_paren || --depth != 0) continue;
+      size_t parentheses = 0, brackets = 0;
+      for (++i; i < tokens_.size(); ++i) {
+        const auto &candidate = tokens_[i];
+        if (!parentheses && !brackets) {
+          if (candidate.kind == token_kind::left_brace) return true;
+          if (candidate.kind == token_kind::identifier &&
+              (candidate.lexeme == "case" || candidate.lexeme == "default")) {
+            // `case` and `default` remain valid operands in an ordinary
+            // call expression. Only a subsequent colon introduces a label.
+            for (size_t label = i + 1; label < tokens_.size() &&
+                 tokens_[label].line == candidate.line; ++label) {
+              if (tokens_[label].kind == token_kind::colon) return true;
+              if (tokens_[label].kind == token_kind::semicolon ||
+                  tokens_[label].kind == token_kind::right_brace ||
+                  tokens_[label].kind == token_kind::eof) break;
+            }
+          }
+          if (candidate.kind == token_kind::end_kw && i + 1 < tokens_.size() &&
+              tokens_[i + 1].kind == token_kind::identifier &&
+              tokens_[i + 1].lexeme == "switch") return true;
+          if (candidate.kind == token_kind::semicolon ||
+              candidate.kind == token_kind::right_brace ||
+              candidate.kind == token_kind::right_paren ||
+              candidate.kind == token_kind::right_bracket ||
+              candidate.kind == token_kind::comma || candidate.kind == token_kind::eof)
+            return false;
+          if (candidate.line != tokens_[i - 1].line) {
+            // A newline ordinarily ends the candidate selector. Continue a
+            // clearly unfinished binary expression, but never scan through
+            // the next statement looking for an unrelated case list.
+            switch (tokens_[i - 1].kind) {
+            case token_kind::plus: case token_kind::minus:
+            case token_kind::star: case token_kind::slash:
+            case token_kind::percent: case token_kind::mod_kw:
+            case token_kind::amp: case token_kind::pipe: case token_kind::caret:
+            case token_kind::amp_amp: case token_kind::pipe_pipe:
+            case token_kind::less_less: case token_kind::greater_greater:
+            case token_kind::less: case token_kind::less_equal:
+            case token_kind::greater: case token_kind::greater_equal:
+            case token_kind::double_equal: case token_kind::not_equal:
+              break;
+            default: return false;
+            }
+          }
+        }
+        if (candidate.kind == token_kind::left_paren) ++parentheses;
+        else if (candidate.kind == token_kind::right_paren && parentheses) --parentheses;
+        if (candidate.kind == token_kind::left_bracket) ++brackets;
+        else if (candidate.kind == token_kind::right_bracket && brackets) --brackets;
+      }
+      return false;
+    }
+    return false;
+  }
+  switch (next) {
+  case token_kind::identifier: case token_kind::number_literal:
+  case token_kind::string_literal: case token_kind::char_literal:
+  case token_kind::true_kw: case token_kind::false_kw:
+  case token_kind::minus: case token_kind::not_kw: case token_kind::tilde:
+  case token_kind::amp: case token_kind::star: case token_kind::ref_kw:
+  case token_kind::if_kw: case token_kind::match_kw:
+  case token_kind::self_kw: case token_kind::left_bracket:
+  case token_kind::formatted_string_begin:
+    return true;
+  default:
+    return false;
+  }
+}
+
+bool parser::is_switch_label() const {
+  if (!check(token_kind::identifier) || pos_ + 1 >= tokens_.size()) return false;
+  if (peek().lexeme == "default") return tokens_[pos_ + 1].kind == token_kind::colon;
+  if (peek().lexeme != "case") return false;
+  // A local named `case` may still be assigned, called or used in a body.
+  // The colon identifies a label without reserving that spelling globally.
+  size_t parentheses = 0, brackets = 0;
+  for (size_t i = pos_ + 1; i < tokens_.size(); ++i) {
+    const auto &candidate = tokens_[i];
+    if (candidate.line != peek().line || candidate.kind == token_kind::semicolon ||
+        candidate.kind == token_kind::eof || candidate.kind == token_kind::end_kw ||
+        candidate.kind == token_kind::right_brace) return false;
+    if (candidate.kind == token_kind::left_paren) ++parentheses;
+    if (candidate.kind == token_kind::right_paren) {
+      if (!parentheses) return false;
+      --parentheses;
+    }
+    if (candidate.kind == token_kind::left_bracket) ++brackets;
+    if (candidate.kind == token_kind::right_bracket) {
+      if (!brackets) return false;
+      --brackets;
+    }
+    if (!parentheses && !brackets && candidate.kind == token_kind::colon) return true;
+  }
+  return false;
+}
+
+std::vector<ast_switch_arm> parser::parse_switch_arms() {
+  const bool braces = match(token_kind::left_brace);
+  std::vector<ast_switch_arm> arms;
+  const auto closed = [&]() {
+    return is_at_end() || check(token_kind::end_kw) ||
+           (braces && check(token_kind::right_brace));
+  };
+  while (!closed()) {
+    while (match(token_kind::semicolon)) {}
+    if (closed()) break;
+    const token label_token = peek();
+    ast_expr_ptr label;
+    if (check(token_kind::identifier) && peek().lexeme == "case") {
+      advance();
+      label = parse_expression();
+    } else if (check(token_kind::identifier) && peek().lexeme == "default") {
+      advance();
+    } else {
+      add_error(peek(), "Expected 'case <value>:' or 'default:' in switch");
+      const size_t before = pos_;
+      parse_statement();
+      if (pos_ == before && !is_at_end()) advance();
+      continue;
+    }
+    consume(token_kind::colon, "Expected ':' after switch label");
+    auto body = std::make_shared<ast_block_stmt>(label_token.line);
+    symbol_table_.enter_scope();
+    while (!closed() && !is_switch_label()) {
+      while (match(token_kind::semicolon)) {}
+      if (closed() || is_switch_label()) break;
+      const size_t before = pos_;
+      if (auto statement = parse_statement()) body->statements.push_back(statement);
+      if (pos_ == before && !is_at_end()) advance();
+    }
+    symbol_table_.leave_scope();
+    arms.push_back({label, body, label_token.line, {}});
+  }
+  if (braces) {
+    consume(token_kind::right_brace, "Expected '}' after switch cases");
+  } else if (check(token_kind::end_kw) && pos_ + 1 < tokens_.size() &&
+             tokens_[pos_ + 1].kind == token_kind::identifier &&
+             tokens_[pos_ + 1].lexeme == "switch") {
+    advance(); advance();
+  } else {
+    add_error(peek(), "Expected 'end switch' after switch cases");
+  }
+  return arms;
+}
+
+std::shared_ptr<ast_stmt> parser::parse_switch_statement() {
+  const token start = advance();
+  ast_expr_ptr target;
+  {
+    // The selector's trailing braces open its case list, even when the first
+    // arm is `default:` or the list is empty. Nested calls and parenthesized
+    // expressions still retain ordinary record-literal parsing.
+    match_boundary_scope boundary(switch_target_boundary_depth_, expression_depth_ + 1);
+    target = parse_expression();
+  }
+  auto arms = parse_switch_arms();
+  match(token_kind::semicolon);
+  return std::make_shared<ast_switch_stmt>(target, std::move(arms), start.line);
+}
+
+std::shared_ptr<ast_expr> parser::parse_switch_expression() {
+  const token start = advance();
+  ast_expr_ptr target;
+  {
+    match_boundary_scope boundary(switch_target_boundary_depth_, expression_depth_ + 1);
+    target = parse_expression();
+  }
+  auto arms = parse_switch_arms();
+  return std::make_shared<ast_switch_expr>(target, std::move(arms), start.line);
 }
 
 std::shared_ptr<ast_expr> parser::parse_match_expression() {

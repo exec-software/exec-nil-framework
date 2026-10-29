@@ -6,6 +6,7 @@
 #include "matrix_parser.hpp"
 #include "lexer.hpp"
 #include "../../common/strict_json.hpp"
+#include "../../common/content_digest.hpp"
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
@@ -157,6 +158,27 @@ bool analysis_session::workspace_source_exists(const std::string &path) const {
   }
 }
 
+void analysis_session::record_dependency(const std::string &path, const std::string &contents) {
+  record_dependency_digest(path, nil::detail::content_digest(contents));
+}
+
+void analysis_session::record_dependency_digest(const std::string &path, const std::string &digest) {
+  if (path.empty() || path.rfind("nillib://", 0) == 0) return;
+  const auto canonical = analysis_source_identity(path);
+  const auto found = dependencies.find(canonical);
+  if (found != dependencies.end()) {
+    // A source changed between two reads within one analysis. Do not certify
+    // that graph for an incremental cache even if checking happened to pass.
+    if (found->second != digest) dependencies_consistent = false;
+    return;
+  }
+  if (dependencies.size() >= 4096) {
+    dependencies_consistent = false;
+    return;
+  }
+  dependencies.emplace(canonical, digest);
+}
+
 std::optional<std::string> analysis_session::read_workspace_source(const std::string &path) {
   const auto canonical = analysis_source_identity(path);
   if (const auto cached = sources.find(canonical); cached != sources.end()) return cached->second;
@@ -263,10 +285,18 @@ void analysis_session::reflect(const ast_program &program, const std::string &pa
     declarations.push_back(std::move(value));
     if (node) for (const auto &a : node->annotations) {
       if (annotations.size() >= declaration_limit) { truncated = true; break; }
-      const auto bytes = sizeof(reflected_annotation) + a.name.size() +
+      auto typed = a.typed_arguments;
+      if (!typed) {
+        const auto parsed = parse_annotation_arguments(a.args.value_or(""));
+        if (parsed.error.empty()) typed = parsed.arguments;
+      }
+      auto bytes = sizeof(reflected_annotation) + a.name.size() +
                          (a.args ? a.args->size() : 0);
+      if (typed) for (const auto &argument : *typed)
+        bytes += sizeof(annotation_argument) + argument.kind.size() + argument.value.size() +
+                 (argument.name ? argument.name->size() : 0);
       if (!reserve_bytes(bytes)) break;
-      annotations.push_back({id, a.name, a.args.value_or(""), source_line(a.line)});
+      annotations.push_back({id, a.name, a.args.value_or(""), source_line(a.line), std::move(typed)});
     }
     return id;
   };
@@ -754,7 +784,9 @@ std::string analysis_session::semantic_json() const {
       std::istringstream words("function fun let const if else elseif then return println while where for in break continue loop do mut import package module namespace using use pub type as end true false match when struct enum trait impl allocate deallocate ref fn mod class abstract virtual override inherits self attempt fault recover raise assert hotreload not test example property generate asm and or _");
       for (std::string word; words >> word;) source.reserved_keys.insert(word);
     }
-    for (const auto *reserved : {"owned", "owned_move", "owned_borrow", "owned_borrow_mut", "parallel_map", "assert", "hotreload"})
+    // Aliases share keyword tokens, so the Matrix canonical-name loop and
+    // Ny's retained list alone do not enumerate every reserved spelling.
+    for (const auto *reserved : {"owned", "owned_move", "owned_borrow", "owned_borrow_mut", "parallel_map", "assert", "hotreload", "mut", "mutable", "ref", "reference"})
       source.reserved_keys.insert(source.language == "matrix" ? matrix::fold_key(reserved) : reserved);
   }
   std::set<std::size_t> unlocated;
@@ -848,6 +880,25 @@ std::string analysis_session::json(bool success) const {
   std::ostringstream out;
   out << "{\"schema\":\"nil.analysis.v1\",\"source\":" << quoted(logical_path)
       << ",\"language\":" << quoted(language) << ",\"success\":" << (success ? "true" : "false")
+      << ",\"dependenciesComplete\":"
+      << (success && dependencies_consistent && !source_stdin && !workspace_stdin &&
+          dependencies.count(primary_path) ? "true" : "false")
+      << ",\"dependencies\":[";
+  bool first_dependency = true;
+  for (const auto &[path, digest] : dependencies) {
+    if (!first_dependency) out << ',';
+    first_dependency = false;
+    out << "{\"path\":" << quoted(path) << ",\"digest\":" << quoted(digest) << '}';
+  }
+  out << "],\"compilerFiles\":[";
+  bool first_compiler_file = true;
+  for (const auto &path : compiler_files) {
+    if (!first_compiler_file) out << ',';
+    first_compiler_file = false;
+    out << quoted(path);
+  }
+  out << "],\"nativeRuntime\":" << (native_runtime ? quoted(*native_runtime) : "null")
+      << ",\"nativeLinker\":" << (native_linker ? quoted(*native_linker) : "null")
       << ",\"diagnostics\":[";
   bool first = true;
   for (const auto &d : diagnostics) {
@@ -901,7 +952,16 @@ std::string analysis_session::json(bool success) const {
     if (i) out << ',';
     const auto &a = annotations[i];
     out << "{\"owner_id\":" << a.owner_id << ",\"name\":" << quoted(a.name)
-        << ",\"arguments\":" << quoted(a.arguments) << ",\"line\":" << a.line << '}';
+        << ",\"arguments\":" << quoted(a.arguments) << ",\"line\":" << a.line
+        << ",\"arguments_parsed\":" << (a.typed_arguments ? "true" : "false")
+        << ",\"parsed_arguments\":[";
+    if (a.typed_arguments) for (std::size_t j = 0; j < a.typed_arguments->size(); ++j) {
+      if (j) out << ',';
+      const auto &argument = a.typed_arguments->at(j);
+      out << "{\"name\":" << (argument.name ? quoted(*argument.name) : "null")
+          << ",\"kind\":" << quoted(argument.kind) << ",\"value\":" << quoted(argument.value) << '}';
+    }
+    out << "]}";
   }
   out << "]}";
   if (semantic_requested) {
@@ -953,6 +1013,31 @@ std::string analysis_session::companion_source() const {
     out << " if id == " << i << " then\n  return "; annotation(annotations[i]); out << " end if\n";
   }
   out << " panic(\"Invalid reflection annotation ID\")\n return "; annotation({-1, "", "", 0});
+  out << "end fn\n";
+  out << "pub fn annotation_arguments_parsed(id: i32) -> bool\n";
+  for (std::size_t i = 0; i < annotations.size(); ++i)
+    out << " if id == " << i << " then\n  return "
+        << (annotations[i].typed_arguments ? "true" : "false") << "\n end if\n";
+  out << " panic(\"Invalid reflection annotation ID\")\n return false\nend fn\n";
+  std::size_t argument_count = 0;
+  for (const auto &a : annotations) if (a.typed_arguments) argument_count += a.typed_arguments->size();
+  out << "pub fn annotation_argument_count() -> i32\n return " << argument_count << "\nend fn\n"
+      << "pub fn annotation_argument(id: i32) -> annotation_argument_info\n";
+  const auto argument_record = [&](int annotation_id, const annotation_argument &argument) {
+    out << "annotation_argument_info { annotation_id: " << annotation_id
+        << ", name: " << ny_literal(argument.name.value_or(""))
+        << ", is_named: " << (argument.name ? "true" : "false")
+        << ", kind: " << ny_literal(argument.kind) << ", value: " << ny_literal(argument.value) << " }\n";
+  };
+  std::size_t argument_id = 0;
+  for (std::size_t i = 0; i < annotations.size(); ++i) if (annotations[i].typed_arguments)
+    for (const auto &argument : *annotations[i].typed_arguments) {
+      out << " if id == " << argument_id++ << " then\n  return ";
+      argument_record(static_cast<int>(i), argument);
+      out << " end if\n";
+    }
+  out << " panic(\"Invalid reflection annotation argument ID\")\n return ";
+  argument_record(-1, {std::nullopt, "", ""});
   out << "end fn\n";
   return out.str();
 }

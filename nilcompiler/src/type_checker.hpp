@@ -86,6 +86,7 @@ public:
   void visit(ast_break_stmt &s) override;
   void visit(ast_continue_stmt &s) override;
   void visit(ast_match_stmt &s) override;
+  void visit(ast_switch_stmt &s) override;
   void visit(ast_deallocate_stmt &s) override;
   void visit(ast_attempt_stmt &s) override;
   void visit(ast_fault_handler &h) override;
@@ -103,6 +104,7 @@ public:
   void visit(ast_char_literal &e) override;
   void visit(ast_boolean_literal &e) override;
   void visit(ast_match_expr &e) override;
+  void visit(ast_switch_expr &e) override;
   void visit(ast_try_expr &e) override;
   void visit(ast_member_access_expr &e) override;
   void visit(ast_struct_literal_expr &e) override;
@@ -266,6 +268,17 @@ private:
   std::map<std::string, std::vector<std::string>>
       active_impl_generic_bounds_;
   bool in_loop_ = false;
+  struct control_context {
+    const ast_node *node;
+    bool loop = false;
+    bool value_switch = false;
+    std::optional<type_info> result_type;
+  };
+  std::vector<control_context> control_contexts_;
+  std::vector<bool *> checked_switches_;
+  std::optional<type_info> check_switch(ast_node &node, ast_expr_ptr &target,
+      std::vector<ast_switch_arm> &arms, bool value_switch, bool &checked);
+
   bool checking_class_call_ = false;
   const ast_expr *direct_call_callee_ = nullptr;
   std::vector<ast_attempt_stmt *> checked_attempts_;

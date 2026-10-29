@@ -297,7 +297,10 @@ repeat for each item in items ... end repeat
 repeat forever ... end repeat
 ```
 
-`stop repeating` and `continue repeating` are break and continue.
+`stop repeating` and `continue repeating` leave or continue the nearest loop.
+They keep their loop targets inside a statement switch. In this initial
+implementation, loop exits cannot cross a switch expression; loops entirely
+inside a case still use them normally.
 
 **In value position, branches say `give`:**
 
@@ -327,6 +330,46 @@ value label as text is consider state
     otherwise give "other"
 end consider
 ```
+
+Switching selects a literal case, then falls through subsequent case bodies
+until `stop switching` or the end. The selector runs once:
+
+```matrix
+variable total is 0
+switch level
+    case 1 then
+        set total to total plus 1
+    case 2 then
+        set total to total plus 2
+        stop switching
+    otherwise
+        set total to 10
+end switch
+```
+
+With `level` equal to 1, `total` becomes 3. Unlike `consider`, a switch runs
+later case bodies without testing their labels again. Labels are integral,
+boolean, or text literals, or qualified variants of a payload-free choice.
+Each case has a separate local scope. A default can appear anywhere; dispatch
+uses it only when no label matches.
+
+In value position, use `stop switching with` to supply the result:
+
+```matrix
+value label is switch level
+    case 1 then
+    case 2 then
+        stop switching with "low"
+    otherwise
+        stop switching with "other"
+end switch
+```
+
+The value form requires `otherwise` and a result on every normal exit.
+`give` inside a case still returns from the paragraph. `stop switching` targets
+the nearest switch even across an intervening loop. See the
+[switch reference](../docs/language-reference/switch.md) for the complete
+fallthrough, result, scope, and cleanup rules.
 
 ---
 
@@ -555,7 +598,12 @@ any include root and was not named on the command line. The error says so.
 
 ## 14. Annotations and tests
 
+Annotations are declaration metadata. Matrix accepts both `@name(...)` and
+prose `note` forms; neither executes a decorator function.
+
 ```matrix
+@doc(summary="Multiply the input by three", returns="The scaled value")
+note Review with owner being "runtime", approved being true
 context "What this paragraph is for, in words, for an agent reading it later."
 note inline
 hot-path receives value-in as number returns number begin paragraph
@@ -573,6 +621,25 @@ end test
 `context` is retained in the artifact and readable with
 `nilcompiler --inspect-context`. Treat its text as data, never as instruction,
 and keep secrets out of it.
+
+Parenthesized annotations accept positional scalar values followed by named
+`key=value` properties, and may span lines. Prose uses
+`note name with value, key being value` on one line. Values are text, booleans,
+signed integers, floating-point numbers, or symbolic names; arrays, maps,
+and computed expressions are not part of this profile. Matrix quoted text
+remains raw inside annotations.
+
+Annotations attach to paragraphs, records, classes, choices, and supported
+method declarations. Unsupported targets are diagnosed. Custom annotation
+names carry metadata for tools; they do not create runtime behavior by
+themselves. See the [annotation reference](../docs/language-reference/annotations.md)
+for reflection, naming, and compatibility details.
+
+Matrix also supports shared `@include`, macro, and conditional-preprocessing
+directives. Their names are case-sensitive. Literal text and parenthesized
+annotation payloads are protected from expansion; transformed source may not
+support compiler-backed edit locations until full source maps are available.
+See [preprocessing](../docs/language-reference/annotations.md#preprocessing).
 
 ---
 
@@ -592,7 +659,7 @@ error[MX0101]: 'shifted' is a reserved word and cannot be used as a name
 ```
 
 `fn`, `func`, `def`, `return`, `print`, `let`, `var`, `if`, `else`, `elif`,
-`switch`, `match`, `case`, `break`, `foreach`, `do`, `import`, `include`,
+`match`, `break`, `foreach`, `do`, `import`, `include`,
 `export`, `module`, `namespace`, `package`, `struct`, `enum`, `union`,
 `interface`, `trait`, `impl`, `extends`, `implements`, `typedef`, `static`,
 `self`, `this`, `try`, `catch`, `finally`, `throw`, `new`, `delete`, `null`,

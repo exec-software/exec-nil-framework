@@ -27,7 +27,7 @@ means the compiler fails closed.
 | `"text"`, `'c'` | same | executed |
 | suffixes `42i64`, `3.14f32` | no spelling | rejected in Ny |
 | `'\xFF'` hex char escape | no spelling | rejected in Ny |
-| `@annotation` | `note <name>` / `context "..."` | see §12 |
+| `@annotation` | `@annotation` / `note <name>` / `context "..."` | see §12 |
 
 The draft offered two comment forms: `!!!` plus text, and a block opened and
 closed by a line that is exactly `!!!`. They cannot coexist. A bare `!!!`
@@ -84,6 +84,9 @@ semantic weight.
 
 | Ny | Matrix | Route state |
 | --- | --- | --- |
+| `@name(value, key=value)` | same `@` spelling, or `note name with value, key being value` | scalar metadata; parenthesized forms may span lines |
+| `@doc(summary="...")` | same `@` spelling, or `note doc with summary being "..."` | retained metadata; no automatic decorator execution |
+| `@include`, macros, conditional directives | same directive spellings | shared preprocessor; Matrix literals/annotation regions protected; source-edit locations conservative after transformation |
 | `i32` / `int` | `integer` | executed |
 | `i64` | `long` | executed |
 | `u8` | `byte` | executed, wrapping (modulo 256) |
@@ -191,7 +194,9 @@ in Ny. There is no implicit last-expression result.
 | `for x in items ... end for` | `repeat for each x in items ... end repeat` |
 | `for i in range(0, 10) ... end for` | `repeat for i from 0 to 10 ... end repeat` |
 | `loop ... end loop` | `repeat forever ... end repeat` |
-| `break` | `stop repeating` |
+| `break` targeting a loop | `stop repeating` |
+| `break` targeting a switch | `stop switching` |
+| `break value` in a switch expression | `stop switching with value` |
 | `continue` | `continue repeating` |
 | `match v ... end match` | `consider v ... end consider` |
 | `Pattern -> expr` (statement) | `when Pattern then <statements>` |
@@ -201,6 +206,10 @@ in Ny. There is no implicit last-expression result.
 | `Enum.Variant(binding) ->` | `when Enum.Variant holding binding then` |
 | `let x = if c then a else b end if` | `value x is when c give a otherwise give b end when` |
 | `match` as expression | `consider` as expression |
+| `switch v ... end switch` or `switch v { ... }` | `switch v ... end switch` |
+| `case literal:` | `case literal then` |
+| `default:` | `otherwise` |
+| `switch` as expression | `switch` as expression |
 
 Every loop form opens with `repeat` and closes with `end repeat`, so a loop
 terminator can never be mismatched to the wrong loop kind. `from 0 to 10`
@@ -220,6 +229,13 @@ parses. The residual cost is real and is stated in
 *target* of a `give` depends on whether an enclosing `consider` is in value
 position, which is the same hazard as `return` inside a closure in other
 languages.
+
+A switch has automatic fallthrough and statement bodies in both value and
+statement positions. `stop switching with value` supplies a switch result;
+`give` inside its cases remains a paragraph return. Its default is mandatory
+in value position. Ny's `break` targets the nearest loop or switch, while
+Matrix's explicit `stop switching` can cross an intervening loop. See the
+[switch reference](../../docs/language-reference/switch.md).
 
 Guards use `provided`, not a second `when`, so an arm and its guard are
 lexically distinct. A `consider` used as an expression requires a final
@@ -446,6 +462,12 @@ conservative: if either branch moves an owner, later use is rejected.
 | `@interop(...)` | `note interop ...` | **experimental**, requires a linked provider |
 | `test` blocks | `name begin test ... end test` | flag bit 1 |
 | `asm "x86_64", "..." (in) -> out end asm` | `assembly for x86_64 is "..." using in giving out` | native x86_64 only |
+
+Annotations support scalar text, boolean, integer, floating-point, and symbol
+values. Matrix preserves raw-string behavior inside `@` arguments. Named
+paragraphs, records, classes, choices, and supported methods can carry them;
+unsupported attachments are rejected. See the
+[shared reference](../../docs/language-reference/annotations.md).
 
 An annotation is not an implementation in Matrix either. `context` is promoted
 to a first-class statement rather than a generic annotation because

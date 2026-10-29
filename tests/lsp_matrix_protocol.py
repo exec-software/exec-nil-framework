@@ -38,6 +38,100 @@ def symbols(items: dict) -> dict:
 
 
 class MatrixProtocol(unittest.TestCase):
+    def test_switch_cases_and_nested_value_forms_keep_lexical_scopes(self) -> None:
+        source = '''main receives mode as number begin paragraph
+ value answer is identity with input being (switch mode
+  case 1 then
+   value outer as number is 1
+   stop switching with switch mode
+    case 1 then
+     value inner as number is 2
+     say in|ner
+     stop switching with inner
+    otherwise
+     stop switching with outer
+   end switch
+  case 2 then
+   value second as number is 2
+   stop switching with second
+  otherwise
+   stop switching with 0
+ end switch)
+ value following as number is 3
+ say following
+end paragraph
+'''
+        result, notes = completion(source)
+        self.assertEqual(set(result), {'inner'})
+        self.assertFalse([note for note in notes if note['params']['diagnostics']])
+        second = source.replace('in|ner', 'inner').replace('stop switching with second', '|\n   stop switching with second')
+        result, _ = completion(second)
+        self.assertIn('second', result)
+        self.assertNotIn('outer', result)
+        self.assertNotIn('inner', result)
+        outside = source.replace('in|ner', 'inner').replace('say following', '|')
+        result, _ = completion(outside)
+        self.assertTrue({'answer', 'following'} <= set(result))
+        self.assertFalse({'outer', 'inner', 'second'} & set(result))
+
+    def test_switch_vocabulary_and_named_members(self) -> None:
+        for fragment, expected in (('|', {'switch', 'case', 'stop switching'}),
+                                   ('end |', {'switch'}), ('stop |', {'repeating', 'switching'}),
+                                   ('stop switching |', {'with'}), ('value result is |', {'switch'})):
+            result, _ = completion(fragment)
+            self.assertTrue(expected <= set(result), result)
+        source = 'Settings begin record\n field switch as number\n field default as number\nend record\nmain receives settings as Settings begin paragraph\n say settings.switch\n say settings.def|ault\nend paragraph\n'
+        result, notes = completion(source)
+        self.assertEqual(set(result), {'default'})
+        self.assertFalse([note for note in notes if note['params']['diagnostics']])
+
+    def test_switch_named_values_and_calls_do_not_open_control_scopes(self) -> None:
+        for expression in ('switch', 'switch plus 1', 'switch with input being 1'):
+            source = ('main receives switch as number begin paragraph\n value result is ' + expression +
+                      '\n value following as number is 3\n say fol|lowing\nend paragraph\n')
+            result, notes = completion(source)
+            self.assertEqual(set(result), {'following'})
+            self.assertFalse([note for note in notes if note['params']['diagnostics']])
+
+    def test_switch_conditions_and_case_named_members_preserve_scopes(self) -> None:
+        source = '''Settings begin record
+ field case as number
+end record
+main receives settings as Settings begin paragraph
+ when (switch 1
+  case 1 then
+   value condition-local as boolean is true
+   stop switching with condition-local
+  otherwise
+   stop switching with false
+ end switch) then
+  value branch-local as number is 1
+  switch 1
+   case 1 then
+    value case-local as number is 2
+    say settings.case
+    say case-|local
+    stop switching
+   otherwise
+    say 0
+  end switch
+ end when
+ value following as number is 3
+ say following
+end paragraph
+'''
+        result, notes = completion(source)
+        self.assertEqual(set(result), {'case-local'})
+        self.assertFalse([note for note in notes if note['params']['diagnostics']])
+        condition = source.replace('case-|local', 'case-local').replace(
+            'stop switching with condition-local', 'stop switching with condition-|local')
+        result, _ = completion(condition)
+        self.assertEqual(set(result), {'condition-local'})
+        outside = source.replace('case-|local', 'case-local').replace('say following', '|')
+        result, _ = completion(outside)
+        self.assertIn('following', result)
+        self.assertFalse({'condition-local', 'branch-local', 'case-local'} & set(result))
+
     def test_language_id_uri_suffix_and_change(self) -> None:
         source = "main begin paragraph\n value local-count as number is 4\n say local-|\nend paragraph\n"
         for uri, language in ((URI, "matrix"), ("file:///code.MAT", None), ("file:///code.MATRIX", None),
@@ -407,6 +501,56 @@ end paragraph
                 result, _ = completion(fragment)
                 self.assertTrue(expected <= set(result))
                 self.assertFalse({"fn", "let", "i32", "i64", "struct", "impl"} & set(result))
+
+    def test_annotation_completion_is_metadata_not_value_resolution(self) -> None:
+        for fragment, expected in (
+            ("|", {"note", "context"}),
+            ("@|", {"doc", "ai_context", "inline"}),
+            ("note |", {"doc", "intrinsic"}),
+            ("note custom |", {"with"}),
+            ("@doc(|", {"summary", "description", "true", "false"}),
+            ("@doc(\n sum|", {"summary"}),
+            ("@doc(summary=|", {"true", "false"}),
+            ("note doc with sum|", {"summary being"}),
+            ("note doc with summary |", {"being"}),
+            ("note custom with enabled being |", {"true", "false"}),
+        ):
+            with self.subTest(fragment=fragment):
+                result, _ = completion("value private-value is 1\n" + fragment)
+                self.assertTrue(expected <= set(result), result)
+                if fragment != "|": self.assertNotIn("private-value", result)
+        result, _ = completion('@doc(summary="not code |")\nmain begin paragraph\nend paragraph\n')
+        self.assertEqual(result, {})
+
+    def test_multiline_annotations_do_not_create_symbols_or_change_following_spans(self) -> None:
+        source = '''@company.review(
+ value=Approved,
+ summary="a literal ) and begin record",
+ enabled=true
+)
+note doc with summary being "A real paragraph"
+context "Kept as metadata"
+main receives input as number returns number begin paragraph
+ give in|put
+end paragraph
+'''
+        replies, notes = protocol.session([
+            opened(source.replace("|", "")), request("definition", source),
+            {"jsonrpc": "2.0", "id": 3, "method": "textDocument/documentSymbol",
+             "params": {"textDocument": {"uri": URI}}}])
+        self.assertFalse([note for note in notes if note['params']['diagnostics']])
+        self.assertEqual(replies[2][0]["range"]["start"], {"line": 7, "character": 14})
+        self.assertEqual([symbol['name'] for symbol in replies[3]], ["main"])
+        source = 'value summary is 1\n@doc(sum|mary="metadata")\nmain begin paragraph\nend paragraph\n'
+        replies, _ = protocol.session([opened(source.replace('|', '')), request('definition', source),
+                                       request('hover', source, identifier=3)])
+        self.assertIsNone(replies[2])
+        self.assertIsNone(replies[3])
+
+    def test_incomplete_annotation_hides_payload_declarations(self) -> None:
+        source = '@custom(\n value fake as number is 1\n fake|'
+        result, _ = completion(source)
+        self.assertNotIn('fake', result)
 
     def test_formatted_text_holes_and_nested_literals(self) -> None:
         prefix = 'main begin paragraph\n value height as floating is -1.6e-3\n'

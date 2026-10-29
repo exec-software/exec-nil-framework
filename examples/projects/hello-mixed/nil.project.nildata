@@ -1,0 +1,15 @@
+nildata 1
+object
+  schema is "nil.project.v1"
+  name is "hello-mixed"
+  entry is "src/main.matrix"
+  includePaths is an array
+    item is "src"
+  end array
+  outputDirectory is "build"
+  analysis is an object
+    disabledRules is an array
+    end array
+    warningsAsErrors is false
+  end object
+end object

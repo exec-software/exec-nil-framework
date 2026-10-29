@@ -113,10 +113,12 @@ Examples: `'a'`, `'A'`, `'\n'`
 #### Annotations
 
 ```
-annotation = '@' identifier
+annotation = '@' qualified_name [ '(' annotation_arguments ')' ]
 ```
 
-Examples: `@pub`, `@inline`, `@extern`
+Examples: `@inline`, `@doc(summary="Advance the counter")`,
+`@Company.review(approved=true)`. See [annotations](annotations.md) for the
+scalar metadata profile and Matrix's equivalent prose syntax.
 
 ## Whitespace
 

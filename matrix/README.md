@@ -154,6 +154,24 @@ See the [function reference](../docs/language-reference/functions.md#parameters)
 and [NIL-0019](../docs/design/NIL-0019-binding-reference-parameters.md) for the
 supported modes and their limits.
 
+## Switches and pattern matching
+
+`switch` selects literal cases or payload-free choice variants and automatically
+falls through later bodies. `stop switching` leaves a statement switch;
+`stop switching with value` supplies a switch expression's result. `consider`
+retains its existing pattern-matching behavior. See the
+[switch reference](../docs/language-reference/switch.md) for both language
+surfaces, case scopes, and exit targets.
+
+## Declaration metadata
+
+Matrix accepts stackable `@doc(summary="...")` annotations and prose
+`note doc with summary being "..."` metadata above supported declarations.
+The existing `note inline` and `context "..."` forms remain available.
+Annotations hold data for the compiler and tools; they do not execute
+decorator functions. See the [annotation reference](../docs/language-reference/annotations.md)
+for scalar values, attachment rules, and reflection.
+
 ## Why this language, beyond syntax
 
 Matrix is intended to become a language for both AI agents and humans, including

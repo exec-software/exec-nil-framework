@@ -242,6 +242,54 @@ void test_lexer_source_ranges() {
   require(synthesized.length == 0, "synthesized token must have no source range");
 }
 
+void test_switch_source_spans() {
+  const std::string source =
+      "// λ switch input\r\nfn select(input: i32) -> i32\r\n"
+      "let result = switch input\r\ncase 1:\r\nlet local = input\r\n"
+      "break local\r\ndefault:\r\nbreak input\r\nend switch\r\n"
+      "switch (input) { case 1: break; default: println(input); }\r\n"
+      "switch input { default: break; }\r\nswitch input {}\r\n"
+      "switch (input) + 1 { default: break; }\r\n"
+      "switch (input) +\r\n1\r\ncase 2:\r\nbreak\r\nend switch\r\n"
+      "let called = switch(input) + 1\r\n"
+      "return result\r\nend fn\r\n";
+  ny::parser parser(source);
+  const auto program = parser.parse_program();
+  require(program && !parser.has_errors(), "switch source-span fixture must parse");
+  const auto body = node<ny::ast_block_stmt>(
+      node<ny::ast_function_decl>(program->declarations.at(0))->body);
+  const auto binding = node<ny::ast_variable_decl>(
+      node<ny::ast_decl_stmt>(body->statements.at(0))->declaration);
+  const auto value = node<ny::ast_switch_expr>(binding->initializer);
+  require(value->arms.size() == 2 && !value->arms.at(1).label,
+          "switch expression preserves ordered default arm");
+  expect_span(source, value->target->name_span,
+              source.find("switch input\r\ncase") + 7, "input");
+  const auto first = node<ny::ast_block_stmt>(value->arms.at(0).body);
+  const auto exit = node<ny::ast_break_stmt>(first->statements.at(1));
+  require(exit->target == ny::break_target_kind::nearest && exit->value,
+          "Ny value break targets the nearest breakable construct");
+  expect_span(source, exit->value->name_span, source.find("break local") + 6, "local");
+  const auto statement = node<ny::ast_switch_stmt>(body->statements.at(1));
+  expect_span(source, statement->target->name_span,
+              source.find("switch (input)") + 8, "input");
+  require(!node<ny::ast_break_stmt>(
+              node<ny::ast_block_stmt>(statement->arms.at(0).body)->statements.at(0))->value,
+          "semicolon keeps ordinary break distinct from value break");
+  require(!node<ny::ast_switch_stmt>(body->statements.at(2))->arms.at(0).label &&
+              node<ny::ast_switch_stmt>(body->statements.at(3))->arms.empty(),
+          "default-first and empty switch bodies are not record literals");
+  for (size_t i : {size_t(4), size_t(5)})
+    require(node<ny::ast_switch_stmt>(body->statements.at(i))->target->kind ==
+                ny::ast_node_kind::binary_expr_node,
+            "parenthesized selector may continue through a binary expression");
+  const auto called = node<ny::ast_variable_decl>(
+      node<ny::ast_decl_stmt>(body->statements.at(6))->declaration);
+  require(node<ny::ast_binary_expr>(called->initializer)->left->kind ==
+              ny::ast_node_kind::call_expr_node,
+          "ordinary switch(input) plus expression remains a call");
+}
+
 void test_repeated_completion_occurrence_is_unavailable() {
   const std::string source = "fn compute(sample_input: i32) -> i32\nprintln(sample_input)\nreturn sample_input\nend fn\n";
   ny::parser_options options;
@@ -283,6 +331,7 @@ int main() {
     test_mapping_preserves_preprocessed_literal_semantics();
     test_interpolated_identifier_is_not_guessed();
     test_explicit_interpolation_source_spans();
+    test_switch_source_spans();
     test_repeated_completion_occurrence_is_unavailable();
     std::cout << "source span tests passed\n";
     return 0;

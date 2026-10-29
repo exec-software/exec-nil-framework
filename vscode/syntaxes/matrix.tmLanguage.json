@@ -16,6 +16,9 @@
       "include": "#strings"
     },
     {
+      "include": "#annotations"
+    },
+    {
       "include": "#pattern-declarations"
     },
     {
@@ -358,6 +361,10 @@
     "keywords": {
       "patterns": [
         {
+          "name": "keyword.control.verb.matrix",
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}.:`-])(?i:switch|switching|case)(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])"
+        },
+        {
           "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[mM][yY])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
           "name": "variable.language.self.matrix"
         },
@@ -693,6 +700,122 @@
         },
         {
           "include": "$self"
+        }
+      ]
+    },
+    "annotation-values": {
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "match": "(?:[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)(?=[ \\t]*(?:=|(?i:being)\\b))",
+          "name": "variable.parameter.annotation.matrix"
+        },
+        {
+          "match": "\\b(?i:with|being)\\b",
+          "name": "keyword.other.annotation.matrix"
+        },
+        {
+          "include": "#constants"
+        },
+        {
+          "include": "#numbers"
+        },
+        {
+          "match": "(?:[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)(?:(?:\\.|::)(?:[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))*",
+          "name": "constant.other.symbol.annotation.matrix"
+        },
+        {
+          "match": "[,=]",
+          "name": "punctuation.separator.annotation.matrix"
+        }
+      ]
+    },
+    "annotations": {
+      "patterns": [
+        {
+          "name": "meta.preprocessor.matrix",
+          "match": "@(pragma|include|define|undef|ifdef|ifndef|if|elif|else|endif|error|warning|message|schema)(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}.:`-])",
+          "captures": {
+            "0": {
+              "name": "keyword.control.directive.matrix"
+            }
+          }
+        },
+        {
+          "name": "meta.annotation.matrix",
+          "begin": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(@)((?:[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)(?:(?:\\.|::)(?:[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))*)([ \\t]*\\()",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.annotation.matrix"
+            },
+            "2": {
+              "name": "storage.type.annotation.matrix"
+            },
+            "3": {
+              "name": "punctuation.section.arguments.begin.matrix"
+            }
+          },
+          "end": "\\)",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.section.arguments.end.matrix"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#annotation-values"
+            }
+          ]
+        },
+        {
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(@)((?:[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)(?:(?:\\.|::)(?:[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))*)",
+          "name": "meta.annotation.matrix",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.annotation.matrix"
+            },
+            "2": {
+              "name": "storage.type.annotation.matrix"
+            }
+          }
+        },
+        {
+          "name": "meta.annotation.matrix",
+          "begin": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])((?i:note))[ \\t]+((?:[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*)(?:(?:\\.|::)(?:[A-Za-z_\\x{80}-\\x{10FFFF}][A-Za-z0-9_\\x{80}-\\x{10FFFF}-]*))*)",
+          "beginCaptures": {
+            "1": {
+              "name": "keyword.other.annotation.matrix"
+            },
+            "2": {
+              "name": "storage.type.annotation.matrix"
+            }
+          },
+          "end": "$",
+          "patterns": [
+            {
+              "include": "#annotation-values"
+            }
+          ]
+        },
+        {
+          "name": "meta.annotation.matrix",
+          "begin": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?i:context)(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "beginCaptures": {
+            "0": {
+              "name": "storage.type.annotation.matrix"
+            }
+          },
+          "end": "$",
+          "patterns": [
+            {
+              "include": "#strings"
+            }
+          ]
         }
       ]
     }

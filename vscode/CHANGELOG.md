@@ -4,6 +4,12 @@ All notable changes to the NIL Framework VS Code extension are documented here.
 
 ## 1.0.0-rc.1
 
+- Prefer `nil.project.nildata` for project discovery and configuration; preserve
+  legacy JSON/YAML manifests and JSON schema support. Parse all project formats
+  locally with strict duplicate-key, Unicode, size, depth, and value limits.
+  Refresh analysis after project edits in every supported format and recognize
+  optional `projectReferences` in project configuration.
+
 - Pin the VSIX packaging tool's MSAL dependency to patched 7.1.1; the local
   dependency audit reports no known vulnerabilities.
 

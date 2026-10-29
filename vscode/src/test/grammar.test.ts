@@ -69,6 +69,24 @@ test("Ny short and long mutability/reference aliases retain keyword and binding 
   }
 });
 
+test("Ny switch statements and value exits are highlighted without claiming members", async () => {
+  const grammar = await loadNyGrammar();
+  assert.ok(grammar);
+  for (const [line, word] of [['switch mode {', 'switch'], ['case 1: break 2', 'case'],
+    ['default: break 0', 'default'], ['break 3', 'break'], ['end switch', 'switch']])
+    assert.ok(scopesForFragment(grammar, line!, word!).includes('keyword.control.ny'));
+  for (const word of ['switch', 'default'])
+    assert.ok(scopesForFragment(grammar, 'settings.' + word, word).includes('variable.other.member.ny'));
+  const config = JSON.parse(fs.readFileSync('language-configuration.json', 'utf8'));
+  const increase = new RegExp(config.indentationRules.increaseIndentPattern);
+  const decrease = new RegExp(config.indentationRules.decreaseIndentPattern);
+  for (const line of ['switch value', 'case 1:', 'default:']) assert.ok(increase.test(line), line);
+  for (const line of ['case 2:', 'default:', 'end switch']) assert.ok(decrease.test(line), line);
+  const snippets = JSON.parse(fs.readFileSync('snippets/ny.code-snippets', 'utf8'));
+  assert.equal(snippets['Switch statement'].body.at(-1), 'end switch');
+  assert.ok(snippets['Switch expression'].body.some((line: string) => line.includes('break')));
+});
+
 test("Ny explicit interpolation scopes expressions, nested strings, and literal braces", async () => {
   const grammar = await loadNyGrammar();
   assert.ok(grammar);
@@ -93,6 +111,15 @@ test("grammar scopes annotations, literals, operators, and both line comments", 
   assert.ok(scopesForFragment(grammar, 'asm "x86_64", "nop" () end asm', "asm").includes("keyword.control.ny"));
   assert.ok(scopesForFragment(grammar, "// slash comment", "slash comment").includes("comment.line.double-slash.ny"));
   assert.ok(scopesForFragment(grammar, "# hash comment", "hash comment").includes("comment.line.number-sign.ny"));
+});
+
+test("Ny annotation properties and qualified names stay inside metadata regions", async () => {
+  const grammar = await loadNyGrammar();
+  assert.ok(grammar);
+  for (const name of ["Company.review", "Company::review"])
+    assert.ok(scopesForFragment(grammar, `@${name}(enabled=true)`, '@' + name).includes('storage.type.annotation.ny'));
+  assert.ok(scopesForFragment(grammar, '@custom(enabled=true)', 'enabled').includes('variable.parameter.annotation.ny'));
+  assert.equal(scopesForFragment(grammar, 'enabled = true', 'enabled').includes('variable.parameter.annotation.ny'), false);
 });
 
 test("grammar keeps scientific literals whole and preserves hexadecimal integers", async () => {

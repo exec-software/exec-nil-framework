@@ -1,0 +1,356 @@
+book fallthrough-switch
+
+Signal begin choice
+    when Idle
+    when Running
+    when Finished
+end choice
+
+choose receives reference calls as override integer returns override integer begin paragraph
+    set calls to calls plus 1
+    give 2
+end paragraph
+
+falling receives input as override integer returns override integer begin paragraph
+    variable total as override integer is 0
+    switch input
+        case 1 then
+            set total to total plus 1
+        case 2 then
+            set total to total plus 2
+        otherwise
+            set total to total plus 4
+        case 3 then
+            set total to total plus 8
+            stop switching
+        case 4 then
+            set total to total plus 16
+    end switch
+    give total
+end paragraph
+
+stacked receives input as override integer returns override integer begin paragraph
+    variable total as override integer is 0
+    switch input
+        case 1 then
+        case 2 then
+            set total to 7
+            stop switching
+        otherwise
+            set total to 9
+    end switch
+    give total
+end paragraph
+
+loop-flow returns override integer begin paragraph
+    variable index as override integer is 0
+    variable total as override integer is 0
+    repeat while index is less than 4
+        set index to index plus 1
+        switch index
+            case 1 then
+                continue repeating
+            case 2 then
+                set total to total plus 2
+                stop switching
+            otherwise
+                set total to total plus 4
+            case 4 then
+                set total to total plus 8
+                stop switching
+        end switch
+        set total to total plus 100
+    end repeat
+    give total
+end paragraph
+
+selected receives input as override integer returns override integer begin paragraph
+    variable state as override integer is 0
+    value result is switch input
+        case 1 then
+            set state to 10
+        case 2 then
+            stop switching with state plus 2
+        otherwise
+            stop switching with 90
+    end switch
+    give result
+end paragraph
+
+text-choice receives input as text returns text begin paragraph
+    give switch input
+        otherwise
+            stop switching with "other"
+        case "start" then
+        case "begin" then
+            stop switching with "ok"
+        case "λ" then
+            stop switching with "unicode"
+    end switch
+end paragraph
+
+early receives input as override integer returns override integer begin paragraph
+    value result is switch input
+        case 1 then
+            give 77
+        otherwise
+            stop switching with 88
+    end switch
+    give result
+end paragraph
+
+conditional receives input as override integer returns override integer begin paragraph
+    give switch input
+        otherwise
+            when input is greater than 0 then
+                stop switching with 1
+            otherwise
+                stop switching with 2
+            end when
+    end switch
+end paragraph
+
+cleaned returns override integer begin paragraph
+    variable state as override integer is 5
+    value result is switch 1
+        case 1 then
+            attempt
+                stop switching with state
+            always
+                set state to 99
+            end attempt
+        otherwise
+            stop switching with 0
+    end switch
+    give result plus state
+end paragraph
+
+nested returns override integer begin paragraph
+    variable total as override integer is 0
+    switch 1
+        case 1 then
+            switch 2
+                case 2 then
+                    set total to 3
+                    stop switching
+                otherwise
+                    set total to 99
+            end switch
+            set total to total plus 1
+            stop switching
+        otherwise
+            set total to 100
+    end switch
+    give total
+end paragraph
+
+owners returns override integer begin paragraph
+    own variable storage as array of override integer sized 1
+    set storage at 0 to 12
+    switch 1
+        case 1 then
+            borrow view-value from storage
+            say view-value at 0
+        otherwise
+            borrow writable from storage exclusively
+            set writable at 0 to 13
+            stop switching
+    end switch
+    give storage at 0
+end paragraph
+
+suspended receives input as override integer returns override integer begin paragraph
+    give 100 plus switch input
+        case 1 then
+            give 77
+        otherwise
+            stop switching with 2
+    end switch
+end paragraph
+
+combine receives left as override integer, right as override integer returns override integer begin paragraph
+    give left plus right
+end paragraph
+
+suspended-call receives input as override integer returns override integer begin paragraph
+    give combine with left being 100, right being switch input
+        case 1 then
+            give 77
+        otherwise
+            stop switching with 2
+    end switch
+end paragraph
+
+suspended-tuple receives input as override integer returns override integer begin paragraph
+    value pair is (100, switch input
+        case 1 then
+            give 77
+        otherwise
+            stop switching with 2
+    end switch)
+    give pair.0 plus pair.1
+end paragraph
+
+suspended-text receives input as override integer returns text begin paragraph
+    give "prefix" plus switch input
+        case 1 then
+            give "early"
+        otherwise
+            stop switching with "late"
+    end switch
+end paragraph
+
+Problem begin record
+    field code as override integer
+end record
+
+suspended-fault receives input as override integer returns override integer begin paragraph
+    attempt
+        give 100 plus switch input
+            case 1 then
+                raise Problem with code being 9
+            otherwise
+                stop switching with 2
+        end switch
+    caught Problem as problem
+        give problem.code
+    end attempt
+    give 0
+end paragraph
+
+replaced receives input as override integer returns override integer begin paragraph
+    attempt
+        give 100 plus switch input
+            case 1 then
+                give 77
+            otherwise
+                stop switching with 2
+        end switch
+    always
+        give 99
+    end attempt
+    give 0
+end paragraph
+
+suspended-void begin paragraph
+    say 100 plus switch 1
+        case 1 then
+            give nothing
+        otherwise
+            stop switching with 2
+    end switch
+end paragraph
+
+main returns override integer begin paragraph
+    say falling with 1
+    say falling with 2
+    say falling with 3
+    say falling with 4
+    say falling with 9
+    say stacked with 1
+    say stacked with 2
+    say stacked with 9
+    variable calls as override integer is 0
+    switch choose with reference to calls
+        otherwise
+            say "wrong default"
+        case 2 then
+            say calls
+            stop switching
+    end switch
+    say loop-flow with nothing
+    say selected with 1
+    say selected with 2
+    say selected with 9
+    say text-choice with "start"
+    say text-choice with "begin"
+    say text-choice with "λ"
+    say text-choice with "missing"
+    say early with 1
+    say early with 2
+    say conditional with 1
+    say conditional with negative 1
+    say cleaned with nothing
+    say nested with nothing
+    say owners with nothing
+    say switch true
+        case false then
+            stop switching with 0
+        case true then
+            stop switching with 1
+        otherwise
+            stop switching with 2
+    end switch
+    say switch negative 9223372036854775808
+        case negative 9223372036854775808 then
+            stop switching with 3
+        otherwise
+            stop switching with 0
+    end switch
+    value widened is switch 1
+        case 1 then
+            stop switching with 1
+        otherwise
+            stop switching with 2.5
+    end switch
+    say widened equals 1.0
+    value nested-value is switch 1
+        case 1 then
+            stop switching with (switch 2
+                case 2 then
+                    stop switching with 22
+                otherwise
+                    stop switching with 0
+            end switch)
+        otherwise
+            stop switching with 0
+    end switch
+    say nested-value
+    switch 9
+        case 1 then
+            say "unmatched"
+    end switch
+    switch choose with reference to calls
+    end switch
+    say calls
+    value phase as Signal is Signal.Running
+    say switch phase
+        case Signal.Idle then
+            stop switching with 0
+        case Signal.Running then
+        case Signal.Finished then
+            stop switching with 42
+        otherwise
+            stop switching with 99
+    end switch
+    say suspended with 1
+    say suspended with 2
+    value pair is switch 1
+        case 1 then
+            stop switching with (3, "pair")
+        otherwise
+            stop switching with (4, "other")
+    end switch
+    value (count, label) is pair
+    say count
+    say label
+    value values is switch 1
+        case 1 then
+            stop switching with [5, 6]
+        otherwise
+            stop switching with [7, 8]
+    end switch
+    say values at 1
+    say suspended-call with 1
+    say suspended-call with 2
+    say suspended-tuple with 1
+    say suspended-tuple with 2
+    say suspended-text with 1
+    say suspended-text with 2
+    say suspended-fault with 1
+    say suspended-fault with 2
+    say replaced with 1
+    say replaced with 2
+    evaluate suspended-void with nothing
+    give 0
+end paragraph

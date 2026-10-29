@@ -19,7 +19,8 @@ bool exact_phrase_word(const token &value, const char *word) {
   return text == word;
 }
 
-ny::source_span name_span(const token &name) {
+std::optional<ny::source_span> name_span(const token &name) {
+  if (!name.original_source) return std::nullopt;
   // Keep delimiters around escaped names out of the editable name range.
   return name.escaped_identifier
              ? ny::source_span{name.start + 1, name.length - 2}
@@ -146,15 +147,93 @@ std::string nil_path(const std::string &written) {
 
 } // namespace
 
+static bool unchanged_source_lines(
+    const std::string &original, const std::string &processed,
+    std::vector<std::pair<size_t, size_t>> &line_offsets) {
+  if (original == processed) return true;
+  size_t original_pos = 0;
+  size_t processed_pos = 0;
+  while (original_pos < original.size()) {
+    const size_t end = original.find('\n', original_pos);
+    const size_t length =
+        (end == std::string::npos ? original.size() : end) - original_pos;
+    const auto line = original.substr(original_pos, length);
+    const auto first = line.find_first_not_of(" \t\r");
+    const auto last = line.find_last_not_of(" \t\r");
+    const bool blank = first == std::string::npos;
+    // These exact no-op markers preserve one blank output line and do not
+    // introduce or rewrite code. All other directives and transformed lines
+    // still require an explicit preprocessor source map before editor use.
+    const auto trimmed = blank ? std::string() : line.substr(first, last - first + 1);
+    const bool marker = trimmed == "@pragma once" || trimmed == "@schema";
+    const size_t emitted_length = blank || marker ? 0 : length;
+    if (processed_pos + emitted_length >= processed.size() ||
+        processed.compare(processed_pos, emitted_length, original, original_pos,
+                          emitted_length) != 0 ||
+        processed[processed_pos + emitted_length] != '\n') {
+      line_offsets.clear();
+      return false;
+    }
+    line_offsets.emplace_back(processed_pos, original_pos);
+    processed_pos += emitted_length + 1;
+    original_pos += length + (end != std::string::npos ? 1 : 0);
+  }
+  if (processed_pos != processed.size()) {
+    line_offsets.clear();
+    return false;
+  }
+  return true;
+}
+
 parser::parser(const std::string &source, const parser_options &opts)
-    : filename_(opts.filename), signature_cursor_(opts.signature_cursor) {
+    : filename_(opts.filename), processed_source_(source), signature_cursor_(opts.signature_cursor) {
+  std::vector<std::pair<std::size_t, std::size_t>> source_offsets;
+  if (opts.enable_preprocessor) {
+    auto preprocessing = opts.preproc_options;
+    preprocessing.matrix_surface = true;
+    ny::preprocessor processor(preprocessing);
+    const auto result = processor.preprocess_text(source, filename_);
+    processed_source_ = result.output;
+    original_spans_available_ = unchanged_source_lines(source, processed_source_, source_offsets);
+    if (!original_spans_available_) signature_cursor_.reset();
+    for (const auto &issue : result.diagnostics) {
+      matrix::diagnostic diagnostic;
+      diagnostic.level = issue.kind == ny::preproc_diag_kind::error ? matrix::severity::error
+                       : issue.kind == ny::preproc_diag_kind::warning ? matrix::severity::warning
+                       : matrix::severity::note;
+      diagnostic.code = "MX0002";
+      diagnostic.message = issue.message;
+      diagnostic.primary.line = issue.line;
+      diagnostic.primary.column = 1;
+      diagnostic.hint = issue.hint.value_or("");
+      if (issue.filename != filename_) {
+        diagnostic.message = issue.filename + ":" + std::to_string(issue.line) + ": " + diagnostic.message;
+        diagnostic.primary.line = 0;
+        diagnostic.primary.column = 0;
+      }
+      rich_.push_back(diagnostic);
+      if (issue.kind == ny::preproc_diag_kind::error)
+        diagnostics_.push_back({issue.line, diagnostic.message, issue.hint});
+    }
+  }
   if (signature_cursor_ && *signature_cursor_ <= source.size()) {
     auto start = *signature_cursor_;
     while (start && (source[start - 1] == ' ' || source[start - 1] == '\t')) --start;
     signature_blank_start_ = start;
   }
-  lexer lex(source);
+  lexer lex(processed_source_);
   tokens_ = lex.scan();
+  for (auto &item : tokens_) {
+    item.original_source = original_spans_available_;
+    if (item.original_source && !source_offsets.empty()) {
+      const auto following = std::upper_bound(source_offsets.begin(), source_offsets.end(), item.start,
+          [](std::size_t offset, const auto &line) { return offset < line.first; });
+      if (following != source_offsets.begin()) {
+        const auto &line = *std::prev(following);
+        item.start = line.second + item.start - line.first;
+      }
+    }
+  }
   prescan_declarations();
   for (const auto &e : lex.errors()) {
     matrix::diagnostic rich;
@@ -378,13 +457,12 @@ bool parser::report_foreign_keyword(const token &at) {
       {"else", "'otherwise', or 'otherwise when <condition> then'"},
       {"endif", "'end when'"},
       {"fi", "'end when'"},
-      {"switch", "'consider <value>' ... 'end consider'"},
       {"match", "'consider <value>' ... 'end consider'"},
-      {"case", "'when <pattern> then' inside a 'consider'"},
-      {"default", "'otherwise' inside a 'consider'"},
+      {"case", "'case <value> then' inside a 'switch'"},
+      {"default", "'otherwise' inside a 'switch' or 'consider'"},
       {"do", "'repeat while <condition>' ... 'end repeat'"},
       {"foreach", "'repeat for each <name> in <collection>'"},
-      {"break", "'stop repeating'"},
+      {"break", "'stop repeating' for a loop, or 'stop switching [with <value>]' for a switch"},
       {"goto", "nothing -- Matrix has no jumps"},
       // Declarations
       {"import", "'read <book>', or 'read <names> from <book>'"},
@@ -499,7 +577,8 @@ void parser::recover_to_declaration() {
     const token &t = peek();
     if (t.is(kw::read) || t.is(kw::cite) || t.is(kw::public_) ||
         t.is(kw::value) || t.is(kw::variable) || t.is(kw::constant) ||
-        t.is(kw::forever) || t.is(kw::note) || t.is(kw::context))
+        t.is(kw::forever) || t.is(kw::note) || t.is(kw::context) ||
+        t.kind == matrix::token_kind::annotation)
       return;
     // A declaration also begins with a bare name followed by a clause word.
     if (t.is_name() &&
@@ -1040,35 +1119,155 @@ std::shared_ptr<ny::ast_decl> parser::parse_text_pattern(const token &name, bool
   return decl;
 }
 
-std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
-  // Annotations: 'context "..."' is @ai_context; 'note <name> <args>' is a
-  // general annotation. Both attach to the following declaration.
+std::vector<ny::ast_annotation> parser::parse_annotations() {
   std::vector<ny::ast_annotation> annotations;
-  while (check(kw::context) || check(kw::note)) {
-    const bool is_context = peek().is(kw::context);
-    advance();
+  while (check(kw::context) || check(kw::note) || check(matrix::token_kind::annotation)) {
+    const auto opening = advance();
     ny::ast_annotation annotation;
-    annotation.line = peek().line;
-    annotation.name = is_context ? "ai_context" : nil_symbol(advance().lexeme);
-    // ast_annotation holds one optional argument string, so several tokens
-    // are joined with a space -- which matches how the Ny parser stores the
-    // raw contents of '@name(...)'.
-    // Arguments stay on the annotation's own line. Without this the name of
-    // the following declaration is read as another argument, and the
-    // declaration then starts at its 'receives' or 'returns' clause.
-    const int annotation_line = previous().line;
-    std::string args;
-    while (peek().line == annotation_line &&
-           (check(matrix::token_kind::string_literal) ||
-            check(matrix::token_kind::number_literal) || peek().is_name())) {
-      if (!args.empty()) args += " ";
-      args += advance().lexeme;
+    annotation.line = opening.line;
+    std::string arguments;
+    bool has_arguments = false;
+    bool raw_text = false;
+    const auto same_line = [&] {
+      return !at_end() && peek().line == opening.line &&
+             !check(matrix::token_kind::statement_end);
+    };
+    const auto read_name = [&]() {
+      std::string name;
+      if (!(peek().is_name() || peek().kind == matrix::token_kind::keyword)) return name;
+      name = nil_symbol(advance().lexeme);
+      while (same_line() && (check(matrix::token_kind::dot) || check(matrix::token_kind::double_colon))) {
+        advance();
+        name += "::";
+        if (!same_line()) break;
+        if (!(peek().is_name() || peek().kind == matrix::token_kind::keyword)) break;
+        name += nil_symbol(advance().lexeme);
+      }
+      return name;
+    };
+    const auto read_value = [&]() {
+      std::string value;
+      if (!same_line()) return value;
+      if (check(matrix::token_kind::string_literal)) {
+        const auto text = advance();
+        if (text.lexeme.find('\0') != std::string::npos) {
+          error(text, "annotation text cannot contain NUL");
+          return std::string("\"\"");
+        }
+        return ny::quote_annotation_text(text.lexeme);
+      }
+      if (check(matrix::token_kind::numeric_sign) || check(kw::negative) || check(kw::minus)) {
+        advance();
+        value = "-";
+        if (!same_line() || !check(matrix::token_kind::number_literal)) {
+          error(peek(), "an annotation sign must be followed by a numeric literal");
+          return value;
+        }
+      }
+      if (check(matrix::token_kind::number_literal)) {
+        const auto number = advance();
+        value += number.lexeme;
+        // The final token validation must see the signed metadata value,
+        // just as it sees a direct unary minimum in an expression or pattern.
+        if (value.front() == '-' && ny::is_integer_minimum_magnitude(number.lexeme))
+          integer_boundaries_.emplace(pos_ - 1,
+              std::make_shared<ny::ast_number_literal>(value, number.line));
+        return value;
+      }
+      if (check(kw::true_) || check(kw::false_)) return std::string(advance().is(kw::true_) ? "true" : "false");
+      return read_name();
+    };
+    if (opening.kind == matrix::token_kind::annotation) {
+      annotation = ny::parse_annotation_lexeme(opening.lexeme, opening.line);
+      arguments = annotation.args.value_or("");
+      has_arguments = annotation.args.has_value();
+      raw_text = true;
+    } else if (opening.is(kw::context)) {
+      annotation.name = "ai_context";
+      if (!same_line() || !check(matrix::token_kind::string_literal))
+        error(opening, "context requires one text literal");
+      else {
+        arguments = read_value();
+        has_arguments = true;
+      }
+      if (same_line()) error(peek(), "context accepts exactly one text literal");
+    } else {
+      if (same_line()) annotation.name = read_name();
+      const bool structured = same_line() && match(kw::with);
+      bool need_value = structured;
+      while (same_line()) {
+        std::string key;
+        if (structured && (peek().is_name() || peek().kind == matrix::token_kind::keyword) && peek(1).is(kw::being)) {
+          key = nil_symbol(advance().lexeme);
+          advance();
+        }
+        const auto before = pos_;
+        const auto value = read_value();
+        if (value.empty()) { error(peek(), "expected a literal annotation value"); break; }
+        if (!arguments.empty()) arguments += ", ";
+        if (!key.empty()) arguments += key + "=";
+        arguments += value;
+        has_arguments = true;
+        need_value = false;
+        if (pos_ == before) break;
+        if (structured && same_line()) {
+          if (!match(matrix::token_kind::comma)) {
+            error(peek(), "separate annotation properties with ','"); break;
+          }
+          need_value = true;
+        }
+      }
+      if (need_value) error(opening, "expected an annotation value after 'with' or ','");
     }
-    if (!args.empty()) annotation.args = args;
+    // Metadata identifiers share NIL identity across frontends. Known compiler
+    // annotations accept Matrix case/separator variants; custom names retain case.
+    annotation.name = nil_symbol(annotation.name);
+    for (std::size_t at = 0; (at = annotation.name.find('.', at)) != std::string::npos; at += 2)
+      annotation.name.replace(at, 1, "::");
+    for (const auto *builtin : {"intrinsic", "interop", "inline", "test", "if_test_mode",
+                                "ai_context", "doc", "category", "performance", "deprecated",
+                                "generate", "property", "example", "integration"}) {
+      if (fold_key(annotation.name) == fold_key(builtin)) { annotation.name = builtin; break; }
+    }
+    const auto parsed_name = ny::parse_annotation_arguments("scope::" + annotation.name);
+    if (!parsed_name.error.empty() || parsed_name.arguments.size() != 1 ||
+        parsed_name.arguments.front().name || parsed_name.arguments.front().kind != "symbol")
+      error(opening, "expected a qualified annotation name");
+    if (annotation.name == "nil_binding_cell")
+      error(opening, "nil_binding_cell is reserved for compiler-generated metadata");
+    auto parsed = ny::parse_annotation_arguments(arguments, raw_text);
+    if (raw_text) for (auto &argument : parsed.arguments) {
+      if (argument.kind != "symbol") continue;
+      std::string word = argument.value;
+      for (auto &letter : word) if (letter >= 'A' && letter <= 'Z') letter += 'a' - 'A';
+      if (word == "true" || word == "false") {
+        argument.kind = "boolean";
+        argument.value = std::move(word);
+      }
+    }
+    if (!parsed.error.empty()) error(opening, "invalid annotation arguments: " + parsed.error);
+    else {
+      annotation.typed_arguments = parsed.arguments;
+      if (has_arguments) {
+        // Retained NIL uses the established decoded argument-text contract.
+        // The typed values separately preserve literal boundaries for reflection.
+        std::string retained;
+        for (const auto &arg : parsed.arguments) {
+          if (!retained.empty()) retained += ", ";
+          if (arg.name) retained += *arg.name + "=";
+          retained += arg.kind == "text" ? "\"" + arg.value + "\"" : arg.value;
+        }
+        annotation.args = std::move(retained);
+      }
+    }
     annotations.push_back(std::move(annotation));
     skip_terminators();
   }
+  return annotations;
+}
 
+std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
+  auto annotations = parse_annotations();
   // A 'context' the author wrote and the artifact does not carry is worse than
   // no context at all: it reads as documented intent that silently is not
   // there, and under NIL-0093 that intent is part of what an image states
@@ -1130,6 +1329,7 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
   // while the language itself keeps knowing nothing about encoding.
   if (peek().kind == matrix::token_kind::keyword && peek(1).is(kw::begin) &&
       peek(2).is(kw::extension)) {
+    refuse_annotations("an extension");
     const int target_line = peek().line;
     auto target = parse_type();
     if (!target) { recover_to_declaration(); return nullptr; }
@@ -1200,8 +1400,10 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
     refuse_annotations("a contract");
     return named(parse_contract(is_public, line, name, std::move(generics)), name_token);
   }
-  if (check(kw::begin) && peek(1).is(kw::test))
+  if (check(kw::begin) && peek(1).is(kw::test)) {
+    refuse_annotations("a test block");
     return named(parse_test(line, name), name_token);
+  }
   if (check(kw::inherits) || (check(kw::begin) && peek(1).is(kw::class_))) {
     auto klass = parse_class(is_public, is_abstract, line, name, std::move(generics));
     if (klass) klass->annotations = std::move(annotations);
@@ -1211,6 +1413,7 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
   // '<Type> provides <Contract> begin implementation', or a bare
   // 'begin implementation' / 'begin extension'.
   if (check(kw::provides)) {
+    refuse_annotations("an implementation");
     advance();
     auto contract = parse_type();
     if (!check(kw::begin)) {
@@ -1226,6 +1429,7 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
   }
   if (check(kw::begin) &&
       (peek(1).is(kw::implementation) || peek(1).is(kw::extension))) {
+    refuse_annotations("an implementation or extension");
     const kw closing = peek(1).is(kw::extension) ? kw::extension
                                                  : kw::implementation;
     return parse_implementation(line, target_name == name
@@ -1234,6 +1438,7 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
   }
 
   if (match(kw::means)) {
+    refuse_annotations("a type alias");
     auto target = parse_type();
     skip_terminators();
     if (!target) return nullptr;
@@ -1329,6 +1534,9 @@ std::shared_ptr<ny::ast_program> parser::parse_program() {
 // then a name, then the ordinary paragraph clauses.
 std::shared_ptr<ny::ast_function_decl>
 parser::parse_member(paragraph_context context) {
+  auto annotations = parse_annotations();
+  if (!annotations.empty() && context == paragraph_context::contract_member)
+    error(peek(), "annotations cannot attach to a contract member; it has no artifact declaration");
   bool is_public = false, is_abstract = false, is_virtual = false;
   bool is_override = false;
   for (;;) {
@@ -1351,8 +1559,10 @@ parser::parse_member(paragraph_context context) {
   const token &name_token = peek();
   const int line = peek().line;
   const std::string name = advance().lexeme;
-  return named(parse_paragraph(is_public, line, name, context, is_abstract,
-                               is_virtual, is_override), name_token);
+  auto result = named(parse_paragraph(is_public, line, name, context, is_abstract,
+                                      is_virtual, is_override), name_token);
+  if (result) result->annotations = std::move(annotations);
+  return result;
 }
 
 // '<name> [inherits B, C] begin class' ... 'end class'
@@ -2157,10 +2367,23 @@ std::shared_ptr<ny::ast_stmt> parser::parse_statement() {
   if (check(kw::append)) return parse_append();
   if (check(kw::when)) return parse_when_statement();
   if (check(kw::repeat)) return parse_repeat();
+  if (is_switch_start()) return parse_switch_statement();
 
   if (check(kw::stop) && peek(1).is(kw::repeating)) {
     advance(); advance(); skip_terminators();
-    return std::make_shared<ny::ast_break_stmt>(line);
+    auto statement = std::make_shared<ny::ast_break_stmt>(line);
+    statement->target = ny::break_target_kind::loop;
+    return statement;
+  }
+  if (check(kw::stop) && exact_phrase_word(peek(1), "switching")) {
+    advance(); advance();
+    auto statement = std::make_shared<ny::ast_break_stmt>(line);
+    statement->target = ny::break_target_kind::switch_;
+    if (peek().line == line && match(kw::with)) {
+      statement->value = parse_expression();
+    }
+    skip_terminators();
+    return statement;
   }
   if (check(kw::continue_) && peek(1).is(kw::repeating)) {
     advance(); advance(); skip_terminators();
@@ -2184,7 +2407,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_statement() {
   // mention the word the author actually wrote, which is the wrong lesson for
   // a reader who is annotating a local binding and has nowhere to be told
   // that only a declaration can carry one.
-  if (check(kw::context) || check(kw::note)) {
+  if (check(kw::context) || check(kw::note) || check(matrix::token_kind::annotation)) {
     const bool is_context = peek().is(kw::context);
     error(start,
           std::string("'") + (is_context ? "context" : "note") +
@@ -2196,7 +2419,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_statement() {
   } else if (!report_foreign_keyword(start))
     error(start, "expected a statement, found '" + start.lexeme + "'",
           "a statement begins with value, variable, constant, set, say, give, "
-          "evaluate, append, when or repeat",
+          "evaluate, append, when, repeat or switch",
           "MX0104");
   while (!at_end() && peek().line == line) advance();
   skip_terminators();
@@ -2543,7 +2766,7 @@ ny::ast_expr_ptr parser::parse_postfix() {
       auto call = std::make_shared<ny::ast_call_expr>(expr, std::move(args),
                                                      std::move(type_args), line);
       call->source_file = filename_;
-      if (!argument_starts.empty()) {
+      if (original_spans_available_ && !argument_starts.empty()) {
         const auto &last = tokens_[pos_ - 1];
         const auto end = std::max(last.start + last.length,
             recovered_signature_call_ && signature_cursor_ ? *signature_cursor_ : std::size_t(0));
@@ -2563,7 +2786,7 @@ ny::ast_expr_ptr parser::parse_postfix() {
       auto call = std::make_shared<ny::ast_call_expr>(
           expr, std::move(args), std::vector<std::string>{}, line);
       call->source_file = filename_;
-      if (!argument_starts.empty()) {
+      if (original_spans_available_ && !argument_starts.empty()) {
         const auto &last = tokens_[pos_ - 1];
         const auto end = std::max(last.start + last.length,
             recovered_signature_call_ && signature_cursor_ ? *signature_cursor_ : std::size_t(0));
@@ -2780,6 +3003,7 @@ ny::ast_expr_ptr parser::parse_primary() {
     return lambda;
   }
 
+  if (is_switch_start()) return parse_switch_expression();
   if (check(kw::when)) return parse_when_expression();
   if (check(kw::consider)) return parse_consider_expression();
   if (check(kw::build)) return parse_build();
@@ -3168,6 +3392,95 @@ ny::ast_pattern parser::parse_pattern() {
                            : ny::ast_pattern_kind::variable_pattern;
   pattern.name = name;
   return pattern;
+}
+
+bool parser::is_switch_start() const {
+  if (!exact_phrase_word(peek(), "switch") || peek(1).line != peek().line)
+    return false;
+  // Keep ordinary references and calls such as `switch with input being 1`
+  // available. Only an expression beginning immediately after the contextual
+  // word introduces a switch; neither spelling becomes a reserved name.
+  const auto &next = peek(1);
+  switch (next.kind) {
+  case matrix::token_kind::identifier:
+  case matrix::token_kind::number_literal:
+  case matrix::token_kind::numeric_sign:
+  case matrix::token_kind::string_literal:
+  case matrix::token_kind::formatted_string_begin:
+  case matrix::token_kind::left_paren:
+  case matrix::token_kind::left_bracket:
+    return true;
+  default:
+    break;
+  }
+  if (next.kind != matrix::token_kind::keyword) return false;
+  switch (next.word) {
+  case kw::true_: case kw::false_: case kw::negative: case kw::minus:
+  case kw::not_: case kw::when: case kw::consider: case kw::build:
+  case kw::anonymous: case kw::reference: case kw::my: case kw::the:
+  case kw::quote: case kw::newline: case kw::tab:
+    return true;
+  default:
+    return false;
+  }
+}
+
+std::vector<ny::ast_switch_arm> parser::parse_switch_arms() {
+  std::vector<ny::ast_switch_arm> arms;
+  const auto at_label = [&]() {
+    return exact_phrase_word(peek(), "case") || check(kw::otherwise);
+  };
+  for (;;) {
+    skip_terminators();
+    if (check(kw::end) && exact_phrase_word(peek(1), "switch")) {
+      advance(); advance();
+      break;
+    }
+    if (at_end() || check(kw::end)) {
+      error(peek(), "expected 'end switch' after switch cases");
+      break;
+    }
+    const token label_token = peek();
+    ny::ast_expr_ptr label;
+    if (exact_phrase_word(peek(), "case")) {
+      advance();
+      label = parse_expression();
+      expect(kw::then, "after a switch case value");
+    } else if (match(kw::otherwise)) {
+      // The default retains its source position for automatic fallthrough.
+    } else {
+      error(peek(), "expected 'case <value> then' or 'otherwise' in switch");
+      const size_t before = pos_;
+      parse_statement();
+      if (pos_ == before && !at_end()) advance();
+      continue;
+    }
+    auto body = std::make_shared<ny::ast_block_stmt>(label_token.line);
+    for (;;) {
+      skip_terminators();
+      if (at_end() || check(kw::end) || at_label()) break;
+      const size_t before = pos_;
+      if (auto statement = parse_statement()) body->statements.push_back(statement);
+      if (pos_ == before && !at_end()) advance();
+    }
+    arms.push_back({label, body, label_token.line, {}});
+  }
+  return arms;
+}
+
+std::shared_ptr<ny::ast_stmt> parser::parse_switch_statement() {
+  const token start = advance();
+  auto target = parse_expression();
+  auto arms = parse_switch_arms();
+  skip_terminators();
+  return std::make_shared<ny::ast_switch_stmt>(target, std::move(arms), start.line);
+}
+
+ny::ast_expr_ptr parser::parse_switch_expression() {
+  const token start = advance();
+  auto target = parse_expression();
+  auto arms = parse_switch_arms();
+  return std::make_shared<ny::ast_switch_expr>(target, std::move(arms), start.line);
 }
 
 // 'consider e / when P [provided g] then ... / otherwise ... / end consider'

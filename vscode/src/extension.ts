@@ -105,7 +105,7 @@ async function runProjectTask(provider: NyTaskProvider, kind: "project-check" | 
   try { project = projectForResource(resource); }
   catch (error) { void vscode.window.showErrorMessage(`NIL project: ${error instanceof Error ? error.message : String(error)}`); return undefined; }
   if (!project) {
-    void vscode.window.showErrorMessage("No nil.project.json found between the active file and its workspace folder.");
+    void vscode.window.showErrorMessage("No nil.project.nildata (or legacy JSON/YAML project) found between the active file and its workspace folder.");
     return undefined;
   }
   // The project driver reads the complete saved import graph. Saving all files

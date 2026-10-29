@@ -117,6 +117,64 @@ test("Matrix scopes subject-first declarations, modifiers, parameters, and type 
   }
 });
 
+test("Matrix switch forms highlight and indent while retaining member names", async () => {
+  const grammar = await loadMatrixGrammar();
+  for (const [line, word] of [['SWITCH mode', 'SWITCH'], ['case 1 then', 'case'],
+    ['stop switching with 2', 'switching'], ['end switch', 'switch']])
+    assertScope(grammar, line!, word!, 'keyword.control.verb');
+  for (const word of ['switch', 'default', 'switch-value'])
+    assertScope(grammar, 'settings.' + word, word, 'variable.other.member');
+  const config = JSON.parse(fs.readFileSync('language-configuration.matrix.json', 'utf8'));
+  const increase = new RegExp(config.indentationRules.increaseIndentPattern);
+  const decrease = new RegExp(config.indentationRules.decreaseIndentPattern);
+  for (const line of ['switch mode', 'CASE 1 THEN', 'otherwise']) assert.ok(increase.test(line), line);
+  for (const line of ['case 2 then', 'otherwise', 'END SWITCH']) assert.ok(decrease.test(line), line);
+  for (const line of ['say "switch mode"', '!!! switch mode', 'say switch-value']) assert.equal(increase.test(line), false, line);
+  const snippets = JSON.parse(fs.readFileSync('snippets/matrix.code-snippets', 'utf8'));
+  assert.equal(snippets['Switch statement'].body.at(-1), 'end switch');
+  assert.ok(snippets['Switch expression'].body.some((line: string) => line.includes('stop switching with')));
+});
+
+test("Matrix annotation regions scope names and properties without consuming declarations", async () => {
+  const grammar = await loadMatrixGrammar();
+  for (const name of ["doc", "Company.review", "Company::review", "custom-note"]) {
+    assertScope(grammar, `@${name}(enabled=true, level=-1.5)`, name, "storage.type.annotation");
+    assertScope(grammar, `note ${name} with enabled being true`, name, "storage.type.annotation");
+  }
+  assertScope(grammar, '@doc(summary="kept")', "summary", "variable.parameter.annotation");
+  assertScope(grammar, 'NOTE doc WITH summary BEING "kept"', "summary", "variable.parameter.annotation");
+  assertScope(grammar, '@custom(mode=Policy.Safe)', "Policy.Safe", "constant.other.symbol.annotation");
+  assertScope(grammar, 'context "kept"', "context", "storage.type.annotation");
+  let state = grammar.tokenizeLine('@doc(', INITIAL).ruleStack;
+  const line = '    summary="a literal ) and @inline",';
+  const result = grammar.tokenizeLine(line, state);
+  assert.ok(scopesAt(result, line, "summary").includes("variable.parameter.annotation.matrix"));
+  assert.ok(scopesAt(result, line, "@inline").includes("string.quoted.double.matrix"));
+  state = grammar.tokenizeLine('    enabled=true)', result.ruleStack).ruleStack;
+  const declaration = grammar.tokenizeLine('main begin paragraph', state);
+  assert.equal(declaration.tokens.some(token => token.scopes.includes("meta.annotation.matrix")), false);
+  assert.ok(scopesAt(declaration, 'main begin paragraph', 'main').includes('entity.name.function.matrix'));
+  // Backslashes remain literal in Matrix annotation text, including before a closing quote.
+  const raw = '@custom(path="C:\\", enabled=true)';
+  assertScope(grammar, raw, "enabled", "variable.parameter.annotation");
+  for (const name of ["note-value", "context-value"]) {
+    assertScope(grammar, 'say ' + name, name, 'variable.other.readwrite');
+  }
+});
+
+test("Matrix preprocessor directives remain distinct from annotation metadata", async () => {
+  const grammar = await loadMatrixGrammar();
+  for (const name of ["pragma", "include", "define", "undef", "ifdef", "ifndef", "if", "elif", "else", "endif", "error", "warning", "message", "schema"])
+    assertScope(grammar, '@' + name + ' FEATURE', '@' + name, 'keyword.control.directive');
+  assertScope(grammar, '@custom(enabled=true)', 'custom', 'storage.type.annotation');
+  assertScope(grammar, '@define-note(enabled=true)', 'define-note', 'storage.type.annotation');
+  assertScope(grammar, '@include.Review(enabled=true)', 'include.Review', 'storage.type.annotation');
+  const state = grammar.tokenizeLine('value document is begin text', INITIAL).ruleStack;
+  const literal = grammar.tokenizeLine('@include "unchanged.matrix"', state);
+  assert.equal(literal.tokens.some(token => token.scopes.includes('keyword.control.directive.matrix')), false);
+  assertScope(grammar, '!!! @define FEATURE true', '!!! @define FEATURE true', 'comment.line.exclamation');
+});
+
 test("Matrix folds ASCII keywords while preserving complete hyphenated and escaped names", async () => {
   const grammar = await loadMatrixGrammar();
   assertScope(grammar, "VALUE total AS NUMBER IS first.raw-value PLUS 2", "VALUE", "storage.type.variable");
@@ -328,10 +386,12 @@ test("Matrix signed numbers, tuple types, and formatted expressions have distinc
 test("Matrix snippets use current paragraph, type, text, and extension spellings", () => {
   const snippets = JSON.parse(fs.readFileSync("snippets/matrix.code-snippets", "utf8")) as Record<string, { prefix: string; body: string[] }>;
   const prefixes = new Set(Object.values(snippets).map(s => s.prefix));
-  for (const prefix of ["paragraph", "main", "extension", "begin-text", "means", "call", "override", "extend-text", "tuple", "unpack", "formatted"]) assert.ok(prefixes.has(prefix), prefix);
+  for (const prefix of ["paragraph", "main", "extension", "begin-text", "means", "call", "override", "extend-text", "tuple", "unpack", "formatted", "@annotation", "note", "@doc", "note-doc", "note-inline", "context", "@include", "@ifdef"]) assert.ok(prefixes.has(prefix), prefix);
   assert.match(snippets["Contract"]!.body.join("\n"), /returns \$\{3:text\}/);
   assert.match(snippets["Paragraph"]!.body.join("\n"), /give \$\{2:argument\}/);
   assert.match(snippets["Variable binding"]!.body.join("\n"), /is \$\{3:0\}/);
   assert.deepEqual(snippets["Raw text block"]!.body, ["begin text", "    ${0:text}", "end text"]);
   assert.deepEqual(snippets["Formatted text"]!.body, ['formatted "${1:Height}: {${2:height}}"']);
+  assert.deepEqual(snippets["Metadata annotation"]!.body, ['@${1:custom}(${2:key}=${3:true})']);
+  assert.deepEqual(snippets["Prose metadata annotation"]!.body, ['note ${1:custom} with ${2:key} being ${3:true}']);
 });

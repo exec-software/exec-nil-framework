@@ -236,6 +236,12 @@ but explicitly audited intrinsic subset; native support is provider-specific.
 
 ## Annotations and foreign interfaces
 
+Both frontends support stackable declaration metadata, including
+`@doc(summary="...")`; Matrix also accepts
+`note doc with summary being "..."`. The
+[annotation reference](annotations.md) defines scalar values, supported targets,
+and the distinction between metadata and executable decorators.
+
 Structured declaration annotations are retained in the frontend, and selected
 annotations such as `@intrinsic`, `@interop`, `@inline`, and `@ai_context` have
 special handling. Current binary executable NIL v3 preserves function

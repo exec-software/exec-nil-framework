@@ -58,7 +58,10 @@
     "onCommand:ny.buildNativeProject",
     "onCommand:ny.runProject",
     "onCommand:ny.runNativeProject",
+    "workspaceContains:**/nil.project.nildata",
     "workspaceContains:**/nil.project.json",
+    "workspaceContains:**/nil.project.yaml",
+    "workspaceContains:**/nil.project.yml",
     "onCommand:ny.profileMemory",
     "onCommand:ny.profileNativeMemory"
   ],
@@ -499,7 +502,7 @@
           },
           "project": {
             "type": "string",
-            "description": "Path to nil.project.json. Defaults to the nearest project within the active workspace."
+            "description": "Path to nil.project.nildata or a legacy JSON/YAML manifest. Defaults to the nearest project within the active workspace."
           },
           "target": {
             "type": "string",

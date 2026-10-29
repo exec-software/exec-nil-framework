@@ -159,7 +159,7 @@ FOREIGN_KEYWORDS = [
     ("return 0", "give <value>"),
     ("print \"hi\"", "say <value>"),
     ("if x then", "when <condition> then"),
-    ("switch x", "consider <value>"),
+    ("match x", "consider <value>"),
     ("foreach item in xs", "repeat for each"),
     ("break", "stop repeating"),
     ("import io", "read <book>"),
@@ -462,7 +462,7 @@ def check_declaration_context(compiler, workdir):
 
     failures = []
     for text, prefix, name in expected:
-        marker = f"@ai_context({text})"
+        marker = f'@ai_context("{text}")'
         if not carries(prefix, name, marker):
             kind = prefix.strip()
             failures.append(

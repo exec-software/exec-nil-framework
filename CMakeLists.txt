@@ -439,6 +439,26 @@ if(BUILD_TESTING)
                     --llvm "${NIL_ENABLE_LLVM}"
         )
         set_tests_properties(nilbuild.project-contract PROPERTIES LABELS "tools;project;analysis;rc" TIMEOUT 180)
+        add_test(NAME nilbuild.incremental-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/incremental_build_contract.py"
+                --builder $<TARGET_FILE:nilbuild> --compiler $<TARGET_FILE:nilcompiler>
+                --interpreter $<TARGET_FILE:nilinterpreter> --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nilbuild.incremental-contract PROPERTIES LABELS "tools;project;rc" TIMEOUT 180)
+        add_test(NAME nilbuild.parallel-process-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/parallel_process_contract.py"
+                --root "${CMAKE_CURRENT_SOURCE_DIR}" --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties(nilbuild.parallel-process-contract PROPERTIES LABELS "tools;project;rc" TIMEOUT 60)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            add_test(NAME nilbuild.toolchain-inputs
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/toolchain_inputs_contract.py"
+                    --root "${CMAKE_CURRENT_SOURCE_DIR}" --cxx "${CMAKE_CXX_COMPILER}" --driver "${CMAKE_CXX_COMPILER}")
+            set_tests_properties(nilbuild.toolchain-inputs PROPERTIES LABELS "tools;project;rc" TIMEOUT 90)
+        endif()
+        add_test(NAME nilbuild.analysis-dependencies
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/analysis_dependencies.py"
+                --compiler $<TARGET_FILE:nilcompiler>)
+        set_tests_properties(nilbuild.analysis-dependencies PROPERTIES LABELS "tools;analysis;project;rc" TIMEOUT 60)
         add_test(
             NAME ny.inline-assembly
             COMMAND "${Python3_EXECUTABLE}"
@@ -550,6 +570,19 @@ if(BUILD_TESTING)
                     --tool $<TARGET_FILE:matrix_lex_dump>
                     --root "${CMAKE_CURRENT_SOURCE_DIR}")
         set_tests_properties(matrix.lexer PROPERTIES LABELS "matrix;lexer" TIMEOUT 60)
+        add_test(NAME matrix.annotations
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/annotation_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(matrix.annotations PROPERTIES LABELS "matrix;reflection;routes" TIMEOUT 180)
+        add_test(NAME nil.switch-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/switch_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --debugger $<TARGET_FILE:nildebugger>
+                    --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.switch-contract PROPERTIES LABELS "matrix;ny;routes;typecheck;debugger" TIMEOUT 240)
         # Matrix execution conformance: each page lowers to NIL and runs on the
         # interpreter with exact expected output. Acceptance is covered by the
         # lexer test; this checks that the lowering means what the surface says.

@@ -56,10 +56,10 @@ CPU tracing, code exploration and debugger integration remain planned. See the
 
 ## `nilbuild`
 
-The [project driver](projects.md) provides `describe`, `check`, `build` and
-`run` over a `nil.project.json` file. It shares compiler analysis and project
-settings with the VS Code extension. Both VM and native targets are available;
-project process execution is currently qualified on Linux.
+The [project driver](projects.md) provides `init`, `convert`, `describe`, `check`, `build` and
+`run` over a `nil.project.nildata` file. It shares compiler analysis and project
+settings with the VS Code extension. VM/native targets share content-based incremental builds and bounded parallel
+project scheduling. Project process execution is currently qualified on Linux.
 
 ## `nilcompiler`
 

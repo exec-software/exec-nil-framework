@@ -39,8 +39,10 @@ do not assume every documented combination is accepted by every backend yet.
 - [Classes and polymorphism](language-reference/classes.md)
 - [Expressions](language-reference/expressions.md)
 - [Statements](language-reference/statements.md)
+- [Switch statements and expressions](language-reference/switch.md)
 - [Faults and cleanup](language-reference/faults.md)
 - [Functions](language-reference/functions.md)
+- [Annotations](language-reference/annotations.md)
 - [Modules](language-reference/modules.md)
 - [Traits](language-reference/traits.md)
 

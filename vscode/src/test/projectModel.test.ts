@@ -14,7 +14,7 @@ const manifest = { schema: "nil.project.v1", name: "hello", entry: "src/main.mat
 test("project defaults resolve relative to its manifest independently of process cwd", () => {
   assert.deepEqual(parseProject(JSON.stringify(manifest), file), {
     projectFile: file, directory: root, name: "hello", entry: path.join(root, "src/main.matrix"),
-    includePaths: [root], outputDirectory: path.join(root, "build"), analysis: { disabledRules: [], warningsAsErrors: false }
+    includePaths: [root], outputDirectory: path.join(root, "build"), analysis: { disabledRules: [], warningsAsErrors: false }, projectReferences: []
   });
   const project = parseProject(JSON.stringify({ ...manifest, includePaths: ["lib", "lib", "."], sdkPath: "../sdk",
     outputDirectory: "artifacts", analysis: { disabledRules: ["NIL1001", "NIL2002"], warningsAsErrors: true } }), file);

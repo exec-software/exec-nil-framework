@@ -88,12 +88,12 @@ public:
 
 private:
   // Internal helpers and grammar entry points
-  std::vector<std::string> parse_leading_annotations();
+  std::vector<ast_annotation> parse_leading_annotations();
   std::shared_ptr<ast_decl> parse_declaration();
   std::shared_ptr<ast_decl> parse_function_declaration(
       visibility_kind visibility = visibility_kind::visibility_private,
       bool is_abstract = false,
-      const std::vector<std::string> &annotations = {});
+      const std::vector<ast_annotation> &annotations = {});
   std::shared_ptr<ast_decl> parse_text_pattern_declaration(
       visibility_kind visibility = visibility_kind::visibility_private);
   std::shared_ptr<ast_decl> parse_variable_declaration(
@@ -138,6 +138,11 @@ private:
   // parser to produce a statement-style match (ast_match_stmt) rather than an
   // expression-style match which returns an ast_expr.
   std::shared_ptr<ast_stmt> parse_match_statement();
+  bool is_switch_start() const;
+  bool is_switch_label() const;
+  std::vector<ast_switch_arm> parse_switch_arms();
+  std::shared_ptr<ast_stmt> parse_switch_statement();
+  std::shared_ptr<ast_expr> parse_switch_expression();
 
   // Fault handling: attempt/fault/recover/raise
   std::shared_ptr<ast_stmt> parse_attempt_statement();
@@ -225,6 +230,7 @@ private:
   size_t pos_ = 0; // current token index (points at the next token)
   size_t expression_depth_ = 0;
   std::optional<size_t> match_arm_boundary_depth_;
+  std::optional<size_t> switch_target_boundary_depth_;
   parser_options options_;
 
   // Local copy of preprocessor options (for convenience in the parser).

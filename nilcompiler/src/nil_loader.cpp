@@ -1,4 +1,5 @@
 #include "nil_loader.hpp"
+#include "annotation_arguments.hpp"
 #include "nil_contract.hpp"
 #include "binding_reference.hpp"
 #include "concurrency_contract.hpp"
@@ -6,6 +7,7 @@
 #include "numeric_literal.hpp"
 #include "scalar_text.hpp"
 #include "vm.hpp"
+#include "../../common/content_digest.hpp"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -669,7 +671,8 @@ std::string fault_stack_type(const std::string &type, const nil_module &module) 
 nil_fault_analysis analyze_fault_body(const nil_function &function,
                                      const nil_module &module,
                                      bool require_schemas,
-                                     bool force_class_validation = false) {
+                                     bool force_class_validation = false,
+                                     const std::unordered_set<std::size_t> *source_returns = nullptr) {
   nil_fault_analysis result;
   result.instructions.resize(function.body.size());
   std::vector<Opcode> ops;
@@ -1134,8 +1137,13 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     case Opcode::RET:
       if (!state.regions.empty() || !state.saved.empty() || state.pending)
         fail("return bypasses live fault state", pc);
-      if (args.empty() && state.stack.size() != (function.return_type == "void" ? 0U : 1U))
-        fail("return has the wrong operand stack height", pc);
+      if (args.empty()) {
+        const std::size_t expected = function.return_type == "void" ? 0U : 1U;
+        const bool compiler_source_return = source_returns && source_returns->count(pc);
+        if (state.stack.size() < expected ||
+            (state.stack.size() != expected && !compiler_source_return))
+          fail("return has the wrong operand stack height", pc);
+      }
       if (args.empty() && function.return_type != "void") {
         require_complete(state.stack.back()); check_class_argument(function.return_type, state.stack.back());
       }
@@ -1177,6 +1185,56 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
 nil_fault_analysis analyze_nil_fault_function(const nil_function &function,
                                               const nil_module &module) {
   return analyze_fault_body(function, module, true);
+}
+
+void finalize_nil_switch_returns(nil_module &module) {
+  for (auto &function : module.functions) {
+    std::unordered_set<std::size_t> source_returns;
+    for (std::size_t pc = 0; pc < function.body.size(); ++pc) {
+      const auto &instruction = function.body[pc];
+      if (instruction.opname == "RET" && instruction.args.size() == 1 &&
+          instruction.args.front() == nil_switch_return_marker)
+        source_returns.insert(pc);
+    }
+    if (source_returns.empty()) continue;
+    // Analyze a complete CFG with ordinary RET spelling. Only these exact
+    // compiler-owned source sites may temporarily carry extra operands;
+    // generated returns, underflow, region state, and class provenance retain
+    // their normal validation. No executable loader invokes this preparation.
+    auto prepared = function;
+    for (const auto pc : source_returns) prepared.body[pc].args.clear();
+    const auto analysis = analyze_fault_body(prepared, module, true, true, &source_returns);
+    std::vector<nil_instruction> body;
+    body.reserve(prepared.body.size());
+    for (std::size_t pc = 0; pc < prepared.body.size(); ++pc) {
+      const auto &instruction = prepared.body[pc];
+      const auto &state = analysis.instructions[pc];
+      if (source_returns.count(pc) && state.reachable) {
+        const std::size_t expected = function.return_type == "void" ? 0 : 1;
+        const auto surplus = state.stack_height - expected;
+        if (surplus) {
+          const auto saved = "$nil.switch.return." + std::to_string(pc);
+          const auto append = [&](const std::string &op, std::vector<std::string> args = {}) {
+            auto adjustment = instruction;
+            adjustment.opname = op;
+            adjustment.args = std::move(args);
+            body.push_back(std::move(adjustment));
+          };
+          // Cleanup has already completed. The old fault-protected operand
+          // prefix may now be retired, preserving the typed return value.
+          if (expected) append("STORE_LOCAL", {saved});
+          for (std::size_t count = 0; count < surplus; ++count) append("POP");
+          if (expected) append("LOAD_LOCAL", {saved});
+        }
+      }
+      body.push_back(instruction);
+    }
+    prepared.body = std::move(body);
+    // Assert the exact executable contract after finalization, including
+    // functions that would otherwise not need fault/class validation.
+    (void)analyze_fault_body(prepared, module, true, true);
+    function.body = std::move(prepared.body);
+  }
 }
 
 void validate_nil_fault_contract(const nil_module &module) {
@@ -1594,7 +1652,7 @@ public:
     std::string marker;
     if (!(fields >> marker))
       return std::nullopt;
-    if (marker == "function_annotation") {
+    if (marker == "function_annotation" || marker == "declaration_annotation") {
       if (!at_module_scope)
         fail("Misplaced function annotation", input_line);
       if (pending_)
@@ -1609,7 +1667,8 @@ public:
       if (operands.size() != 1 || !trailing.empty())
         fail("Invalid quoted function annotation", input_line);
       annotation(operands.front(), input_line);
-      quoted_annotation_pending_ = true;
+      if (marker == "function_annotation") quoted_annotation_pending_ = true;
+      else quoted_declaration_annotation_pending_ = true;
       return operands.front();
     }
     if (marker != "declaration_line")
@@ -1639,12 +1698,21 @@ public:
       fail("Function annotation count exceeds safety limit", input_line);
   }
 
-  void record(const std::string &line, std::size_t input_line) const {
+  void record(const std::string &line, std::size_t input_line) {
     if (pending_ && line.rfind("function ", 0) != 0)
       fail("Orphan declaration line", input_line);
     if (quoted_annotation_pending_ && line.rfind("function ", 0) != 0 &&
         (line.front() != '@' || line.rfind("@test ", 0) == 0))
       fail("Orphan function annotation", input_line);
+    const bool type_header = line.rfind("struct ", 0) == 0 || line.rfind("enum ", 0) == 0 ||
+                             line.rfind("class ", 0) == 0;
+    if (quoted_declaration_annotation_pending_ && !type_header && line.rfind("function ", 0) != 0 &&
+        (line.front() != '@' || line.rfind("@test ", 0) == 0))
+      fail("Orphan declaration annotation", input_line);
+    if (type_header) {
+      quoted_declaration_annotation_pending_ = false;
+      annotation_count_ = 0;
+    }
   }
 
   int consume() {
@@ -1652,6 +1720,7 @@ public:
     pending_.reset();
     annotation_count_ = 0;
     quoted_annotation_pending_ = false;
+    quoted_declaration_annotation_pending_ = false;
     return result;
   }
 
@@ -1660,6 +1729,8 @@ public:
       fail("Orphan declaration line", input_line);
     if (quoted_annotation_pending_)
       fail("Orphan function annotation", input_line);
+    if (quoted_declaration_annotation_pending_)
+      fail("Orphan declaration annotation", input_line);
   }
 
 private:
@@ -1671,6 +1742,7 @@ private:
   std::optional<int> pending_;
   std::size_t annotation_count_ = 0;
   bool quoted_annotation_pending_ = false;
+  bool quoted_declaration_annotation_pending_ = false;
 };
 
 bool is_serialized_identifier(const std::string &value) {
@@ -2178,9 +2250,9 @@ std::unique_ptr<nil_module> parseTextNilModule(std::istream &is) {
       parsed.annotations = std::move(pending_annotations);
       pending_annotations.clear();
       for (const auto &annotation : parsed.annotations) {
-        if (annotation.rfind("@inline", 0) == 0)
+        if (annotation_name_matches(annotation, "inline"))
           parsed.is_inline = true;
-        if (annotation.rfind("@test", 0) == 0)
+        if (annotation_name_matches(annotation, "test"))
           parsed.is_test = true;
       }
       validate_serialized_function_signature(
@@ -2973,7 +3045,7 @@ parseBinaryProgram(std::istream &is,
         (void)section.string("test name");
       require_section_consumed(section, "module");
     } else if (sec.type == 7) {
-      read_class_metadata(section, fault_metadata);
+      read_class_metadata(section, fault_metadata, false, annotates_types);
       require_section_consumed(section, "class");
     } else if (sec.type == 6) { // Embedded source interface
       const std::uint32_t source_count = section.u32("source count");
@@ -3247,7 +3319,7 @@ std::unique_ptr<nil_module> parseBinaryNilModule(std::istream &is) {
   return module;
 }
 
-nil_library_metadata parseBinaryLibraryMetadata(std::istream &is) {
+nil_library_metadata parseBinaryLibraryMetadata(std::istream &is, std::string *content_digest) {
   const auto bytes = read_binary_bytes(is);
   if (bytes.size() < 16 || std::memcmp(bytes.data(), "NIL\0", 4) != 0)
     throw std::runtime_error("Invalid NIL library header");
@@ -3351,6 +3423,9 @@ nil_library_metadata parseBinaryLibraryMetadata(std::istream &is) {
     std::unordered_map<std::string, Value> constants;
     (void)parseBinaryProgram(checked, constants);
   }
+  if (content_digest)
+    *content_digest = nil::detail::content_digest(
+        std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
   return result;
 }
 
