@@ -6,7 +6,7 @@ language needs stays one explicit word away.
 
 ## Two tiers of type
 
-**Tier one — what a program says unless it has a reason not to.** Five names,
+**Tier one — what a program says unless it has a reason not to.** A small vocabulary,
 and encoding, width and precision are not among the program's concerns.
 
 | Matrix | NIL | Meaning |
@@ -14,7 +14,8 @@ and encoding, width and precision are not among the program's concerns.
 | `text` | `text` | Text. Encoding is the library's problem, never the program's. |
 | `number` | `i64` | A whole number. |
 | `floating` | `f64` | A real number. |
-| `boolean` | `bool` | True or false. |
+| `boolean` / `flag` | `bool` | `true` / `yes` or `false` / `no`. |
+| `anything` | `anything` | An initialized dynamic value with a checked concrete type. |
 | `nothing` | `void` | No result. |
 
 **Tier two — the machine representation, reached only through `override`.**
@@ -54,6 +55,31 @@ Overflow and nonzero literals that round to zero are rejected in compilation
 and editor analysis. Exact zero may have any exponent magnitude. `0x1E3`
 remains a hexadecimal integer. See the shared
 [floating literal contract](../../docs/language-reference/expressions.md#float-literals).
+
+### Boolean and dynamic values
+
+`variable myflag is yes` infers a Boolean. `flag` is also a type spelling, so
+`value enabled as flag is no` expresses the same type as `boolean`. Numeric
+conversion accepts only zero and one. Other numbers, including NaN and infinity,
+produce an error. An absent Boolean is represented by `Option of boolean`.
+
+An `anything` binding always starts with a value:
+
+```matrix
+variable item as anything is 42
+set item to "ready"
+value label is try-as of text with item
+```
+
+Import `nil.std.core` for `try-as`, which returns `Option of text` here. The
+builtin `anything-is of text with item` tests the stored type, and `item becomes
+text` performs checked extraction. A mismatched extraction reports the requested
+and stored types. It does not parse or convert the payload; those are separate
+operations on the extracted value. `Option of anything` represents absence.
+The type alias `Count means number` still names one compile-time type.
+
+See [NIL-0023](../../docs/design/NIL-0023-dynamic-values-and-booleans.md) for
+ownership restrictions, runtime validation, and native callable limitations.
 
 ### Reserved and rejected
 

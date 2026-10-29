@@ -225,10 +225,18 @@ private:
   bool class_assignable(const std::string &expected, const std::string &actual);
   bool type_contains_class(const std::string &type);
   bool type_contains_tuple(const std::string &type);
+  bool valid_dynamic_type(const std::string &type, bool allow_anything = false);
+  bool type_requires_dynamic_initialization(const std::string &type);
+  bool check_dynamic_enum_payload(ast_call_expr &call, const std::string &type);
   bool check_assignment_type(const type_info &expected, const type_info &actual,
                              ast_expr *value);
   bool class_method_is_virtual(const symbol &receiver, const std::string &name);
   std::vector<ast_expr *> checked_class_conversions_;
+  std::set<std::string> checking_dynamic_types_;
+  bool checking_tuple_binding_ = false;
+  std::vector<ast_expr *> checked_any_boxes_;
+  std::vector<ast_cast_expr *> checked_any_casts_;
+  std::vector<ast_call_expr *> checked_any_tests_;
   std::vector<ast_call_expr *> checked_class_calls_;
   bool check_reference_handle(ast_expr &reference, ast_expr &operand,
                               const type_info &operand_type);

@@ -23,7 +23,7 @@ fn main() -> i32
 
     let flags: ptr<bool> = allocate<bool>(3)
     let second_flag = flags + 1
-    *second_flag = 9
+    *second_flag = 1
     if flags[1] then
         println(1)
     end if

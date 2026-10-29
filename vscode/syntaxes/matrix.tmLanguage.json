@@ -297,6 +297,10 @@
             "2": {
               "patterns": [
                 {
+                  "name": "storage.type.builtin.matrix",
+                  "match": "(?<![A-Za-z0-9_.:`-])[fF][lL][aA][gG](?![A-Za-z0-9_.:`-])"
+                },
+                {
                   "include": "#types"
                 },
                 {
@@ -429,7 +433,7 @@
     "types": {
       "patterns": [
         {
-          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[nN][uU][mM][bB][eE][rR]|[fF][lL][oO][aA][tT][iI][nN][gG]|[bB][oO][oO][lL][eE][aA][nN]|[tT][eE][xX][tT]|[nN][oO][tT][hH][iI][nN][gG]|[iI][nN][tT][eE][gG][eE][rR]|[lL][oO][nN][gG]|[bB][yY][tT][eE]|[dD][oO][uU][bB][lL][eE]|[pP][oO][iI][nN][tT][eE][rR]|[tT][uU][pP][lL][eE]|[aA][rR][rR][aA][yY]|[oO][wW][nN][eE][dD]|[sS][hH][aA][rR][eE][dD]|[eE][xX][cC][lL][uU][sS][iI][vV][eE]|[vV][iI][eE][wW]|[rR][eE][fF](?:[eE][rR][eE][nN][cC][eE])?)(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[nN][uU][mM][bB][eE][rR]|[fF][lL][oO][aA][tT][iI][nN][gG]|[bB][oO][oO][lL][eE][aA][nN]|[aA][nN][yY][tT][hH][iI][nN][gG]|[tT][eE][xX][tT]|[nN][oO][tT][hH][iI][nN][gG]|[iI][nN][tT][eE][gG][eE][rR]|[lL][oO][nN][gG]|[bB][yY][tT][eE]|[dD][oO][uU][bB][lL][eE]|[pP][oO][iI][nN][tT][eE][rR]|[tT][uU][pP][lL][eE]|[aA][rR][rR][aA][yY]|[oO][wW][nN][eE][dD]|[sS][hH][aA][rR][eE][dD]|[eE][xX][cC][lL][uU][sS][iI][vV][eE]|[vV][iI][eE][wW]|[rR][eE][fF](?:[eE][rR][eE][nN][cC][eE])?)(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
           "name": "storage.type.builtin.matrix"
         },
         {
@@ -441,7 +445,7 @@
     "constants": {
       "patterns": [
         {
-          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][rR][uU][eE]|[fF][aA][lL][sS][eE])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "match": "(?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])(?:[tT][rR][uU][eE]|[fF][aA][lL][sS][eE]|[yY][eE][sS]|[nN][oO])(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
           "name": "constant.language.boolean.matrix"
         },
         {

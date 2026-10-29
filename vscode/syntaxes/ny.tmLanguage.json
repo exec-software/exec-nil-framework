@@ -228,7 +228,7 @@
               "include": "#constants"
             },
             {
-              "match": "\\b(?:true|false)\\b",
+              "match": "\\b(?:true|false|yes|no)\\b",
               "name": "constant.language.boolean.ny"
             }
           ]
@@ -370,7 +370,11 @@
       "patterns": [
         {
           "name": "storage.type.builtin.ny",
-          "match": "\\b(any|array|bool|char|f32|f64|i8|i16|i32|i64|isize|map|option|Option|result|Result|text|tuple|u8|u16|u32|u64|usize|vec|void)\\b"
+          "match": "(?<=:|<|,|\\bas|->)\\s*\\Kflag\\b(?![.:])"
+        },
+        {
+          "name": "storage.type.builtin.ny",
+          "match": "\\b(any|anything|array|bool|boolean|char|f32|f64|i8|i16|i32|i64|isize|map|option|Option|result|Result|text|tuple|u8|u16|u32|u64|usize|vec|void)\\b"
         }
       ]
     },
@@ -378,7 +382,7 @@
       "patterns": [
         {
           "name": "constant.language.boolean.ny",
-          "match": "\\b(true|false)\\b"
+          "match": "\\b(true|false|yes|no)\\b"
         }
       ]
     },

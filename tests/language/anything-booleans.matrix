@@ -1,0 +1,72 @@
+book dynamic-values
+@define ENABLED YES
+@if ENABLED == YES
+note tag with enabled being YES
+enabled returns boolean begin paragraph
+    give yes
+end paragraph
+@else
+@error Boolean alias preprocessor condition failed
+@endif
+
+Switch means flag
+value global-value as anything is 7
+
+Parcel begin record
+    field item as anything
+end record
+
+Envelope begin choice
+    when Data holding anything
+    when Empty
+end choice
+
+echo receives input as anything returns anything begin paragraph
+    give input
+end paragraph
+
+make returns anything begin paragraph
+    give "returned"
+end paragraph
+
+main returns override integer begin paragraph
+    value flag as Switch is no
+    value inferred is YES
+    when not (enabled with nothing) or not inferred or flag then give 1 end when
+    consider YES
+        when YES then say "yes"
+        when NO then give 1
+    end consider
+    say (1 becomes boolean) and not (0 becomes flag)
+    variable item as anything is 42
+    value original is item
+    set item to "ready"
+    when not (anything-is of text with item) then give 2 end when
+    when anything-is of override integer with item then give 3 end when
+    say item becomes text
+    say original becomes override integer
+    say global-value becomes override integer
+    say (echo with input being yes) becomes boolean
+    say (make with nothing) becomes text
+    value parcel-value is build Parcel with item being 2.5
+    say parcel-value.item becomes floating
+    set parcel-value.item to "field"
+    say parcel-value.item becomes text
+    value variant as Envelope is Envelope.Data holding 9
+    consider variant
+        when Envelope.Data holding held then say held becomes override integer
+        when Envelope.Empty then give 4
+    end consider
+    variable values as array of anything is [1, "two", no]
+    say (values at 0) becomes override integer
+    say (values at 1) becomes text
+    say (values at 2) becomes flag
+    set values at 0 to "changed"
+    append 3.5 to values
+    say (values at 0) becomes text
+    say (values at 3) becomes floating
+    value boxed-array as anything is values
+    value recovered is boxed-array becomes array of anything
+    say (recovered at 1) becomes text
+    give 0
+end paragraph

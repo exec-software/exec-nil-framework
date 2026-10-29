@@ -18,6 +18,7 @@ enum nyrt_array_kind : std::uint32_t {
   // Compiler-proven, fully initialized tuple object handles. The runtime
   // traces the handles; exact tuple schema identity remains in typed NIL.
   NYRT_ARRAY_TUPLE = 7,
+  NYRT_ARRAY_ANYTHING = 8,
 };
 
 // Additive database ABI. Success is 1, failure 0; outputs are context-owned.
@@ -62,6 +63,17 @@ const char *nyrt_text_substr(const char *text, std::int64_t start,
 const char *nyrt_text_i64(std::int64_t value) noexcept;
 const char *nyrt_text_f64(double value) noexcept;
 const char *nyrt_text_bool(std::int64_t value) noexcept;
+std::int64_t nyrt_bool_i64(std::int64_t value) noexcept;
+std::int64_t nyrt_bool_f64(double value) noexcept;
+std::int64_t nyrt_bool_text(const char *value) noexcept;
+// Immutable, context-owned dynamic values retain an exact canonical descriptor
+// and trace any managed payload. Invalid handles and mismatched unboxing fault.
+void *nyrt_any_v1_box(const char *type, std::uint64_t length,
+                      std::uint64_t payload) noexcept;
+std::uint64_t nyrt_any_v1_unbox(const void *box, const char *type,
+                                std::uint64_t length) noexcept;
+std::int32_t nyrt_any_v1_is_type(const void *box, const char *type,
+                                std::uint64_t length) noexcept;
 [[noreturn]] void nyrt_panic(const char *message) noexcept;
 
 // Context-owned storage backs compiler-created language values (for example,

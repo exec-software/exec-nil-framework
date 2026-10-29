@@ -1,0 +1,13 @@
+@pragma once
+book nil.std.core
+
+read nil.std.core.option
+
+!!! Recover the exact stored type without raising a type-mismatch fault.
+!!! This tests the canonical type; it does not parse text or narrow numbers.
+public try-as of type T receives input as anything returns Option of T begin paragraph
+    when anything-is of T with input then
+        give Option.Some holding (input becomes T)
+    end when
+    give Option.None
+end paragraph

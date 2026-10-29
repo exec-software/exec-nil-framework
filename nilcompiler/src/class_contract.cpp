@@ -26,7 +26,7 @@ bool reserved_class_name(std::string name) {
   std::transform(name.begin(), name.end(), name.begin(),
                  [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   static const std::unordered_set<std::string> reserved = {
-      "void", "any", "bool", "char", "text", "string", "str", "int",
+      "void", "any", "anything", "bool", "boolean", "flag", "char", "text", "string", "str", "int",
       "float", "double", "i8", "i16", "i32", "i64", "u8", "u16",
       "u32", "u64", "f32", "f64", "isize", "usize", "pointer", "array", "slice"};
   return reserved.count(name) != 0;

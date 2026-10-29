@@ -1455,7 +1455,7 @@ void test_vm_scalar_arithmetic_widths() {
 
 void test_scalar_text_contract() {
   for (const auto &item : std::vector<std::vector<std::string>>{
-           {"0", "bool", "false"}, {"-1", "bool", "true"},
+           {"0", "bool", "false"}, {"1", "bool", "true"},
            {"-9223372036854775808", "i64", "-9223372036854775808"},
            {"-0.0", "f64", "-0"}, {"1.2345678901234567", "f64", "1.2345678901234567"},
            {"1.6", "", "1.6"}}) {
@@ -1473,6 +1473,23 @@ void test_scalar_text_contract() {
             std::holds_alternative<std::string>(vm.getStack().back()) &&
             std::get<std::string>(vm.getStack().back()) == item[2],
             "scalar text metadata and formatting survive text/binary NIL");
+    }
+  }
+  for (const auto *value : {"-1", "2"}) {
+    ny::nil_module module;
+    module.functions.push_back(make_function("main", "text",
+        {{"PUSH_CONST", {value}, 1}, {"TO_STRING", {"bool"}, 2}, {"RET", {}, 3}}));
+    for (const bool binary : {false, true}) {
+      bool rejected = false;
+      try {
+        std::unordered_map<std::string, ny::Value> constants;
+        ny::VM vm;
+        vm.loadProgram(parse_module(module, binary, constants), constants);
+        vm.execute();
+      } catch (const std::runtime_error &error) {
+        rejected = std::string(error.what()).find("boolean values must be exactly 0 or 1") != std::string::npos;
+      }
+      check(rejected, "Boolean text conversion rejects values other than zero and one");
     }
   }
   for (const auto *type : {"array<i32>", "ptr<i32>", "f32", "u64"}) {

@@ -402,9 +402,9 @@ token lexer::identifier() {
     kind = token_kind::as_kw;
   else if (text == "end")
     kind = token_kind::end_kw;
-  else if (text == "true")
+  else if (text == "true" || text == "yes")
     kind = token_kind::true_kw;
-  else if (text == "false")
+  else if (text == "false" || text == "no")
     kind = token_kind::false_kw;
   else if (text == "match")
     kind = token_kind::match_kw;

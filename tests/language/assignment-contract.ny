@@ -63,7 +63,7 @@ fn main() -> i32
     deallocate(bytes)
 
     let flags: ptr<bool> = allocate<bool>(1)
-    *flags = 4
+    *flags = 1
     println(*flags)
     flags[0] = 0
     println(flags[0])

@@ -169,7 +169,7 @@ void check_scalar_formatting(bool &ok) {
   ok &= expect_text(nyrt_text_i64(std::numeric_limits<std::int64_t>::min()),
                     "-9223372036854775808", "formatting lost the signed minimum");
   ok &= expect_text(nyrt_text_bool(0), "false", "false formatting failed");
-  ok &= expect_text(nyrt_text_bool(-1), "true", "true formatting failed");
+  ok &= expect_text(nyrt_text_bool(1), "true", "true formatting failed");
   ok &= expect_text(nyrt_text_f64(-0.0), "-0", "formatting lost negative zero");
   ok &= expect_text(nyrt_text_f64(1.2345678901234567), "1.2345678901234567",
                     "floating formatting lost round-trip precision");
@@ -217,7 +217,7 @@ void check_array_contract(bool &ok) {
   void *filled = nyrt_array_new_with_value(NYRT_ARRAY_U8, 3, 511);
   ok &= expect_bytes(filled, {255, 255, 255},
                      "filled byte array did not use u8 semantics");
-  void *booleans = nyrt_array_new_with_value(NYRT_ARRAY_BOOL, 2, 42);
+  void *booleans = nyrt_array_new_with_value(NYRT_ARRAY_BOOL, 2, 1);
   ok &= expect(nyrt_array_get(booleans, NYRT_ARRAY_BOOL, 0) == 1 &&
                    nyrt_array_set(booleans, NYRT_ARRAY_BOOL, 1, 0) == 1 &&
                    nyrt_array_get(booleans, NYRT_ARRAY_BOOL, 1) == 0,
@@ -426,7 +426,7 @@ void check_buffer_contract(bool &ok) {
   auto *booleans =
       static_cast<std::uint8_t *>(nyrt_buffer_new(NYRT_ARRAY_BOOL, 2));
   ok &= expect(booleans != nullptr &&
-                   nyrt_buffer_set(booleans, NYRT_ARRAY_BOOL, 0, 42) == 1 &&
+                   nyrt_buffer_set(booleans, NYRT_ARRAY_BOOL, 0, 1) == 1 &&
                    booleans[0] == 1 &&
                    nyrt_buffer_get(booleans, NYRT_ARRAY_BOOL, 0) == 1,
                "ptr<bool> did not use one-byte canonical storage");

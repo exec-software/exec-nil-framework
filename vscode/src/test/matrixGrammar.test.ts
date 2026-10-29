@@ -83,6 +83,21 @@ test("Matrix collection query scopes stay inside their block", async () => {
   assert.equal(snippets["Collect query"]!.body.at(-1), "end query");
 });
 
+test("Matrix Boolean aliases and dynamic types respect lexical context", async () => {
+  const grammar = await loadMatrixGrammar();
+  for (const type of ["boolean", "flag", "anything", "FLAG", "ANYTHING"])
+    assertScope(grammar, `value enabled as ${type} is yes`, type, "storage.type.builtin");
+  for (const literal of ["true", "false", "yes", "no", "YES", "NO"]) {
+    assertScope(grammar, `value enabled is ${literal}`, literal, "constant.language.boolean");
+    assertScope(grammar, `@tag(enabled=${literal})`, literal, "constant.language.boolean");
+  }
+  assertScope(grammar, "value flag is yes", "flag", "variable.other.readwrite");
+  assertScope(grammar, "say flag", "flag", "variable.other.readwrite");
+  assertScope(grammar, "value result as flag.Type is input", "flag.Type", "entity.name.type");
+  for (const name of ["yes-value", "no_value", "anything-value"])
+    assertScope(grammar, "say " + name, name, "variable.other.readwrite");
+});
+
 test("Matrix query keywords match the compiler's projection and ordering vocabulary", async () => {
   const grammar = await loadMatrixGrammar();
   const state = grammar.tokenizeLine("collect begin query", INITIAL).ruleStack;

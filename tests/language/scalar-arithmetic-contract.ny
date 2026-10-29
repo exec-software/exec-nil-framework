@@ -63,7 +63,7 @@ fn main() -> i32
     println(box.value)
     box.value = 4294967298
     println(box.value)
-    let flag: ScalarBox<bool> = ScalarBox<bool> { value: 3 }
+    let flag: ScalarBox<bool> = ScalarBox<bool> { value: 1 }
     println(flag.value)
     flag.value = 0
     println(flag.value)

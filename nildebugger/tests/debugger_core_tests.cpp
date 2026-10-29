@@ -564,8 +564,96 @@ void test_json_value_serialization() {
                      "array field serialization");
 }
 
+void test_anything_value_inspection() {
+  const ny::BoxedValue scalar{std::make_shared<const ny::DynamicBox>("i64", Value{int64_t{42}})};
+  const std::string scalar_json = "{\"__type__\":\"anything\",\"__boxed_type__\":\"i64\",\"value\":42}";
+  require(Debugger::format_value(Value{scalar}) == scalar_json,
+          "anything debugger value lost its dynamic type or payload");
+  require_valid_json(scalar_json, "anything scalar serialization");
+  StructValue holder;
+  holder.type_name = "Holder";
+  holder.anything_fields()["value"] = scalar;
+  Debugger inspector;
+  inspector.get_vm().setGlobal("holder", holder);
+  require(inspector.evaluate_expression("holder.value") == scalar_json,
+          "debugger member lookup lost anything fields");
+  EnumValue enumeration;
+  enumeration.variant_name = "Option::Some";
+  enumeration.payloads.emplace_back(scalar);
+  require(Debugger::format_value(Value{enumeration}).find(scalar_json) != std::string::npos,
+          "debugger enum inspection lost anything payloads");
+  ArrayValue array;
+  array.elements.emplace_back(scalar);
+  require(Debugger::format_value(Value{array}) == "[" + scalar_json + "]",
+          "debugger array inspection lost anything elements");
+  const ny::BoxedValue cycle{std::make_shared<const ny::DynamicBox>("Holder", Value{holder})};
+  holder.anything_fields()["cycle"] = cycle;
+  const auto cycle_json = Debugger::format_value(Value{cycle});
+  require(cycle_json.find("<cycle>") != std::string::npos,
+          "debugger anything cycles were not bounded");
+  require_valid_json(cycle_json, "anything cycle serialization");
+  holder.anything_fields().erase("cycle");
+}
+
+void test_source_anything_inspection() {
+  const std::string code = R"NIL(module dynamic_inspection
+function main() -> i64:
+  PUSH_CONST 41
+  BOX_ANY i64
+  STORE_LOCAL hidden_payload
+  # source_debug 3 "/source/dynamic.ny" 1 "item" "hidden_payload" "anything" 1
+  NOP ; line 2
+  PUSH_CONST 91
+  NEW_ARRAY_LITERAL 1 i64
+  BOX_ANY array<i64>
+  STORE_LOCAL hidden_payload
+  PUSH_CONST 2
+  INTEROP_CALL intrinsic gc.collect 1 void
+  # source_debug 10 "/source/dynamic.ny" 1 "item" "hidden_payload" "anything" 1
+  NOP ; line 3
+  LOAD_LOCAL hidden_payload
+  UNBOX_ANY array<i64>
+  PUSH_CONST 0
+  GET_INDEX
+  RET
+end function
+)NIL";
+  TempNilFile fixture("source-anything", code);
+  Debugger debugger;
+  require(debugger.load_program(fixture.path().string()), "could not load anything inspection fixture");
+  auto& vm = debugger.get_vm();
+  vm.setMemoryMode(ny::MemoryMode::SAFE_GC);
+  vm.resetExecution("main");
+  const auto next_stop = [&] {
+    for (int steps = 0; steps < 30 && vm.getProgram().at(vm.getPC()).op != ny::Opcode::NOP; ++steps)
+      require(vm.stepInstruction(), "anything inspection fixture ended before its source stop");
+    require(vm.getProgram().at(vm.getPC()).op == ny::Opcode::NOP, "anything source stop was not reached");
+  };
+  next_stop();
+  auto locals = debugger.get_source_locals();
+  require(locals.size() == 1 && locals[0].name == "item" && locals[0].type == "anything",
+          "anything source local lost its declared type or exposed internal storage");
+  const auto scalar = std::get<ny::BoxedValue>(locals[0].value);
+  require(scalar.box && scalar.box->type_name == "i64" && std::get<int64_t>(scalar.box->value) == 41,
+          "source debugger did not retain the boxed scalar identity");
+  require(debugger.evaluate_expression("item").find("\"value\":41") != std::string::npos,
+          "source debugger did not display the boxed scalar payload");
+  require(vm.stepInstruction(), "could not continue after scalar source stop");
+  next_stop();
+  locals = debugger.get_source_locals();
+  require(locals.size() == 1 && locals[0].type == "anything", "managed rebind changed the source binding type");
+  const auto managed = std::get<ny::BoxedValue>(locals[0].value);
+  require(managed.box && managed.box->type_name == "array<i64>" &&
+          std::holds_alternative<ny::ArrayHandle>(managed.box->value),
+          "source debugger lost the managed payload's dynamic identity");
+  require(debugger.evaluate_expression("item").find("array<i64>") != std::string::npos,
+          "source debugger did not show the managed payload's boxed type");
+  vm.execute(false);
+  require(vm.getProgramExitCode() == 91, "GC collected an array retained solely by an anything source binding");
+}
+
 void test_source_binding_reference_inspection() {
-  for (const auto& type : {"i32", "i64", "u8", "bool", "f64", "text"}) {
+  for (const auto& type : {"i32", "i64", "u8", "bool", "f64", "text", "anything"}) {
     const std::string scalar_type = type;
     const std::string code =
         "module reference_inspection\nfunction main:\n"
@@ -579,6 +667,8 @@ void test_source_binding_reference_inspection() {
     cell.type_name = "$nil.binding.cell." + scalar_type;
     if (scalar_type == "f64") cell.double_fields()["value"] = 1.25;
     else if (scalar_type == "text") cell.string_fields()["value"] = "hello";
+    else if (scalar_type == "anything")
+      cell.anything_fields()["value"] = ny::BoxedValue{std::make_shared<const ny::DynamicBox>("i64", Value{int64_t{42}})};
     else cell.fields()["value"] = scalar_type == "bool" ? 1 : 42;
     auto& vm = debugger.get_vm();
     vm.resetExecution("main");
@@ -588,7 +678,8 @@ void test_source_binding_reference_inspection() {
     const auto locals = debugger.get_source_locals();
     require(locals.size() == 1 && locals[0].name == "amount" && locals[0].type == scalar_type,
             "source reference inspection exposed its internal cell type");
-    const auto expected = scalar_type == "f64" ? "1.25" : scalar_type == "text" ? "\"hello\"" :
+    const auto expected = scalar_type == "anything" ? Debugger::format_value(Value{cell.anything_fields().at("value")}) :
+                          scalar_type == "f64" ? std::string("1.25") : scalar_type == "text" ? "\"hello\"" :
                           scalar_type == "bool" ? "1" : "42";
     require(debugger.evaluate_expression("amount") == expected,
             "source reference expression did not unwrap its scalar value");
@@ -763,6 +854,8 @@ int main() {
     test_step_over_out_and_frame_cleanup(path);
     test_json_value_serialization();
     test_source_binding_reference_inspection();
+    test_anything_value_inspection();
+    test_source_anything_inspection();
     test_vm_input_routing();
     test_execute_true_preserves_injected_globals();
     test_rejects_missing_main_and_v2_library(path);

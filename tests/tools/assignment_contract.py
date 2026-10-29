@@ -98,7 +98,7 @@ def main() -> int:
             'let mut floats: array<f64> = []\nfloats.push(4 as f64)\n'
             'let mut texts: array<text> = []\ntexts.push("four")\n'
             'let mut bytes: array<u8> = []\nbytes.push(257)\n'
-            'let mut flags: array<bool> = []\nflags.push(3)'
+            'let mut flags: array<bool> = []\nflags.push(1)'
         ), encoding="utf-8")
         for mode, extra in (("text", []), ("binary", ["--emit-binary-nil"])):
             output = root / ("array-push-valid-" + mode + ".nil")

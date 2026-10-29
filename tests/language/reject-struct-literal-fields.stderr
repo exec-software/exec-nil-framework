@@ -1,4 +1,4 @@
 Type checking failed:
   {{SOURCE}}:7: Struct literal for 'native_record' initializes field 'count' more than once
   {{SOURCE}}:7: Struct literal for 'native_record' contains unknown field 'extra'
-  {{SOURCE}}:7: Struct literal for 'native_record' is missing required field 'label'
+  {{SOURCE}}:7: Struct literal for 'native_record' is missing required field 'label' of type 'String'

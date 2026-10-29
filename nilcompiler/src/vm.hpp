@@ -173,6 +173,10 @@ enum class Opcode {
   OWN_MOVE, // local slot; transfer allocation and clear the source slot
   OWN_ALLOC, // owned scalar allocation, independent of ambient GC mode
 
+  BOX_ANY, // exact source type; preserve a value in immutable dynamic storage
+  UNBOX_ANY, // exact target type; checked extraction from anything
+  IS_ANY_TYPE, // exact target type; checked box identity test
+
   COUNT, // Sentinel used to keep NIL decoding exhaustive
 };
 
@@ -197,6 +201,12 @@ struct Instruction {
 
 struct StructValue;
 struct EnumValue; // forward declaration for use in StructData
+struct DynamicBox;
+// A distinct variant alternative prevents boxed words from masquerading as
+// pointers, numbers or class handles before an explicit checked extraction.
+struct BoxedValue {
+  std::shared_ptr<const DynamicBox> box;
+};
 
 // Heap array identity is not an integer: every i64 bit pattern remains a valid
 // scalar even when its numeric value coincides with a live VM allocation.
@@ -212,6 +222,7 @@ struct StructData {
   std::unordered_map<std::string, double> double_fields;
   std::unordered_map<std::string, std::shared_ptr<StructValue>> struct_fields;
   std::unordered_map<std::string, EnumValue> enum_fields;
+  std::unordered_map<std::string, BoxedValue> anything_fields;
 };
 
 // Struct instance: map of field names to values (Reference Semantics)
@@ -231,13 +242,15 @@ struct StructValue {
   const auto& double_fields() const { return data->double_fields; }
   auto& struct_fields() { return data->struct_fields; }
   const auto& struct_fields() const { return data->struct_fields; }
+  auto& anything_fields() { return data->anything_fields; }
+  const auto& anything_fields() const { return data->anything_fields; }
   auto& enum_fields() { return data->enum_fields; }
   const auto& enum_fields() const { return data->enum_fields; }
 };
 
 using EnumPayload =
     std::variant<std::string, int64_t, double, StructValue,
-                 std::shared_ptr<EnumValue>, ArrayHandle>;
+                 std::shared_ptr<EnumValue>, ArrayHandle, BoxedValue>;
 
 // Enum variant instance - stores variant name and payload values
 struct EnumValue {
@@ -249,7 +262,7 @@ struct EnumValue {
 
 // Array instance
 struct ArrayValue {
-  std::vector<std::variant<std::string, int64_t, double, StructValue, ArrayValue, EnumValue, ArrayHandle>> elements;
+  std::vector<std::variant<std::string, int64_t, double, StructValue, ArrayValue, EnumValue, ArrayHandle, BoxedValue>> elements;
 };
 
 // NyForeignFunc — lightweight handle stored in globals to represent VM-visible
@@ -267,7 +280,14 @@ struct NyForeignFunc {
 };
 } // namespace ny
 
-using Value = std::variant<std::string, int64_t, double, StructValue, ArrayValue, EnumValue, ny::NyForeignFunc, ArrayHandle>;
+using Value = std::variant<std::string, int64_t, double, StructValue, ArrayValue, EnumValue, ny::NyForeignFunc, ArrayHandle, BoxedValue>;
+
+struct DynamicBox {
+  const std::string type_name;
+  const Value value;
+  DynamicBox(std::string type, Value payload)
+      : type_name(std::move(type)), value(std::move(payload)) {}
+};
 
 // Forward declaration — VM is defined after Value because Value is in VM's stack/heap.
 class VM;
@@ -485,6 +505,7 @@ private:
   std::uint64_t total_allocated_bytes_ = 0;
   std::uint64_t gc_critical_depth_ = 0;
   std::unordered_set<const StructData *> gc_marked_structs_;
+  std::unordered_set<const DynamicBox *> gc_marked_boxes_;
 
   // One capture belongs to the VM's first execution. It is finalized while
   // heap blocks are still live, so retained bytes describe the program at its

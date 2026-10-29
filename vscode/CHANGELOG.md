@@ -4,6 +4,10 @@ All notable changes to the NIL Framework VS Code extension are documented here.
 
 ## 1.0.0-rc.1
 
+- Highlight `anything`, `boolean`/`flag`, and `yes`/`no` in Ny and Matrix.
+  Infer Matrix Boolean literals for member completion and keep `flag` usable as
+  an ordinary binding name outside type positions.
+
 - Prefer `nil.project.nildata` for project discovery and configuration; preserve
   legacy JSON/YAML manifests and JSON schema support. Parse all project formats
   locally with strict duplicate-key, Unicode, size, depth, and value limits.

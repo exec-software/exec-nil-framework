@@ -356,6 +356,10 @@ struct ast_expr : public ast_node {
   // Proven directional class conversion at an explicitly typed boundary.
   // It must never be inferred from a codegen contextual type alone.
   std::optional<std::string> checked_class_upcast;
+  // A typed boundary may box a concrete value without changing the type of
+  // its expression. Only the checker may establish this source descriptor.
+  std::optional<std::string> checked_any_box_type;
+  std::optional<std::string> rejected_dynamic_operation;
   // REF_LOCAL aliases an existing nominal aggregate handle; it is not a
   // primitive stack reference. Only successful semantic checking grants this
   // proof, and any semantic error invalidates it before diagnostic continuation.
@@ -559,6 +563,7 @@ struct ast_variable_decl : public ast_decl {
   ast_expr_ptr initializer; // optional
   bool is_mut = false;      // variable declared as `mut`
   bool is_const = false;    // variable declared as `const` (NY-050)
+  bool rejected_dynamic_initializer = false;
   // Tuple destructuring keeps one initializer and distinct source bindings.
   std::vector<std::shared_ptr<ast_variable_decl>> tuple_bindings;
 
@@ -1020,6 +1025,7 @@ struct ast_cast_expr : public ast_expr {
   ast_expr_ptr operand;
   std::string target_type;
   bool checked_identity = false; // Only the type checker may prove erasure safe.
+  bool checked_any_cast = false;
 
   ast_cast_expr(ast_expr_ptr op, std::string type, int ln = 0)
       : ast_expr(ast_node_kind::cast_expr_node, ln), operand(std::move(op)),
@@ -1074,6 +1080,7 @@ struct ast_if_expr : public ast_expr {
 
 struct ast_call_expr : public ast_expr {
   // Compiler-owned operations; ordinary user calls never acquire this proof.
+  std::optional<std::string> checked_any_type_test;
   std::string ownership_operation;
   std::optional<std::string> parallel_worker;
   std::string parallel_input_type;

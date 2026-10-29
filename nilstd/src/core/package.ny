@@ -27,6 +27,7 @@ package nil.std.core
 
 import nil.std.core.traits
 import nil.std.core.option
+import nil.std.core.dynamic
 import nil.std.core.result
 import nil.std.core.error
 import nil.std.core.ordering

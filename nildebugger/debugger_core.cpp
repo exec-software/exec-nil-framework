@@ -886,10 +886,11 @@ constexpr size_t kSerializationMaxDepth = 32;
 struct SerializationContext {
     std::unordered_set<const StructData*> active_structs;
     std::unordered_set<const EnumValue*> active_enums;
+    std::unordered_set<const DynamicBox*> active_boxes;
 };
 
 using ArrayElement = std::variant<std::string, int64_t, double,
-                                  StructValue, ArrayValue, EnumValue, ArrayHandle>;
+                                  StructValue, ArrayValue, EnumValue, ArrayHandle, BoxedValue>;
 
 std::string format_array_handle(const ArrayHandle& value) {
     return "{\"__array_handle__\":" + std::to_string(value.address) + "}";
@@ -901,6 +902,21 @@ std::string format_array_safe(const ArrayValue& value,
                               SerializationContext& context, size_t depth);
 std::string format_enum_safe(const EnumValue& value,
                              SerializationContext& context, size_t depth);
+
+std::string format_value_safe(const Value& value,
+                              SerializationContext& context, size_t depth);
+std::string format_box_safe(const BoxedValue& value,
+                            SerializationContext& context, size_t depth) {
+    if (depth >= kSerializationMaxDepth) return Debugger::json_str("<max-depth>");
+    if (!value.box) return Debugger::json_str("<invalid-anything>");
+    if (!context.active_boxes.insert(value.box.get()).second)
+        return Debugger::json_str("<cycle>");
+    const auto result = "{\"__type__\":\"anything\",\"__boxed_type__\":" +
+        Debugger::json_str(value.box->type_name) + ",\"value\":" +
+        format_value_safe(value.box->value, context, depth + 1) + "}";
+    context.active_boxes.erase(value.box.get());
+    return result;
+}
 
 std::string format_finite_double(double value) {
     if (!std::isfinite(value)) return "null";
@@ -928,6 +944,8 @@ std::string format_array_element_safe(const ArrayElement& element,
             return format_array_safe(value, context, depth);
         } else if constexpr (std::is_same_v<T, EnumValue>) {
             return format_enum_safe(value, context, depth);
+        } else if constexpr (std::is_same_v<T, BoxedValue>) {
+            return format_box_safe(value, context, depth);
         } else if constexpr (std::is_same_v<T, ArrayHandle>) {
             return format_array_handle(value);
         }
@@ -963,6 +981,9 @@ std::string format_struct_safe(const StructValue& value,
         output += "," + Debugger::json_str(name) + ":" +
                   (field ? format_struct_safe(*field, context, depth + 1)
                          : "null");
+    for (const auto& [name, field] : value.anything_fields())
+        output += "," + Debugger::json_str(name) + ":" +
+                  format_box_safe(field, context, depth + 1);
     for (const auto& [name, field] : value.enum_fields())
         output += "," + Debugger::json_str(name) + ":" +
                   format_enum_safe(field, context, depth + 1);
@@ -1008,6 +1029,8 @@ std::string format_enum_safe(const EnumValue& value,
                     output += Debugger::json_str(payload);
                 } else if constexpr (std::is_same_v<T, StructValue>) {
                     output += format_struct_safe(payload, context, depth + 1);
+                } else if constexpr (std::is_same_v<T, BoxedValue>) {
+                    output += format_box_safe(payload, context, depth + 1);
                 } else if constexpr (std::is_same_v<T, ArrayHandle>) {
                     output += format_array_handle(payload);
                 } else {
@@ -1026,6 +1049,8 @@ std::string format_enum_safe(const EnumValue& value,
 
 std::string format_value_safe(const Value& value,
                               SerializationContext& context, size_t depth) {
+    if (const auto* boxed = std::get_if<BoxedValue>(&value))
+        return format_box_safe(*boxed, context, depth);
     if (const auto* integer = std::get_if<int64_t>(&value))
         return std::to_string(*integer);
     if (const auto* floating = std::get_if<double>(&value))
@@ -1117,6 +1142,10 @@ std::vector<LocalVariable> Debugger::get_source_locals(int frame_idx) const {
                     } else if (type == "text") {
                         const auto field = cell->string_fields().find("value");
                         if (field != cell->string_fields().end()) referent = Value{field->second};
+                    } else if (type == "anything") {
+                        const auto field = cell->anything_fields().find("value");
+                        if (field != cell->anything_fields().end() && field->second.box)
+                            referent = Value{field->second};
                     }
                     if (referent) {
                         local.type = type;
@@ -1320,6 +1349,9 @@ Debugger::resolve_expression_value(const std::string& expr) const {
     if (const auto found = structure->struct_fields().find(field);
         found != structure->struct_fields().end() && found->second)
         return Value{*found->second};
+    if (const auto found = structure->anything_fields().find(field);
+        found != structure->anything_fields().end())
+        return Value{found->second};
     if (const auto found = structure->enum_fields().find(field);
         found != structure->enum_fields().end())
         return Value{found->second};

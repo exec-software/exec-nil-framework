@@ -781,7 +781,7 @@ std::string analysis_session::semantic_json() const {
             (token.kind == token_kind::string_literal && token.lexeme.find('{') != std::string::npos))
           source.available = false;
       }
-      std::istringstream words("function fun let const if else elseif then return println while where for in break continue loop do mut import package module namespace using use pub type as end true false match when struct enum trait impl allocate deallocate ref fn mod class abstract virtual override inherits self attempt fault recover raise assert hotreload not test example property generate asm and or _");
+      std::istringstream words("function fun let const if else elseif then return println while where for in break continue loop do mut import package module namespace using use pub type as end true false yes no match when struct enum trait impl allocate deallocate ref fn mod class abstract virtual override inherits self attempt fault recover raise assert hotreload not test example property generate asm and or _");
       for (std::string word; words >> word;) source.reserved_keys.insert(word);
     }
     // Aliases share keyword tokens, so the Matrix canonical-name loop and

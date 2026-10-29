@@ -2,6 +2,8 @@
 #include "annotation_arguments.hpp"
 #include "nil_contract.hpp"
 #include "binding_reference.hpp"
+#include "dynamic_type.hpp"
+#include "array_intrinsic.hpp"
 #include "concurrency_contract.hpp"
 #include "owned_contract.hpp"
 #include "numeric_literal.hpp"
@@ -151,6 +153,9 @@ constexpr opcode_entry opcode_table[] = {
     {"OWN_BIND", Opcode::OWN_BIND},
     {"OWN_MOVE", Opcode::OWN_MOVE},
     {"OWN_ALLOC", Opcode::OWN_ALLOC},
+    {"BOX_ANY", Opcode::BOX_ANY},
+    {"UNBOX_ANY", Opcode::UNBOX_ANY},
+    {"IS_ANY_TYPE", Opcode::IS_ANY_TYPE},
 };
 
 constexpr std::size_t opcode_table_size =
@@ -210,13 +215,16 @@ argument_range opcode_argument_range(Opcode opcode) {
   case Opcode::FAULT_RESUME:
   case Opcode::FAULT_RETHROW:
   case Opcode::CLASS_UPCAST:
+  case Opcode::BOX_ANY:
+  case Opcode::UNBOX_ANY:
+  case Opcode::IS_ANY_TYPE:
     return {1, 1};
   case Opcode::CALL_METHOD:
   case Opcode::PARALLEL_MAP:
     return {3, 3};
   case Opcode::LOAD_GLOBAL:
   case Opcode::STORE_GLOBAL:
-    return {1, 2}; // Legacy name or name plus exact scalar/text storage type.
+    return {1, 2}; // Legacy name or name plus exact scalar/text/anything storage type.
   case Opcode::IS_VARIANT:
     // Legacy: tag. Concrete generic metadata: tag, enum type, payload type.
     return {1, 3};
@@ -366,6 +374,10 @@ void validate_instruction(Opcode opcode, const std::string &name,
                           const std::vector<std::string> &arguments,
                           const std::string &context) {
   validate_instruction_arity(opcode, name, arguments.size(), context);
+  if ((opcode == Opcode::BOX_ANY || opcode == Opcode::UNBOX_ANY || opcode == Opcode::IS_ANY_TYPE) &&
+      (!dynamic_type_syntax_supported(arguments[0]) ||
+       canonical_dynamic_type(arguments[0]) != arguments[0]))
+    throw std::runtime_error("NIL dynamic operation requires an exact canonical concrete type" + context);
   if (opcode == Opcode::TO_STRING && !arguments.empty() &&
       !supports_scalar_text(arguments[0]))
     throw std::runtime_error("NIL TO_STRING requires a supported scalar source type" + context);
@@ -558,6 +570,7 @@ bool class_sensitive_type(const std::string &raw, const nil_module &module) {
     auto type = pending.back(); pending.pop_back();
     if (type.rfind("ref<", 0) == 0 && type.back() == '>') type = type.substr(4, type.size() - 5);
     if (!visited.insert(type).second) continue;
+    if (type == "anything") return true;
     // Compiler-owned binding cells carry stack storage in native code. Use
     // the existing exact-provenance CFG analysis for these handles too, so
     // casts, unknown calls, globals, arrays and raw pointers cannot erase the
@@ -576,7 +589,7 @@ bool class_sensitive_type(const std::string &raw, const nil_module &module) {
 
 constexpr const char *unproven_class_value = "#class-unproven";
 bool class_provenance_type(const std::string &type, const nil_module &module) {
-  if (type == unproven_class_value) return true;
+  if (type == unproven_class_value || type == "#anything") return true;
   // An opaque cast of a callable must not disguise a class-returning target
   // as a scalar callback, including through nested callable signatures.
   if (type.rfind("#callable:", 0) == 0)
@@ -649,6 +662,9 @@ std::string fault_stack_type(const std::string &type, const nil_module &module) 
         return "@" + canonical;
     return unproven_class_value;
   }
+  if (type == "anything") return "#anything";
+  if (type.rfind("ptr<", 0) == 0 || type.rfind("array<", 0) == 0)
+    return "#typed:" + canonical_dynamic_type(type);
   if (fault_callable_signature(type)) return "#callable:" + compact_binding_type(type);
   if (type == "i32" || type == "i64" || type == "u8" || type == "bool") return "#word";
   if (type == "f64") return "#float";
@@ -678,12 +694,24 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
   std::vector<Opcode> ops;
   ops.reserve(function.body.size());
   bool has_faults = false;
+  bool has_dynamic_operations = false;
   for (const auto &instruction : function.body) {
     const auto opcode = decode_opcode(instruction.opname, " in function '" + function.name + "'");
     ops.push_back(opcode);
     has_faults = has_faults || is_fault_opcode(opcode);
+    has_dynamic_operations = has_dynamic_operations || opcode == Opcode::BOX_ANY || opcode == Opcode::UNBOX_ANY || opcode == Opcode::IS_ANY_TYPE;
   }
   if (!has_faults && !force_class_validation) return result;
+  const auto stack_type = [&](const std::string &type, const nil_module &context) {
+    const auto category = fault_stack_type(type, context);
+    if (!has_dynamic_operations) return category;
+    if (category == "#word") return std::string("#scalar:") + canonical_dynamic_type(type);
+    if (category == "#enum") return std::string("#enum:") + canonical_dynamic_type(type);
+    return category;
+  };
+  const auto integer_category = [](const std::string &type) {
+    return type == "#word" || type.rfind("#scalar:", 0) == 0;
+  };
   const auto fail = [&](const std::string &message, std::size_t pc) -> void {
     throw std::runtime_error("NIL fault contract in function '" + function.name +
                              "' at instruction " + std::to_string(pc + 1) + ": " + message);
@@ -710,7 +738,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       const auto &type = args.back();
       if (contains_binding_cell_type(type)) fail("binding-reference cells cannot be fault payloads", pc);
       if (find_nil_class(module, type)) fail("classes cannot be fault payloads", pc);
-      if (type == "void" || type == "any" || type == "bool" || type == "i32" ||
+      if (type == "void" || type == "any" || type == "anything" || type == "bool" || type == "i32" ||
           type == "i64" || type == "u8" || type == "f64" || type == "text" ||
           type.front() == '*' || type.front() == '&' || type.back() == ']')
         fail("fault type must be a concrete nominal struct, not a scalar, pointer, or array", pc);
@@ -727,7 +755,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
   for (const auto &parameter : function.params) {
     const auto colon = parameter.find(':');
     const auto first = colon == std::string::npos ? std::string::npos : parameter.find_first_not_of(" \t", colon + 1);
-    entry.stack.push_back(first == std::string::npos ? "?" : fault_stack_type(parameter.substr(first), module));
+    entry.stack.push_back(first == std::string::npos ? "?" : stack_type(parameter.substr(first), module));
   }
   incoming[0] = entry;
   queue.push_back(0);
@@ -755,6 +783,10 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
            old.stack[i] == unproven_class_value || state.stack[i] == unproven_class_value) &&
           (class_provenance_type(old.stack[i], module) || class_provenance_type(state.stack[i], module))) {
         if (old.stack[i] != unproven_class_value) { old.stack[i] = unproven_class_value; changed = true; }
+        continue;
+      }
+      if (has_dynamic_operations && integer_category(old.stack[i]) && integer_category(state.stack[i])) {
+        if (old.stack[i] != "#word") { old.stack[i] = "#word"; changed = true; }
         continue;
       }
       if (old.stack[i] != "?" && state.stack[i] != "?")
@@ -810,18 +842,26 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     };
     const auto reject_class_operands = [&](std::size_t count) {
       if (state.stack.size() < count) fail("operand underflow", pc);
-      for (std::size_t i = state.stack.size() - count; i < state.stack.size(); ++i)
+      for (std::size_t i = state.stack.size() - count; i < state.stack.size(); ++i) {
+        if (state.stack[i] == "#anything")
+          fail("anything must be extracted with a checked cast before this operation", pc);
         if (class_type(state.stack[i])) fail("class value cannot be used by this untyped, scalar, or raw-pointer operation", pc);
+      }
     };
     const auto check_class_argument = [&](const std::string &expected, const std::string &actual) {
-      const auto checked = fault_stack_type(expected, module);
+      const auto checked = stack_type(expected, module);
+      if (actual == "#owned") fail("affine owned storage cannot escape through a call or aggregate", pc);
+      if (checked == "#anything" && actual != checked)
+        fail("anything storage requires an explicitly boxed value", pc);
+      if (actual == "#anything" && checked != actual)
+        fail("anything must be extracted with a checked cast before use as '" + expected + "'", pc);
       if ((class_type(checked) || class_type(actual)) && checked != actual)
         fail("class argument or storage requires its exact checked static view", pc);
       if (checked.rfind("#callable:", 0) == 0 && checked != actual)
         fail("callable argument or storage requires its exact checked signature", pc);
     };
     const auto opaque_stack_type = [&](const std::string &raw) {
-      const auto type = fault_stack_type(raw, module);
+      const auto type = stack_type(raw, module);
       if (type.rfind("#callable:", 0) == 0)
         fail("opaque result metadata cannot establish a checked callable signature", pc);
       return type;
@@ -868,7 +908,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
         fail("save would overwrite a live fault slot", pc);
       state.saved.push_back(args[0]); state.pending = false; break;
     case Opcode::FAULT_MATCH:
-      require_saved(); state.stack.push_back("#word"); break;
+      require_saved(); state.stack.push_back(stack_type("bool", module)); break;
     case Opcode::FAULT_BIND:
       require_saved(); state.stack.push_back("@" + args[1]); break;
     case Opcode::FAULT_DROP:
@@ -885,7 +925,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       exception_edge(state); terminal = true; break;
     }
     case Opcode::PUSH_CONST:
-      state.stack.push_back(is_floating_literal_spelling(args[0]) ? "#float" : "#word"); break;
+      state.stack.push_back(stack_type(is_floating_literal_spelling(args[0]) ? "f64" : "i64", module)); break;
     case Opcode::PUSH_CONST_STR:
       state.stack.push_back("#text"); break;
     case Opcode::PUSH_FN_PTR: {
@@ -920,7 +960,10 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       state.stack.push_back(type); break;
     }
     case Opcode::STORE_GLOBAL:
-      reject_class_operands(1); pop(1); break;
+      if (args.size() == 2 && args[1] == "anything") {
+        if (state.stack.empty() || state.stack.back() != "#anything") fail("anything global requires a boxed value", pc);
+      } else reject_class_operands(1);
+      pop(1); break;
     case Opcode::POP: pop(1); break;
     case Opcode::FREE:
     case Opcode::CONSOLE_WRITE: case Opcode::CONSOLE_WRITELN: case Opcode::TIME_SLEEP:
@@ -930,7 +973,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
         fail("cannot construct an abstract class", pc);
       const auto schema = std::find_if(module.structs.begin(), module.structs.end(),
                                       [&](const auto &value) { return value.name == args[0]; });
-      if (class_sensitive_type(args[0], module) && schema != module.structs.end() && !schema->fields.empty()) {
+      if ((has_dynamic_operations || class_sensitive_type(args[0], module)) && schema != module.structs.end() && !schema->fields.empty()) {
         const auto construction = "!" + std::to_string(pc) + "@" + args[0];
         state.initialized_fields[construction].clear();
         state.stack.push_back(construction);
@@ -961,7 +1004,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       for (const auto &schema : module.structs) if (schema.name == nominal)
         for (const auto &field : schema.fields) if (field.first == args[0]) {
           if (binding_cell_value_type(nominal) &&
-              fault_stack_type(field.second, module) != state.stack.back())
+              stack_type(field.second, module) != state.stack.back())
             fail("binding-reference cell write requires its exact scalar value category", pc);
           check_class_argument(field.second, state.stack.back()); known_field = true;
         }
@@ -978,39 +1021,114 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       pop(2, true); state.stack.push_back(result); break;
     }
     case Opcode::SET_FIELD_PTR: case Opcode::WRITE_PTR: reject_class_operands(2); pop(2); break;
-    case Opcode::GET_INDEX: reject_class_operands(2); pop(2); state.stack.push_back("?"); break;
-    case Opcode::SET_INDEX: reject_class_operands(3); pop(3); break;
-    case Opcode::NEW_ARRAY_LITERAL:
-      reject_class_operands(static_cast<std::size_t>(std::stoull(args[0])));
-      pop(static_cast<std::size_t>(std::stoull(args[0]))); state.stack.push_back("?"); break;
+    case Opcode::GET_INDEX: {
+      reject_class_operands(2);
+      const auto owner = state.stack[state.stack.size() - 2];
+      std::string element = "?";
+      if (owner.rfind("#typed:array<", 0) == 0 || owner.rfind("#typed:ptr<", 0) == 0) {
+        const auto open = owner.find('<');
+        element = stack_type(owner.substr(open + 1, owner.size() - open - 2), module);
+      }
+      pop(2); state.stack.push_back(element); break;
+    }
+    case Opcode::SET_INDEX: {
+      if (state.stack.size() < 3) fail("index write requires three operands", pc);
+      const auto owner = state.stack[state.stack.size() - 3];
+      if (owner == "#typed:array<anything>") {
+        if (state.stack.back() != "#anything") fail("anything array requires a boxed value", pc);
+      } else reject_class_operands(3);
+      pop(3); break;
+    }
+    case Opcode::NEW_ARRAY_LITERAL: {
+      const auto count = static_cast<std::size_t>(std::stoull(args[0]));
+      if (state.stack.size() < count) fail("array literal requires its declared operands", pc);
+      if (args.size() == 2 && args[1] == "anything") {
+        for (std::size_t index = state.stack.size() - count; index < state.stack.size(); ++index)
+          if (state.stack[index] != "#anything") fail("anything array requires boxed elements", pc);
+      } else reject_class_operands(count);
+      pop(count); state.stack.push_back(args.size() == 2 ? stack_type("array<" + args[1] + ">", module) : "?"); break;
+    }
     case Opcode::NEW_ARRAY:
       if (args.empty()) { reject_class_operands(1); pop(1); }
-      state.stack.push_back("?"); break;
+      state.stack.push_back("#typed:array<i64>"); break;
     case Opcode::OWN_ENTER: case Opcode::OWN_LEAVE: case Opcode::OWN_BIND: break;
     case Opcode::OWN_MOVE:
       state.stack.push_back(state.locals.count(args[0]) ? state.locals.at(args[0]) : "?"); break;
     case Opcode::PARALLEL_MAP:
       reject_class_operands(1); pop(1);
-      state.stack.push_back(fault_stack_type("array<" + args[2] + ">", module)); break;
+      state.stack.push_back(stack_type("array<" + args[2] + ">", module)); break;
     case Opcode::OWN_ALLOC:
+      reject_class_operands(1); pop(1); state.stack.push_back("#owned"); break;
     case Opcode::ALLOC:
-      reject_class_operands(1); pop(1); state.stack.push_back("?"); break;
-    case Opcode::NEW_VARIANT:
-      reject_class_operands(static_cast<std::size_t>(std::stoull(args[1])));
-      pop(static_cast<std::size_t>(std::stoull(args[1]))); state.stack.push_back("#enum"); break;
-    case Opcode::IS_VARIANT: reject_class_operands(1); pop(1); state.stack.push_back("#word"); break;
+      reject_class_operands(1); pop(1); state.stack.push_back(args.empty() ? "?" : stack_type("ptr<" + args[0] + ">", module)); break;
+    case Opcode::NEW_VARIANT: {
+      const auto count = static_cast<std::size_t>(std::stoull(args[1]));
+      if (state.stack.size() < count) fail("enum constructor requires payloads", pc);
+      std::vector<std::string> payloads;
+      if (args.size() == 4 && args[3] != "void") {
+        if (args[3].front() == '(' && args[3].back() == ')') {
+          const auto parts = array_tuple_elements("tuple<" + args[3].substr(1, args[3].size() - 2) + ">");
+          if (parts) payloads = *parts;
+        } else payloads.push_back(args[3]);
+      }
+      if (payloads.size() == count && std::find(payloads.begin(), payloads.end(), "anything") != payloads.end()) {
+        for (std::size_t index = 0; index < count; ++index) {
+          const auto &actual = state.stack[state.stack.size() - count + index];
+          if (payloads[index] == "anything") {
+            if (actual != "#anything") fail("anything enum payload requires a boxed value", pc);
+          } else if (class_type(actual)) fail("enum payload cannot erase class or boxed provenance", pc);
+        }
+      } else reject_class_operands(count);
+      std::string enumeration_type;
+      if (args.size() == 4) enumeration_type = args[2];
+      else {
+        const auto separator = args[0].rfind("::");
+        if (separator != std::string::npos) enumeration_type = args[0].substr(0, separator);
+      }
+      pop(count);
+      state.stack.push_back(has_dynamic_operations && !enumeration_type.empty()
+          ? stack_type(enumeration_type, module) : "#enum"); break;
+    }
+    case Opcode::IS_VARIANT: reject_class_operands(1); pop(1); state.stack.push_back(stack_type("bool", module)); break;
     case Opcode::UNWRAP_VARIANT: {
       reject_class_operands(1);
-      if (args.size() == 3 && class_sensitive_type(args[2], module))
-        fail("enum payload metadata cannot fabricate class provenance", pc);
+      std::vector<std::string> payloads;
+      if (args.size() == 3 && args[2] != "void") {
+        if (args[2].front() == '(' && args[2].back() == ')') {
+          const auto parts = array_tuple_elements("tuple<" + args[2].substr(1, args[2].size() - 2) + ">");
+          if (parts) payloads = *parts;
+        } else payloads.push_back(args[2]);
+      }
+      for (const auto &payload : payloads)
+        if (payload != "anything" && class_sensitive_type(payload, module))
+          fail("enum payload metadata cannot fabricate class provenance", pc);
       pop(1); const auto count = args.empty() ? 0 : std::stoull(args[0]);
-      for (std::size_t i = 0; i < count; ++i) state.stack.push_back(args.size() == 3 ? opaque_stack_type(args[2]) : "?");
+      if (args.size() == 3 && payloads.size() != count) fail("enum payload count disagrees with its metadata", pc);
+      for (std::size_t i = 0; i < count; ++i) state.stack.push_back(args.size() == 3 ? opaque_stack_type(payloads[i]) : "?");
       break;
     }
     case Opcode::CALL: {
       exception_edge(state);
       const auto count = static_cast<std::size_t>(std::stoull(args[1]));
       if (state.stack.size() < count) fail("call argument underflow", pc);
+      // Source array methods retain their historical direct-call adapters.
+      // Permit boxed elements only through a proven array<anything> receiver,
+      // never by relaxing the general external-call provenance boundary.
+      if ((args[0] == "array__push" || args[0] == "array__set" ||
+           args[0] == "array__get" || args[0] == "array__len") && count != 0 &&
+          state.stack[state.stack.size() - count] == "#typed:array<anything>") {
+        const auto expected_count = args[0] == "array__set" ? 3U : args[0] == "array__len" ? 1U : 2U;
+        if (count != expected_count) fail("anything array method has an invalid argument count", pc);
+        if ((args[0] == "array__push" || args[0] == "array__set") && state.stack.back() != "#anything")
+          fail("anything array mutation requires a boxed value", pc);
+        if ((args[0] == "array__set" || args[0] == "array__get") &&
+            !integer_category(state.stack[state.stack.size() - count + 1]))
+          fail("anything array index requires an integer", pc);
+        pop(count);
+        if (args[0] == "array__get") state.stack.push_back("#anything");
+        else if (args[0] == "array__len") state.stack.push_back(stack_type("i64", module));
+        break;
+      }
       const auto local_callable = state.locals.find(args[0]);
       if (local_callable != state.locals.end() && local_callable->second.rfind("#callable:", 0) == 0) {
         const auto signature = fault_callable_signature(local_callable->second.substr(10));
@@ -1027,7 +1145,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
           fail("indirect calls cannot return binding-reference or class storage", pc);
         pop(count);
         if (signature->second != "void")
-          state.stack.push_back(fault_stack_type(signature->second, module));
+          state.stack.push_back(stack_type(signature->second, module));
         break;
       }
       if (local_callable != state.locals.end())
@@ -1047,7 +1165,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       pop(count);
       if (callee != module.functions.end()) {
         if (callee->return_type != "void") {
-          const auto result_type = fault_stack_type(callee->return_type, module);
+          const auto result_type = stack_type(callee->return_type, module);
           if (result_type.rfind("#callable:", 0) == 0 &&
               (callee->body.empty() || std::any_of(callee->annotations.begin(), callee->annotations.end(),
                   [](const auto &annotation) {
@@ -1073,7 +1191,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       else if (args[0] == "String__len" || args[0] == "String__length" ||
                args[0] == "String__contains" || args[0] == "String__starts_with" ||
                args[0] == "String__ends_with" || args[0] == "String__find")
-        state.stack.push_back("#word");
+        state.stack.push_back(stack_type("i64", module));
       else if (args[0].rfind("__ritual_", 0) == 0 || args[0].rfind("String__", 0) == 0 ||
                args[0].rfind("array__", 0) == 0 || args[0].rfind("core__to_string", 0) == 0)
         state.stack.push_back("?");
@@ -1100,10 +1218,26 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       for (std::size_t i = 0; i < method.method->parameter_types.size(); ++i)
         check_class_argument(method.method->parameter_types[i], state.stack[state.stack.size() - count + i + 1]);
       exception_edge(state); pop(count);
-      if (method.method->return_type != "void") state.stack.push_back(fault_stack_type(method.method->return_type, module));
+      if (method.method->return_type != "void") state.stack.push_back(stack_type(method.method->return_type, module));
       break;
     }
     case Opcode::INTEROP_CALL: {
+      if (args.size() == 5 && args[0] == "intrinsic" && is_array_intrinsic(args[1]) && args[4] == "anything") {
+        const auto contract = parse_array_intrinsic(args);
+        if (state.stack.size() < contract.argument_count) fail("array intrinsic requires its declared operands", pc);
+        const auto start = state.stack.size() - contract.argument_count;
+        const bool create = contract.operation == array_intrinsic_operation::create;
+        if (create ? !integer_category(state.stack[start]) : state.stack[start] != "#typed:array<anything>")
+          fail("anything array intrinsic requires its exact array or size operand", pc);
+        if (contract.operation == array_intrinsic_operation::create || contract.operation == array_intrinsic_operation::set) {
+          if (state.stack.back() != "#anything") fail("anything array mutation requires a boxed value", pc);
+        }
+        if ((contract.operation == array_intrinsic_operation::get || contract.operation == array_intrinsic_operation::set) && !integer_category(state.stack[start + 1]))
+          fail("anything array index requires an integer", pc);
+        pop(contract.argument_count);
+        if (contract.result != "void") state.stack.push_back(stack_type(contract.result, module));
+        break;
+      }
       reject_class_operands(static_cast<std::size_t>(std::stoull(args[2])));
       pop(static_cast<std::size_t>(std::stoull(args[2])));
       if (args.size() < 4) fail("interop in a fault-bearing function requires explicit result metadata", pc);
@@ -1114,12 +1248,28 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     case Opcode::INLINE_ASM:
       reject_class_operands(static_cast<std::size_t>(std::stoull(args[2])));
       pop(static_cast<std::size_t>(std::stoull(args[2])));
-      if (args[3] == "1") state.stack.push_back("#word");
+      if (args[3] == "1") state.stack.push_back(stack_type("i64", module));
       break;
+    case Opcode::BOX_ANY: {
+      validate_nil_dynamic_type(module, args[0]);
+      if (state.stack.empty()) fail("boxing requires an operand", pc);
+      const auto expected = stack_type(args[0], module);
+      if (expected == "?" || state.stack.back() != expected)
+        fail("boxing requires its exact proven source type", pc);
+      pop(1); state.stack.push_back("#anything"); break;
+    }
+    case Opcode::UNBOX_ANY:
+    case Opcode::IS_ANY_TYPE: {
+      validate_nil_dynamic_type(module, args[0]);
+      if (state.stack.empty() || state.stack.back() != "#anything")
+        fail("dynamic extraction and tests require an explicitly boxed value", pc);
+      pop(1); state.stack.push_back(opcode == Opcode::IS_ANY_TYPE ? stack_type("bool", module) : stack_type(args[0], module)); break;
+    }
     case Opcode::CAST: {
       if (state.stack.empty()) fail("cast requires an operand", pc);
       const auto source_type = state.stack.back();
-      const auto target_type = fault_stack_type(args[0], module);
+      const auto target_type = stack_type(args[0], module);
+      if (source_type == "#owned") fail("CAST cannot erase affine ownership provenance", pc);
       if (class_type(source_type) || class_type(target_type))
         fail("CAST cannot fabricate or erase class provenance; use CLASS_UPCAST", pc);
       if (target_type.rfind("#callable:", 0) == 0 && source_type != target_type)
@@ -1128,12 +1278,20 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
         fail("cast cannot fabricate a concrete fault payload", pc);
       pop(1); state.stack.push_back(target_type); break;
     }
-    case Opcode::READ_PTR: reject_class_operands(1); pop(1); state.stack.push_back("?"); break;
+    case Opcode::READ_PTR: {
+      reject_class_operands(1);
+      const auto owner = state.stack.back();
+      const auto type = owner.rfind("#typed:ptr<", 0) == 0
+          ? stack_type(owner.substr(11, owner.size() - 12), module) : "?";
+      pop(1); state.stack.push_back(type); break;
+    }
     case Opcode::TO_STRING: reject_class_operands(1); pop(1); state.stack.push_back("#text"); break;
     case Opcode::STR_CONCAT: reject_class_operands(2); pop(2); state.stack.push_back("#text"); break;
-    case Opcode::LEN: case Opcode::STRLEN: case Opcode::NOT:
-      reject_class_operands(1); pop(1); state.stack.push_back("#word"); break;
-    case Opcode::TIME_NOW: state.stack.push_back("#word"); break;
+    case Opcode::LEN: case Opcode::STRLEN:
+      reject_class_operands(1); pop(1); state.stack.push_back(stack_type("i64", module)); break;
+    case Opcode::NOT:
+      reject_class_operands(1); pop(1); state.stack.push_back(stack_type("bool", module)); break;
+    case Opcode::TIME_NOW: state.stack.push_back(stack_type("i64", module)); break;
     case Opcode::RET:
       if (!state.regions.empty() || !state.saved.empty() || state.pending)
         fail("return bypasses live fault state", pc);
@@ -1167,10 +1325,15 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       reject_class_operands(2); pop(2); state.stack.push_back("#float"); break;
     case Opcode::CMP_EQ: case Opcode::CMP_NE: case Opcode::CMP_LT:
     case Opcode::CMP_LE: case Opcode::CMP_GT: case Opcode::CMP_GE:
-      reject_class_operands(2); pop(2); state.stack.push_back("#word"); break;
+      reject_class_operands(2); pop(2); state.stack.push_back(stack_type("bool", module)); break;
+    case Opcode::PTR_ADD: case Opcode::PTR_SUB: {
+      reject_class_operands(2);
+      const auto type = state.stack[state.stack.size() - 2];
+      pop(2); state.stack.push_back(type); break;
+    }
     case Opcode::ADD: case Opcode::SUB: case Opcode::MUL: case Opcode::DIV:
     case Opcode::MOD: case Opcode::BIT_AND: case Opcode::BIT_OR: case Opcode::BIT_XOR:
-    case Opcode::SHL: case Opcode::SHR: case Opcode::PTR_ADD: case Opcode::PTR_SUB:
+    case Opcode::SHL: case Opcode::SHR:
       reject_class_operands(2);
       pop(2); state.stack.push_back(args.empty() ? "?" : opaque_stack_type(args[0])); break;
     case Opcode::COUNT: fail("invalid opcode", pc); break;
@@ -1181,6 +1344,56 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
 }
 
 } // namespace
+
+void validate_nil_dynamic_type(const nil_module &module, const std::string &raw,
+                               bool allow_anything) {
+  const auto fail = [&](const std::string &type) {
+    throw std::runtime_error("NIL anything contract: unsupported or escaping payload type '" + type + "'");
+  };
+  if (!dynamic_type_syntax_supported(raw, allow_anything) || canonical_dynamic_type(raw) != raw)
+    fail(raw);
+  std::vector<std::string> pending{raw};
+  std::unordered_set<std::string> visited;
+  while (!pending.empty()) {
+    const auto type = pending.back(); pending.pop_back();
+    if (!visited.insert(type).second) continue;
+    if (visited.size() > 4096 || !dynamic_type_syntax_supported(type, true)) fail(type);
+    if (type == "anything" || type == "bool" || type == "i32" || type == "i64" ||
+        type == "u8" || type == "f64" || type == "text") continue;
+    if (const auto signature = fault_callable_signature(type)) {
+      pending.insert(pending.end(), signature->first.begin(), signature->first.end());
+      if (signature->second != "void") pending.push_back(signature->second);
+      continue;
+    }
+    if (type.rfind("ptr<", 0) == 0 || type.rfind("array<", 0) == 0) {
+      const auto open = type.find('<');
+      pending.push_back(type.substr(open + 1, type.size() - open - 2));
+      continue;
+    }
+    if (find_nil_class(module, type))
+      for (const auto &candidate : module.classes)
+        if (candidate.name != type && nil_class_assignable(module, type, candidate.name))
+          pending.push_back(candidate.name);
+    std::size_t matches = 0;
+    for (const auto &schema : module.structs) if (canonical_dynamic_type(schema.name) == type) {
+      ++matches;
+      for (const auto &field : schema.fields) pending.push_back(canonical_dynamic_type(field.second));
+    }
+    for (const auto &enumeration : module.enums) if (canonical_dynamic_type(enumeration.name) == type) {
+      ++matches;
+      for (const auto &variant : enumeration.variants) {
+        const auto payload = canonical_dynamic_type(variant.associated_type);
+        if (payload.empty()) continue;
+        if (payload.front() == '(' && payload.back() == ')') {
+          const auto parts = array_tuple_elements("tuple<" + payload.substr(1, payload.size() - 2) + ">");
+          if (!parts) fail(type);
+          pending.insert(pending.end(), parts->begin(), parts->end());
+        } else pending.push_back(payload);
+      }
+    }
+    if (matches != 1) fail(type);
+  }
+}
 
 nil_fault_analysis analyze_nil_fault_function(const nil_function &function,
                                               const nil_module &module) {
@@ -1244,6 +1457,23 @@ void validate_nil_fault_contract(const nil_module &module) {
 
 void validate_nil_class_provenance(const nil_module &module) {
   std::unordered_set<std::string> related;
+  bool dynamic_operations = false;
+  for (const auto &function : module.functions)
+    for (const auto &instruction : function.body)
+      dynamic_operations = dynamic_operations || instruction.opname == "BOX_ANY" ||
+          instruction.opname == "UNBOX_ANY" || instruction.opname == "IS_ANY_TYPE";
+  for (const auto &function : module.functions) {
+    dynamic_operations = dynamic_operations || function.return_type.find("anything") != std::string::npos;
+    for (const auto &parameter : function.params)
+      dynamic_operations = dynamic_operations || parameter.find("anything") != std::string::npos;
+  }
+  for (const auto &schema : module.structs)
+    for (const auto &field : schema.fields)
+      dynamic_operations = dynamic_operations || field.second.find("anything") != std::string::npos;
+  for (const auto &enumeration : module.enums)
+    for (const auto &variant : enumeration.variants)
+      dynamic_operations = dynamic_operations || variant.associated_type.find("anything") != std::string::npos;
+  if (dynamic_operations) related.insert("anything");
   const auto invalid_binding = [](const std::string &message) {
     throw std::runtime_error("NIL binding-reference contract: " + message);
   };
@@ -1328,6 +1558,13 @@ void validate_nil_class_provenance(const nil_module &module) {
   bool changed = true;
   while (changed) {
     changed = false;
+    for (const auto &enumeration : module.enums)
+      if (!related.count(enumeration.name) && std::any_of(enumeration.variants.begin(), enumeration.variants.end(),
+          [&](const auto &variant) {
+            return related.count(compact_binding_type(variant.associated_type)) != 0 ||
+                (dynamic_operations && variant.associated_type.find("anything") != std::string::npos);
+          }))
+        changed = related.insert(enumeration.name).second || changed;
     for (const auto &schema : module.structs)
       if (!related.count(schema.name) && std::any_of(schema.fields.begin(), schema.fields.end(),
               [&](const auto &field) {
@@ -1338,7 +1575,7 @@ void validate_nil_class_provenance(const nil_module &module) {
   }
   const auto related_type = [&](const std::string &raw) {
     const auto type = compact_binding_type(raw);
-    return related.count(type) != 0 || contains_binding_cell_type(type) ||
+    return related.count(type) != 0 || (dynamic_operations && type.find("anything") != std::string::npos) || contains_binding_cell_type(type) ||
         fault_callable_signature(type).has_value();
   };
   for (const auto &function : module.functions) {
@@ -1349,7 +1586,8 @@ void validate_nil_class_provenance(const nil_module &module) {
       if (start != std::string::npos && related_type(parameter.substr(start))) relevant = true;
     }
     for (const auto &instruction : function.body) {
-      if (instruction.opname == "CLASS_UPCAST" || instruction.opname == "CALL_METHOD") relevant = true;
+      if (instruction.opname == "CLASS_UPCAST" || instruction.opname == "CALL_METHOD" ||
+          instruction.opname == "BOX_ANY" || instruction.opname == "UNBOX_ANY" || instruction.opname == "IS_ANY_TYPE") relevant = true;
       for (const auto &argument : instruction.args)
         if (related_type(argument)) relevant = true;
       if ((instruction.opname == "CALL" || instruction.opname == "PUSH_FN_PTR") && !instruction.args.empty())
@@ -1429,14 +1667,17 @@ static void attach_class_metadata(std::vector<Instruction> &program, nil_module 
       const auto ordinal = static_cast<std::size_t>(instruction.op);
       if (ordinal >= opcode_table_size) throw std::runtime_error("Invalid opcode in class program");
       function->body.push_back({std::string(opcode_table[ordinal].name), instruction.args, instruction.line});
-    } else if (instruction.op == Opcode::CLASS_UPCAST || instruction.op == Opcode::CALL_METHOD)
-      throw std::runtime_error("Class instruction outside a declared function");
+    } else if (instruction.op == Opcode::CLASS_UPCAST || instruction.op == Opcode::CALL_METHOD ||
+               instruction.op == Opcode::BOX_ANY || instruction.op == Opcode::UNBOX_ANY || instruction.op == Opcode::IS_ANY_TYPE)
+      throw std::runtime_error("Class or anything instruction outside a declared function");
   }
   validate_nil_class_contract(metadata);
   // Tuple arrays also use exact record schemas at execution time, including
   // modules that declare no classes at all.
   if (!program.empty() && (!metadata.classes.empty() || !metadata.structs.empty() ||
-                           !metadata.enums.empty()))
+                           !metadata.enums.empty() || std::any_of(program.begin(), program.end(), [](const auto &instruction) {
+                             return instruction.op == Opcode::BOX_ANY || instruction.op == Opcode::UNBOX_ANY || instruction.op == Opcode::IS_ANY_TYPE;
+                           })))
     program.front().module_metadata = std::make_shared<const nil_module>(std::move(metadata));
 }
 
@@ -1445,8 +1686,9 @@ void validate_nil_class_contract(const std::vector<Instruction> &program) {
   const auto metadata = program.front().module_metadata;
   if (!metadata) {
     for (const auto &instruction : program)
-      if (instruction.op == Opcode::CLASS_UPCAST || instruction.op == Opcode::CALL_METHOD)
-        throw std::runtime_error("NIL class instructions require explicit module metadata");
+      if (instruction.op == Opcode::CLASS_UPCAST || instruction.op == Opcode::CALL_METHOD ||
+          instruction.op == Opcode::BOX_ANY || instruction.op == Opcode::UNBOX_ANY || instruction.op == Opcode::IS_ANY_TYPE)
+        throw std::runtime_error("NIL class/anything instructions require explicit module metadata");
       else {
         for (const auto &argument : instruction.args)
           if (contains_binding_cell_type(argument))

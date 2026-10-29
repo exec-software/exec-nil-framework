@@ -21,7 +21,7 @@ inline std::string compact_binding_type(std::string type) {
 
 inline bool is_binding_scalar_type(const std::string &type) {
   return type == "i32" || type == "i64" || type == "u8" || type == "bool" ||
-         type == "f64" || type == "text";
+         type == "f64" || type == "text" || type == "anything";
 }
 
 inline bool contains_binding_cell_type(const std::string &type) {

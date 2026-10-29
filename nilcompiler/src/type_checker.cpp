@@ -5,6 +5,7 @@
  */
 #include "type_checker.hpp"
 #include "diagnostics.hpp"
+#include "dynamic_type.hpp"
 #include "nil_contract.hpp"
 #include "numeric_literal.hpp"
 #include "scalar_text.hpp"
@@ -19,6 +20,32 @@
 #include <unordered_set>
 
 namespace ny {
+
+// Return only a known literal value. Computed numeric conversions retain the
+// runtime 0/1 check; they must never acquire conventional nonzero truthiness.
+static std::optional<double> numeric_boolean_literal(const ast_expr *value) {
+  if (!value) return std::nullopt;
+  if (value->kind == ast_node_kind::unary_expr_node) {
+    const auto &unary = static_cast<const ast_unary_expr &>(*value);
+    if (unary.op == token_kind::minus) {
+      const auto operand = numeric_boolean_literal(unary.operand.get());
+      if (operand) return -*operand;
+    }
+    return std::nullopt;
+  }
+  if (value->kind != ast_node_kind::number_literal_node) return std::nullopt;
+  const auto &literal = static_cast<const ast_number_literal &>(*value).value;
+  if (is_floating_literal_spelling(literal)) {
+    double result = 0;
+    if (!parse_floating_literal(literal, result)) return result;
+  } else {
+    integer_literal_info integer;
+    if (!parse_integer_literal(literal, integer))
+      return integer.negative ? -static_cast<double>(integer.magnitude)
+                              : static_cast<double>(integer.magnitude);
+  }
+  return std::nullopt;
+}
 
 // Empty module markers are source-unit boundaries in a merged AST. They
 // restore the root context without creating a module named "" or "::name".
@@ -128,6 +155,9 @@ type_checker::type_checker(bool collect_semantics,
       "any", symbol_kind::type_symbol, nullptr, std::nullopt, false,
       visibility_kind::visibility_public, std::nullopt);
   symbols_.insert_symbol_with_context(
+      "anything", symbol_kind::type_symbol, nullptr, std::nullopt, false,
+      visibility_kind::visibility_public, std::nullopt);
+  symbols_.insert_symbol_with_context(
       "String", symbol_kind::type_symbol, nullptr, std::nullopt, false,
       visibility_kind::visibility_public, std::nullopt);
 
@@ -160,6 +190,8 @@ type_checker::type_checker(bool collect_semantics,
   // Aliases (text -> String, int -> i32) - register as public aliases
   symbols_.insert_type_alias_in_module("text", "String", true);
   symbols_.insert_type_alias_in_module("int", "i32", true);
+  symbols_.insert_type_alias_in_module("boolean", "bool", true);
+  symbols_.insert_type_alias_in_module("flag", "bool", true);
 
   // Built-in functions
   // panic(msg: String) -> any (diverging)
@@ -570,6 +602,18 @@ bool type_checker::check(ast_program &program) {
     for (auto *handler : checked_fault_handlers_) handler->fault_checked = false;
     for (auto *raise : checked_raises_) raise->fault_checked = false;
     for (auto *value : checked_class_conversions_) value->checked_class_upcast.reset();
+    for (auto *value : checked_any_boxes_) {
+      value->checked_any_box_type.reset();
+      value->rejected_dynamic_operation = "anything boxing requires successful type checking";
+    }
+    for (auto *value : checked_any_casts_) {
+      value->checked_any_cast = false;
+      value->rejected_dynamic_operation = "anything conversion requires successful type checking";
+    }
+    for (auto *value : checked_any_tests_) {
+      value->checked_any_type_test.reset();
+      value->rejected_dynamic_operation = "anything type tests require successful type checking";
+    }
     for (auto *value : checked_reference_handles_)
       value->checked_reference_handle = false;
     for (auto *value : checked_binding_references_)
@@ -603,6 +647,10 @@ void type_checker::add_error(int line, const std::string &msg) {
 static thread_local std::vector<std::string> resolution_stack;
 
 type_info type_checker::resolve_type(const std::string &name) {
+  // Language type spellings remain types even when a value binding has the
+  // same name (for example `let flag: boolean = no`).
+  if (name == "boolean" || name == "flag") return type_bool;
+  if (name == "anything") return {"anything", true};
   // Recursion guard with stack dump
   // std::cerr << "[resolve_type] ENTRY '" << name << "'\n";
 
@@ -1091,6 +1139,10 @@ std::optional<std::string> type_checker::resolve_type_name_with_imports(
 
 bool type_checker::are_types_compatible(const type_info &t1,
                                         const type_info &t2) {
+  // Dynamic values have their own representation. Only an explicit checked
+  // boundary can box a concrete source; `any` must not erase that distinction.
+  if (t1.name == "anything" || t2.name == "anything")
+    return t1.name == t2.name;
   // Affine resources cannot disappear through any, generic wildcards, or
   // containers. Their ownership pass proves transfers, not representation.
   if (contains_ownership_type(t1.name) || contains_ownership_type(t2.name))
@@ -1408,12 +1460,193 @@ bool type_checker::type_contains_tuple(const std::string &type) {
   return false;
 }
 
+bool type_checker::valid_dynamic_type(const std::string &written, bool allow_anything) {
+  const auto type = resolve_type(written).name;
+  if (!dynamic_type_syntax_supported(type, allow_anything)) return false;
+  if (!checking_dynamic_types_.insert(type).second) return true;
+  struct dynamic_type_guard {
+    std::set<std::string> &active;
+    std::string type;
+    ~dynamic_type_guard() { active.erase(type); }
+  } guard{checking_dynamic_types_, type};
+  if (const auto callable = parse_callable_signature(type)) {
+    for (const auto &parameter : callable->first)
+      if (!valid_dynamic_type(parameter, true)) return false;
+    return callable->second == "void" || valid_dynamic_type(callable->second, true);
+  }
+  const auto parts = parse_generic_type_string(type);
+  if (parts.base_name == "array" || parts.base_name == "ptr")
+    return parts.type_args.size() == 1 && valid_dynamic_type(parts.type_args.front(), true);
+  if (parts.base_name == "tuple") {
+    if (parts.type_args.empty()) return false;
+  } else {
+    const auto *symbol = symbols_.lookup_type(parts.base_name);
+    if (!symbol) return false;
+    if (symbol->generic_params.size() != parts.type_args.size()) return false;
+    std::map<std::string, std::string> substitutions;
+    for (std::size_t i = 0; i < parts.type_args.size(); ++i)
+      substitutions[symbol->generic_params[i].name] = parts.type_args[i];
+    const auto valid_field = [&](const ast_struct_field &field) {
+      return valid_dynamic_type(instantiate_generic_type(field.type_name, substitutions), true);
+    };
+    if (symbol->defining_node && symbol->defining_node->kind == ast_node_kind::struct_decl_node) {
+      for (const auto &field : static_cast<const ast_struct_decl &>(*symbol->defining_node).fields)
+        if (!valid_field(field)) return false;
+    } else if (symbol->defining_node && symbol->defining_node->kind == ast_node_kind::class_decl_node) {
+      for (const auto &field : class_fields(*symbol, 0))
+        if (!valid_field(field)) return false;
+    } else if (symbol->defining_node && symbol->defining_node->kind == ast_node_kind::enum_decl_node) {
+      for (const auto &variant : static_cast<const ast_enum_decl &>(*symbol->defining_node).variants)
+        if (variant.associated_type) {
+          auto payload = instantiate_generic_type(*variant.associated_type, substitutions);
+          if (!payload.empty() && payload.front() == '(' && payload.back() == ')')
+            payload = "tuple<" + payload.substr(1, payload.size() - 2) + ">";
+          if (!valid_dynamic_type(payload, true)) return false;
+        }
+    }
+  }
+  for (const auto &argument : parts.type_args)
+    if (!valid_dynamic_type(argument, true)) return false;
+  return true;
+}
+
+// An aggregate with a dynamic slot cannot use the historical zero-filled
+// default. Traverse nominal fields as well as structural tuple/array types;
+// pointer targets are separate storage with their existing lifetime contract.
+bool type_checker::type_requires_dynamic_initialization(const std::string &written) {
+  std::set<std::string> active;
+  std::function<bool(const std::string &)> contains = [&](const std::string &name) {
+    const auto type = resolve_type(name).name;
+    if (type == "anything") return true;
+    if (!active.insert(type).second) return false;
+    const auto parts = parse_generic_type_string(type);
+    if (parts.base_name == "ptr" || parts.base_name == "ref" ||
+        parse_callable_signature(type)) return false;
+    for (const auto &argument : parts.type_args)
+      if (contains(argument)) return true;
+    const auto *symbol = symbols_.lookup_type(parts.base_name);
+    if (!symbol || !symbol->defining_node) return false;
+    std::map<std::string, std::string> substitutions;
+    for (std::size_t i = 0; i < symbol->generic_params.size() && i < parts.type_args.size(); ++i)
+      substitutions[symbol->generic_params[i].name] = parts.type_args[i];
+    const auto field_contains = [&](const ast_struct_field &field) {
+      return contains(instantiate_generic_type(field.type_name, substitutions));
+    };
+    if (symbol->defining_node->kind == ast_node_kind::struct_decl_node) {
+      for (const auto &field : static_cast<const ast_struct_decl &>(*symbol->defining_node).fields)
+        if (field_contains(field)) return true;
+    } else if (symbol->defining_node->kind == ast_node_kind::class_decl_node) {
+      for (const auto &field : class_fields(*symbol, 0))
+        if (field_contains(field)) return true;
+    } else if (symbol->defining_node->kind == ast_node_kind::enum_decl_node) {
+      for (const auto &variant : static_cast<const ast_enum_decl &>(*symbol->defining_node).variants)
+        if (variant.associated_type) {
+          auto payload = instantiate_generic_type(*variant.associated_type, substitutions);
+          if (!payload.empty() && payload.front() == '(' && payload.back() == ')')
+            payload = "tuple<" + payload.substr(1, payload.size() - 2) + ">";
+          if (contains(payload)) return true;
+        }
+    }
+    return false;
+  };
+  return contains(written);
+}
+
+bool type_checker::check_dynamic_enum_payload(ast_call_expr &call, const std::string &written) {
+  if (!call.callee) return true;
+  const auto parts = parse_generic_type_string(resolve_type(written).name);
+  const auto *owner = symbols_.lookup_type(parts.base_name);
+  if (!owner || !owner->defining_node ||
+      owner->defining_node->kind != ast_node_kind::enum_decl_node) return true;
+  const auto &declaration = static_cast<const ast_enum_decl &>(*owner->defining_node);
+  std::string variant_name;
+  if (call.callee->kind == ast_node_kind::member_access_expr_node) {
+    const auto &member = static_cast<const ast_member_access_expr &>(*call.callee);
+    if (!member.object || member.object->kind != ast_node_kind::identifier_expr_node) return true;
+    const auto object_type = resolve_type(static_cast<const ast_identifier_expr &>(*member.object).name).name;
+    if (parse_generic_type_string(object_type).base_name != parts.base_name) return true;
+    variant_name = member.member_name;
+  } else if (call.callee->kind == ast_node_kind::identifier_expr_node) {
+    const auto &identifier = static_cast<const ast_identifier_expr &>(*call.callee);
+    const auto *function = symbols_.lookup(identifier.name);
+    // Real functions returning this enum are not variant constructors.
+    if (!function || function->defining_node) return true;
+    const auto separator = identifier.name.rfind("::");
+    variant_name = separator == std::string::npos ? identifier.name : identifier.name.substr(separator + 2);
+  } else return true;
+  const auto variant = std::find_if(declaration.variants.begin(), declaration.variants.end(),
+      [&](const ast_enum_variant &candidate) { return candidate.name == variant_name; });
+  if (variant == declaration.variants.end() || !variant->associated_type) return true;
+  std::map<std::string, std::string> substitutions;
+  const auto &arguments = parts.type_args.empty() ? call.type_args : parts.type_args;
+  for (std::size_t i = 0; i < declaration.generic_params.size() && i < arguments.size(); ++i)
+    substitutions[declaration.generic_params[i].name] = arguments[i];
+  auto payload = instantiate_generic_type(*variant->associated_type, substitutions);
+  std::vector<std::string> fields;
+  if (!payload.empty() && payload.front() == '(' && payload.back() == ')')
+    fields = parse_generic_type_string("tuple<" + payload.substr(1, payload.size() - 2) + ">").type_args;
+  else fields.push_back(payload);
+  // Preserve existing generic constructor inference for unrelated payloads.
+  // Dynamic payloads need explicit checked boxing before NIL lowering.
+  bool dynamic = false;
+  for (const auto &field : fields)
+    dynamic = dynamic || resolve_type(field).name.find("anything") != std::string::npos;
+  if (!dynamic) return true;
+  if (fields.size() != call.args.size()) {
+    add_error(call.line, "Enum variant '" + variant_name + "' requires " +
+        std::to_string(fields.size()) + " initialized payload values");
+    call.rejected_dynamic_operation = "Incomplete dynamic enum payload";
+    return false;
+  }
+  bool valid = true;
+  for (std::size_t i = 0; i < fields.size(); ++i) {
+    const auto expected = resolve_type(fields[i]);
+    const auto actual = resolve_type(call.args[i]->inferred_type.value_or("<unknown>"));
+    if (!check_assignment_type(expected, actual, call.args[i].get())) {
+      add_error(call.line, "Enum payload requires '" + expected.name + "', got '" + actual.name + "'");
+      valid = false;
+    }
+  }
+  return valid;
+}
+
 bool type_checker::check_assignment_type(const type_info &expected,
                                          const type_info &actual,
                                          ast_expr *value) {
-  if (value) value->checked_class_upcast.reset();
+  if (value) {
+    value->checked_class_upcast.reset();
+    value->checked_any_box_type.reset();
+  }
   const auto target = resolve_type(expected.name).name;
   const auto source = resolve_type(actual.name).name;
+  if (value && value->kind == ast_node_kind::call_expr_node &&
+      !check_dynamic_enum_payload(static_cast<ast_call_expr &>(*value), target)) return false;
+  if (target == "anything") {
+    if (source == "anything") return true;
+    if (!value || !valid_dynamic_type(source)) {
+      if (value) value->rejected_dynamic_operation =
+          "Cannot box '" + source + "' as anything; a concrete value with a non-borrowed lifetime is required";
+      return false;
+    }
+    value->checked_any_box_type = source;
+    checked_any_boxes_.push_back(value);
+    return true;
+  }
+  if (source == "anything") {
+    if (value) {
+      const auto message = "Extract anything with a checked cast or try_as before using it as '" + target + "'";
+      value->rejected_dynamic_operation = message;
+      add_error(value->line, message);
+    }
+    return false;
+  }
+  if (target == "bool") {
+    if (const auto literal = numeric_boolean_literal(value)) {
+      if (*literal == 0.0 || *literal == 1.0) return true;
+      add_error(value->line, "Boolean numeric values must be exactly 0 or 1");
+      return false;
+    }
+  }
   const auto target_tuple = parse_generic_type_string(target);
   const auto reject_tuple = [&]() {
     if (value) value->rejected_tuple_operation = "Tuple storage type mismatch: expected '" + target + "', got '" + source + "'";
@@ -1422,7 +1655,8 @@ bool type_checker::check_assignment_type(const type_info &expected,
   // A newly constructed array can contextualize each fresh tuple. Existing
   // arrays retain invariant element layouts; no array handle is reinterpreted.
   if (target_tuple.base_name == "array" && target_tuple.type_args.size() == 1 &&
-      type_contains_tuple(target_tuple.type_args.front()) && value &&
+      (type_contains_tuple(target_tuple.type_args.front()) ||
+       target_tuple.type_args.front() == "anything" || target_tuple.type_args.front() == "bool") && value &&
       value->kind == ast_node_kind::array_literal_expr_node) {
     auto &array = static_cast<ast_array_literal_expr &>(*value);
     for (auto &element : array.elements) {
@@ -1434,6 +1668,9 @@ bool type_checker::check_assignment_type(const type_info &expected,
     return true;
   }
   const auto source_shape = parse_generic_type_string(source);
+  if ((target_tuple.base_name == "array" || source_shape.base_name == "array") &&
+      (target.find("anything") != std::string::npos || source.find("anything") != std::string::npos))
+    return target == source;
   if ((target_tuple.base_name == "array" || source_shape.base_name == "array") &&
       (type_contains_tuple(target) || type_contains_tuple(source))) {
     // The historical array<any> compatibility rule applies to freshly
@@ -2027,7 +2264,7 @@ type_checker::resolve_member_type(const type_info &struct_type,
 static inline bool is_primitive_name(const std::string &n) {
   return n == "i8" || n == "i16" || n == "i32" || n == "i64" || n == "u8" ||
          n == "u16" || n == "u32" || n == "u64" || n == "f32" || n == "f64" ||
-         n == "bool" || n == "char" || n == "String" || n == "any";
+         n == "bool" || n == "char" || n == "String" || n == "any" || n == "anything";
 }
 
 type_info type_checker::infer_literal_type(const std::string &literal) const {
@@ -2800,7 +3037,7 @@ void type_checker::visit(ast_function_decl &p) {
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
   semantic_node(p, p.name, "function", p.return_type.value_or(""), diagnostic_source_file_);
   if (p.name == "owned" || p.name == "owned_move" || p.name == "owned_borrow" ||
-      p.name == "owned_borrow_mut" || p.name == "parallel_map")
+      p.name == "owned_borrow_mut" || p.name == "parallel_map" || p.name == "anything_is")
     add_error(p.line, "Function name '" + p.name + "' is reserved for a checked language operation");
   std::size_t native_dispatch_annotations = 0;
   for (const auto &annotation : p.annotations) {
@@ -2908,8 +3145,8 @@ void type_checker::visit(ast_function_decl &p) {
         add_error(param.line, "Reference parameters cannot be variadic or have defaults");
       const auto type = canonical_param_type.value_or("");
       if (type != "i32" && type != "i64" && type != "u8" && type != "bool" &&
-          type != "f64" && type != "String")
-        add_error(param.line, "Reference parameters currently support i32, i64, u8, bool, f64 and text bindings");
+          type != "f64" && type != "String" && type != "anything")
+        add_error(param.line, "Reference parameters currently support i32, i64, u8, bool, f64, text and anything bindings");
       param.is_mut = true;
       param.checked_binding_reference = diagnostics_.size() == errors_before;
       checked_reference_parameters_.push_back(&param);
@@ -2977,7 +3214,12 @@ void type_checker::visit(ast_variable_decl &p) {
       auto &binding = p.tuple_bindings[index];
       binding->type_name = tuple.type_args[index];
       binding->source_file = p.source_file;
-      if (binding->name != "_") binding->accept(*this);
+      if (binding->name != "_") {
+        const bool saved = checking_tuple_binding_;
+        checking_tuple_binding_ = true;
+        binding->accept(*this);
+        checking_tuple_binding_ = saved;
+      }
     }
     if (diagnostics_.size() != before && p.initializer)
       p.initializer->rejected_tuple_operation = "Invalid tuple destructuring binding";
@@ -2985,7 +3227,7 @@ void type_checker::visit(ast_variable_decl &p) {
     return;
   }
   if (p.name == "owned" || p.name == "owned_move" || p.name == "owned_borrow" ||
-      p.name == "owned_borrow_mut" || p.name == "parallel_map")
+      p.name == "owned_borrow_mut" || p.name == "parallel_map" || p.name == "anything_is")
     add_error(p.line, "Variable name '" + p.name + "' is reserved for a checked language operation");
   // Check if trying to shadow intrinsic keywords
   if (p.name == "assert") {
@@ -3016,7 +3258,8 @@ void type_checker::visit(ast_variable_decl &p) {
       const auto declared = resolve_type(*p.type_name);
       const auto context = parse_generic_type_string(declared.name);
       if (context.base_name == "array" && context.type_args.size() == 1 &&
-          type_contains_tuple(context.type_args.front()))
+          (type_contains_tuple(context.type_args.front()) || context.type_args.front() == "anything" ||
+           context.type_args.front() == "bool"))
         p.initializer->inferred_type = declared.name;
     }
     p.initializer->accept(*this);
@@ -3038,6 +3281,11 @@ void type_checker::visit(ast_variable_decl &p) {
     candidate_type = resolved.has_value() ? *resolved : *p.type_name;
     var_type_name = resolve_type(candidate_type).name;
     type_info declared_type = {var_type_name, true};
+    if (!p.initializer && !checking_tuple_binding_ && type_requires_dynamic_initialization(var_type_name)) {
+      p.rejected_dynamic_initializer = true;
+      add_error(p.line, "Binding of type '" + var_type_name +
+          "' requires an initial value for its anything storage; use an explicit Option.None for absence");
+    }
 
     // std::cerr << "[type_checker] visit(variable_decl): var='" << p.name
     //           << "' annotated='" << *p.type_name << "' candidate='"
@@ -3080,13 +3328,14 @@ void type_checker::visit(ast_variable_decl &p) {
   const auto canonical_variable_type = resolve_type(var_type_name).name;
   if (contains_ownership_type(canonical_variable_type))
     p.type_name = canonical_variable_type;
-  if (scalar_type(canonical_variable_type)) {
+  if (scalar_type(canonical_variable_type) || canonical_variable_type == "anything") {
     // Storage conversion happens after expression evaluation. Do not change
     // an arithmetic expression's width merely because its destination differs.
     p.type_name = canonical_variable_type;
   }
   if (p.initializer && var_type_name != "any" && var_type_name != "<none>" &&
       !p.initializer->checked_class_upcast &&
+      !p.initializer->checked_any_box_type &&
       !(scalar_type(init_type.name) && scalar_type(canonical_variable_type))) {
     p.initializer->inferred_type = var_type_name;
   }
@@ -3171,6 +3420,10 @@ void type_checker::visit(ast_import_decl &p) {
 void type_checker::visit(ast_class_decl &p) {
   if (p.name == "tuple") {
     add_error(p.line, "Type name 'tuple' is reserved for structural tuples");
+    return;
+  }
+  if (p.name == "anything" || p.name == "boolean" || p.name == "flag") {
+    add_error(p.line, "Type name '" + p.name + "' is reserved for a built-in type");
     return;
   }
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
@@ -3546,6 +3799,10 @@ void type_checker::visit(ast_class_decl &p) {
 }
 
 void type_checker::visit(ast_type_alias_decl &p) {
+  if (p.name == "anything" || p.name == "boolean" || p.name == "flag") {
+    add_error(p.line, "Type name '" + p.name + "' is reserved for a built-in type");
+    return;
+  }
   if (p.name == "tuple") {
     add_error(p.line, "Type name 'tuple' is reserved for structural tuples");
     return;
@@ -3682,7 +3939,8 @@ void type_checker::visit(ast_return_stmt &s) {
       auto &array = static_cast<ast_array_literal_expr &>(*s.value);
       const auto context =
           parse_generic_type_string(current_function_return_type_->name);
-      if ((array.elements.empty() || type_contains_tuple(current_function_return_type_->name)) &&
+      if ((array.elements.empty() || type_contains_tuple(current_function_return_type_->name) ||
+           (context.type_args.size() == 1 && (context.type_args[0] == "anything" || context.type_args[0] == "bool"))) &&
           context.base_name == "array" &&
           context.type_args.size() == 1 && context.type_args[0] != "any" &&
           context.type_args[0] != "<unknown>") {
@@ -3788,6 +4046,15 @@ void type_checker::visit(ast_member_access_expr &e) {
     return;
   }
   type_info obj_type = *last_expr_type_;
+
+  if (obj_type.name == "anything") {
+    const std::string message = "Extract anything with a checked cast or try_as before accessing a member";
+    add_error(e.line, message);
+    e.rejected_dynamic_operation = message;
+    last_expr_type_ = type_unknown;
+    e.inferred_type = last_expr_type_->name;
+    return;
+  }
 
   capture_member_completion(e, obj_type);
 
@@ -3918,7 +4185,7 @@ void type_checker::visit(ast_struct_literal_expr &e) {
           [&](const ast_struct_field &item) { return item.name == field.first; });
       if (declared == fields.end())
         add_error(e.line, "Class literal contains unknown field '" + field.first + "'");
-      else if (field.second)
+      else if (field.second && resolve_type(declared->type_name).name != "anything")
         field.second->inferred_type = declared->type_name;
       if (field.second) field.second->accept(*this);
       if (declared != fields.end() &&
@@ -3927,8 +4194,11 @@ void type_checker::visit(ast_struct_literal_expr &e) {
         add_error(e.line, "Type mismatch in class field '" + field.first + "'");
     }
     for (const auto &field : fields)
-      if (!initialized.count(field.name))
-        add_error(e.line, "Class literal is missing required field '" + field.name + "'");
+      if (!initialized.count(field.name)) {
+        add_error(e.line, "Class literal is missing required field '" + field.name + "' of type '" + field.type_name + "'");
+        if (type_requires_dynamic_initialization(field.type_name))
+          e.rejected_dynamic_operation = "Class construction requires an initialized value for field '" + field.name + "'";
+      }
     e.type_name = sym->name;
     e.inferred_type = sym->name;
     last_expr_type_ = type_info{sym->name, false};
@@ -4023,7 +4293,8 @@ void type_checker::visit(ast_struct_literal_expr &e) {
             !declared_field->type_name.empty()) {
           expected_type = resolve_type(
               instantiate_generic_type(declared_field->type_name, generic_subs));
-          f.second->inferred_type = expected_type->name;
+          if (expected_type->name != "anything")
+            f.second->inferred_type = expected_type->name;
         }
         // Now visit the field expression
         f.second->accept(*this);
@@ -4038,9 +4309,12 @@ void type_checker::visit(ast_struct_literal_expr &e) {
 
     for (const auto &decl_field : struct_decl->fields) {
       if (initialized_fields.count(decl_field.name) == 0) {
+        if (type_requires_dynamic_initialization(instantiate_generic_type(decl_field.type_name, generic_subs)))
+          e.rejected_dynamic_operation = "Struct construction requires an initialized value for field '" + decl_field.name + "'";
         add_error(e.line, "Struct literal for '" + full_type_name +
                               "' is missing required field '" +
-                              decl_field.name + "'");
+                              decl_field.name + "' of type '" +
+                              instantiate_generic_type(decl_field.type_name, generic_subs) + "'");
       }
     }
 
@@ -5000,6 +5274,33 @@ static callable_parameter_contract callable_parameters(
 }
 
 void type_checker::visit(ast_call_expr &e) {
+  e.checked_any_type_test.reset();
+  if (e.callee && e.callee->kind == ast_node_kind::identifier_expr_node &&
+      static_cast<ast_identifier_expr &>(*e.callee).name == "anything_is") {
+    const auto before = diagnostics_.size();
+    if (e.type_args.size() != 1 || e.args.size() != 1) {
+      add_error(e.line, "anything_is requires one concrete type argument and one anything value");
+    }
+    if (!e.argument_names.empty() &&
+        (e.argument_names.size() != 1 ||
+         (!e.argument_names.front().empty() && e.argument_names.front() != "value")))
+      add_error(e.line, "anything_is has one parameter named 'value'");
+    for (auto &argument : e.type_args) argument = resolve_type(argument).name;
+    if (e.type_args.size() == 1 && !valid_dynamic_type(e.type_args.front()))
+      add_error(e.line, "anything_is requires a concrete, non-borrowed target type");
+    for (auto &argument : e.args) {
+      if (argument) argument->accept(*this);
+      if (!argument || last_expr_type_.value_or(type_unknown).name != "anything")
+        add_error(e.line, "anything_is requires an anything value");
+    }
+    if (diagnostics_.size() == before) {
+      e.checked_any_type_test = e.type_args.front();
+      checked_any_tests_.push_back(&e);
+    } else e.rejected_dynamic_operation = "Invalid anything type test";
+    last_expr_type_ = type_bool;
+    e.inferred_type = "bool";
+    return;
+  }
   const bool signature_selected = select_signature_call(e);
   const auto signature_errors = diagnostics_.size();
   bool named_arguments_handled = e.argument_names.empty();
@@ -5028,7 +5329,7 @@ void type_checker::visit(ast_call_expr &e) {
       const auto &identifier = static_cast<const ast_identifier_expr &>(*member.object);
       const symbol *candidate = symbols_.lookup(identifier.name);
       static const std::set<std::string> builtin_constructors = {
-          "array", "vec", "slice", "tuple", "ref", "ptr", "Self", "void", "any"};
+          "array", "vec", "slice", "tuple", "ref", "ptr", "Self", "void", "any", "anything"};
       if (candidate && candidate->kind == symbol_kind::type_symbol &&
           !candidate->defining_node && !candidate->type_name &&
           !is_primitive_name(identifier.name) &&
@@ -5050,6 +5351,11 @@ void type_checker::visit(ast_call_expr &e) {
   direct_call_callee_ = e.callee.get();
   if (e.callee && !bounded_receiver)
     e.callee->accept(*this);
+  if (e.callee && e.callee->inferred_type == std::optional<std::string>("anything")) {
+    const std::string message = "Extract anything as a checked function type before calling it";
+    add_error(e.line, message);
+    e.rejected_dynamic_operation = message;
+  }
   checking_class_call_ = saved_class_call;
   direct_call_callee_ = saved_direct_callee;
   const bool signature_eligible = signature_selected && diagnostics_.size() == signature_errors;
@@ -5070,7 +5376,38 @@ void type_checker::visit(ast_call_expr &e) {
   }};
   // Visit arguments first to resolve their types for inference
   std::vector<type_info> arg_types;
+  const auto source_signature = e.callee && e.callee->inferred_type
+      ? parse_callable_signature(*e.callee->inferred_type) : std::nullopt;
+  // Explicit specializations supply literal context before inference visits
+  // the elements: identity<array<anything>>([1, "two"]) has a known target.
+  std::map<std::string, std::string> source_substitutions;
+  if (!e.type_args.empty() && e.callee &&
+      e.callee->kind == ast_node_kind::identifier_expr_node) {
+    const auto &name = static_cast<const ast_identifier_expr &>(*e.callee).name;
+    if (const auto *function = symbols_.lookup(name))
+      for (std::size_t i = 0; i < function->generic_params.size() && i < e.type_args.size(); ++i)
+        source_substitutions[function->generic_params[i].name] = e.type_args[i];
+  }
+  std::size_t source_argument_index = 0;
   for (auto &arg : e.args) {
+    // Fresh array literals can be heterogeneous only when their destination
+    // explicitly supplies array<anything>. Existing arrays remain invariant.
+    if (arg && arg->kind == ast_node_kind::array_literal_expr_node && source_signature) {
+      std::size_t parameter = source_argument_index;
+      if (source_argument_index < e.argument_names.size() &&
+          !e.argument_names[source_argument_index].empty() &&
+          e.callee->checked_callable_parameters) {
+        const auto &names = e.callee->checked_callable_parameters->names;
+        const auto found = std::find(names.begin(), names.end(), e.argument_names[source_argument_index]);
+        parameter = static_cast<std::size_t>(found - names.begin());
+      }
+      if (parameter < source_signature->first.size()) {
+        const auto expected = resolve_type(instantiate_generic_type(
+            source_signature->first[parameter], source_substitutions)).name;
+        if (expected == "array<anything>" || expected == "array<bool>") arg->inferred_type = expected;
+      }
+    }
+    ++source_argument_index;
     if (arg) {
       if (arg->kind == ast_node_kind::ref_expr_node) {
         auto &reference = static_cast<ast_ref_expr &>(*arg);
@@ -5085,6 +5422,45 @@ void type_checker::visit(ast_call_expr &e) {
       arg_types.push_back(last_expr_type_.value_or(type_unknown));
     } else {
       arg_types.push_back(type_unknown);
+    }
+  }
+
+  if (e.callee && e.callee->kind == ast_node_kind::identifier_expr_node) {
+    const auto &identifier = static_cast<const ast_identifier_expr &>(*e.callee);
+    const auto type = resolve_type(identifier.name).name;
+    const auto *owner = symbols_.lookup_type(type);
+    if (owner && owner->defining_node && owner->defining_node->kind == ast_node_kind::struct_decl_node) {
+      const auto &declaration = static_cast<const ast_struct_decl &>(*owner->defining_node);
+      std::map<std::string, std::string> substitutions;
+      for (std::size_t i = 0; i < declaration.generic_params.size() && i < e.type_args.size(); ++i)
+        substitutions[declaration.generic_params[i].name] = e.type_args[i];
+      bool dynamic_fields = false;
+      for (const auto &field : declaration.fields)
+        dynamic_fields = dynamic_fields ||
+            type_requires_dynamic_initialization(instantiate_generic_type(field.type_name, substitutions));
+      if (dynamic_fields) {
+        std::string result = type;
+        if (!e.type_args.empty()) {
+          result += "<";
+          for (std::size_t i = 0; i < e.type_args.size(); ++i) {
+            if (i) result += ", ";
+            result += e.type_args[i];
+          }
+          result += ">";
+        }
+        if (declaration.fields.size() != e.args.size()) {
+          add_error(e.line, "Struct '" + type + "' requires one initialized value for each of its " +
+              std::to_string(declaration.fields.size()) + " fields");
+          e.rejected_dynamic_operation = "Incomplete struct construction containing anything";
+        } else for (std::size_t i = 0; i < e.args.size(); ++i) {
+          const auto expected = resolve_type(instantiate_generic_type(declaration.fields[i].type_name, substitutions));
+          if (!check_assignment_type(expected, arg_types[i], e.args[i].get()))
+            add_error(e.line, "Struct field '" + declaration.fields[i].name + "' requires '" + expected.name + "'");
+        }
+        last_expr_type_ = resolve_type(result);
+        e.inferred_type = last_expr_type_->name;
+        return;
+      }
     }
   }
 
@@ -6074,7 +6450,7 @@ void type_checker::visit(ast_call_expr &e) {
           const bool storage_conversion =
               (expected.name == "u8" || expected.name == "bool") &&
               integer_storage_value(actual.name);
-          const bool compatible = tuple_storage
+          const bool compatible = tuple_storage || expected.name == "anything" || expected.name == "bool"
               ? check_assignment_type(expected, actual, e.args.front().get())
               : are_types_compatible(expected, actual);
           if (!storage_conversion && !compatible) {
@@ -6330,8 +6706,10 @@ void type_checker::visit(ast_call_expr &e) {
   } else {
     last_expr_type_ = type_any;
   }
-  if (last_expr_type_)
+  if (last_expr_type_) {
     e.inferred_type = last_expr_type_->name;
+    check_dynamic_enum_payload(e, last_expr_type_->name);
+  }
 }
 
 void type_checker::visit(ast_binary_expr &e) {
@@ -6342,6 +6720,15 @@ void type_checker::visit(ast_binary_expr &e) {
   if (e.right)
     e.right->accept(*this);
   type_info right_type = last_expr_type_.value_or(type_unknown);
+
+  if (left_type.name == "anything" || right_type.name == "anything") {
+    const std::string message = "Extract anything with a checked cast or try_as before applying an operator";
+    add_error(e.line, message);
+    e.rejected_dynamic_operation = message;
+    last_expr_type_ = type_unknown;
+    e.inferred_type = last_expr_type_->name;
+    return;
+  }
 
   const bool left_is_pointer = left_type.name.rfind("ptr<", 0) == 0;
   const bool right_is_pointer = right_type.name.rfind("ptr<", 0) == 0;
@@ -6447,11 +6834,31 @@ void type_checker::visit(ast_binary_expr &e) {
 
 void type_checker::visit(ast_cast_expr &e) {
   e.checked_identity = false;
+  e.checked_any_cast = false;
   if (e.operand)
     e.operand->accept(*this);
 
   const type_info source = last_expr_type_.value_or(type_unknown);
   const type_info target = resolve_type(e.target_type);
+  if (source.name == "anything" || target.name == "anything") {
+    const auto concrete = target.name == "anything" ? source.name : target.name;
+    if (!valid_dynamic_type(concrete, true)) {
+      const std::string message = "Cannot convert '" + source.name + "' to '" + target.name +
+          "'; anything cannot erase ownership, borrowing, references, or an unresolved type";
+      add_error(e.line, message);
+      e.rejected_dynamic_operation = message;
+    } else {
+      e.checked_any_cast = true;
+      checked_any_casts_.push_back(&e);
+    }
+    last_expr_type_ = target;
+    e.inferred_type = target.name;
+    return;
+  }
+  if (target.name == "bool")
+    if (const auto literal = numeric_boolean_literal(e.operand.get());
+        literal && *literal != 0.0 && *literal != 1.0)
+      add_error(e.line, "Boolean numeric values must be exactly 0 or 1");
   const auto scalar = [](const std::string &name) {
     return name == "bool" || name == "i32" || name == "i64" ||
            name == "u8" || name == "f64";
@@ -6569,6 +6976,15 @@ bool type_checker::check_binding_reference_argument(ast_ref_expr &argument,
 void type_checker::visit(ast_unary_expr &e) {
   if (e.operand)
     e.operand->accept(*this);
+
+  if (last_expr_type_ && last_expr_type_->name == "anything") {
+    const std::string message = "Extract anything with a checked cast or try_as before applying an operator";
+    add_error(e.line, message);
+    e.rejected_dynamic_operation = message;
+    last_expr_type_ = type_unknown;
+    e.inferred_type = last_expr_type_->name;
+    return;
+  }
 
   if (e.op == token_kind::not_kw) {
     if (!last_expr_type_ || last_expr_type_->name != "bool")
@@ -6852,16 +7268,21 @@ void type_checker::visit(ast_assignment_expr &e) {
 
   if (target_type) {
     e.target->inferred_type = target_type->name;
-    if (e.value)
+    if (e.value && target_type->name != "anything")
       e.value->inferred_type = target_type->name;
   }
   last_expr_type_ = type_unknown;
   if (e.value)
     e.value->accept(*this);
   const type_info val_type = last_expr_type_.value_or(type_unknown);
+  if (target_type && target_type->name == "bool")
+    if (const auto literal = numeric_boolean_literal(e.value.get());
+        literal && *literal != 0.0 && *literal != 1.0)
+      add_error(e.line, "Boolean numeric values must be exactly 0 or 1");
   if (target_type &&
       !(storage_conversion && !type_contains_tuple(target_type->name) &&
-                              !type_contains_tuple(val_type.name)
+                              !type_contains_tuple(val_type.name) &&
+                              target_type->name != "anything" && val_type.name != "anything"
                            ? storage_types_compatible(*target_type, val_type)
                            : check_assignment_type(*target_type, val_type, e.value.get()))) {
     add_error(e.line, "Type mismatch in " + assignment_kind +
@@ -7499,7 +7920,8 @@ void type_checker::visit(ast_array_literal_expr &e) {
     const auto context_type = resolve_type(*e.inferred_type);
     const auto context = parse_generic_type_string(context_type.name);
     if (context.base_name == "array" && context.type_args.size() == 1 &&
-        type_contains_tuple(context.type_args.front())) {
+        (type_contains_tuple(context.type_args.front()) || context.type_args.front() == "anything" ||
+         context.type_args.front() == "bool")) {
       const auto expected = resolve_type(context.type_args.front());
       for (auto &element : e.elements) {
         element->accept(*this);
@@ -7619,6 +8041,10 @@ void type_checker::visit(ast_index_expr &e) {
 }
 
 void type_checker::visit(ast_struct_decl &p) {
+  if (p.name == "anything" || p.name == "boolean" || p.name == "flag") {
+    add_error(p.line, "Type name '" + p.name + "' is reserved for a built-in type");
+    return;
+  }
   if (p.name == "tuple") {
     add_error(p.line, "Type name 'tuple' is reserved for structural tuples");
     return;
@@ -7748,6 +8174,10 @@ void type_checker::visit(ast_struct_decl &p) {
 
 void type_checker::visit(ast_enum_decl &p) {
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
+  if (p.name == "anything" || p.name == "boolean" || p.name == "flag") {
+    add_error(p.line, "Type name '" + p.name + "' is reserved by the language");
+    return;
+  }
   // Register enum as a type; preserve visibility from AST
   std::string name = p.name;
   if (current_module_) {
@@ -8887,6 +9317,13 @@ void type_checker::visit(ast_allocate_expr &e) {
   type_info target_type = resolve_type(e.type_name);
   if (target_type.name == "unknown") {
     add_error(e.line, "Unknown type '" + e.type_name + "' in allocate");
+  }
+
+  if (type_requires_dynamic_initialization(target_type.name)) {
+    const std::string message = "Allocate cannot create uninitialized '" + target_type.name +
+        "' storage containing anything; construct initialized values in an array instead";
+    add_error(e.line, message);
+    e.rejected_dynamic_operation = message;
   }
 
   // Result type is ptr<T>

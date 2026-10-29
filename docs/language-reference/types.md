@@ -13,7 +13,8 @@ scalar contract; the release profile remains a separate qualification decision.
 | `i64` | Signed 64-bit integer |
 | `u8` | Unsigned byte |
 | `f64` | Double-precision floating point |
-| `bool` | `true` or `false`; not an arithmetic operand |
+| `bool` / `boolean` / `flag` | `true` / `yes` or `false` / `no`; not an arithmetic operand |
+| `anything` | Initialized dynamic value with a checked concrete type |
 | `text` / `String` | Text value; not an integer or pointer |
 | `void` | No result from a function |
 
@@ -60,7 +61,8 @@ undefined behavior; they are not recoverable Ny exceptions.
 
 `as` supports scalar targets `bool`, `i32`, `i64`, `u8`, and `f64`:
 
-- Numeric-to-boolean conversion tests nonzero, including NaN as true.
+- Numeric-to-boolean conversion accepts only `0` and `1` (including `0.0`,
+  `-0.0`, and `1.0`). Other numbers, NaN, and infinity are errors.
 - Integer narrowing keeps the low bits; `i32` interprets them as signed.
 - Floating-to-integer conversion first requires a finite value in
   `[-2^63, 2^63)`, truncates toward zero to `i64`, then narrows if requested.
@@ -80,12 +82,42 @@ The interpreted routes also support explicit text conversions:
 - Scalar to text retains decimal integer formatting, `0`/`1` for booleans,
   and six fractional digits for `f64`.
 
-Native ordinary `as` does not implement text/scalar conversions and rejects
-them explicitly. This is a route limitation, not an implicit alternative
-conversion. Exact, statically checked identity casts preserve values such as
+Native ordinary `as` supports the same text-to-boolean spellings and rejects
+unrecognized text. Other text/scalar casts remain unavailable on the native
+route and are rejected explicitly. Exact, statically checked identity casts
+preserve values such as
 `ptr<i32>` or a concrete struct; they do not reinterpret storage. Changing a
 pointer element type, converting integers to pointers, changing nominal types,
 or erasing/recovering types through `any` is rejected.
+
+## Dynamic values
+
+Use `anything` when a binding must hold different concrete types at runtime:
+
+```ny
+import nil.std.core.*
+
+let mut value: anything = 42
+let original = value
+value = "ready"
+let label: Option<text> = try_as<text>(value)
+let count: i32 = original as i32
+```
+
+The equivalent Matrix declaration is `variable value as anything is 42`.
+`anything-is of text with value` checks its type, and `value becomes text`
+extracts it. Extraction requires the exact canonical type; it does not convert
+between text and numbers. Use the conversion library after extraction when that
+is needed. A checked extraction reports both types on mismatch; `try-as` returns
+`Option.None` instead.
+
+An `anything` declaration requires an initial value. Use `Option<anything>` for
+an absent value. Ownership and borrowed-reference restrictions remain enforced;
+boxing a raw pointer does not make its lifetime automatic. Static type aliases
+and inferred bindings still have one compile-time type.
+
+See [NIL-0023](../design/NIL-0023-dynamic-values-and-booleans.md) for the storage
+contract and current backend limits.
 
 ## Arrays and pointers
 

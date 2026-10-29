@@ -82,6 +82,10 @@ if(BUILD_TESTING)
     target_link_libraries(ny_fault_vm_tests PRIVATE nilcompiler_core)
     target_compile_features(ny_fault_vm_tests PRIVATE cxx_std_17)
     add_test(NAME nil.fault-contract COMMAND $<TARGET_FILE:ny_fault_vm_tests>)
+    add_executable(nil_anything_vm_tests tests/anything_vm_tests.cpp)
+    target_link_libraries(nil_anything_vm_tests PRIVATE nilcompiler_core)
+    target_compile_features(nil_anything_vm_tests PRIVATE cxx_std_17)
+    add_test(NAME nil.dynamic-values COMMAND $<TARGET_FILE:nil_anything_vm_tests>)
 
     add_executable(ny_class_vm_tests tests/class_vm_tests.cpp)
     target_link_libraries(ny_class_vm_tests PRIVATE nilcompiler_core)
@@ -172,6 +176,21 @@ if(BUILD_TESTING)
     target_compile_features(ny_native_runtime_tests PRIVATE cxx_std_17)
 
     add_test(NAME native.runtime-abi COMMAND $<TARGET_FILE:ny_native_runtime_tests>)
+    foreach(nil_dynamic_linkage IN ITEMS static shared)
+        add_executable(nil_native_dynamic_${nil_dynamic_linkage}_tests tests/native_dynamic_tests.cpp)
+        if(nil_dynamic_linkage STREQUAL "shared")
+            target_link_libraries(nil_native_dynamic_${nil_dynamic_linkage}_tests PRIVATE nilruntime_shared)
+        else()
+            target_link_libraries(nil_native_dynamic_${nil_dynamic_linkage}_tests PRIVATE nilruntime)
+        endif()
+        target_include_directories(nil_native_dynamic_${nil_dynamic_linkage}_tests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+        target_compile_features(nil_native_dynamic_${nil_dynamic_linkage}_tests PRIVATE cxx_std_17)
+        add_test(NAME native.dynamic-values-${nil_dynamic_linkage}
+            COMMAND $<TARGET_FILE:nil_native_dynamic_${nil_dynamic_linkage}_tests>)
+        set_tests_properties(native.dynamic-values-${nil_dynamic_linkage} PROPERTIES
+            LABELS "native;dynamic;rc" TIMEOUT 30)
+    endforeach()
 
     # Exercise the distributed shared library as well as the static AOT runtime.
     add_executable(nil_shared_runtime_tests tests/native_runtime_tests.cpp)
@@ -583,6 +602,12 @@ if(BUILD_TESTING)
                     --debugger $<TARGET_FILE:nildebugger>
                     --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(nil.switch-contract PROPERTIES LABELS "matrix;ny;routes;typecheck;debugger" TIMEOUT 240)
+        add_test(NAME nil.anything-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/anything_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.anything-contract PROPERTIES LABELS "matrix;ny;routes;typecheck" TIMEOUT 240)
         # Matrix execution conformance: each page lowers to NIL and runs on the
         # interpreter with exact expected output. Acceptance is covered by the
         # lexer test; this checks that the lowering means what the surface says.
