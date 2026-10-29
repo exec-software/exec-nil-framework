@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-export type NyTool = "nilcompiler" | "nilinterpreter" | "nillsp" | "nildebugger" | "nilbuild" | "aperture";
+export type NyTool = "nilcompiler" | "nilinterpreter" | "nillsp" | "nildebugger" | "nilbuild" | "niltest" | "aperture";
 
 export interface ResolveToolOptions {
   readonly tool: NyTool;

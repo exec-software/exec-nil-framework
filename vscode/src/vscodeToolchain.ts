@@ -13,6 +13,7 @@ const settingForTool: Record<NyTool, string> = {
   nillsp: "server.path",
   nildebugger: "debugger.path",
   nilbuild: "projectTool.path",
+  niltest: "testTool.path",
   aperture: "aperture.path"
 };
 

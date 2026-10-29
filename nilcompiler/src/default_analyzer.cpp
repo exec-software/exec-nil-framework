@@ -31,7 +31,10 @@ class analyzer {
       const auto &function = static_cast<const ast_function_decl &>(decl);
       for (const auto &param : function.params)
         if (param.default_value) expression(param.default_value->get());
-      statement(function.body.get()); break;
+      statement(function.body.get());
+      for (const auto &test : function.test_blocks) if (test) declaration(*test);
+      for (const auto &test : function.example_blocks) if (test) declaration(*test);
+      break;
     }
     case ast_node_kind::class_decl_node:
       for (const auto &method : static_cast<const ast_class_decl &>(decl).methods)
@@ -157,6 +160,11 @@ class analyzer {
         else exited = statement(child.get());
       }
       return exited;
+    }
+    case ast_node_kind::inline_test_stmt_node: {
+      const auto &value = static_cast<const ast_inline_test_stmt &>(*node);
+      if (value.test) statement(value.test->body.get());
+      break;
     }
     case ast_node_kind::return_stmt_node:
       expression(static_cast<const ast_return_stmt &>(*node).value.get()); return true;

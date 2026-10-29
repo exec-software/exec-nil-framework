@@ -296,6 +296,11 @@ private:
       enter();
       for (auto &item : static_cast<ast_block_stmt &>(*statement).statements) stmt(item.get());
       leave(); break;
+    case ast_node_kind::inline_test_stmt_node: {
+      auto &value = static_cast<ast_inline_test_stmt &>(*statement);
+      if (value.test) scoped_stmt(value.test->body.get());
+      break;
+    }
     case ast_node_kind::decl_stmt_node:
       declaration(static_cast<ast_decl_stmt &>(*statement).declaration.get(), true); break;
     case ast_node_kind::expr_stmt_node:

@@ -53,13 +53,14 @@ class QualificationTests(unittest.TestCase):
     def test_positive_metadata(self):
         self.assertEqual(qualification.qualification_errors(fixture(), True, "a" * 40), [])
 
-    def test_aperture_hash_is_bound_and_legacy_tool_evidence_remains_valid(self):
+    def test_new_tool_hashes_are_bound_and_historical_evidence_remains_valid(self):
         value = fixture()
-        value["qualification"]["evidence"]["tools"]["aperture"] = "e" * 64
-        self.rejection(value, "tool hashes differ")
-        value["tools"] = [tool for tool in value["tools"] if tool["name"] != "aperture"]
-        del value["qualification"]["evidence"]["tools"]["aperture"]
-        self.assertEqual(qualification.qualification_errors(value, True, "a" * 40), [])
+        for name in ("niltest", "aperture"):
+            value["qualification"]["evidence"]["tools"][name] = "e" * 64
+            self.rejection(value, "tool hashes differ")
+            value["tools"] = [tool for tool in value["tools"] if tool["name"] != name]
+            del value["qualification"]["evidence"]["tools"][name]
+            self.assertEqual(qualification.qualification_errors(value, True, "a" * 40), [])
 
     def test_nil_sdk_requires_matching_shared_runtime_evidence(self):
         value = fixture()
@@ -407,7 +408,18 @@ class RuntimeLayoutTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "tool is not executable.*aperture"):
                 self.package.validate_stage_input(self.root)
 
-    def test_sealed_tool_inventory_accepts_legacy_or_aperture_and_rejects_mismatch(self):
+    def test_new_packages_require_executable_niltest(self):
+        tester = self.root / self.package.executable_name("niltest")
+        tester.unlink()
+        with self.assertRaisesRegex(SystemExit, "missing files=.*niltest"):
+            self.package.validate_stage_input(self.root)
+        if os.name != "nt":
+            tester.write_text("fixture")
+            tester.chmod(0o644)
+            with self.assertRaisesRegex(SystemExit, "tool is not executable.*niltest"):
+                self.package.validate_stage_input(self.root)
+
+    def test_sealed_tool_inventory_accepts_historical_tools_and_rejects_mismatch(self):
         spec = importlib.util.spec_from_file_location("nil_validator_inventory_test", ROOT / "scripts/validate-sdk.py")
         validator = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(validator)
@@ -432,6 +444,16 @@ class RuntimeLayoutTests(unittest.TestCase):
         errors = []
         validator.validate_tools(full_records[:-1], files, errors)
         self.assertTrue(any("canonical ordered tool set" in error for error in errors), errors)
+        tester = self.root / validator.executable_name("niltest")
+        tester.unlink()
+        errors = validator.root_layout_errors(self.root)
+        files, directories = validator.inventory_tree(self.root, errors)
+        validator.validate_exact_layout(self.root, files, directories, errors)
+        aperture_records = full_records[:-1]
+        validator.validate_tools(aperture_records, files, errors)
+        self.assertEqual(errors, [])
+        validator.validate_tools(full_records, files, errors)
+        self.assertTrue(any("missing file: niltest" in error for error in errors), errors)
         aperture = self.root / validator.executable_name("aperture")
         aperture.write_text("changed payload")
         errors = []
@@ -441,9 +463,9 @@ class RuntimeLayoutTests(unittest.TestCase):
         errors = validator.root_layout_errors(self.root)
         files, directories = validator.inventory_tree(self.root, errors)
         validator.validate_exact_layout(self.root, files, directories, errors)
-        validator.validate_tools(full_records[:-1], files, errors)
+        validator.validate_tools(full_records[:-2], files, errors)
         self.assertEqual(errors, [])
-        validator.validate_tools(full_records, files, errors)
+        validator.validate_tools(aperture_records, files, errors)
         self.assertTrue(any("missing file: aperture" in error for error in errors), errors)
         (self.root / "unexpected-tool").write_text("fixture")
         self.assertTrue(validator.root_layout_errors(self.root))

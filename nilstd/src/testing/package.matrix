@@ -1,0 +1,71 @@
+@pragma once
+book nil.std.testing
+
+read nil.std.core.option
+read nil.std.core.result
+
+!!! These checks remain runtime checks wherever they are called. Put calls in
+!!! a named test or an inline test block when they should exist only in niltest.
+public expect-true receives condition as boolean begin paragraph
+    expect condition
+end paragraph
+
+public expect-false receives condition as boolean begin paragraph
+    expect not condition
+end paragraph
+
+public expect-number receives actual as number, expected as number begin paragraph
+    expect actual equals expected
+end paragraph
+
+public expect-floating receives actual as floating, expected as floating begin paragraph
+    expect actual equals expected
+end paragraph
+
+public expect-text receives actual as text, expected as text begin paragraph
+    expect actual equals expected
+end paragraph
+
+public expect-boolean receives actual as boolean, expected as boolean begin paragraph
+    expect actual equals expected
+end paragraph
+
+!!! Checked value recovery works inside an ordinary assignment. The input is
+!!! evaluated once by the caller and no default value is invented on failure.
+public require-some of type T receives input as Option of T, message as text returns T begin paragraph
+    consider input
+        when Option.Some holding found then give found
+        when Option.None then evaluate panic with message
+    end consider
+end paragraph
+
+public require-ok of type T, type E receives input as Result of T, E, message as text returns T begin paragraph
+    consider input
+        when Result.Ok holding found then give found
+        when Result.Error holding failure then evaluate panic with message
+    end consider
+end paragraph
+
+note suite "nil.std.testing"
+checked_option_keeps_its_value begin test
+    value input as Option of number is Option.Some holding 42
+    value actual is require-some of number with input being input, message being "expected a present value"
+    expect actual equals 42
+end test
+
+note suite "nil.std.testing"
+primitive_expectations begin test
+    evaluate expect-true with yes
+    evaluate expect-false with no
+    evaluate expect-number with actual being 42, expected being 42
+    evaluate expect-floating with actual being 1.5, expected being 1.5
+    evaluate expect-text with actual being "NIL", expected being "NIL"
+    evaluate expect-boolean with actual being yes, expected being true
+end test
+
+note suite "nil.std.testing"
+checked_result_keeps_its_value begin test
+    value input as Result of number, text is Result.Ok holding 7
+    value actual is require-ok of number, text with input being input, message being "expected success"
+    expect actual equals 7
+end test

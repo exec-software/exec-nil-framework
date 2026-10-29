@@ -72,6 +72,7 @@ public:
   void visit(ast_trait_decl &p) override;
   void visit(ast_impl_decl &p) override;
   void visit(ast_test_block &p) override;
+  void visit(ast_inline_test_stmt &s) override;
 
   void visit(ast_block_stmt &s) override;
   void visit(ast_expr_stmt &s) override;
@@ -151,6 +152,10 @@ public:
   resolve_type_name_with_imports(const std::string &type_name) const;
 
 private:
+  bool inline_test_ = false;
+  std::vector<bool *> checked_tests_;
+  void check_test_annotations(const std::vector<ast_annotation> &annotations, int line);
+  void check_test_target(const ast_decl &declaration);
   symbol_table symbols_;
   std::vector<diagnostic> diagnostics_;
   bool collect_semantics_ = false;

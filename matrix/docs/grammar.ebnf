@@ -263,6 +263,8 @@ qualified_name  = dotted_name [ '::' identifier ] ;
 statement_terminator = ';' | '.' | end_of_line ;
 
 statement       = binding_decl
+                | 'expect' expression
+                | test_decl
                 | pattern_decl
                 | assignment
                 | 'say' expression

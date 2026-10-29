@@ -19,6 +19,7 @@
 #include "matrix_parser.hpp"
 #include "parser.hpp"
 #include "type_checker.hpp"
+#include "test_harness.hpp"
 #include "executable_context.hpp"
 #include "secure_file_io.hpp"
 #if defined(NY_HAS_LLVM)
@@ -386,12 +387,16 @@ static void print_usage(std::ostream &out = std::cerr) {
       << "              [--emit-reflection <analysis_snapshot.ny>]\n"
       << "              [--disable-rule <code>] [--warnings-as-errors]\n"
       << "  nilcompiler --list-analysis-rules  List built-in analyzer rules as JSON\n"
+      << "  nilcompiler --test-list [options] <input.ny|matrix> [...]\n"
+      << "              Discover checked tests as JSON without executing user code\n"
       << "  nilcompiler --to-nildata <input.json>\n"
       << "  nilcompiler --to-json <input.nildata>\n"
       << "  nilcompiler --import-nydata <legacy.nydata>\n"
       << "  nilcompiler --import-nydata-compiler <legacy.nydata>\n"
       << "\nOptions:\n"
       << "  -o, --out, --output <path>     Set the output path\n"
+      << "  --test                         Build an isolated-test entry point; run with one test ID\n"
+      << "  --test-list                    List checked tests; no output artifact or execution\n"
       << "  --bundle[=true]                Bundle NIL with nilinterpreter "
          "(default)\n"
       << "  --no-bundle, --bundle=false    Emit a standalone NIL file\n"
@@ -678,6 +683,8 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
   std::vector<std::string> sdk_include_paths; // User-specified SDK paths
   bool emit_binary_nil = false;
   bool emit_library = false;
+  bool compile_tests = false;
+  bool list_tests = false;
   bool use_native = false;
   bool use_jit = false;
   bool no_stdlib = false;
@@ -686,6 +693,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
   bool embed_context = false;
   bool source_debug = false;
   bool bundle_output = true;
+  bool explicit_bundle_option = false;
   bool has_program_argument_boundary = false;
   std::vector<std::string> program_args;
   std::vector<std::string> link_libraries;
@@ -734,6 +742,13 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
       emit_binary_nil = true;
     } else if (a == "--emit-library") {
       emit_library = true;
+    } else if (a == "--test" || a == "--test-list") {
+      if (compile_tests || list_tests) {
+        std::cerr << "Error: provide exactly one of --test or --test-list, once\n";
+        return 1;
+      }
+      compile_tests = a == "--test";
+      list_tests = a == "--test-list";
     } else if (a == "--native") {
       use_native = true;
     } else if (a == "--debug-info") {
@@ -747,8 +762,10 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     } else if (a == "--jit") {
       use_jit = true;
     } else if (a == "--no-bundle" || a == "--bundle=false") {
+      explicit_bundle_option = true;
       bundle_output = false; // Produce a separate .nil file
     } else if (a == "--bundle" || a == "--bundle=true") {
+      explicit_bundle_option = true;
       bundle_output = true; // Explicit enable (already default)
     } else if (a == "-l" || a == "--link") {
       if (i + 1 >= argc) {
@@ -780,7 +797,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
   }
 
   // ... (existing output path logic)
-  if (output_path.empty()) {
+  if (output_path.empty() && !list_tests) {
     if (!input_paths.empty()) {
       const std::string &last = input_paths.back();
       if (last.size() >= 4 && last.substr(last.size() - 4) == ".nil") {
@@ -790,7 +807,19 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     }
   }
 
-  if (input_paths.empty() || output_path.empty()) {
+  if ((compile_tests || list_tests) && (skip_typecheck || emit_library || analysis)) {
+    std::cerr << "Error: --test and --test-list require full type checking and cannot be combined with --no-typecheck, --emit-library, or --analyze\n";
+    return 1;
+  }
+  if (list_tests && (!output_path.empty() || use_native || use_jit || emit_binary_nil ||
+                     unmanaged || embed_context || source_debug || explicit_bundle_option ||
+                     !link_libraries.empty() || has_program_argument_boundary)) {
+    std::cerr << "Error: --test-list is discovery only; output, backend, execution, linking, and artifact options are not accepted\n";
+    return 1;
+  }
+  if (list_tests) g_verbosity_level = 0; // stdout is exclusively the manifest.
+
+  if (input_paths.empty() || (output_path.empty() && !list_tests)) {
     std::cerr
         << "Error: Must provide at least one input file and an output file\n";
     print_usage();
@@ -1425,6 +1454,18 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     }
   }
 
+  // Analysis retains test declarations for editor checking. Production removes
+  // them before semantic checking so no test-only symbols or bodies can leak
+  // into an ordinary artifact; explicit discovery/build checks the full suite.
+  if (!analysis) {
+    try {
+      ny::prepare_test_program(*combined, compile_tests || list_tests);
+    } catch (const std::exception &error) {
+      std::cerr << "Test declaration error: " << error.what() << '\n';
+      return 1;
+    }
+  }
+
   // Debug: Print declaration statistics
   if (g_verbosity_level >= 3) {
     int n_modules = 0, n_functions = 0, n_structs = 0, n_imports = 0,
@@ -1665,6 +1706,36 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
               });
   }
 
+  ny::codegen_options opts;
+  opts.include_source_debug = source_debug;
+  if (compile_tests || list_tests) opts.mode = ny::build_mode::test_mode;
+  ny::codegen generator(opts);
+  std::vector<ny::codegen_diagnostic> codegen_diags;
+  std::unique_ptr<ny::nil_module> test_nil_module;
+  if (compile_tests || list_tests) {
+    try {
+      test_nil_module = generator.generate_module(*combined, &codegen_diags);
+      if (!test_nil_module) {
+        for (const auto &diagnostic : codegen_diags) {
+          std::cerr << "Test code generation error at line " << diagnostic.line << ": "
+                    << diagnostic.message;
+          if (!diagnostic.hint.empty()) std::cerr << " (" << diagnostic.hint << ')';
+          std::cerr << '\n';
+        }
+        if (codegen_diags.empty()) std::cerr << "Test code generation failed\n";
+        return 1;
+      }
+      if (list_tests) {
+        std::cout << ny::test_manifest_json(*test_nil_module);
+        return std::cout ? 0 : 1;
+      }
+      ny::add_test_harness(*test_nil_module);
+    } catch (const std::exception &error) {
+      std::cerr << "Test harness error: " << error.what() << '\n';
+      return 1;
+    }
+  }
+
   // Native AOT and bundled executables are assembled in a freshly reserved
   // directory beside their final destination. Keeping every intermediate
   // behind that private directory removes the predictable sibling-file race
@@ -1675,6 +1746,8 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     workspace_purpose = "ny-native";
   else if (bundle_output && !use_native)
     workspace_purpose = "ny-bundle";
+  else if (compile_tests && !use_native)
+    workspace_purpose = "nil-test";
   if (workspace_purpose) {
     std::error_code workspace_error;
     private_output_workspace = create_private_staging_directory(
@@ -1694,7 +1767,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
   // workspace; an explicit standalone NIL output remains the sole direct
   // file-emission route.
   std::string nil_out_path = output_path;
-  if (bundle_output && !use_native) {
+  if ((bundle_output || compile_tests) && !use_native) {
     if (!private_output_workspace) {
       std::cerr << "Error: private bundle workspace was not created\n";
       return 1;
@@ -1703,15 +1776,30 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
   }
   std::filesystem::path reported_output_path = nil_out_path;
 
-  ny::codegen_options opts;
-  opts.include_source_debug = source_debug;
-  ny::codegen generator(opts);
-  std::vector<ny::codegen_diagnostic> codegen_diags;
   std::unique_ptr<ny::nil_module> native_nil_module;
   bool ok;
   if (use_native) {
-    native_nil_module = generator.generate_module(*combined, &codegen_diags);
+    native_nil_module = compile_tests ? std::move(test_nil_module)
+                                     : generator.generate_module(*combined, &codegen_diags);
     ok = static_cast<bool>(native_nil_module);
+  } else if (compile_tests) {
+    ok = false;
+    try {
+      std::ofstream output(nil_out_path, std::ios::binary);
+      if (output) {
+        if (emit_binary_nil) {
+          ny::nil_binary_writer writer(output, opts);
+          writer.emit_binary_module(*test_nil_module);
+        } else {
+          ny::nil_writer writer(output, opts);
+          writer.emit_text_module(*test_nil_module);
+        }
+        output.flush();
+        ok = static_cast<bool>(output);
+      }
+    } catch (const std::exception &error) {
+      std::cerr << "Test artifact error: " << error.what() << '\n';
+    }
   } else if (emit_library) {
     auto library_module = generator.generate_module(*combined, &codegen_diags);
     ok = static_cast<bool>(library_module);
@@ -1751,6 +1839,19 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
   if (!ok) {
     std::cerr << "Code generation failed\n";
     return 1;
+  }
+
+  if (compile_tests && !use_native && !bundle_output) {
+    std::error_code output_error;
+    if (!ensure_staged_regular_file_permissions(nil_out_path,
+            std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+            output_error) ||
+        !replace_output_file(nil_out_path, output_path, output_error)) {
+      std::cerr << "Error: failed to install complete test artifact: "
+                << output_error.message() << '\n';
+      return 1;
+    }
+    reported_output_path = output_path;
   }
 
   // Bundle into standalone executable if requested (default: true)

@@ -1091,7 +1091,7 @@ tests.
 
 ### F35 — A Matrix generic parameter can consume the next parameter
 
-**Status:** Confirmed open parser bug.
+**Status:** Fixed during the co-located testing implementation (2026-10-29).
 
 A signature containing `actual as Option of text, label as text` fails at
 the second parameter's `as`, reporting `expected 'begin paragraph' to open
@@ -1102,9 +1102,12 @@ minimal sources and exact diagnostics are in
 `baseline-results.json`.
 
 The checked-text fixtures put `Option of text` last as a temporary workaround.
-**Next step:** Distinguish commas within generic arguments from commas between
-function parameters, then test nested generic types and named arguments without
-requiring parameter reordering.
+**Resolution:** A comma followed by a named parameter declaration now ends
+the preceding generic application, including mutable/reference aliases and
+variadic parameter prefixes. Parser regressions cover Option and Result
+parameters, and the Matrix testing library uses the original natural order
+through both execution routes. Deeper ambiguous nested type applications still
+need a separately specified grouping syntax.
 
 ### F36 — Conversion intrinsics do not preserve a custom Result owner
 
@@ -2359,3 +2362,53 @@ origin and expansion chain while rename/fix operations continue to require exact
 source ranges. Simply retaining transformed offsets would make the message look
 more precise while risking incorrect editor edits, so the existing suppression
 remains until that mapping is available.
+
+
+## Co-located tests — 2026-10-29
+
+### F82 — Test syntax needs an executable shared contract
+
+**Observation:** Ny retained test declarations and the compiler exposed a test
+build mode, but ordinary compilation never selected it. Runtime registration
+referenced an unavailable testing library, assertions lacked complete lowering,
+and Matrix had no inline assertion statement. A source block that merely parses
+cannot provide test coverage.
+
+**Implementation:** Both frontends now share checked named cases, annotated test
+functions, suites, lexical inline test regions and production exclusion.
+`niltest` uses compiler discovery and isolated processes on the VM and native
+routes. `nilbuild test` and VS Code Test Explorer consume the same contract.
+The Matrix-authored `nil.std.testing` includes its own co-located cases and
+checked Option/Result extraction. See [NIL-0024](../../docs/design/NIL-0024-colocated-testing.md).
+
+**Bugs found and fixed:** AST annotation names were being compared as serialized
+annotations, dropping suite labels and test-only behavior. Standalone wrappers
+needed retained ownership proof before lowering owned buffers. Generic functions
+silently lost their attached cases when code generation skipped the generic
+body. The native harness needed the supported annotated console ABI for stderr.
+Direct imports of Option and Result omitted the traits their implementations
+require; those modules now declare that dependency. The new Matrix helpers also
+reproduced and fixed F35's generic-parameter comma bug.
+
+**Remaining work:** Property generators, aggregate deep equality, tolerance-based
+floating checks, coverage and test debugging profiles are not implemented.
+Inline checks need a case to call their enclosing function with meaningful
+inputs. Source tests imported from dependencies participate in discovery and
+can be selected by suite. Native source function values still preclude a
+callback-based test registry. F81's preprocessor source-map limitation applies
+to tests as well.
+
+### F83 — The existing UI experiments have no complete runtime provider
+
+**Observation:** `packages/ny.ui.mimic` contains declarations and simulated window
+identities for an absent `ml_mimic` provider. `nilaix/native` is outside the main
+build and references missing interfaces. Neither is a sound implementation base
+for a library advertised as usable across both execution routes.
+
+**Direction:** Rebuild the public API in Matrix under `nil.std.ui`, with a small
+shared window/event provider, explicit checked resource lifetimes, and pure
+layout/widget behavior tested through niltest. Start on Linux with portable
+library boundaries. Polling typed events avoids assuming the unimplemented
+native function-value callback ABI. Real display tests must complement headless
+logic tests; accessibility, Unicode text shaping, clipboard, and platform
+backends require explicit implementation and evidence before support claims.

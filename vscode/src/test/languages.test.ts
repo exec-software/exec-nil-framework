@@ -6,6 +6,7 @@ import {
   analysisSourcePath,
   compilerProblemMatchers,
   debugProgramKind,
+  isDirtySavedSource,
   languageDocumentSelector,
   savedSourcePath,
   sourceLanguage,
@@ -44,6 +45,16 @@ test("commands require saved source in the frontend selected by its extension", 
   assert.equal(savedSourcePath(document("/work/main.mat", "matrix", "untitled")), undefined);
   assert.equal(savedSourcePath(document("/work/main.mat", "matrix", "vscode-remote")), undefined);
   assert.equal(savedSourcePath(undefined), undefined);
+});
+
+test("saved-source commands ignore dirty scratch buffers but reject unsaved disk edits", () => {
+  for (const [file, language] of [["/work/main.matrix", "matrix"], ["/work/main.mat", "matrix"], ["/work/main.ny", "ny"]] as const) {
+    assert.equal(isDirtySavedSource({ ...document(file, language), isDirty: true }), true);
+    assert.equal(isDirtySavedSource({ ...document(file, language), isDirty: false }), false);
+    assert.equal(isDirtySavedSource({ ...document(file, language, "untitled"), isDirty: true }), false);
+  }
+  assert.equal(isDirtySavedSource({ ...document("Untitled-1", "matrix", "untitled"), isDirty: true }), false);
+  assert.equal(isDirtySavedSource({ ...document("/work/notes.md", "markdown"), isDirty: true }), false);
 });
 
 test("analysis preserves named untitled source identities without treating scratch buffers as imports", () => {

@@ -54,6 +54,10 @@ struct ast_annotation {
   // boundaries and decoded text independently of that legacy spelling.
   std::optional<std::vector<annotation_argument>> typed_arguments;
 
+  bool has_name(const std::string &identity) const {
+    return name == identity || name == "@" + identity;
+  }
+
   ast_annotation() = default;
   explicit ast_annotation(std::string n,
                           std::optional<std::string> a = std::nullopt,
@@ -196,6 +200,7 @@ enum class ast_node_kind {
 
   // Ny testing nodes
   test_block_node,
+  inline_test_stmt_node,
 };
 
 // Base AST node
@@ -301,6 +306,7 @@ struct ast_node::ast_visitor {
 
   // Ny testing
   virtual void visit(struct ast_test_block &s) {}
+  virtual void visit(struct ast_inline_test_stmt &s) {}
 
   // Expressions
   virtual void visit(struct ast_call_expr &e) {}
@@ -475,6 +481,8 @@ struct ast_function_decl : public ast_decl {
   std::vector<std::shared_ptr<ast_test_block>> test_blocks;
   std::vector<std::shared_ptr<ast_test_block>> example_blocks;
   std::optional<std::string> ai_context;
+
+  bool checked_test_function = false;
 
   // Modifiers
   bool is_virtual = false;
@@ -915,6 +923,7 @@ struct ast_attempt_stmt : public ast_stmt {
 enum class test_type { unit, example, property, integration };
 
 struct ast_test_block : public ast_decl {
+  bool checked_test = false;
   std::string description;
   std::shared_ptr<ast_block_stmt> body;
   test_type type;
@@ -932,6 +941,15 @@ struct ast_test_block : public ast_decl {
 
   void accept(ast_node::ast_visitor &v) override { v.visit(*this); }
 };
+// Inline test regions retain the enclosing frame, but have their own scope.
+struct ast_inline_test_stmt : public ast_stmt {
+  std::shared_ptr<ast_test_block> test;
+  bool checked_test = false;
+  explicit ast_inline_test_stmt(std::shared_ptr<ast_test_block> value, int line = 0)
+      : ast_stmt(ast_node_kind::inline_test_stmt_node, line), test(std::move(value)) {}
+  void accept(ast_node::ast_visitor &v) override { v.visit(*this); }
+};
+
 // Syntax: raise FaultExpression
 struct ast_raise_stmt : public ast_stmt {
   ast_expr_ptr fault_expr; // expression evaluating to fault
@@ -1043,6 +1061,7 @@ struct ast_cast_expr : public ast_expr {
 struct ast_assert_expr : public ast_expr {
   std::string method; // Assertion method: "true", "equal", "contains", etc.
   std::vector<ast_expr_ptr> args; // Arguments to the assertion
+  bool checked_assertion = false;
   std::string inferred_type;      // Type inference result (usually void)
 
   ast_assert_expr(std::string m, std::vector<ast_expr_ptr> a, int ln = 0)
@@ -1944,6 +1963,10 @@ struct ast_char_literal : public ast_expr {
 
   void accept(ast_node::ast_visitor &v) override { v.visit(*this); }
 };
+
+// Remove test-only declarations and inline regions before a production check.
+// Analysis retains the original tree; test compilation passes include_tests=true.
+void prepare_test_program(ast_program &program, bool include_tests);
 
 } // namespace ny
 

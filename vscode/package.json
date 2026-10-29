@@ -63,7 +63,8 @@
     "workspaceContains:**/nil.project.yaml",
     "workspaceContains:**/nil.project.yml",
     "onCommand:ny.profileMemory",
-    "onCommand:ny.profileNativeMemory"
+    "onCommand:ny.profileNativeMemory",
+    "onCommand:ny.discoverTests"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -320,6 +321,10 @@
       {
         "command": "ny.profileNativeMemory",
         "title": "NIL Framework: Profile Current File Memory (Native)"
+      },
+      {
+        "command": "ny.discoverTests",
+        "title": "NIL Framework: Discover Tests in Current File or Project"
       }
     ],
     "configuration": {
@@ -440,6 +445,20 @@
           "default": "",
           "scope": "machine-overridable",
           "description": "Absolute path or command name for Aperture. Overrides SDK and PATH discovery."
+        },
+        "ny.testTool.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Absolute path or command name for niltest. Overrides SDK and PATH discovery."
+        },
+        "ny.testing.timeoutSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "maximum": 300,
+          "scope": "resource",
+          "description": "Maximum execution time per test in the NIL Test Explorer run profiles."
         }
       }
     },

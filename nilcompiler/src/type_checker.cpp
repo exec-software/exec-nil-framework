@@ -598,6 +598,7 @@ bool type_checker::check(ast_program &program) {
     // --no-typecheck is diagnostic continuation, not permission to fabricate
     // a fault ABI or bypass opaque-token and cleanup proofs.
     for (auto *proof : checked_switches_) *proof = false;
+    for (auto *proof : checked_tests_) *proof = false;
     for (auto *attempt : checked_attempts_) attempt->fault_checked = false;
     for (auto *handler : checked_fault_handlers_) handler->fault_checked = false;
     for (auto *raise : checked_raises_) raise->fault_checked = false;
@@ -2578,95 +2579,83 @@ void type_checker::bind_pattern_to_type(ast_pattern &pattern,
   }
 }
 
+void type_checker::check_test_target(const ast_decl &declaration) {
+  for (const auto &annotation : declaration.annotations) {
+    if (annotation.has_name("test") &&
+        declaration.kind != ast_node_kind::function_decl_node &&
+        declaration.kind != ast_node_kind::test_block_node)
+      add_error(annotation.line ? annotation.line : declaration.line,
+          "@test can only annotate functions or test blocks");
+    if (annotation.has_name("if_test_mode") &&
+        declaration.kind != ast_node_kind::function_decl_node)
+      add_error(annotation.line ? annotation.line : declaration.line,
+          "@if_test_mode can only annotate functions");
+  }
+}
+
+void type_checker::check_test_annotations(const std::vector<ast_annotation> &annotations, int line) {
+  bool suite = false;
+  for (const auto &annotation : annotations) {
+    if (annotation.has_name("generate") ||
+        annotation.has_name("property"))
+      add_error(annotation.line ? annotation.line : line,
+          "Property generators are not supported by niltest; write deterministic test cases");
+    if (!annotation.has_name("suite")) continue;
+    if (suite) add_error(line, "A test may specify only one suite");
+    suite = true;
+    const auto parsed = parse_annotation_arguments(annotation.args.value_or(""));
+    const auto &arguments = annotation.typed_arguments ? *annotation.typed_arguments : parsed.arguments;
+    if ((!annotation.typed_arguments && !parsed.error.empty()) || arguments.size() != 1 ||
+        arguments.front().name || arguments.front().kind != "text" || arguments.front().value.empty())
+      add_error(line, "@suite requires one nonempty text name, for example @suite(\"arithmetic\")");
+  }
+}
+
 void type_checker::visit(ast_test_block &p) {
-  struct control_scope {
-    std::vector<control_context> &contexts;
-    std::vector<control_context> saved;
-    bool &in_loop;
-    bool saved_loop;
-    ~control_scope() { contexts = std::move(saved); in_loop = saved_loop; }
-  } controls{control_contexts_, std::move(control_contexts_), in_loop_, in_loop_};
-  control_contexts_.clear();
-  in_loop_ = false;
-
+  p.checked_test = false;
+  checked_tests_.push_back(&p.checked_test);
+  const auto test_errors_before = diagnostics_.size();
+  auto saved_controls = std::move(control_contexts_);
+  const bool saved_loop = in_loop_, saved_inline = inline_test_;
+  control_contexts_.clear(); in_loop_ = false; inline_test_ = false;
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
-  // Enter a new scope for the test body
+  check_test_annotations(p.annotations, p.line);
+  if (p.type == test_type::property || !p.generators.empty())
+    add_error(p.line, "Property generators are not supported by niltest; write deterministic test cases");
   symbols_.enter_scope();
-
-  // Check Ny @generate annotations used by property tests.
-  if (p.type == test_type::property) {
-    for (const auto &ann : p.annotations) {
-      if ((ann.name == "generate" || ann.name == "@generate") &&
-          ann.args.has_value()) {
-        std::string gen_str = *ann.args;
-        // Remove quotes
-        if (gen_str.size() >= 2 && gen_str.front() == '"' &&
-            gen_str.back() == '"') {
-          gen_str = gen_str.substr(1, gen_str.size() - 2);
-        }
-
-        // Parse "var: type [in range]" list
-        size_t start = 0;
-        while (start < gen_str.length()) {
-          size_t end = gen_str.find(',', start);
-          if (end == std::string::npos)
-            end = gen_str.length();
-
-          std::string segment = gen_str.substr(start, end - start);
-
-          // Find colon
-          size_t colon = segment.find(':');
-          if (colon != std::string::npos) {
-            std::string name = segment.substr(0, colon);
-            std::string rest = segment.substr(colon + 1);
-
-            // Trim Name
-            name.erase(0, name.find_first_not_of(" \t"));
-            name.erase(name.find_last_not_of(" \t") + 1);
-
-            // Identify type - check for " in "
-            std::string type_s = rest;
-            size_t in_pos = rest.find(" in ");
-            if (in_pos != std::string::npos) {
-              type_s = rest.substr(0, in_pos);
-            }
-
-            // Trim Type
-            type_s.erase(0, type_s.find_first_not_of(" \t"));
-            type_s.erase(type_s.find_last_not_of(" \t") + 1);
-
-            // Resolve type -> assuming simple type for now
-            // We need to resolve "i32" etc.
-            auto resolved_type = resolve_type(type_s);
-
-            // Insert
-            symbols_.insert_symbol_with_context(
-                name, symbol_kind::variable_symbol, nullptr, resolved_type.name,
-                false, visibility_kind::visibility_private, current_module_);
-          }
-
-          start = end + 1;
-        }
-      }
-    }
-  }
-
-  // Test blocks are like void functions - they don't return anything
-  // (though assertions might throw exceptions/panic)
-  std::optional<type_info> prev_return_type = current_function_return_type_;
+  const auto saved_return = current_function_return_type_;
   current_function_return_type_ = type_void;
-
-  // Visit the body
-  if (p.body) {
-    p.body->accept(*this);
-  }
-
-  // Restore previous state
-  current_function_return_type_ = prev_return_type;
+  if (p.body) p.body->accept(*this);
+  current_function_return_type_ = saved_return;
   symbols_.leave_scope();
+  control_contexts_ = std::move(saved_controls); in_loop_ = saved_loop; inline_test_ = saved_inline;
+  p.checked_test = diagnostics_.size() == test_errors_before;
+}
+
+void type_checker::visit(ast_inline_test_stmt &s) {
+  s.checked_test = false;
+  checked_tests_.push_back(&s.checked_test);
+  const auto before = diagnostics_.size();
+  auto saved_controls = std::move(control_contexts_);
+  const bool saved_loop = in_loop_, saved_inline = inline_test_;
+  control_contexts_.clear(); in_loop_ = false; inline_test_ = true;
+  symbols_.enter_scope();
+  if (s.test) {
+    check_test_annotations(s.test->annotations, s.line);
+    if (s.test->type == test_type::property || !s.test->generators.empty())
+      add_error(s.line, "Property generators are not supported by niltest; write deterministic test cases");
+    if (s.test->body) s.test->body->accept(*this);
+  }
+  symbols_.leave_scope();
+  control_contexts_ = std::move(saved_controls); in_loop_ = saved_loop; inline_test_ = saved_inline;
+  s.checked_test = diagnostics_.size() == before;
 }
 
 void type_checker::visit(ast_program &p) {
+  for (const auto &declaration : p.declarations) if (declaration) {
+    diagnostic_source_scope source_scope(diagnostic_source_file_, declaration->source_file);
+    check_test_target(*declaration);
+  }
   // Keep declared module identities independently of symbol registration
   // order. Never select a global merely because its suffix matches a name.
   std::string global_module;
@@ -3018,6 +3007,8 @@ void type_checker::visit(ast_program &p) {
 }
 
 void type_checker::visit(ast_function_decl &p) {
+  struct inline_scope { bool &value; bool saved; ~inline_scope() { value = saved; } } inline_guard{inline_test_, inline_test_};
+  inline_test_ = false;
   struct control_scope {
     std::vector<control_context> &contexts;
     std::vector<control_context> saved;
@@ -3039,12 +3030,28 @@ void type_checker::visit(ast_function_decl &p) {
   if (p.name == "owned" || p.name == "owned_move" || p.name == "owned_borrow" ||
       p.name == "owned_borrow_mut" || p.name == "parallel_map" || p.name == "anything_is")
     add_error(p.line, "Function name '" + p.name + "' is reserved for a checked language operation");
+  if (current_class_name_ && (!p.test_blocks.empty() || !p.example_blocks.empty()))
+    add_error(p.line, "Attached tests on methods are not supported; use a module-level test and construct the receiver explicitly");
+  p.checked_test_function = false;
+  const auto test_errors_before = diagnostics_.size();
+  check_test_annotations(p.annotations, p.line);
+  const bool test_function = std::any_of(p.annotations.begin(), p.annotations.end(),
+      [](const auto &a) { return a.has_name("test"); });
+  if (test_function && (!p.params.empty() || !p.generic_params.empty() ||
+      resolve_type(p.return_type.value_or("void")).name != "void" || !p.body || current_class_name_))
+    add_error(p.line, "@test requires a module-level, zero-argument, non-generic function returning void with a body");
   std::size_t native_dispatch_annotations = 0;
   for (const auto &annotation : p.annotations) {
     if (annotation.name == "intrinsic" || annotation.name == "@intrinsic" ||
         annotation.name == "interop" || annotation.name == "@interop") {
       ++native_dispatch_annotations;
     }
+  }
+  if (test_function && native_dispatch_annotations)
+    add_error(p.line, "@test functions cannot use intrinsic or interop dispatch");
+  if (test_function) {
+    p.checked_test_function = diagnostics_.size() == test_errors_before;
+    checked_tests_.push_back(&p.checked_test_function);
   }
   if (native_dispatch_annotations > 1) {
     add_error(p.line, "Function '" + p.name +
@@ -3897,6 +3904,7 @@ void type_checker::visit(ast_println_stmt &s) {
 }
 
 void type_checker::visit(ast_decl_stmt &s) {
+  if (s.declaration) check_test_target(*s.declaration);
   if (s.declaration) {
     s.declaration->accept(*this);
     // Prove lexical provenance from a declaration statement in a body, not
@@ -3932,6 +3940,7 @@ void type_checker::visit(ast_asm_stmt &s) {
 }
 
 void type_checker::visit(ast_return_stmt &s) {
+  if (inline_test_) add_error(s.line, "return cannot leave an inline test block; use an assertion or a nested function");
   type_info ret_type = type_void;
   if (s.value) {
     if (s.value->kind == ast_node_kind::array_literal_expr_node &&
@@ -9520,229 +9529,49 @@ void type_checker::visit(ast_raise_stmt &s) {
 }
 
 void type_checker::visit(ast_assert_expr &e) {
-  // Valid assertion methods (from intrinsic specification)
-  static const std::set<std::string> valid_methods = {
-      // Boolean
-      "true", "false",
-      // Equality
-      "equal", "not_equal",
-      // Option
-      "something", "nothing",
-      // Collection
-      "contains", "not_contains", "empty", "not_empty", "length",
-      // Comparison
-      "greater_than", "greater_or_equal", "less_than", "less_or_equal",
-      // Range
-      "in_range", "not_in_range",
-      // String
-      "starts_with", "ends_with", "matches",
-      // Type
-      "is_type", "implements",
-      // Fault
-      "raises", "not_raises"};
-
-  // Validate method name
-  if (valid_methods.find(e.method) == valid_methods.end()) {
-    add_error(e.line, "Unknown assertion method: assert." + e.method);
-    last_expr_type_ = type_void;
-    return;
+  const auto before = diagnostics_.size();
+  e.checked_assertion = false;
+  checked_tests_.push_back(&e.checked_assertion);
+  if (e.method == "yes") e.method = "true";
+  if (e.method == "no") e.method = "false";
+  const bool boolean = e.method == "true" || e.method == "false";
+  const bool equality = e.method == "equal" || e.method == "not_equal";
+  const bool ordered = e.method == "greater_than" || e.method == "greater_or_equal" ||
+      e.method == "less_than" || e.method == "less_or_equal";
+  const std::size_t arity = boolean ? 1 : 2;
+  if (!boolean && !equality && !ordered)
+    add_error(e.line, "Unsupported assertion method assert." + e.method +
+        "; use true, false, equal, not_equal, or an ordered scalar comparison");
+  if (e.args.size() < arity || e.args.size() > arity + 1)
+    add_error(e.line, "assert." + e.method + " requires " + std::to_string(arity) +
+        " argument(s) and at most one optional text message");
+  std::vector<std::string> types;
+  for (auto &argument : e.args) {
+    if (argument) argument->accept(*this);
+    const auto type = last_expr_type_.value_or(type_unknown).name;
+    types.push_back(type);
+    if (argument) argument->inferred_type = type;
   }
-
-  // Type-check arguments based on method
-  if (e.method == "true" || e.method == "false") {
-    // Boolean assertions: assert.true(condition: bool, message?: text)
-    if (e.args.empty()) {
-      add_error(e.line, "assert." + e.method + " requires a boolean condition");
-      last_expr_type_ = type_void;
-      return;
-    }
-    e.args[0]->accept(*this);
-    if (last_expr_type_ && last_expr_type_->name != "bool" &&
-        last_expr_type_->name != "any") {
-      add_error(e.line, "assert." + e.method +
-                            " condition must be boolean, got '" +
-                            last_expr_type_->name + "'");
-    }
-  } else if (e.method == "equal" || e.method == "not_equal") {
-    // Equality assertions: assert.equal(actual: T, expected: T, message?: text)
-    if (e.args.size() < 2) {
-      add_error(e.line, "assert." + e.method + " requires two arguments");
-      last_expr_type_ = type_void;
-      return;
-    }
-    e.args[0]->accept(*this);
-    type_info arg1_type = last_expr_type_.value_or(type_unknown);
-    e.args[1]->accept(*this);
-    type_info arg2_type = last_expr_type_.value_or(type_unknown);
-
-    if (!are_types_compatible(arg1_type, arg2_type)) {
-      add_error(e.line,
-                "assert." + e.method + " arguments must have compatible types");
-    }
-  } else if (e.method == "something" || e.method == "nothing") {
-    // Option assertions: assert.something(value: option<T>, message?: text)
-    if (e.args.empty()) {
-      add_error(e.line, "assert." + e.method + " requires an option value");
-      last_expr_type_ = type_void;
-      return;
-    }
-    e.args[0]->accept(*this);
-    // TODO: Verify first arg is option<T> type
-  } else if (e.method == "contains" || e.method == "not_contains") {
-    // Collection assertions: assert.contains(collection: vec<T>, item: T,
-    // message?: text)
-    if (e.args.size() < 2) {
-      add_error(e.line, "assert." + e.method +
-                            " requires collection and item arguments");
-      last_expr_type_ = type_void;
-      return;
-    }
-    e.args[0]->accept(*this);
-    // TODO: Verify first arg is vec<T> or similar collection
-    e.args[1]->accept(*this);
-    // TODO: Verify second arg type matches collection element type
-  } else if (e.method == "empty" || e.method == "not_empty") {
-    // Collection assertions: assert.empty(collection: vec<T>, message?: text)
-    if (e.args.empty()) {
-      add_error(e.line,
-                "assert." + e.method + " requires a collection argument");
-      last_expr_type_ = type_void;
-      return;
-    }
-    e.args[0]->accept(*this);
-    // TODO: Verify first arg is vec<T> or similar collection
-  } else if (e.method == "length") {
-    // Length assertion: assert.length(collection: vec<T>, expected: i32,
-    // message?: text)
-    if (e.args.size() < 2) {
-      add_error(
-          e.line,
-          "assert.length requires collection and expected length arguments");
-      last_expr_type_ = type_void;
-      return;
-    }
-    e.args[0]->accept(*this);
-    // TODO: Verify first arg is vec<T> or similar collection
-    e.args[1]->accept(*this);
-    if (last_expr_type_ && last_expr_type_->name != "i32" &&
-        last_expr_type_->name != "any") {
-      add_error(e.line, "assert.length expected length must be i32, got '" +
-                            last_expr_type_->name + "'");
-    }
-  } else if (e.method == "greater_than" || e.method == "greater_or_equal" ||
-             e.method == "less_than" || e.method == "less_or_equal") {
-    // Comparison assertions: assert.greater_than(actual: T, threshold: T,
-    // message?: text)
-    if (e.args.size() < 2) {
-      add_error(e.line,
-                "assert." + e.method + " requires two comparable arguments");
-      last_expr_type_ = type_void;
-      return;
-    }
-    e.args[0]->accept(*this);
-    type_info arg1_type = last_expr_type_.value_or(type_unknown);
-    e.args[1]->accept(*this);
-    type_info arg2_type = last_expr_type_.value_or(type_unknown);
-
-    if (!are_types_compatible(arg1_type, arg2_type)) {
-      add_error(e.line,
-                "assert." + e.method + " arguments must have compatible types");
-    }
-  } else if (e.method == "in_range" || e.method == "not_in_range") {
-    // Range assertions: assert.in_range(value: T, min: T, max: T, message?:
-    // text)
-    if (e.args.size() < 3) {
-      add_error(e.line, "assert." + e.method +
-                            " requires value, min, and max arguments");
-      last_expr_type_ = type_void;
-      return;
-    }
-    e.args[0]->accept(*this);
-    type_info value_type = last_expr_type_.value_or(type_unknown);
-    e.args[1]->accept(*this);
-    type_info min_type = last_expr_type_.value_or(type_unknown);
-    e.args[2]->accept(*this);
-    type_info max_type = last_expr_type_.value_or(type_unknown);
-
-    if (!are_types_compatible(value_type, min_type) ||
-        !are_types_compatible(value_type, max_type)) {
-      add_error(e.line, "assert." + e.method +
-                            " all arguments must have compatible types");
-    }
-  } else if (e.method == "starts_with" || e.method == "ends_with") {
-    // String assertions: assert.starts_with(text: text, prefix: text, message?:
-    // text)
-    if (e.args.size() < 2) {
-      add_error(e.line,
-                "assert." + e.method + " requires text and pattern arguments");
-      last_expr_type_ = type_void;
-      return;
-    }
-    e.args[0]->accept(*this);
-    if (last_expr_type_ && last_expr_type_->name != "String" &&
-        last_expr_type_->name != "text" && last_expr_type_->name != "any") {
-      add_error(e.line,
-                "assert." + e.method + " first argument must be text/String");
-    }
-    e.args[1]->accept(*this);
-    if (last_expr_type_ && last_expr_type_->name != "String" &&
-        last_expr_type_->name != "text" && last_expr_type_->name != "any") {
-      add_error(e.line,
-                "assert." + e.method + " second argument must be text/String");
-    }
-  } else if (e.method == "matches") {
-    // Pattern matching: assert.matches(text: text, pattern: text, message?:
-    // text)
-    if (e.args.size() < 2) {
-      add_error(e.line, "assert.matches requires text and pattern arguments");
-      last_expr_type_ = type_void;
-      return;
-    }
-    e.args[0]->accept(*this);
-    e.args[1]->accept(*this);
-  } else if (e.method == "raises" || e.method == "not_raises") {
-    // Fault assertions: assert.raises<FaultType>(fn: fn() -> (), message?:
-    // text)
-    if (e.args.empty()) {
-      add_error(e.line,
-                "assert." + e.method + " requires a function/lambda argument");
-      last_expr_type_ = type_void;
-      return;
-    }
-    e.args[0]->accept(*this);
-    // TODO: Verify first arg is a function/lambda type
+  const auto numeric = [](const std::string &t) {
+    return t == "i32" || t == "i64" || t == "u8" || t == "f32" || t == "f64";
+  };
+  const auto text = [](const std::string &t) { return t == "String" || t == "text"; };
+  if (boolean && !types.empty() && types[0] != "bool")
+    add_error(e.line, "assert." + e.method + " requires a boolean condition, got '" + types[0] + "'");
+  if ((equality || ordered) && types.size() >= 2) {
+    const bool numbers = numeric(types[0]) && numeric(types[1]);
+    const bool equal_supported = equality && ((text(types[0]) && text(types[1])) ||
+        (types[0] == "bool" && types[1] == "bool"));
+    if (!numbers && !equal_supported)
+      add_error(e.line, "assert." + e.method + " requires comparable scalar" +
+          std::string(equality ? " or text" : "") + " operands, got '" + types[0] + "' and '" + types[1] + "'");
   }
-
-  // Check optional message parameter (if more args than required, last should
-  // be text) Most assertions take 1-3 required args, so if we have more, check
-  // the last one
-  size_t expected_args = 1;
-  if (e.method == "equal" || e.method == "not_equal" ||
-      e.method == "contains" || e.method == "not_contains" ||
-      e.method == "greater_than" || e.method == "greater_or_equal" ||
-      e.method == "less_than" || e.method == "less_or_equal" ||
-      e.method == "starts_with" || e.method == "ends_with" ||
-      e.method == "matches" || e.method == "length") {
-    expected_args = 2;
-  } else if (e.method == "in_range" || e.method == "not_in_range") {
-    expected_args = 3;
-  }
-
-  if (e.args.size() > expected_args) {
-    // Check if last arg is text (message parameter)
-    auto &msg_arg = e.args.back();
-    msg_arg->accept(*this);
-    if (last_expr_type_ && last_expr_type_->name != "String" &&
-        last_expr_type_->name != "text" && last_expr_type_->name != "any") {
-      add_error(e.line,
-                "Assertion message parameter must be text/String, got '" +
-                    last_expr_type_->name + "'");
-    }
-  }
-
-  // Assertions always return void
+  if (types.size() == arity + 1 && !text(types.back()))
+    add_error(e.line, "Assertion message must be text, got '" + types.back() + "'");
   last_expr_type_ = type_void;
   e.inferred_type = "void";
+  e.ast_expr::inferred_type = "void";
+  e.checked_assertion = diagnostics_.size() == before;
 }
 
 void type_checker::visit(ast_hotreload_expr &e) {
@@ -9905,6 +9734,8 @@ void type_checker::visit(ast_ref_expr &e) {
 }
 
 void type_checker::visit(ast_lambda_expr &e) {
+  struct inline_scope { bool &value; bool saved; ~inline_scope() { value = saved; } } inline_guard{inline_test_, inline_test_};
+  inline_test_ = false;
   struct control_scope {
     std::vector<control_context> &contexts;
     std::vector<control_context> saved;

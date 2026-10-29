@@ -24,7 +24,7 @@ from sdk_artifact_validation import (
     is_nil_library, is_nil_v2_library, is_static_archive,
     nil_library_format, nil_library_version,
 )
-from sdk_qualification import LEGACY_TOOLS, TOOLS, qualification_errors
+from sdk_qualification import LEGACY_TOOLS, APERTURE_TOOLS, TOOLS, qualification_errors
 from sdk_sources import is_source, module_artifact_path, canonical_std_namespace
 from sdk_runtime import STATIC_NAMES, SHARED_NAMES, RUNTIME_PAIRS, shared_library_valid, shared_runtime_smoke
 
@@ -77,8 +77,10 @@ def executable_name(name: str) -> str:
 
 
 def inventory_tools(paths) -> tuple[str, ...]:
-    """Recognize the two sealed v1 inventories, without permitting omissions."""
-    return REQUIRED_TOOLS if executable_name("aperture") in paths else LEGACY_TOOLS
+    """Recognize historical sealed inventories without permitting omissions."""
+    if executable_name("niltest") in paths:
+        return REQUIRED_TOOLS
+    return APERTURE_TOOLS if executable_name("aperture") in paths else LEGACY_TOOLS
 
 
 def sha256(path: Path) -> str:
@@ -172,8 +174,7 @@ def root_layout_errors(sdk: Path) -> list[str]:
             actual_directories.add(entry.name)
         else:
             errors.append("SDK root contains a special entry: {}".format(entry.name))
-    if executable_name("aperture") in actual_files:
-        expected_files.add(executable_name("aperture"))
+    expected_files.update(executable_name(name) for name in inventory_tools(actual_files))
     if actual_files != expected_files:
         errors.append(
             "SDK root files differ: missing={} extra={}".format(
@@ -833,6 +834,38 @@ def debugger_smoke_error(
     return None
 
 
+def niltest_smoke_error(sdk: Path, cwd: Path, environment: dict[str, str],
+                       native_enabled: bool) -> str | None:
+    tester = sdk / executable_name("niltest")
+    if not tester.is_file():
+        return None  # Historical sealed SDKs did not ship niltest.
+    source = cwd / "sdk_test_runner.ny"
+    source.write_text('test "SDK test runner"\n'
+                      ' println("SDK test runner ready")\n'
+                      'end test\n', encoding="utf-8")
+    try:
+        # Resolve the compiler/interpreter beside the relocated runner.
+        process = subprocess.run(
+            [str(tester), "run", "--no-stdlib", "--sdk-path", str(sdk / "nillib"),
+             "--format", "json", "--target", "all" if native_enabled else "vm", str(source)],
+            cwd=cwd, env=environment, check=False, capture_output=True,
+            text=True, encoding="utf-8", errors="replace", timeout=180)
+        report = json.loads(process.stdout)
+        expected_routes = {"vm", "native"} if native_enabled else {"vm"}
+        cases = report.get("tests", [])
+        if (process.returncode != 0 or process.stderr or report.get("schema") != "nil.test.results.v1"
+                or report.get("errors") != [] or len(cases) != len(expected_routes)
+                or {case.get("route") for case in cases} != expected_routes
+                or any(case.get("status") != "passed" or case.get("exitCode") != 77
+                       or case.get("stdout") != "SDK test runner ready\n" or case.get("stderr")
+                       for case in cases)):
+            return "SDK niltest smoke contract failed: exit={} stdout={!r} stderr={!r}".format(
+                process.returncode, process.stdout, process.stderr)
+    except (OSError, subprocess.TimeoutExpired, ValueError, AttributeError, TypeError) as exc:
+        return "SDK niltest smoke could not run: {}".format(exc)
+    return None
+
+
 def run_smoke(sdk: Path, native_enabled: bool) -> list[str]:
     errors: list[str] = []
     compiler = sdk / executable_name("nilcompiler")
@@ -859,6 +892,12 @@ def run_smoke(sdk: Path, native_enabled: bool) -> list[str]:
             )
             if identity_error is not None:
                 errors.append(identity_error)
+        tester = sdk / executable_name("niltest")
+        if tester.is_file():
+            identity_error = tool_identity_error(
+                tester, "niltest", "Usage: niltest", root, smoke_environment)
+            if identity_error is not None:
+                errors.append(identity_error)
         aperture = sdk / executable_name("aperture")
         if aperture.is_file():
             identity_error = tool_identity_error(
@@ -868,6 +907,10 @@ def run_smoke(sdk: Path, native_enabled: bool) -> list[str]:
                 errors.append(identity_error)
         if errors:
             return errors
+
+        tester_error = niltest_smoke_error(sdk, root, smoke_environment, native_enabled)
+        if tester_error is not None:
+            return [tester_error]
 
         source = root / "sdk_smoke.ny"
         artifact = root / "sdk_smoke.nil"

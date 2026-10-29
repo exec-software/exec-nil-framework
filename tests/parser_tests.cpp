@@ -333,6 +333,8 @@ void test_assembly_and_registration_constant_pools() {
   check(!parser.has_errors(), "assembly with attached test must parse");
   if (!program || parser.has_errors())
     return;
+  ny::type_checker checker;
+  check(checker.check(*program), "assembly and attached test must type-check");
   ny::codegen_options options;
   options.mode = ny::build_mode::test_mode;
   ny::codegen generator(options);
@@ -341,14 +343,16 @@ void test_assembly_and_registration_constant_pools() {
   check(module && diagnostics.empty(), "test-mode assembly must generate NIL");
   if (!module)
     return;
+  check(module->test_cases.size() == 1 && module->test_cases[0].name == "registration description",
+        "test-mode metadata must retain the description");
   const auto inspect = [](const ny::nil_module &mod) {
     std::map<std::string, std::string> constants;
-    bool has_registration = false;
+    bool has_test_literal = false;
     for (const auto &entry : mod.string_constants) {
       check(constants.emplace(entry).second, "constant pool names must be unique");
-      has_registration |= entry.second == "registration description";
+      has_test_literal |= entry.second == "literal from test";
     }
-    check(has_registration, "test-mode registration constants must be present");
+    check(has_test_literal, "test wrapper constants must be present");
     bool has_assembly = false;
     for (const auto &function : mod.functions) {
       for (const auto &instruction : function.body) {
@@ -615,10 +619,40 @@ void test_integer_literal_ranges_and_unchecked_arrays() {
   }
 }
 
+void test_matrix_generic_parameter_separators() {
+  matrix::parser parser(
+      "book parameter-types\n"
+      "inspect receives input as Option of T, message as text begin paragraph\nend paragraph\n"
+      "inspect-result receives input as Result of T, E, mutable message as text begin paragraph\nend paragraph\n"
+      "inspect-reference receives input as Option of T, reference destination as number begin paragraph\nend paragraph\n"
+      "inspect-short receives input as Option of T, mut message as text, ref destination as number begin paragraph\nend paragraph\n"
+      "inspect-variadic receives input as Option of T, more messages as text begin paragraph\nend paragraph\n");
+  const auto program = parser.parse_program();
+  check(program && !parser.has_errors(), "Matrix generic parameter types must stop before the next named parameter");
+  if (!program || parser.has_errors()) return;
+  std::vector<const ny::ast_function_decl *> functions;
+  for (const auto &declaration : program->declarations)
+    if (declaration && declaration->kind == ny::ast_node_kind::function_decl_node)
+      functions.push_back(static_cast<const ny::ast_function_decl *>(declaration.get()));
+  check(functions.size() == 5, "all generic-signature paragraphs must be retained");
+  if (functions.size() != 5) return;
+  check(functions[0]->params.size() == 2 && functions[0]->params[0].type_name == "Option<T>" &&
+        functions[0]->params[1].name == "message", "Option<T> must not absorb a following text parameter");
+  check(functions[1]->params.size() == 2 && functions[1]->params[0].type_name == "Result<T, E>" &&
+        functions[1]->params[1].is_mut, "Result<T,E> retains both types and a mutable next parameter");
+  check(functions[2]->params.size() == 2 && functions[2]->params[1].is_ref,
+        "a reference parameter follows a generic parameter type");
+  check(functions[3]->params.size() == 3 && functions[3]->params[1].is_mut && functions[3]->params[2].is_ref,
+        "short mut/ref aliases remain parameter modifiers after generic types");
+  check(functions[4]->params.size() == 2 && functions[4]->params[1].is_variadic,
+        "a variadic parameter follows a generic parameter type");
+}
+
 } // namespace
 
 int main() {
   test_leading_method_annotations();
+  test_matrix_generic_parameter_separators();
   test_variable_visibility_and_source_lines();
   test_decoded_string_quotes_are_content();
   test_bitwise_complement_precedence();
