@@ -565,6 +565,7 @@ bool type_checker::check(ast_program &program) {
         static_cast<ast_class_decl &>(*declaration).checked_name.reset();
     // --no-typecheck is diagnostic continuation, not permission to fabricate
     // a fault ABI or bypass opaque-token and cleanup proofs.
+    for (auto *proof : checked_switches_) *proof = false;
     for (auto *attempt : checked_attempts_) attempt->fault_checked = false;
     for (auto *handler : checked_fault_handlers_) handler->fault_checked = false;
     for (auto *raise : checked_raises_) raise->fault_checked = false;
@@ -2341,6 +2342,16 @@ void type_checker::bind_pattern_to_type(ast_pattern &pattern,
 }
 
 void type_checker::visit(ast_test_block &p) {
+  struct control_scope {
+    std::vector<control_context> &contexts;
+    std::vector<control_context> saved;
+    bool &in_loop;
+    bool saved_loop;
+    ~control_scope() { contexts = std::move(saved); in_loop = saved_loop; }
+  } controls{control_contexts_, std::move(control_contexts_), in_loop_, in_loop_};
+  control_contexts_.clear();
+  in_loop_ = false;
+
   diagnostic_source_scope source_scope(diagnostic_source_file_, p.source_file);
   // Enter a new scope for the test body
   symbols_.enter_scope();
@@ -2572,7 +2583,7 @@ void type_checker::visit(ast_program &p) {
             name, symbol_kind::type_symbol, &cls, std::nullopt, false,
             cls.get_visibility(), module_ctx, cls.generic_params);
     } else if (decl && decl->kind == ast_node_kind::enum_decl_node) {
-      // Pre-register enum type names with nullptr defining_node (placeholder).
+      // Keep the declaration available for order-independent case/member validation.
       auto &e = static_cast<ast_enum_decl &>(*decl);
       std::string enum_name = e.name;
       if (module_ctx) {
@@ -2580,7 +2591,7 @@ void type_checker::visit(ast_program &p) {
       }
       if (!symbols_.lookup(enum_name)) {
         symbols_.insert_symbol_with_context(
-            enum_name, symbol_kind::type_symbol, nullptr, std::nullopt, false,
+            enum_name, symbol_kind::type_symbol, &e, std::nullopt, false,
             e.get_visibility(), module_ctx, e.generic_params);
 
         // Pre-register enum variants so they can be referenced out-of-order
@@ -2770,6 +2781,16 @@ void type_checker::visit(ast_program &p) {
 }
 
 void type_checker::visit(ast_function_decl &p) {
+  struct control_scope {
+    std::vector<control_context> &contexts;
+    std::vector<control_context> saved;
+    bool &in_loop;
+    bool saved_loop;
+    ~control_scope() { contexts = std::move(saved); in_loop = saved_loop; }
+  } controls{control_contexts_, std::move(control_contexts_), in_loop_, in_loop_};
+  control_contexts_.clear();
+  in_loop_ = false;
+
   struct function_scope {
     const ast_function_decl *&current;
     const ast_function_decl *previous;
@@ -3706,6 +3727,20 @@ void type_checker::visit(ast_member_access_expr &e) {
     auto id = std::static_pointer_cast<ast_identifier_expr>(e.object);
     const symbol *sym = symbols_.lookup(id->name);
     if (!sym) sym = resolve_class_symbol(id->name);
+    if (!sym) {
+      // Resolve additional enum owners only for actual variants. Associated
+      // functions (for example imported http_method.parse) must retain the
+      // ordinary member/call-resolution path instead of being mistaken for a
+      // misspelled variant. Existing lexical value bindings still win.
+      const auto *owner = resolve_pattern_type_symbol(id->name);
+      if (owner && owner->defining_node &&
+          owner->defining_node->kind == ast_node_kind::enum_decl_node) {
+        const auto &enumeration = static_cast<const ast_enum_decl &>(*owner->defining_node);
+        if (std::any_of(enumeration.variants.begin(), enumeration.variants.end(),
+            [&](const ast_enum_variant &variant) { return variant.name == e.member_name; }))
+          sym = owner;
+      }
+    }
     if (sym && sym->kind == symbol_kind::type_symbol) {
       if (sym->defining_node && sym->defining_node->kind == ast_node_kind::class_decl_node) {
         const auto member = resolve_class_member(*sym, e.member_name, e.line);
@@ -4051,8 +4086,10 @@ void type_checker::visit(ast_while_stmt &s) {
   }
   bool prev_loop = in_loop_;
   in_loop_ = true;
+  control_contexts_.push_back({&s, true, false, {}});
   if (s.body)
     s.body->accept(*this);
+  control_contexts_.pop_back();
   in_loop_ = prev_loop;
 }
 
@@ -4376,9 +4413,11 @@ void type_checker::visit(ast_for_in_stmt &s) {
   // Enable in-loop checks for break/continue semantics
   bool prev_loop = in_loop_;
   in_loop_ = true;
+  control_contexts_.push_back({&s, true, false, {}});
 
   if (s.body)
     s.body->accept(*this);
+  control_contexts_.pop_back();
   in_loop_ = prev_loop;
 
   symbols_.leave_scope();
@@ -4387,21 +4426,253 @@ void type_checker::visit(ast_for_in_stmt &s) {
 void type_checker::visit(ast_loop_stmt &s) {
   bool prev_loop = in_loop_;
   in_loop_ = true;
+  control_contexts_.push_back({&s, true, false, {}});
   if (s.body)
     s.body->accept(*this);
+  control_contexts_.pop_back();
   in_loop_ = prev_loop;
 }
 
 void type_checker::visit(ast_break_stmt &s) {
-  if (!in_loop_) {
-    add_error(s.line, "Break statement outside of loop");
+  s.checked_target = nullptr;
+  std::size_t destination = control_contexts_.size();
+  while (destination) {
+    --destination;
+    const auto &context = control_contexts_[destination];
+    if (s.target == break_target_kind::nearest ||
+        (s.target == break_target_kind::loop && context.loop) ||
+        (s.target == break_target_kind::switch_ && !context.loop)) break;
+  }
+  if (control_contexts_.empty() ||
+      (s.target == break_target_kind::loop && !control_contexts_[destination].loop) ||
+      (s.target == break_target_kind::switch_ && control_contexts_[destination].loop)) {
+    if (s.value) s.value->accept(*this);
+    add_error(s.line, s.target == break_target_kind::loop
+        ? "Loop break outside of a loop" : s.target == break_target_kind::switch_
+        ? "Switch break outside of a switch" : "Break statement outside of a loop or switch");
+    return;
+  }
+  s.checked_target = control_contexts_[destination].node;
+  if (std::any_of(control_contexts_.begin() + destination + 1, control_contexts_.end(),
+      [](const control_context &context) { return context.value_switch; })) {
+    add_error(s.line, "A loop exit cannot cross a switch expression; produce a result and exit the loop afterward");
+  }
+  const bool value_switch = control_contexts_[destination].value_switch;
+  if (s.value) {
+    // Visiting the value may push nested switches, so reacquire by index.
+    last_expr_type_.reset();
+    s.value->accept(*this);
+    const auto value = last_expr_type_.value_or(type_unknown);
+    if (!value_switch) {
+      add_error(s.line, "A break value requires the targeted construct to be a switch expression");
+      return;
+    }
+    if (value.name == "void" || value.name == "any" || value.name == "<unknown>" ||
+        value.name == "<error>" || contains_ownership_type(value.name)) {
+      add_error(s.line, "Switch expression break must produce a concrete, non-owned value");
+      return;
+    }
+    auto &result = control_contexts_[destination].result_type;
+    if (!result) result = value;
+    else if (const auto promoted = promoted_scalar_join(result->name, value.name))
+      result = resolve_type(*promoted);
+    else if (result->name != value.name)
+      add_error(s.line, "Switch result types must agree; expected '" + result->name +
+          "', found '" + value.name + "'");
+  } else if (value_switch) {
+    add_error(s.line, "Switch expression requires a value when breaking out of it");
   }
 }
 
 void type_checker::visit(ast_continue_stmt &s) {
-  if (!in_loop_) {
+  const auto destination = std::find_if(control_contexts_.rbegin(), control_contexts_.rend(),
+      [](const control_context &context) { return context.loop; });
+  if (destination == control_contexts_.rend()) {
     add_error(s.line, "Continue statement outside of loop");
+  } else if (std::any_of(control_contexts_.rbegin(), destination,
+      [](const control_context &context) { return context.value_switch; })) {
+    add_error(s.line, "Continue cannot cross a switch expression; produce a result and continue the loop afterward");
   }
+}
+
+// Conservative structural proof: inner loops and statement switches can reach
+// their successor; direct transfers leave this case. This intentionally does
+// not infer termination from conditions or assume a loop executes at least once.
+static bool switch_body_can_fall_through(const ast_stmt *statement) {
+  if (!statement) return true;
+  switch (statement->kind) {
+  case ast_node_kind::break_stmt_node:
+  case ast_node_kind::continue_stmt_node:
+  case ast_node_kind::return_stmt_node:
+  case ast_node_kind::raise_stmt_node:
+    return false;
+  case ast_node_kind::block_stmt_node:
+    for (const auto &item : static_cast<const ast_block_stmt &>(*statement).statements)
+      if (!switch_body_can_fall_through(item.get())) return false;
+    return true;
+  case ast_node_kind::if_stmt_node: {
+    const auto &value = static_cast<const ast_if_stmt &>(*statement);
+    return switch_body_can_fall_through(value.then_branch.get()) ||
+           switch_body_can_fall_through(value.else_branch.get());
+  }
+  case ast_node_kind::attempt_stmt_node: {
+    const auto &value = static_cast<const ast_attempt_stmt &>(*statement);
+    if (!switch_body_can_fall_through(value.recover.get())) return false;
+    if (switch_body_can_fall_through(value.body.get())) return true;
+    for (const auto &handler : value.handlers)
+      if (handler && switch_body_can_fall_through(handler->body.get())) return true;
+    return false;
+  }
+  default: return true;
+  }
+}
+
+std::optional<type_info> type_checker::check_switch(ast_node &node,
+    ast_expr_ptr &target, std::vector<ast_switch_arm> &arms,
+    bool value_switch, bool &checked) {
+  checked = false;
+  checked_switches_.push_back(&checked);
+  const auto before = diagnostics_.size();
+  last_expr_type_.reset();
+  if (target) target->accept(*this);
+  const auto target_type = last_expr_type_.value_or(type_unknown);
+  const auto integral = [](const std::string &type) {
+    return type == "i32" || type == "i64" || type == "u8";
+  };
+  const auto enum_parts = parse_generic_type_string(target_type.name);
+  const symbol *enum_symbol = resolve_pattern_type_symbol(enum_parts.base_name);
+  const ast_enum_decl *enumeration = enum_symbol && enum_symbol->defining_node &&
+      enum_symbol->defining_node->kind == ast_node_kind::enum_decl_node
+      ? static_cast<const ast_enum_decl *>(enum_symbol->defining_node) : nullptr;
+  if (!target || (!integral(target_type.name) && target_type.name != "bool" &&
+      target_type.name != "String" && target_type.name != "text" && !enumeration))
+    add_error(node.line, "Switch selector requires an integer, bool, text, or payload-free enum value");
+  if (enumeration && std::any_of(enumeration->variants.begin(), enumeration->variants.end(),
+      [](const ast_enum_variant &variant) { return variant.associated_type.has_value(); }))
+    add_error(node.line, "Switch selectors require a payload-free enum; use match for payload variants");
+  std::set<std::string> labels;
+  bool has_default = false;
+  // Labels are all checked before any case body creates local bindings.
+  for (auto &arm : arms) {
+    arm.enum_variant.clear();
+    if (!arm.label) {
+      if (has_default) add_error(arm.line, "Switch has more than one default case");
+      has_default = true;
+      continue;
+    }
+    last_expr_type_.reset();
+    arm.label->accept(*this);
+    const auto label_type = last_expr_type_.value_or(type_unknown);
+    std::string key;
+    if (enumeration) {
+      std::string path;
+      if (arm.label->kind == ast_node_kind::identifier_expr_node)
+        path = static_cast<const ast_identifier_expr &>(*arm.label).name;
+      else if (arm.label->kind == ast_node_kind::member_access_expr_node) {
+        const auto &member = static_cast<const ast_member_access_expr &>(*arm.label);
+        if (member.object && member.object->kind == ast_node_kind::identifier_expr_node)
+          path = static_cast<const ast_identifier_expr &>(*member.object).name + "::" + member.member_name;
+      }
+      const auto separator = path.rfind("::");
+      const auto owner = separator == std::string::npos ? nullptr :
+          resolve_pattern_type_symbol(path.substr(0, separator));
+      const auto variant = separator == std::string::npos ? std::string() : path.substr(separator + 2);
+      const auto found = std::find_if(enumeration->variants.begin(), enumeration->variants.end(),
+          [&](const ast_enum_variant &item) { return item.name == variant; });
+      if (!owner || owner->name != enum_symbol->name || found == enumeration->variants.end() ||
+          found->associated_type || label_type.name != target_type.name) {
+        add_error(arm.line, "Switch enum case requires a qualified payload-free variant of '" + target_type.name + "'");
+      } else {
+        key = "enum:" + (arm.enum_variant = enum_symbol->name + "::" + variant);
+      }
+    } else if (arm.label->kind == ast_node_kind::string_literal_node) {
+      key = "text:" + static_cast<const ast_string_literal &>(*arm.label).value;
+      if (target_type.name != "String" && target_type.name != "text")
+        add_error(arm.line, "Switch text case is incompatible with selector type '" + target_type.name + "'");
+    } else if (arm.label->kind == ast_node_kind::boolean_literal_node) {
+      key = static_cast<const ast_boolean_literal &>(*arm.label).value ? "bool:1" : "bool:0";
+      if (target_type.name != "bool")
+        add_error(arm.line, "Switch bool case requires a bool selector");
+    } else {
+      std::string spelling;
+      if (arm.label->kind == ast_node_kind::number_literal_node)
+        spelling = static_cast<const ast_number_literal &>(*arm.label).value;
+      else if (arm.label->kind == ast_node_kind::unary_expr_node) {
+        const auto &unary = static_cast<const ast_unary_expr &>(*arm.label);
+        if (unary.op == token_kind::minus && unary.operand &&
+            unary.operand->kind == ast_node_kind::number_literal_node)
+          spelling = "-" + static_cast<const ast_number_literal &>(*unary.operand).value;
+      } else if (arm.label->kind == ast_node_kind::char_literal_node) {
+        const auto &text = static_cast<const ast_char_literal &>(*arm.label).value;
+        unsigned char value = text.empty() ? 0 : text.front();
+        if (text.size() == 2 && text[0] == '\\') {
+          switch (text[1]) {
+          case 'n': value = 10; break; case 'r': value = 13; break;
+          case 't': value = 9; break; case '0': value = 0; break;
+          case '\\': value = 92; break; case '\'': value = 39; break;
+          default: value = static_cast<unsigned char>(text[1]); break;
+          }
+        }
+        spelling = std::to_string(value);
+      }
+      integer_literal_info integer;
+      if (spelling.empty() || is_floating_literal_spelling(spelling) ||
+          parse_integer_literal(spelling, integer)) {
+        add_error(arm.line, "Switch case requires an integer, bool, text, character literal, or payload-free enum variant");
+      } else {
+        // Match the source literal's checked arithmetic width, including
+        // hexadecimal i32 masks and signed negation wrapping.
+        std::int64_t value;
+        if (label_type.name == "i32") {
+          auto bits = static_cast<std::uint32_t>(integer.magnitude);
+          if (integer.negative) bits = std::uint32_t(0) - bits;
+          value = bits <= INT32_MAX ? static_cast<std::int64_t>(bits)
+                                   : static_cast<std::int64_t>(bits) - (std::int64_t(1) << 32);
+        } else if (integer.negative && integer.magnitude == std::uint64_t(INT64_MAX) + 1) {
+          value = INT64_MIN;
+        } else {
+          value = static_cast<std::int64_t>(integer.magnitude);
+          if (integer.negative) value = -value;
+        }
+        key = "integer:" + std::to_string(value);
+        if (!integral(target_type.name))
+          add_error(arm.line, "Switch integer case requires an integer selector");
+      }
+    }
+    if (!key.empty() && !labels.insert(key).second)
+      add_error(arm.line, "Duplicate switch case value");
+  }
+  if (value_switch && !has_default)
+    add_error(node.line, "Switch expression requires a default case");
+  control_contexts_.push_back({&node, false, value_switch, {}});
+  for (auto &arm : arms) {
+    symbols_.enter_scope();
+    if (arm.body) arm.body->accept(*this);
+    symbols_.leave_scope();
+  }
+  const auto result = control_contexts_.back().result_type;
+  control_contexts_.pop_back();
+  if (value_switch) {
+    bool suffix_exits = false;
+    for (auto arm = arms.rbegin(); arm != arms.rend(); ++arm) {
+      suffix_exits = !switch_body_can_fall_through(arm->body.get()) || suffix_exits;
+      if (!suffix_exits)
+        add_error(arm->line, "Switch expression case can reach the end without producing a value");
+    }
+    if (!result) add_error(node.line, "Switch expression requires at least one break value to establish its result type");
+  }
+  checked = diagnostics_.size() == before;
+  return result;
+}
+
+void type_checker::visit(ast_switch_stmt &s) {
+  check_switch(s, s.target, s.arms, false, s.checked_switch);
+  last_expr_type_ = type_void;
+}
+
+void type_checker::visit(ast_switch_expr &e) {
+  last_expr_type_ = check_switch(e, e.target, e.arms, true, e.checked_switch).value_or(type_unknown);
+  e.inferred_type = last_expr_type_->name;
 }
 
 void type_checker::visit(ast_match_stmt &s) {
@@ -7483,12 +7754,12 @@ void type_checker::visit(ast_enum_decl &p) {
     name = *current_module_ + "::" + name;
   }
 
-  // Check if enum already exists.
-  // nullptr defining_node = pre-registered placeholder; update and continue.
-  // non-null defining_node = fully registered; skip (multi-include protection).
+  // Pre-registration retains this node for forward references; still validate
+  // it here. Only a different declaration is an already-registered include.
   symbol *existing_enum_sym = symbols_.lookup_mut(name);
   if (existing_enum_sym) {
-    if (existing_enum_sym->defining_node != nullptr) {
+    if (existing_enum_sym->defining_node != nullptr &&
+        existing_enum_sym->defining_node != &p) {
       return;
     }
     existing_enum_sym->defining_node = &p;
@@ -9197,6 +9468,16 @@ void type_checker::visit(ast_ref_expr &e) {
 }
 
 void type_checker::visit(ast_lambda_expr &e) {
+  struct control_scope {
+    std::vector<control_context> &contexts;
+    std::vector<control_context> saved;
+    bool &in_loop;
+    bool saved_loop;
+    ~control_scope() { contexts = std::move(saved); in_loop = saved_loop; }
+  } controls{control_contexts_, std::move(control_contexts_), in_loop_, in_loop_};
+  control_contexts_.clear();
+  in_loop_ = false;
+
   for (auto &parameter : e.params) {
     parameter.checked_binding_reference = false;
     if (parameter.is_ref)

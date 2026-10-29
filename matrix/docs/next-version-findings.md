@@ -2156,6 +2156,62 @@ need separate contracts. Preprocessor directives remain distinct from
 declaration metadata. The detailed scope is in
 [NIL-0020](../../docs/design/NIL-0020-declaration-annotations.md).
 
+### F78 — Fallthrough needs explicit exits and consistent case scopes
+
+**Observation:** Ny `match` and Matrix `consider` provide independent pattern
+arms. Reusing those forms for sequential fallthrough would change existing
+control flow and make expression results ambiguous.
+
+**Decision and implementation:** A separate `switch` supports statement and
+value positions in both languages. The selector runs once; equality dispatch
+chooses a literal label or default, then case bodies execute in source order
+until an exit. The default may appear anywhere. Value switches require a
+default and a compatible result on every normal exit; they may fall through
+to a later result-producing body.
+
+Ny retains nearest-loop-or-switch `break` and adds `break value` for a switch
+expression. Matrix makes the target explicit with `stop switching` and
+`stop switching with value`; its `stop repeating` and `continue repeating`
+remain loop-specific. `give` in a switch body returns from the paragraph.
+Each case has its own lexical scope, including across fallthrough, and local
+owners/borrows are cleaned up at case boundaries and transfers of control.
+Outer-owner movement across switch paths remains conservatively rejected.
+
+**Control-flow boundary found during review:** A loop exit from a switch
+expression could abandon pending operands in the containing expression, such
+as the left operand of `100 plus switch ...`. This initial implementation
+rejects `continue`/`continue repeating` and Matrix `stop repeating` when their
+loop target lies outside an active value switch. Loops wholly inside the case
+still work, and `stop switching with` can yield across an inner loop. A future
+relaxation needs explicit operand-stack cleanup across every backend.
+
+**Editor requirements:** Fallback indexing must traverse switches nested in
+initializers and call arguments, keep case locals from leaking into later
+cases, and resume indexing after the switch ends. Completion, highlighting,
+indentation, and snippets expose both statement and value forms without
+turning similarly named members into control constructs.
+
+**Initial scope:** Integral, boolean, and text literal labels, Ny character
+literals, and qualified variants of payload-free enums/choices. Floating-point
+selectors, executable labels, guards, and payload patterns are unsupported.
+The entire enum/choice must be payload-free. Pattern matching remains unchanged.
+The shared decision is recorded in
+[NIL-0021](../../docs/design/NIL-0021-fallthrough-switch.md), with source examples
+in the [switch reference](../../docs/language-reference/switch.md).
+
+**Bugs found during qualification:** Braced Ny selectors needed a parsing
+boundary so a default-first case list was not mistaken for a record literal.
+Case identity now follows checked integer width, including hexadecimal masks,
+and enum cases resolve regardless of declaration order or frontend spelling.
+Early returns from value switches can abandon operands from an enclosing
+binary expression, call, or aggregate. Compiler finalization removes those
+operands after cleanup while retaining strict executable return validation.
+Tuple and record fields now evaluate before aggregate allocation, so an early
+exit cannot leave an incomplete object on the native operand stack.
+Case bodies, including those inside expressions and unused parameter defaults,
+are traversed by the default analyzer. Debugger coverage checks execution order
+and case-local visibility in text and binary NIL.
+
 ## NILData migration — 2026-10-26
 
 ### F67 — Serialization needs one model and full-input validation

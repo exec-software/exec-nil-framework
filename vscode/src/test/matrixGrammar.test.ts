@@ -117,6 +117,24 @@ test("Matrix scopes subject-first declarations, modifiers, parameters, and type 
   }
 });
 
+test("Matrix switch forms highlight and indent while retaining member names", async () => {
+  const grammar = await loadMatrixGrammar();
+  for (const [line, word] of [['SWITCH mode', 'SWITCH'], ['case 1 then', 'case'],
+    ['stop switching with 2', 'switching'], ['end switch', 'switch']])
+    assertScope(grammar, line!, word!, 'keyword.control.verb');
+  for (const word of ['switch', 'default', 'switch-value'])
+    assertScope(grammar, 'settings.' + word, word, 'variable.other.member');
+  const config = JSON.parse(fs.readFileSync('language-configuration.matrix.json', 'utf8'));
+  const increase = new RegExp(config.indentationRules.increaseIndentPattern);
+  const decrease = new RegExp(config.indentationRules.decreaseIndentPattern);
+  for (const line of ['switch mode', 'CASE 1 THEN', 'otherwise']) assert.ok(increase.test(line), line);
+  for (const line of ['case 2 then', 'otherwise', 'END SWITCH']) assert.ok(decrease.test(line), line);
+  for (const line of ['say "switch mode"', '!!! switch mode', 'say switch-value']) assert.equal(increase.test(line), false, line);
+  const snippets = JSON.parse(fs.readFileSync('snippets/matrix.code-snippets', 'utf8'));
+  assert.equal(snippets['Switch statement'].body.at(-1), 'end switch');
+  assert.ok(snippets['Switch expression'].body.some((line: string) => line.includes('stop switching with')));
+});
+
 test("Matrix annotation regions scope names and properties without consuming declarations", async () => {
   const grammar = await loadMatrixGrammar();
   for (const name of ["doc", "Company.review", "Company::review", "custom-note"]) {

@@ -132,8 +132,8 @@ class Indexer {
     std::vector<std::size_t> lines;
     std::size_t cursor = 0;
 
-    bool at(const std::string& value) const {
-        return cursor < tokens.size() && tokens[cursor].text == value;
+    bool at(const std::string& value, std::size_t lookahead = 0) const {
+        return cursor + lookahead < tokens.size() && tokens[cursor + lookahead].text == value;
     }
     Range range(std::size_t start, std::size_t end) const {
         return {NyParser::position_at(text, lines, start), NyParser::position_at(text, lines, end)};
@@ -232,7 +232,7 @@ class Indexer {
             const auto begin = ++cursor;
             while (cursor < tokens.size() && !at("\n") && !at("{") && !at(";") &&
                    !at("return") && !at("let") && !at("const") && !at("if") &&
-                   !at("while") && !at("for") && !at("loop") && !at("match") && !at("end")) ++cursor;
+                   !at("while") && !at("for") && !at("loop") && !at("match") && !at("switch") && !at("end")) ++cursor;
             result_type = joined(begin, cursor);
         }
         const auto end = cursor > 0 ? tokens[cursor - 1].end : name.end;
@@ -271,7 +271,7 @@ class Indexer {
             if (!at(")")) return;
             ++cursor;
             if (!at("=")) return;
-            const auto end = line_end(++cursor);
+            const auto end = value_end(scope, parent, cursor + 1);
             const auto finish_at = end > cursor ? tokens[end - 1].end : tokens[cursor - 1].end;
             for (const auto& name : names) {
                 if (name.text == "_") continue;
@@ -310,17 +310,9 @@ class Indexer {
                     }
             }
         }
-        // Skip balanced constructor braces so their fields never become declarations.
-        int braces = 0;
-        auto last = cursor;
-        while (last < tokens.size()) {
-            const auto& value_text = tokens[last].text;
-            if (braces == 0 && (value_text == "\n" || value_text == ";" || value_text == "}")) break;
-            if (value_text == "{") ++braces;
-            if (value_text == "}") --braces;
-            ++last;
-        }
-        const auto finish_at = last > cursor ? tokens[last - 1].end : name.end;
+        const auto value_start = cursor;
+        const auto last = value_end(scope, parent, cursor);
+        const auto finish_at = last > value_start ? tokens[last - 1].end : name.end;
         const auto id = add(name, constant ? symbol_kind::Constant : symbol_kind::Variable,
                             scope, parent, declaration_start, finish_at);
         out.symbols[id].type = declared;
@@ -331,6 +323,41 @@ class Indexer {
         if (parent >= 0 && out.symbols[parent].kind != symbol_kind::Module)
             out.symbols[id].visible_after = finish_at;
         cursor = last;
+    }
+    bool switch_start() const {
+        if (!at("switch") || cursor + 1 >= tokens.size() ||
+            (cursor > 0 && (tokens[cursor - 1].text == "." || tokens[cursor - 1].text == "::"))) return false;
+        if (at("(", 1)) {
+            auto close = balanced(cursor + 1, "(", ")");
+            if (close == tokens.size()) return false;
+            while (++close < tokens.size() && tokens[close].text == "\n") {}
+            if (close == tokens.size()) return false;
+            const auto& after = tokens[close].text;
+            return after == "{" || after == "case" || after == "default" ||
+                (after == "end" && close + 1 < tokens.size() && tokens[close + 1].text == "switch");
+        }
+        const auto& next = tokens[cursor + 1].text;
+        static const std::set<std::string> continuation = {
+            "and", "or", "as", "then", "else", "elseif", "end", "in", "when"};
+        return (!continuation.count(next) && name_start(next.front())) ||
+            std::isdigit(static_cast<unsigned char>(next.front())) || next == "<literal>" ||
+            next == "-" || next == "~" || next == "&" || next == "*" || next == "[";
+    }
+    std::size_t value_end(int scope, int parent, std::size_t begin) {
+        cursor = begin;
+        int braces = 0, parens = 0, brackets = 0;
+        while (cursor < tokens.size()) {
+            if (braces == 0 && parens == 0 && brackets == 0 && (at("\n") || at(";") || at("}"))) break;
+            if (switch_start()) { control(scope, parent); continue; }
+            if (at("{")) ++braces;
+            else if (at("}")) --braces;
+            else if (at("(")) ++parens;
+            else if (at(")")) --parens;
+            else if (at("[")) ++brackets;
+            else if (at("]")) --brackets;
+            ++cursor;
+        }
+        return cursor;
     }
     void aggregate(int scope, int parent, std::size_t start) {
         const auto kind = tokens[cursor++].text;
@@ -364,7 +391,10 @@ class Indexer {
     void control(int scope, int parent) {
         const auto keyword = tokens[cursor++];
         const auto begin = cursor;
-        while (cursor < tokens.size() && !at("\n") && !at("{") && !at("then") && !at("do")) ++cursor;
+        while (cursor < tokens.size() && !at("\n") && !at("{") && !at("then") && !at("do")) {
+            if (switch_start()) control(scope, parent);
+            else ++cursor;
+        }
         const bool braces = at("{");
         if (braces || at("then") || at("do")) ++cursor;
         const auto body = child(scope, keyword.end);
@@ -373,10 +403,10 @@ class Indexer {
                                 tokens[begin].start, tokens[begin].end);
             out.symbols[id].visible_after = cursor < tokens.size() ? tokens[cursor].start : keyword.end;
         }
-        block(body, -1, {}, braces ? "}" : keyword.text, false, parent);
+        block(body, -1, {}, braces ? "}" : keyword.text, false, parent, keyword.text == "switch");
     }
     void block(int scope, int parent, const std::string& owner, const std::string& ending,
-               bool signatures, int outline_parent = -1) {
+               bool signatures, int outline_parent = -1, bool switch_body = false) {
         if (outline_parent < 0) outline_parent = parent;
         bool intrinsic = false;
         while (cursor < tokens.size()) {
@@ -394,6 +424,16 @@ class Indexer {
                     diagnostic(end, "Mismatched block end: expected 'end " + ending + "' but found 'end " + kind + "'");
                 finish(scope, parent, tokens[cursor - 1].end);
                 return;
+            }
+            if (switch_body && (at("case") || (at("default") && at(":", 1))) &&
+                (cursor == 0 || (tokens[cursor - 1].text != "." && tokens[cursor - 1].text != "::"))) {
+                const auto arm = tokens[cursor++];
+                const auto scope_parent = out.scopes[scope].parent;
+                finish(scope, -1, arm.start);
+                scope = child(scope_parent, arm.start);
+                while (cursor < tokens.size() && !at(":") && !at("\n") && !at("}")) ++cursor;
+                if (at(":")) ++cursor;
+                continue;
             }
             if ((at("else") || at("elseif")) && ending == "if") {
                 const bool elseif = at("elseif");
@@ -476,7 +516,7 @@ class Indexer {
             else if (at("struct") || at("class") || at("trait") || at("enum")) aggregate(scope, outline_parent, start);
             else if (at("impl")) implementation(scope, outline_parent);
             else if (at("let") || at("const")) variable(scope, outline_parent, start);
-            else if (at("if") || at("while") || at("for") || at("loop") || at("match") || at("attempt")) control(scope, outline_parent);
+            else if (at("if") || at("while") || at("for") || at("loop") || at("match") || at("attempt") || switch_start()) control(scope, outline_parent);
             else if (!owner.empty() && name_start(tokens[cursor].text.front()) &&
                      cursor + 1 < tokens.size() && tokens[cursor + 1].text == ":") {
                 const auto name = tokens[cursor];

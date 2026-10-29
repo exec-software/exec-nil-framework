@@ -159,7 +159,7 @@ FOREIGN_KEYWORDS = [
     ("return 0", "give <value>"),
     ("print \"hi\"", "say <value>"),
     ("if x then", "when <condition> then"),
-    ("switch x", "consider <value>"),
+    ("match x", "consider <value>"),
     ("foreach item in xs", "repeat for each"),
     ("break", "stop repeating"),
     ("import io", "read <book>"),

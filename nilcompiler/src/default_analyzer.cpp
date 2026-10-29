@@ -2,6 +2,7 @@
 #include "analysis.hpp"
 #include <array>
 #include <sstream>
+#include <unordered_set>
 
 namespace ny {
 namespace {
@@ -18,6 +19,7 @@ constexpr std::array<rule, 4> rules{{
 
 class analyzer {
   analysis_session &session;
+  std::unordered_set<const ast_expr *> visited_expressions;
 
   void report(const char *code, const char *message, const ast_stmt &statement) {
     session.add(code, "warning", message, session.primary_path, statement.line);
@@ -25,8 +27,12 @@ class analyzer {
 
   void declaration(const ast_decl &decl) {
     switch (decl.kind) {
-    case ast_node_kind::function_decl_node:
-      statement(static_cast<const ast_function_decl &>(decl).body.get()); break;
+    case ast_node_kind::function_decl_node: {
+      const auto &function = static_cast<const ast_function_decl &>(decl);
+      for (const auto &param : function.params)
+        if (param.default_value) expression(param.default_value->get());
+      statement(function.body.get()); break;
+    }
     case ast_node_kind::class_decl_node:
       for (const auto &method : static_cast<const ast_class_decl &>(decl).methods)
         if (method) declaration(*method);
@@ -41,6 +47,99 @@ class analyzer {
       break;
     case ast_node_kind::test_block_node:
       statement(static_cast<const ast_test_block &>(decl).body.get()); break;
+    case ast_node_kind::variable_decl_node:
+      expression(static_cast<const ast_variable_decl &>(decl).initializer.get()); break;
+    default: break;
+    }
+  }
+
+  // Value-producing switches may occur inside any expression. Walk their
+  // enclosing expressions so case bodies receive the same diagnostics as
+  // ordinary blocks; a case break never makes the enclosing function exit.
+  void expression(const ast_expr *node) {
+    if (!node || !visited_expressions.insert(node).second) return;
+    switch (node->kind) {
+    case ast_node_kind::switch_expr_node: {
+      const auto &value = static_cast<const ast_switch_expr &>(*node);
+      expression(value.target.get());
+      for (const auto &arm : value.arms) {
+        expression(arm.label.get()); statement(arm.body.get());
+      }
+      break;
+    }
+    case ast_node_kind::call_expr_node: {
+      const auto &value = static_cast<const ast_call_expr &>(*node);
+      expression(value.callee.get());
+      for (const auto &arg : value.args) expression(arg.get());
+      break;
+    }
+    case ast_node_kind::binary_expr_node: {
+      const auto &value = static_cast<const ast_binary_expr &>(*node);
+      expression(value.left.get()); expression(value.right.get()); break;
+    }
+    case ast_node_kind::assignment_expr_node: {
+      const auto &value = static_cast<const ast_assignment_expr &>(*node);
+      expression(value.target.get()); expression(value.value.get()); break;
+    }
+    case ast_node_kind::unary_expr_node:
+      expression(static_cast<const ast_unary_expr &>(*node).operand.get()); break;
+    case ast_node_kind::cast_expr_node:
+      expression(static_cast<const ast_cast_expr &>(*node).operand.get()); break;
+    case ast_node_kind::ref_expr_node:
+      expression(static_cast<const ast_ref_expr &>(*node).operand.get()); break;
+    case ast_node_kind::try_expr_node:
+      expression(static_cast<const ast_try_expr &>(*node).inner.get()); break;
+    case ast_node_kind::member_access_expr_node:
+      expression(static_cast<const ast_member_access_expr &>(*node).object.get()); break;
+    case ast_node_kind::index_expr_node: {
+      const auto &value = static_cast<const ast_index_expr &>(*node);
+      expression(value.object.get()); expression(value.index.get()); break;
+    }
+    case ast_node_kind::array_literal_expr_node:
+      for (const auto &item : static_cast<const ast_array_literal_expr &>(*node).elements)
+        expression(item.get());
+      break;
+    case ast_node_kind::struct_literal_expr_node:
+      for (const auto &field : static_cast<const ast_struct_literal_expr &>(*node).fields)
+        expression(field.second.get());
+      break;
+    case ast_node_kind::allocate_expr_node:
+      expression(static_cast<const ast_allocate_expr &>(*node).size.get()); break;
+    case ast_node_kind::if_expr_node: {
+      const auto &value = static_cast<const ast_if_expr &>(*node);
+      expression(value.condition.get()); expression(value.then_expr.get());
+      expression(value.else_expr.get()); break;
+    }
+    case ast_node_kind::match_expr_node: {
+      const auto &value = static_cast<const ast_match_expr &>(*node);
+      expression(value.target.get());
+      for (const auto &arm : value.cases) {
+        expression(arm.pattern.get()); expression(arm.guard.get()); statement(arm.body.get());
+      }
+      break;
+    }
+    case ast_node_kind::lambda_expr_node: {
+      const auto &lambda = static_cast<const ast_lambda_expr &>(*node);
+      for (const auto &param : lambda.params)
+        if (param.default_value) expression(param.default_value->get());
+      statement(lambda.body.get()); break;
+    }
+    case ast_node_kind::interpolated_string_expr_node:
+      for (const auto &part : static_cast<const ast_interpolated_string_expr &>(*node).parts)
+        expression(part.expression.get());
+      break;
+    case ast_node_kind::query_expr_node: {
+      const auto &value = static_cast<const ast_query_expr &>(*node);
+      expression(value.source.get()); expression(value.skip.get()); expression(value.take.get());
+      expression(value.predicate.get()); expression(value.order_key.get());
+      expression(value.projection.get()); break;
+    }
+    case ast_node_kind::assert_expr_node:
+      for (const auto &arg : static_cast<const ast_assert_expr &>(*node).args) expression(arg.get());
+      break;
+    case ast_node_kind::hotreload_expr_node:
+      for (const auto &arg : static_cast<const ast_hotreload_expr &>(*node).args) expression(arg.get());
+      break;
     default: break;
     }
   }
@@ -60,30 +159,52 @@ class analyzer {
       return exited;
     }
     case ast_node_kind::return_stmt_node:
+      expression(static_cast<const ast_return_stmt &>(*node).value.get()); return true;
     case ast_node_kind::raise_stmt_node:
+      expression(static_cast<const ast_raise_stmt &>(*node).fault_expr.get()); return true;
     case ast_node_kind::break_stmt_node:
+      expression(static_cast<const ast_break_stmt &>(*node).value.get()); return true;
     case ast_node_kind::continue_stmt_node:
       return true;
     case ast_node_kind::if_stmt_node: {
       const auto &branch = static_cast<const ast_if_stmt &>(*node);
+      expression(branch.condition.get());
       const bool left = statement(branch.then_branch.get());
       const bool right = statement(branch.else_branch.get());
       return left && right;
     }
-    case ast_node_kind::while_stmt_node:
-      statement(static_cast<const ast_while_stmt &>(*node).body.get()); break;
-    case ast_node_kind::for_in_stmt_node:
-      statement(static_cast<const ast_for_in_stmt &>(*node).body.get()); break;
+    case ast_node_kind::while_stmt_node: {
+      const auto &value = static_cast<const ast_while_stmt &>(*node);
+      expression(value.condition.get()); statement(value.body.get()); break;
+    }
+    case ast_node_kind::for_in_stmt_node: {
+      const auto &value = static_cast<const ast_for_in_stmt &>(*node);
+      expression(value.iterable.get()); statement(value.body.get()); break;
+    }
     case ast_node_kind::loop_stmt_node:
       statement(static_cast<const ast_loop_stmt &>(*node).body.get()); break;
-    case ast_node_kind::match_stmt_node:
-      for (const auto &arm : static_cast<const ast_match_stmt &>(*node).arms)
-        statement(arm.body.get());
+    case ast_node_kind::match_stmt_node: {
+      const auto &value = static_cast<const ast_match_stmt &>(*node);
+      expression(value.target.get());
+      for (const auto &arm : value.arms) {
+        expression(arm.guard.get()); statement(arm.body.get());
+      }
       break;
+    }
+    case ast_node_kind::switch_stmt_node: {
+      const auto &value = static_cast<const ast_switch_stmt &>(*node);
+      expression(value.target.get());
+      for (const auto &arm : value.arms) {
+        expression(arm.label.get()); statement(arm.body.get());
+      }
+      break;
+    }
     case ast_node_kind::attempt_stmt_node: {
       const auto &attempt = static_cast<const ast_attempt_stmt &>(*node);
       statement(attempt.body.get());
-      for (const auto &handler : attempt.handlers) if (handler) statement(handler->body.get());
+      for (const auto &handler : attempt.handlers) if (handler) {
+        expression(handler->guard.get()); statement(handler->body.get());
+      }
       statement(attempt.recover.get());
       break;
     }
@@ -93,17 +214,26 @@ class analyzer {
       break;
     }
     case ast_node_kind::expr_stmt_node: {
-      const auto &expression = static_cast<const ast_expr_stmt &>(*node).expression;
-      if (!expression || expression->kind != ast_node_kind::call_expr_node ||
-          !expression->inferred_type) break;
+      const auto &value = static_cast<const ast_expr_stmt &>(*node).expression;
+      expression(value.get());
+      if (!value || value->kind != ast_node_kind::call_expr_node ||
+          !value->inferred_type) break;
       // Read ast_expr's checked type (it shadows ast_node::inferred_type).
       // Exact nominal owners exclude unrelated user-defined Option/Result.
-      const auto &type = *expression->inferred_type;
+      const auto &type = *value->inferred_type;
       const auto owner = type.substr(0, type.find('<'));
       if (owner == "nil::std::core::Option" || owner == "nil::std::core::Result")
         report("NIL2002", "Call result is a standard Option or Result; retain or handle its outcome", *node);
       break;
     }
+    case ast_node_kind::println_stmt_node:
+      for (const auto &arg : static_cast<const ast_println_stmt &>(*node).args) expression(arg.get());
+      break;
+    case ast_node_kind::deallocate_stmt_node:
+      expression(static_cast<const ast_deallocate_stmt &>(*node).ptr.get()); break;
+    case ast_node_kind::asm_stmt_node:
+      for (const auto &input : static_cast<const ast_asm_stmt &>(*node).inputs) expression(input.get());
+      break;
     default: break;
     }
     return false;

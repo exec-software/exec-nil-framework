@@ -457,13 +457,12 @@ bool parser::report_foreign_keyword(const token &at) {
       {"else", "'otherwise', or 'otherwise when <condition> then'"},
       {"endif", "'end when'"},
       {"fi", "'end when'"},
-      {"switch", "'consider <value>' ... 'end consider'"},
       {"match", "'consider <value>' ... 'end consider'"},
-      {"case", "'when <pattern> then' inside a 'consider'"},
-      {"default", "'otherwise' inside a 'consider'"},
+      {"case", "'case <value> then' inside a 'switch'"},
+      {"default", "'otherwise' inside a 'switch' or 'consider'"},
       {"do", "'repeat while <condition>' ... 'end repeat'"},
       {"foreach", "'repeat for each <name> in <collection>'"},
-      {"break", "'stop repeating'"},
+      {"break", "'stop repeating' for a loop, or 'stop switching [with <value>]' for a switch"},
       {"goto", "nothing -- Matrix has no jumps"},
       // Declarations
       {"import", "'read <book>', or 'read <names> from <book>'"},
@@ -2368,10 +2367,23 @@ std::shared_ptr<ny::ast_stmt> parser::parse_statement() {
   if (check(kw::append)) return parse_append();
   if (check(kw::when)) return parse_when_statement();
   if (check(kw::repeat)) return parse_repeat();
+  if (is_switch_start()) return parse_switch_statement();
 
   if (check(kw::stop) && peek(1).is(kw::repeating)) {
     advance(); advance(); skip_terminators();
-    return std::make_shared<ny::ast_break_stmt>(line);
+    auto statement = std::make_shared<ny::ast_break_stmt>(line);
+    statement->target = ny::break_target_kind::loop;
+    return statement;
+  }
+  if (check(kw::stop) && exact_phrase_word(peek(1), "switching")) {
+    advance(); advance();
+    auto statement = std::make_shared<ny::ast_break_stmt>(line);
+    statement->target = ny::break_target_kind::switch_;
+    if (peek().line == line && match(kw::with)) {
+      statement->value = parse_expression();
+    }
+    skip_terminators();
+    return statement;
   }
   if (check(kw::continue_) && peek(1).is(kw::repeating)) {
     advance(); advance(); skip_terminators();
@@ -2407,7 +2419,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_statement() {
   } else if (!report_foreign_keyword(start))
     error(start, "expected a statement, found '" + start.lexeme + "'",
           "a statement begins with value, variable, constant, set, say, give, "
-          "evaluate, append, when or repeat",
+          "evaluate, append, when, repeat or switch",
           "MX0104");
   while (!at_end() && peek().line == line) advance();
   skip_terminators();
@@ -2991,6 +3003,7 @@ ny::ast_expr_ptr parser::parse_primary() {
     return lambda;
   }
 
+  if (is_switch_start()) return parse_switch_expression();
   if (check(kw::when)) return parse_when_expression();
   if (check(kw::consider)) return parse_consider_expression();
   if (check(kw::build)) return parse_build();
@@ -3379,6 +3392,95 @@ ny::ast_pattern parser::parse_pattern() {
                            : ny::ast_pattern_kind::variable_pattern;
   pattern.name = name;
   return pattern;
+}
+
+bool parser::is_switch_start() const {
+  if (!exact_phrase_word(peek(), "switch") || peek(1).line != peek().line)
+    return false;
+  // Keep ordinary references and calls such as `switch with input being 1`
+  // available. Only an expression beginning immediately after the contextual
+  // word introduces a switch; neither spelling becomes a reserved name.
+  const auto &next = peek(1);
+  switch (next.kind) {
+  case matrix::token_kind::identifier:
+  case matrix::token_kind::number_literal:
+  case matrix::token_kind::numeric_sign:
+  case matrix::token_kind::string_literal:
+  case matrix::token_kind::formatted_string_begin:
+  case matrix::token_kind::left_paren:
+  case matrix::token_kind::left_bracket:
+    return true;
+  default:
+    break;
+  }
+  if (next.kind != matrix::token_kind::keyword) return false;
+  switch (next.word) {
+  case kw::true_: case kw::false_: case kw::negative: case kw::minus:
+  case kw::not_: case kw::when: case kw::consider: case kw::build:
+  case kw::anonymous: case kw::reference: case kw::my: case kw::the:
+  case kw::quote: case kw::newline: case kw::tab:
+    return true;
+  default:
+    return false;
+  }
+}
+
+std::vector<ny::ast_switch_arm> parser::parse_switch_arms() {
+  std::vector<ny::ast_switch_arm> arms;
+  const auto at_label = [&]() {
+    return exact_phrase_word(peek(), "case") || check(kw::otherwise);
+  };
+  for (;;) {
+    skip_terminators();
+    if (check(kw::end) && exact_phrase_word(peek(1), "switch")) {
+      advance(); advance();
+      break;
+    }
+    if (at_end() || check(kw::end)) {
+      error(peek(), "expected 'end switch' after switch cases");
+      break;
+    }
+    const token label_token = peek();
+    ny::ast_expr_ptr label;
+    if (exact_phrase_word(peek(), "case")) {
+      advance();
+      label = parse_expression();
+      expect(kw::then, "after a switch case value");
+    } else if (match(kw::otherwise)) {
+      // The default retains its source position for automatic fallthrough.
+    } else {
+      error(peek(), "expected 'case <value> then' or 'otherwise' in switch");
+      const size_t before = pos_;
+      parse_statement();
+      if (pos_ == before && !at_end()) advance();
+      continue;
+    }
+    auto body = std::make_shared<ny::ast_block_stmt>(label_token.line);
+    for (;;) {
+      skip_terminators();
+      if (at_end() || check(kw::end) || at_label()) break;
+      const size_t before = pos_;
+      if (auto statement = parse_statement()) body->statements.push_back(statement);
+      if (pos_ == before && !at_end()) advance();
+    }
+    arms.push_back({label, body, label_token.line, {}});
+  }
+  return arms;
+}
+
+std::shared_ptr<ny::ast_stmt> parser::parse_switch_statement() {
+  const token start = advance();
+  auto target = parse_expression();
+  auto arms = parse_switch_arms();
+  skip_terminators();
+  return std::make_shared<ny::ast_switch_stmt>(target, std::move(arms), start.line);
+}
+
+ny::ast_expr_ptr parser::parse_switch_expression() {
+  const token start = advance();
+  auto target = parse_expression();
+  auto arms = parse_switch_arms();
+  return std::make_shared<ny::ast_switch_expr>(target, std::move(arms), start.line);
 }
 
 // 'consider e / when P [provided g] then ... / otherwise ... / end consider'

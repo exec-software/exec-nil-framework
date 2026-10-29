@@ -160,6 +160,7 @@ enum class ast_node_kind {
   break_stmt_node,
   continue_stmt_node,
   match_stmt_node,
+  switch_stmt_node,
   attempt_stmt_node,  // attempt ... fault ... recover ... end attempt
   fault_handler_node, // fault FaultType as e when condition
   raise_stmt_node,    // raise FaultInstance
@@ -175,6 +176,7 @@ enum class ast_node_kind {
   char_literal_node,
   boolean_literal_node,
   match_expr_node,
+  switch_expr_node,
   try_expr_node, // expr? error propagation operator
   member_access_expr_node,
   struct_literal_expr_node, // Struct instantiation: Type { field: val, ... }
@@ -291,6 +293,7 @@ struct ast_node::ast_visitor {
   virtual void visit(struct ast_break_stmt &s) {}
   virtual void visit(struct ast_continue_stmt &s) {}
   virtual void visit(struct ast_match_stmt &s) {}
+  virtual void visit(struct ast_switch_stmt &s) {}
   virtual void visit(struct ast_deallocate_stmt &s) {}
   virtual void visit(struct ast_fault_handler &s) {}
   virtual void visit(struct ast_attempt_stmt &s) {}
@@ -310,6 +313,7 @@ struct ast_node::ast_visitor {
   virtual void visit(struct ast_char_literal &e) {}
   virtual void visit(struct ast_boolean_literal &e) {}
   virtual void visit(struct ast_match_expr &e) {}
+  virtual void visit(struct ast_switch_expr &e) {}
   virtual void visit(struct ast_try_expr &e) {}
   virtual void visit(struct ast_member_access_expr &e) {}
   virtual void visit(struct ast_struct_literal_expr &e) {}
@@ -824,8 +828,13 @@ struct ast_loop_stmt : public ast_stmt {
   void accept(ast_node::ast_visitor &v) override { v.visit(*this); }
 };
 
-// Break statement: `break`
+enum class break_target_kind { nearest, loop, switch_ };
+
+// Break statement; a value is allowed only when targeting a value switch.
 struct ast_break_stmt : public ast_stmt {
+  break_target_kind target = break_target_kind::nearest;
+  ast_expr_ptr value;
+  const ast_node *checked_target = nullptr;
   explicit ast_break_stmt(int l = 0)
       : ast_stmt(ast_node_kind::break_stmt_node, l) {}
 
@@ -1223,6 +1232,33 @@ struct ast_match_stmt : public ast_stmt {
       : ast_stmt(ast_node_kind::match_stmt_node, ln), target(std::move(t)),
         arms(std::move(a)) {}
 
+  void accept(ast_node::ast_visitor &v) override { v.visit(*this); }
+};
+
+// A null label is the default; arms execute in source order after dispatch.
+struct ast_switch_arm {
+  ast_expr_ptr label;
+  ast_stmt_ptr body;
+  int line = 0;
+  // A checked, payload-free enum label uses its canonical variant identity.
+  std::string enum_variant;
+};
+
+struct ast_switch_stmt : public ast_stmt {
+  ast_expr_ptr target;
+  std::vector<ast_switch_arm> arms;
+  bool checked_switch = false;
+  ast_switch_stmt(ast_expr_ptr t, std::vector<ast_switch_arm> a, int ln = 0)
+      : ast_stmt(ast_node_kind::switch_stmt_node, ln), target(std::move(t)), arms(std::move(a)) {}
+  void accept(ast_node::ast_visitor &v) override { v.visit(*this); }
+};
+
+struct ast_switch_expr : public ast_expr {
+  ast_expr_ptr target;
+  std::vector<ast_switch_arm> arms;
+  bool checked_switch = false;
+  ast_switch_expr(ast_expr_ptr t, std::vector<ast_switch_arm> a, int ln = 0)
+      : ast_expr(ast_node_kind::switch_expr_node, ln), target(std::move(t)), arms(std::move(a)) {}
   void accept(ast_node::ast_visitor &v) override { v.visit(*this); }
 };
 

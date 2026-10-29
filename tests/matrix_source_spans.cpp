@@ -256,6 +256,44 @@ void test_lowered_bindings() {
       "raise fault-value", "fault-value");
 }
 
+void test_switch_source_spans() {
+  const std::string source =
+      "!!! λ switch sample-value\r\nbook switch-spans\r\n"
+      "select receives sample-value as number returns number begin paragraph\r\n"
+      "value result is switch sample-value\r\ncase 1 then\r\n"
+      "value local-value is sample-value\r\nstop switching with local-value\r\n"
+      "otherwise\r\nstop switching with sample-value\r\nend switch\r\n"
+      "repeat forever\r\nswitch sample-value\r\ncase 1 then\r\n"
+      "stop repeating\r\notherwise\r\nstop switching\r\nend switch\r\n"
+      "stop repeating\r\nend repeat\r\ngive result\r\nend paragraph\r\n";
+  const auto program = parse(source);
+  const auto body = cast<ny::ast_block_stmt>(
+      cast<ny::ast_function_decl>(program->declarations.at(1))->body);
+  const auto binding = cast<ny::ast_variable_decl>(
+      cast<ny::ast_decl_stmt>(body->statements.at(0))->declaration);
+  const auto value = cast<ny::ast_switch_expr>(binding->initializer);
+  require(value->arms.size() == 2 && !value->arms.at(1).label,
+          "Matrix switch expression preserves ordered default arm");
+  check_span(source, value->target->name_span,
+             "is switch sample-value", "sample-value");
+  const auto first = cast<ny::ast_block_stmt>(value->arms.at(0).body);
+  const auto exit = cast<ny::ast_break_stmt>(first->statements.at(1));
+  require(exit->target == ny::break_target_kind::switch_ && exit->value,
+          "Matrix value stop explicitly targets a switch");
+  check_span(source, exit->value->name_span,
+             "with local-value", "local-value");
+  const auto loop = cast<ny::ast_loop_stmt>(body->statements.at(1));
+  const auto statement = cast<ny::ast_switch_stmt>(
+      cast<ny::ast_block_stmt>(loop->body)->statements.at(0));
+  const auto loop_exit = cast<ny::ast_break_stmt>(
+      cast<ny::ast_block_stmt>(statement->arms.at(0).body)->statements.at(0));
+  const auto switch_exit = cast<ny::ast_break_stmt>(
+      cast<ny::ast_block_stmt>(statement->arms.at(1).body)->statements.at(0));
+  require(loop_exit->target == ny::break_target_kind::loop && !loop_exit->value &&
+              switch_exit->target == ny::break_target_kind::switch_ && !switch_exit->value,
+          "stop repeating and stop switching retain distinct targets");
+}
+
 } // namespace
 
 int main() {
@@ -265,6 +303,7 @@ int main() {
     test_names_and_uses();
     test_members_and_types();
     test_lowered_bindings();
+    test_switch_source_spans();
   } catch (const std::exception &error) {
     std::cerr << "FAIL: " << error.what() << '\n';
     return 1;

@@ -334,6 +334,14 @@
       "patterns": [
         {
           "name": "keyword.control.ny",
+          "match": "(?<![A-Za-z0-9_.:])(?:switch|case)(?![A-Za-z0-9_])"
+        },
+        {
+          "name": "keyword.control.ny",
+          "match": "(?<![A-Za-z0-9_.:])default(?=\\s*:(?:\\s*(?:$|break\\b|return\\b|raise\\b|println\\b|let\\b|if\\b)))"
+        },
+        {
+          "name": "keyword.control.ny",
           "match": "\\b(if|then|elseif|else|end|while|where|for|in|break|continue|loop|do|match|when|attempt|fault|recover|raise|return|asm)\\b"
         },
         {

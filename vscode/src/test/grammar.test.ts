@@ -69,6 +69,24 @@ test("Ny short and long mutability/reference aliases retain keyword and binding 
   }
 });
 
+test("Ny switch statements and value exits are highlighted without claiming members", async () => {
+  const grammar = await loadNyGrammar();
+  assert.ok(grammar);
+  for (const [line, word] of [['switch mode {', 'switch'], ['case 1: break 2', 'case'],
+    ['default: break 0', 'default'], ['break 3', 'break'], ['end switch', 'switch']])
+    assert.ok(scopesForFragment(grammar, line!, word!).includes('keyword.control.ny'));
+  for (const word of ['switch', 'default'])
+    assert.ok(scopesForFragment(grammar, 'settings.' + word, word).includes('variable.other.member.ny'));
+  const config = JSON.parse(fs.readFileSync('language-configuration.json', 'utf8'));
+  const increase = new RegExp(config.indentationRules.increaseIndentPattern);
+  const decrease = new RegExp(config.indentationRules.decreaseIndentPattern);
+  for (const line of ['switch value', 'case 1:', 'default:']) assert.ok(increase.test(line), line);
+  for (const line of ['case 2:', 'default:', 'end switch']) assert.ok(decrease.test(line), line);
+  const snippets = JSON.parse(fs.readFileSync('snippets/ny.code-snippets', 'utf8'));
+  assert.equal(snippets['Switch statement'].body.at(-1), 'end switch');
+  assert.ok(snippets['Switch expression'].body.some((line: string) => line.includes('break')));
+});
+
 test("Ny explicit interpolation scopes expressions, nested strings, and literal braces", async () => {
   const grammar = await loadNyGrammar();
   assert.ok(grammar);

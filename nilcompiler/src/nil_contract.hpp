@@ -102,6 +102,11 @@ struct nil_fault_analysis {
 };
 nil_fault_analysis analyze_nil_fault_function(const nil_function &function,
                                               const nil_module &module);
+// Compiler-only marker and finalization. Source returns nested in a value
+// switch may abandon suspended expression operands; executable NIL still
+// requires an exact 0/1-value RET stack and never accepts this marker.
+inline constexpr const char *nil_switch_return_marker = "$nil.codegen.switch-return";
+void finalize_nil_switch_returns(nil_module &module);
 void validate_nil_fault_contract(const nil_module &module);
 // Loader-bypassing embedders still receive region/stack/state validation.
 void validate_nil_fault_contract(const std::vector<Instruction> &program);
