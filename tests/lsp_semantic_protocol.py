@@ -78,13 +78,22 @@ def completion(source: str, marker: str = "|", *, extra: list[dict] | None = Non
 
 class SemanticProtocol(unittest.TestCase):
     def test_reference_parameter_name_and_definition(self) -> None:
-        source = 'fn update(ref amount: i64) -> i64\n amount = amount + 1\n return amo|unt\nend fn\n'
-        result, notes = completion(source)
-        self.assertEqual(set(result), {'amount'})
-        self.assertEqual(result['amount']['detail'], 'ref amount: i64')
-        replies, _ = session([opened(source.replace('|', '')), query('definition', source, '|')])
-        self.assertEqual(replies[2][0]['range']['start'], {'line': 0, 'character': 14})
-        self.assertEqual(notes[0]['params']['diagnostics'], [])
+        for modifier in ('ref', 'reference', 'mut', 'mutable'):
+            with self.subTest(modifier=modifier):
+                source = f'fn update({modifier} amount: i64) -> i64\n amount = amount + 1\n return amo|unt\nend fn\n'
+                result, notes = completion(source)
+                self.assertEqual(set(result), {'amount'})
+                self.assertEqual(result['amount']['detail'], modifier + ' amount: i64')
+                replies, _ = session([opened(source.replace('|', '')), query('definition', source, '|')])
+                self.assertEqual(replies[2][0]['range']['start'], {'line': 0, 'character': 11 + len(modifier)})
+                self.assertEqual(notes[0]['params']['diagnostics'], [])
+
+    def test_long_mutability_and_reference_type_aliases(self) -> None:
+        result, _ = completion('fn main()\n let mutable total: i64 = 1\n println(tot|al)\nend fn\n')
+        self.assertEqual(set(result), {'total'})
+        source = 'struct Point\n count: i64\nend struct\nfn main(point: reference<Point>)\n println(point.|)\nend fn\n'
+        result, _ = completion(source)
+        self.assertEqual(set(result), {'count'})
 
     def test_formatted_text_holes_and_nested_literals(self) -> None:
         prefix = 'fn main()\n let height: f64 = -1.6\n'

@@ -162,6 +162,24 @@ test("Matrix binding references scope parameters separately from reference expre
   assertScope(grammar, "item as reference to Record", "reference", "storage.type.builtin");
 });
 
+test("Matrix short mut/ref aliases preserve parameter and reference scopes", async () => {
+  const grammar = await loadMatrixGrammar();
+  for (const prefix of ["receives mut", "receives more mut", "receives first as number and mut",
+    "receives ref", "receives first as number, ref"]) {
+    const line = `update ${prefix} amount as number begin paragraph`;
+    assertScope(grammar, line, "amount", "variable.parameter");
+    assertScope(grammar, line, prefix.includes("mut") ? "mut" : "ref", "storage.modifier");
+  }
+  assertScope(grammar, "    MUT amount as number", "MUT", "storage.modifier");
+  assertScope(grammar, "    REF amount as number", "amount", "variable.parameter");
+  assertScope(grammar, "update with amount being ref to total", "ref", "storage.type.builtin");
+  assertScope(grammar, "item as ref to Record", "ref", "storage.type.builtin");
+  for (const word of ["mut", "mutable"])
+    assertScope(grammar, `change on ${word} receiver begin paragraph`, word, "keyword.other.modifier");
+  for (const name of ["mut-value", "ref-value", "mutable-value", "reference-value"])
+    assertScope(grammar, "say " + name, name, "variable.other.readwrite");
+});
+
 test("Matrix scopes imports, named calls, and precise type overrides", async () => {
   const grammar = await loadMatrixGrammar();
   assertScope(grammar, "read everything from ny.lang.text", "ny.lang.text", "entity.name.namespace");

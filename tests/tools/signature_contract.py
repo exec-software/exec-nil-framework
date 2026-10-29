@@ -120,13 +120,16 @@ def main():
         assert value['label'] == 'combine receives first as number, second-value as number returns number', value
         assert value['active_parameter'] == 1
         assert query(matrix.replace('|9', '9').replace('first being 7', 'first being |7'), name='first.matrix', status=0)['active_parameter'] == 0
-        for spelling in ('mutable', 'variable'):
+        for spelling in ('mutable', 'mut', 'variable'):
             mutable = matrix.replace('first as number', spelling + ' first as number')
             value = query(mutable, name='mutable-' + spelling + '.matrix', status=0)
             assert value['parameters'][0]['label'] == 'mutable first as number', value
             assert value['parameters'][0]['mutable'] is True
             assert value['parameters'][1]['mutable'] is False
         value = query(ny.replace('first: i32', 'mut first: i32'), name='mutable.ny', status=0)
+        assert value['parameters'][0]['label'] == 'mut first: i32', value
+        assert value['parameters'][0]['mutable'] is True
+        value = query(ny.replace('first: i32', 'mutable first: i32'), name='long-mutable.ny', status=0)
         assert value['parameters'][0]['label'] == 'mut first: i32', value
         assert value['parameters'][0]['mutable'] is True
         reference_ny = ('fn update(ref amount: i64) -> i64\namount = amount + 1\nreturn amount\nend fn\n'
@@ -136,7 +139,9 @@ def main():
                             'main returns number begin paragraph\nvariable total as number is 4\n'
                             'give update with amount being reference to |total\nend paragraph\n')
         for name, source, label in (('reference.ny', reference_ny, 'ref amount: i64'),
-                                    ('reference.matrix', reference_matrix, 'reference amount as number')):
+                                    ('long-reference.ny', reference_ny.replace('ref ', 'reference '), 'ref amount: i64'),
+                                    ('reference.matrix', reference_matrix, 'reference amount as number'),
+                                    ('short-reference.matrix', reference_matrix.replace('reference ', 'ref '), 'reference amount as number')):
             value = query(source, name=name, status=0)
             assert value['parameters'][0]['label'] == label, value
             assert value['parameters'][0]['reference'] is True, value
@@ -199,7 +204,10 @@ def main():
         assert value['parameters'][1]['type'] == 'array<i32>', value
         assert value['parameters'][1]['mutable'] and value['parameters'][1]['variadic']
         assert value['active_parameter'] == 1
-        for mode in ('', 'mutable ', 'variable '):
+        value = query(variadic.replace('..rest:', 'mutable ..rest:'), name='long-mutable-variadic.ny', status=0)
+        assert value['parameters'][1]['label'] == 'mut ..rest: i32', value
+        assert value['parameters'][1]['mutable'] and value['parameters'][1]['variadic']
+        for mode in ('', 'mutable ', 'mut ', 'variable '):
             matrix_variadic = ('book signatures.variadic\n'
                 'combine receives first as override integer, more ' + mode + 'rest as override integer '
                 'returns override integer begin paragraph\ngive first\nend paragraph\n'

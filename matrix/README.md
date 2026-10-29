@@ -53,11 +53,11 @@ construct. Matrix keeps `[` `]` for array literals, `(` `)` for grouping, `,`
 for list separation, `.` for member access and `::` for path qualification.
 Everything else is a word.
 
-**2. One canonical phrasing per construct.** The temptation with a
-natural-language surface is to accept synonyms — `returns`, `gives`, `yields`.
-Synonyms make the grammar ambiguous, make diffs unstable, and make two agents
-produce two spellings of one program. Matrix's naturalness comes from word
-*order*, not from vocabulary breadth. There is one spelling for each thing.
+**2. One canonical phrasing per construct.** Matrix's naturalness comes from
+word *order*, rather than a broad vocabulary of alternative grammatical forms.
+Documentation and signature help use canonical spellings. The shared
+`mut`/`mutable` and `ref`/`reference` aliases map to the same tokens in both
+languages while preserving each language's word order and punctuation.
 
 **3. A word is reused when the relation is the same, not when the word is
 free.** `.` is already multi-context in Ny — member access, decimal point,
@@ -142,8 +142,11 @@ main returns number begin paragraph
 end paragraph
 ```
 
-`variable` remains an alias for `mutable` in a parameter header. Reference
-parameters initially support exact scalar/text types on ordinary non-generic
+Both languages accept `mut`/`mutable` and `ref`/`reference`. Matrix keeps the
+`to` in reference expressions, so `ref to total` is the short form above;
+Ny writes `ref total` or `reference total`. Matrix's `variable` remains an
+alias for `mutable` in a parameter header. Reference parameters initially
+support exact scalar/text types on ordinary non-generic
 named paragraphs, with mutable locals or parameters as their targets. Writes
 are immediate, aliases share the binding, and references cannot escape the
 call. Existing `reference to Record` types still refer to shared objects.

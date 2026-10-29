@@ -42,7 +42,7 @@ end class
         "downcast_return": program("", f"fn make() -> Derived {{ return {base} }}"),
         "downcast_field": program(f"let value = Holder {{ item: {base} }}", "struct Holder { item: Derived }"),
         "unrelated": program("let value: Base = Other { value: 1 }"),
-        "reference_covariance": program(f"let value = {derived}\nlet reference: ref<Base> = ref value"),
+        "reference_covariance": program(f"let value = {derived}\nlet borrowed: ref<Base> = ref value"),
         "pointer_covariance": program("let pointer = allocate<Derived>(1)\nlet base: ptr<Base> = pointer"),
         "array_covariance": program(f"let values = [{derived}]\nlet bases: array<Base> = values"),
         "inferred_if_base_first": program(f"let value = if true then {base} else {derived} end if"),
@@ -149,9 +149,9 @@ pub override fn read(self: ref<Self>) -> i32 { return self.value + 1 }
 end class
 fn main() -> i32
 let child = Child { value: 7 }
-let reference = ref child
-println(reference.read())
-println(reference.inherited())
+let borrowed = ref child
+println(borrowed.read())
+println(borrowed.inherited())
 let parent: Parent = child
 let parent_reference = ref parent
 println(parent_reference.read())

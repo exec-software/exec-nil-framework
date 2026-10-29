@@ -283,7 +283,7 @@ end paragraph
                                        request("hover", located, identifier=3)])
         self.assertEqual(replies[2][0]["range"]["start"], {"line": 0, "character": 24})
         self.assertIn("mutable current-value as number", replies[3]["contents"]["value"])
-        for modifiers in ("mutable", "variable", "more mutable", "more variable"):
+        for modifiers in ("mutable", "mut", "variable", "more mutable", "more mut", "more variable"):
             with self.subTest(modifiers=modifiers):
                 result, _ = completion(f"sample receives\n {modifiers} input-value as number begin paragraph\n say input-|\nend paragraph\n")
                 self.assertEqual(set(result), {"input-value"})
@@ -293,15 +293,20 @@ end paragraph
 
     def test_parameter_modifier_keyword_completion(self) -> None:
         for source, expected in (
-            ("sample receives |", {"mutable", "variable", "reference", "more"}),
-            ("sample receives more mu|", {"mutable"}),
-            ("sample receives first as number and mu|", {"mutable"}),
-            ("sample receives first as number,\n mu|", {"mutable"}),
-            ("sample receives first as number,\n more mu|", {"mutable"}),
+            ("sample receives |", {"mutable", "mut", "variable", "reference", "ref", "more"}),
+            ("sample receives more mu|", {"mutable", "mut"}),
+            ("sample receives first as number and mu|", {"mutable", "mut"}),
+            ("sample receives first as number,\n mu|", {"mutable", "mut"}),
+            ("sample receives first as number,\n more mu|", {"mutable", "mut"}),
+            ("sample receives first as number and re|", {"reference", "ref"}),
             ("sample receives mutable |", set()),
+            ("sample receives mut |", set()),
             ("sample receives reference |", set()),
+            ("sample receives ref |", set()),
             ("sample receives value-name as reference |", {"to"}),
+            ("sample receives value-name as ref |", {"to"}),
             ("main begin paragraph\n evaluate sample with reference |", {"to"}),
+            ("main begin paragraph\n evaluate sample with ref |", {"to"}),
             ("main begin paragraph\n say sample with more mu|", set()),
         ):
             with self.subTest(source=source):
@@ -324,6 +329,14 @@ end paragraph
         self.assertEqual(replies[2][0]["range"]["start"], {"line": 0, "character": source.index("current-value")})
         result, _ = completion(source.replace("first-value as number and reference", "\n reference"))
         self.assertEqual(set(result), {"current-value"})
+        result, _ = completion(source.replace("reference current-value", "ref current-value"))
+        self.assertEqual(set(result), {"current-value"})
+        self.assertEqual(result["current-value"]["detail"], "ref current-value as number")
+
+    def test_short_reference_type_preserves_member_completion(self) -> None:
+        source = 'Point begin record\n field count as number\nend record\nmain receives point as ref to Point begin paragraph\n say point.|\nend paragraph\n'
+        result, _ = completion(source)
+        self.assertEqual(set(result), {"count"})
 
     def test_non_capturing_paragraph_and_escaped_names_with_spaces(self) -> None:
         source = """value global-count is 1

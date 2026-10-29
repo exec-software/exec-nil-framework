@@ -17,9 +17,9 @@ end fn
 
 fn check_float_range(lower: f64, upper: f64, input: i64)
     let stream = random_generator.new(input)
-    let reference = stream.clone()
-    let first = reference.next_i32()
-    let second = reference.next_i32()
+    let reference_stream = stream.clone()
+    let first = reference_stream.next_i32()
+    let second = reference_stream.next_i32()
     let actual = stream.range_f64(lower, upper)
     require(is_finite(actual) and actual >= lower and actual < upper, "instance finite half-open interval")
     require(stream.next_i32() == second, "instance float range consumes one draw")

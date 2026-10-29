@@ -7,9 +7,11 @@
 ## Decision
 
 Parameter declarations distinguish an immutable local binding, a mutable local
-binding, and a reference to the caller's binding. Matrix uses `mutable` for
-callee-local assignment and retains `variable` as a compatibility alias. Ny
-keeps `mut` for that mode. The caller passes an ordinary value in either case.
+binding, and a reference to the caller's binding. Both languages accept `mut`
+and `mutable` for callee-local assignment, and `ref` and `reference` for
+caller-binding parameters. Matrix also retains `variable` as a compatibility
+alias for local mutability. The caller passes an ordinary value to a locally
+mutable parameter.
 
 Caller-binding mutation requires a separate modifier at both ends of the call:
 
@@ -18,6 +20,17 @@ Caller-binding mutation requires a separate modifier at both ends of the call:
 | Mutable local parameter | `mut amount: i64` | `mutable amount as number` |
 | Caller-binding parameter | `ref amount: i64` | `reference amount as number` |
 | Explicit binding argument | `update(ref total)` | `update with amount being reference to total` |
+
+These examples use the canonical display spellings: short forms in Ny and long
+forms in Matrix. Either spelling works in either language without changing its
+grammar. Ny accepts `update(reference total)`; Matrix accepts
+`update with amount being ref to total`, retaining its `to` keyword. The aliases
+also apply to existing uses such as Ny `let mutable`, Matrix `on mut receiver`,
+Ny `reference<Record>`, and Matrix `ref to Record`.
+
+All four spellings are reserved keywords in both languages. Existing bindings
+named `mutable` or `reference` in Ny, or `mut` or `ref` in Matrix, must be renamed
+or, in Matrix, written as escaped identifiers.
 
 The parameter's source type remains its scalar/text value type. Assigning the
 parameter updates the referenced binding; reading or returning the parameter
@@ -88,8 +101,9 @@ a public FFI layout or user-constructible reference type.
 ## Tooling
 
 Source signatures display `mutable` or `reference` in Matrix and `mut` or
-`ref` in Ny. The `nil.signature.v1` parameter records add boolean `mutable`
-and `reference` fields; clients that read older compiler output may treat
+`ref` in Ny, regardless of the spelling used in source. The `nil.signature.v1`
+parameter records add boolean `mutable` and `reference` fields; clients that
+read older compiler output may treat
 those fields as absent. The value type is still the source scalar/text type.
 
 Source debug metadata maps an addressed name to its cell slot using the

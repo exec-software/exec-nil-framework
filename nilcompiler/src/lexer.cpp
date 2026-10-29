@@ -382,7 +382,7 @@ token lexer::identifier() {
     kind = token_kind::loop_kw;
   else if (text == "do")
     kind = token_kind::do_kw;
-  else if (text == "mut")
+  else if (text == "mut" || text == "mutable")
     kind = token_kind::mut_kw;
   else if (text == "import")
     kind = token_kind::import_kw;
@@ -422,7 +422,7 @@ token lexer::identifier() {
     kind = token_kind::allocate_kw;
   else if (text == "deallocate")
     kind = token_kind::deallocate_kw;
-  else if (text == "ref")
+  else if (text == "ref" || text == "reference")
     kind = token_kind::ref_kw;
   else if (text == "fn")
     kind = token_kind::fn_kw;

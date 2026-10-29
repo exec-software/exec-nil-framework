@@ -236,9 +236,9 @@ unguarded `otherwise` and one value-producing expression per arm, as Ny does.
 | `fn f() -> i32` | `f returns override integer begin paragraph ... end paragraph` | executed |
 | `f(1, 2)` | `f with a being 1, b being 2` | executed |
 | `f()` | `f with nothing` | executed |
-| `mut amount: i32` parameter | `mutable amount as override integer` parameter; `variable` remains an alias | callee-local mutation |
-| `ref amount: i64` parameter | `reference amount as number` parameter | explicit caller-binding mutation; ordinary non-generic named functions, exact scalar/text types only |
-| `f(ref total)` | `f with amount being reference to total` | mutable local/parameter target; immediate writes and forwarding, no escaping binding reference |
+| `mut amount: i32` / `mutable amount: i32` parameter | `mutable amount as override integer` / `mut amount as override integer`; `variable` remains an alias | callee-local mutation |
+| `ref amount: i64` / `reference amount: i64` parameter | `reference amount as number` / `ref amount as number` parameter | explicit caller-binding mutation; ordinary non-generic named functions, exact scalar/text types only |
+| `f(ref total)` / `f(reference total)` | `f with amount being reference to total` / `f with amount being ref to total` | mutable local/parameter target; immediate writes and forwarding, no escaping binding reference |
 | `..values: i32` variadic | `receives more values as override integer` | executed for `override integer` |
 | default parameter expressions | `defaulting to <literal>` | **parsed; omitted arguments rejected** |
 | `fn square(x) -> i32 => x * x` | no spelling | not implemented in Ny |

@@ -54,6 +54,21 @@ test("grammar compiles and scopes canonical declarations", async () => {
   assert.ok(scopesForFragment(grammar, "type UserId = i64", "UserId").includes("entity.name.type.ny"));
 });
 
+test("Ny short and long mutability/reference aliases retain keyword and binding scopes", async () => {
+  const grammar = await loadNyGrammar();
+  assert.ok(grammar);
+  for (const word of ["mut", "mutable"]) {
+    assert.ok(scopesForFragment(grammar, `fn update(${word} amount: i64)`, word).includes("storage.modifier.ny"));
+    assert.ok(scopesForFragment(grammar, `let ${word} amount: i64 = 0`, word).includes("storage.modifier.mutable.ny"));
+    assert.ok(scopesForFragment(grammar, `let ${word} amount: i64 = 0`, "amount").includes("variable.other.readwrite.ny"));
+  }
+  for (const word of ["ref", "reference"]) {
+    assert.ok(scopesForFragment(grammar, `fn update(${word} amount: i64)`, word).includes("keyword.operator.word.ny"));
+    assert.ok(scopesForFragment(grammar, `update(${word} amount)`, word).includes("keyword.operator.word.ny"));
+    assert.ok(scopesForFragment(grammar, `fn read(item: ${word}<Point>)`, word).includes("keyword.operator.word.ny"));
+  }
+});
+
 test("Ny explicit interpolation scopes expressions, nested strings, and literal braces", async () => {
   const grammar = await loadNyGrammar();
   assert.ok(grammar);

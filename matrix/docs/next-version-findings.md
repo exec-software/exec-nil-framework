@@ -2031,6 +2031,14 @@ argument. Ny keeps `mut amount: i64` and adds `ref amount: i64` with `ref total`
 at the call. Both frontends share checking, typed cells, and direct-call
 lowering. The parameter remains a scalar/text value in source inspection.
 
+Both languages accept the short and long spellings `mut` / `mutable` and
+`ref` / `reference`. This keeps familiar abbreviations available while allowing
+the prose forms in Ny as well. Each language retains its grammar: Ny accepts
+`update(reference total)` and Matrix accepts `update with ref to total`.
+Signature help uses canonical Ny short forms and Matrix long forms, regardless
+of the source spelling. Existing reference types and receiver clauses accept
+the same aliases.
+
 The parser and editor tooling also recognize modifiers after the `and`
 parameter separator and combined `more mutable` / `more variable` prefixes.
 Signature help exposes the selected mode, and debugger source inspection

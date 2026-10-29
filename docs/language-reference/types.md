@@ -178,6 +178,11 @@ synchronous call. This mode does not introduce first-class `ref<i64>` values:
 the reference cannot be stored, returned, or captured. Existing `ref<Struct>`
 object identity and rebinding behavior are unchanged.
 
+`reference` is an alias for `ref` in Ny, including `reference<Struct>` types,
+`reference value` expressions, and reference parameter declarations. Matrix
+likewise accepts `ref` for `reference`, retaining its `ref to Record` type and
+`ref to value` expression grammar.
+
 ### Classes
 
 Non-generic concrete classes support instance methods, inherited fields and

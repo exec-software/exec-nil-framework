@@ -248,14 +248,18 @@ the fixed parameters of a variadic paragraph.
 
 Parameters are immutable unless their declaration says otherwise.
 `receives mutable amount as number` lets the paragraph reassign its local copy;
-`variable` remains an alias for `mutable` in this position. To change the
-caller's binding, declare `receives reference amount as number` and call it
-with `amount being reference to total`. Here `total` must be a mutable local or
-parameter of exactly the same type. Writes are immediate, including before a
+`mut` is the short spelling, and `variable` remains an alias in this position.
+To change the caller's binding, declare `receives reference amount as number` and call it
+with `amount being reference to total`. `ref` can replace `reference` in both
+places: `receives ref amount as number` and `amount being ref to total`.
+Here `total` must be a mutable local or parameter of exactly the same type.
+Writes are immediate, including before a
 later fault, and the reference cannot escape the call. This initial mode
 supports scalar/text parameters on ordinary non-generic named paragraphs;
 see the [complete parameter contract](../docs/language-reference/functions.md#reference-parameters).
 An existing `reference to Record` type still denotes a shared object handle.
+It also accepts the short spelling `ref to Record`. Both spellings are
+case-insensitive in Matrix.
 
 An immutable local paragraph value retains parameter names from its declared
 paragraph, anonymous paragraph or immutable local initializer. Function-typed

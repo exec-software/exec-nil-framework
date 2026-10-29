@@ -53,8 +53,8 @@ the native backend.
 
 ### Mutable parameters
 
-`mut` makes the callee's local parameter binding mutable. It does not mutate an
-ordinary scalar variable in the caller.
+`mut` or `mutable` makes the callee's local parameter binding mutable. It does
+not mutate an ordinary scalar variable in the caller.
 
 ```ny
 fn increment_local(mut value: i32) -> i32
@@ -67,9 +67,9 @@ let incremented = increment_local(original)
 # original is 5; incremented is 6
 ```
 
-Matrix spells this modifier `mutable`; the existing `variable` spelling remains
-an alias in parameter declarations. Ordinary local declarations still use
-`variable`.
+Matrix accepts `mutable` and `mut`; the existing `variable` spelling remains
+an alias in parameter declarations. Ordinary Matrix local declarations still
+use `variable`; Ny local declarations accept `let mut` and `let mutable`.
 
 ```matrix
 increment-local receives mutable amount as number returns number begin paragraph
@@ -91,9 +91,11 @@ ownership/borrowing contract; owners and loans cannot be function parameters.
 
 ### Reference parameters
 
-`ref` before a Ny parameter name, or `reference` before a Matrix parameter name,
-allows the function to update the caller's binding. The call must explicitly
-identify the binding too.
+`ref` or `reference` before a parameter name allows the function to update the
+caller's binding. Both languages accept both spellings. The call must
+explicitly identify the binding too: Ny accepts `ref total` or `reference total`,
+and Matrix accepts `reference to total` or `ref to total`. The aliases keep each
+language's surrounding syntax unchanged.
 
 ```ny
 fn increment(ref amount: i64)
@@ -140,6 +142,11 @@ defaulted reference parameters, and variadic reference parameters are rejected.
 it does not acquire the caller-binding behavior of `reference amount as number`.
 See [NIL-0019](../design/NIL-0019-binding-reference-parameters.md) for the
 representation and scope of this parameter mode.
+
+The aliases also apply to existing reference types: Ny accepts
+`ref<Record>` / `reference<Record>`, and Matrix accepts
+`reference to Record` / `ref to Record`. Signature help uses Ny's short forms
+and Matrix's long forms regardless of which alias appears in the declaration.
 
 ### Default parameters
 

@@ -72,7 +72,9 @@ std::vector<Token> lex(const std::string& text, ParseResult& out) {
         } else if (name_start(text[i])) {
             while (i < text.size() && name_part(text[i])) ++i;
             const auto spelling = text.substr(start, i - start);
-            const auto word = lowercase(spelling);
+            auto word = lowercase(spelling);
+            if (word == "mut") word = "mutable";
+            else if (word == "ref") word = "reference";
             auto quote = i;
             while (quote < text.size() && (text[quote] == ' ' || text[quote] == '\t')) ++quote;
             if (word == "formatted" && quote > i && quote < text.size() && text[quote] == '"') {
@@ -660,7 +662,7 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
     }
     if (last == "as" || last == "returns" || last == "becomes" || last == "means" ||
         last == "of" || last == "holding" || last == "to") {
-        words = {"number", "floating", "boolean", "text", "nothing", "override", "array of", "tuple of", "pointer to", "reference to", "owned array of", "shared view of", "exclusive view of"};
+        words = {"number", "floating", "boolean", "text", "nothing", "override", "array of", "tuple of", "pointer to", "reference to", "ref to", "owned array of", "shared view of", "exclusive view of"};
         kind = 25; // TypeParameter: language type vocabulary
     } else if (last == "override") words = {"integer", "long", "byte", "double"};
     else if (last == "begin") words = {"paragraph", "record", "class", "choice", "contract", "implementation", "extension", "test", "text"};
@@ -670,10 +672,10 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
     else if (last == "shifted") words = {"left by", "right by"};
     else if (last == "the") words = {"length of", "paragraph"};
     else if (last == "with") words = {"nothing", "more"};
-    else if (last == "receives") words = {"mutable", "variable", "reference", "more"};
-    else if (parameter_clause && last == "more") words = {"mutable", "variable"};
+    else if (last == "receives") words = {"mutable", "mut", "variable", "reference", "ref", "more"};
+    else if (parameter_clause && last == "more") words = {"mutable", "mut", "variable"};
     else if (parameter_clause && (last == "," || last == "and" || last == "\n"))
-        words = {"mutable", "variable", "reference", "more"};
+        words = {"mutable", "mut", "variable", "reference", "ref", "more"};
     else if (last == "reference") {
         const auto previous = before.size() > 1 ? before[before.size() - 2].word : "";
         if (parameter_clause && (previous == "receives" || previous == "and" || previous == "," || previous == "\n"))

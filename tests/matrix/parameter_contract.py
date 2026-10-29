@@ -335,6 +335,94 @@ main returns override integer begin paragraph
 end paragraph
 '''
 
+ALIASES_NY = '''module parameter_aliases
+struct Parcel
+ item: i64
+end struct
+fn adjust(mutable amount: i64, mut adjustment: i64, reference first: i64, ref second: i64) -> i64
+ amount = amount + adjustment
+ adjustment = 99
+ first = first + amount
+ second = second + 1
+ return amount
+end fn
+fn increment(reference target: i64)
+ target = target + 1
+end fn
+fn relay(ref target: i64)
+ increment(reference target)
+end fn
+fn rest(mutable ..items: i64) -> i64
+ items = [4 as i64]
+ return items[0]
+end fn
+fn touch(sample: reference<Parcel>)
+ sample.item = 23
+end fn
+fn main() -> i32
+ let mutable total: i64 = 5
+ println(adjust(total, 2, reference total, ref total))
+ println(total)
+ relay(reference total)
+ println(total)
+ println(rest(1, 2))
+ let mutable original = Parcel { item: 17 }
+ let first_handle: ref<Parcel> = reference original
+ let second_handle: reference<Parcel> = ref original
+ touch(first_handle)
+ println(second_handle.item)
+ original = Parcel { item: 29 }
+ second_handle.item = 31
+ println(original.item)
+ println(first_handle.item)
+ return 0
+end fn
+'''
+
+ALIASES_MATRIX = '''book parameter-aliases
+Parcel begin record
+ field item as number
+end record
+adjust receives mut amount as number and mutable adjustment as number and ref first as number, reference second as number returns number begin paragraph
+ set amount to amount plus adjustment
+ set adjustment to 99
+ set first to first plus amount
+ set second to second plus 1
+ give amount
+end paragraph
+increment receives ref target as number begin paragraph
+ set target to target plus 1
+end paragraph
+relay receives reference target as number begin paragraph
+ evaluate increment with ref to target
+end paragraph
+rest receives more mut items as number returns number begin paragraph
+ set items to [4 becomes number]
+ give items at 0
+end paragraph
+touch receives sample as ref to Parcel begin paragraph
+ set sample.item to 23
+end paragraph
+main returns override integer begin paragraph
+ variable total as number is 5
+ say adjust with amount being total, adjustment being 2, first being reference to total, second being ref to total
+ say total
+ evaluate relay with ref to total
+ say total
+ say rest with 1, 2
+ variable original is build Parcel with item being 17
+ value first-handle as reference to Parcel is ref to original
+ value second-handle as ref to Parcel is reference to original
+ evaluate touch with first-handle
+ say second-handle.item
+ set original to build Parcel with item being 29
+ set second-handle.item to 31
+ say original.item
+ say first-handle.item
+ give 0
+end paragraph
+'''
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -392,6 +480,7 @@ def main() -> int:
         for name, ny, matrix, stdout, native in (
             ('callbacks', CALLBACK_NY, CALLBACK_MATRIX, '16\n16\n12\n', False),
             ('text-operations', TEXT_NY, TEXT_MATRIX, 'bc\nnew\nnew!\n', True),
+            ('keyword-aliases', ALIASES_NY, ALIASES_MATRIX, '7\n13\n14\n4\n23\n29\n31\n', True),
         ):
             for language, source in (('ny', ny), ('matrix', matrix)):
                 path = root / (name + '.' + language)
@@ -460,6 +549,39 @@ def main() -> int:
             'ny': 'fn bump(ref target: i64)\ntarget = target + 1\nend fn\n',
             'matrix': 'bump receives reference target as number begin paragraph\nset target to target plus 1\nend paragraph\n',
         }
+        # Short and full keywords are lexical aliases, including when a
+        # reference form must be rejected. Check semantic rejection rather
+        # than accepting a parser error as equivalent behavior.
+        for language in ('ny', 'matrix'):
+            for reference_word in ('ref', 'reference'):
+                if language == 'ny':
+                    bump = f'fn bump({reference_word} target: i64)\ntarget = target + 1\nend fn\n'
+                    alias_invalid = (
+                        ('immutable', f'let total: i64 = 1\nbump({reference_word} total)', bump),
+                        ('wrong-width', f'let mutable total: i32 = 1\nbump({reference_word} total)', bump),
+                        ('standalone-scalar', f'let mutable total: i64 = 1\nlet borrowed = {reference_word} total', ''),
+                        ('variadic', '', f'fn invalid({reference_word} ..items: i64)\nend fn\n'),
+                    )
+                else:
+                    bump = f'bump receives {reference_word} target as number begin paragraph\nset target to target plus 1\nend paragraph\n'
+                    alias_invalid = (
+                        ('immutable', f'value total as number is 1\nevaluate bump with {reference_word} to total', bump),
+                        ('wrong-width', f'variable total as override integer is 1\nevaluate bump with {reference_word} to total', bump),
+                        ('standalone-scalar', f'variable total as number is 1\nvalue borrowed is {reference_word} to total', ''),
+                        ('variadic', '', f'invalid receives more {reference_word} items as number begin paragraph\nend paragraph\n'),
+                    )
+                for name, body, extra in alias_invalid:
+                    path = root / ('alias-' + reference_word + '-' + name + '.' + language)
+                    path.write_text(program(language, body, extra), encoding='utf-8')
+                    for flags in ([], ['--no-typecheck']):
+                        output = root / 'protected-alias-output'
+                        output.write_bytes(b'previous successful artifact')
+                        result = run([*common, '--quiet', '--no-bundle', *flags, '-o', output, path], 1)
+                        assert result.stderr.strip(), (name, language, reference_word, result)
+                        assert not any(marker in result.stderr for marker in ('Parse error', 'Syntax error')), result
+                        assert output.read_bytes() == b'previous successful artifact', (name, language, reference_word)
+                        checks += 1
+
         invalid = [
             ('immutable-local', 'let total: i64 = 1\nbump(ref total)',
              'value total as number is 1\nevaluate bump with reference to total'),

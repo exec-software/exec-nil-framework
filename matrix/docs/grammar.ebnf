@@ -106,8 +106,10 @@ paragraph_decl   = { modifier } identifier [ generic_clause ]
                   [ 'returns' type ]
                   [ 'begin' 'paragraph' { statement } 'end' 'paragraph' ] ;
 
-receiver_clause = 'on' [ 'mutable' ] 'receiver'
-                | 'on' 'reference'
+mutable_keyword = 'mutable' | 'mut' ;
+reference_keyword = 'reference' | 'ref' ;
+receiver_clause = 'on' [ mutable_keyword ] 'receiver'
+                | 'on' reference_keyword
                 | 'without' 'receiver' ;   (* associated function: no 'my' *)
 
 (* After a complete parameter, an 'and' starts a further parameter only when
@@ -123,7 +125,7 @@ receiver_clause = 'on' [ 'mutable' ] 'receiver'
 param_list      = param { ( ',' | 'and' ) param } ;
 param           = [ 'more' ] [ parameter_mode ] identifier 'as' type
                   [ 'defaulting' 'to' ( literal | signed_number | ( 'negative' | 'minus' ) unary ) ] ;
-parameter_mode  = 'mutable' | 'variable' | 'reference' ;
+parameter_mode  = mutable_keyword | 'variable' | reference_keyword ;
 
 generic_clause  = 'of' generic_param { ',' generic_param } ;
 (* Several bounds are joined with 'and'.  A bound is a type name, so 'and
@@ -200,7 +202,7 @@ type            = ergonomic_type
                 | 'shared' 'view' 'of' type
                 | 'exclusive' 'view' 'of' type
                 | 'pointer' 'to' type
-                | 'reference' 'to' type
+                | reference_keyword 'to' type
                 | nominal_type ;
 
 (* TIER ONE: what a program says unless it has a reason not to.  Width,
@@ -373,7 +375,7 @@ primary         = literal
                 | '(' expression ')'
                 | '(' expression ',' [ expression { ',' expression } [ ',' ] ] ')'
                 | 'build' nominal_type [ 'with' field_init { ',' field_init } ]
-                | 'reference' 'to' identifier
+                | reference_keyword 'to' identifier
                 | 'apply' identifier 'across' expression
                 | 'now' 'in' 'milliseconds'
                 | when_expr
