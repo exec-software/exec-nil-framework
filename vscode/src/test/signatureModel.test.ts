@@ -40,6 +40,24 @@ test("signature accepts empty argument regions and does not require successful c
   assert.equal(parseCompilerSignature(undefined), undefined);
 });
 
+test("signature accepts optional mutable parameter metadata and rendered modifiers", () => {
+  const value = fixture();
+  value.parameters[0]!.mutable = true;
+  value.parameters[0]!.label = "mutable first as number";
+  value.label = "combine receives mutable first as number, second as text returns text";
+  value.parameters[1]!.mutable = false;
+  assert.deepEqual(parseCompilerSignature(value), value);
+});
+
+test("signature accepts reference parameter metadata without changing its scalar type", () => {
+  const value = fixture();
+  value.parameters[0]!.mutable = true;
+  value.parameters[0]!.reference = true;
+  value.parameters[0]!.label = "reference first as number";
+  value.label = "combine receives reference first as number, second as text returns text";
+  assert.deepEqual(parseCompilerSignature(value), value);
+});
+
 test("signature rejects invalid identities, byte boundaries and parameter metadata", () => {
   for (const mutate of [
     (v: any) => v.schema = "nil.signature.v2",
@@ -60,7 +78,9 @@ test("signature rejects invalid identities, byte boundaries and parameter metada
     (v: any) => v.parameters[0].name = "",
     (v: any) => v.parameters[0].type = "\0",
     (v: any) => v.parameters[0].variadic = true,
-    (v: any) => v.parameters[1].variadic = "false"
+    (v: any) => v.parameters[1].variadic = "false",
+    (v: any) => v.parameters[0].mutable = "true",
+    (v: any) => v.parameters[0].reference = "true"
   ]) {
     const value = fixture(); mutate(value); assert.throws(() => parseCompilerSignature(value));
   }

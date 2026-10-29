@@ -571,6 +571,10 @@ bool type_checker::check(ast_program &program) {
     for (auto *value : checked_class_conversions_) value->checked_class_upcast.reset();
     for (auto *value : checked_reference_handles_)
       value->checked_reference_handle = false;
+    for (auto *value : checked_binding_references_)
+      value->checked_binding_reference = false;
+    for (auto *parameter : checked_reference_parameters_)
+      parameter->checked_binding_reference = false;
     for (auto *call : checked_class_calls_) {
       call->concrete_class_receiver.reset();
       call->class_method_owner.reset();
@@ -2863,6 +2867,7 @@ void type_checker::visit(ast_function_decl &p) {
 
   // Register parameters
   for (auto &param : p.params) {
+    param.checked_binding_reference = false;
     // Resolve canonical parameter type if a type annotation is provided.
     std::optional<std::string> canonical_param_type = std::nullopt;
     if (param.type_name.has_value()) {
@@ -2873,6 +2878,21 @@ void type_checker::visit(ast_function_decl &p) {
     }
     if (canonical_param_type)
       param.type_name = canonical_param_type;
+    if (param.is_ref) {
+      const auto errors_before = diagnostics_.size();
+      if (!p.body || native_dispatch_annotations || current_class_name_ ||
+          !p.generic_params.empty() || p.is_virtual || p.is_abstract || p.is_override)
+        add_error(param.line, "Reference parameters require an ordinary non-generic function body; methods and foreign dispatch are unavailable");
+      if (param.is_variadic || param.default_value)
+        add_error(param.line, "Reference parameters cannot be variadic or have defaults");
+      const auto type = canonical_param_type.value_or("");
+      if (type != "i32" && type != "i64" && type != "u8" && type != "bool" &&
+          type != "f64" && type != "String")
+        add_error(param.line, "Reference parameters currently support i32, i64, u8, bool, f64 and text bindings");
+      param.is_mut = true;
+      param.checked_binding_reference = diagnostics_.size() == errors_before;
+      checked_reference_parameters_.push_back(&param);
+    }
     // Preserve `is_mut` on parameter symbols so the symbol table accurately
     // reflects parameter mutability for later analysis.
     if (!symbols_.insert_symbol_with_context(
@@ -4631,7 +4651,8 @@ void type_checker::capture_signature(const ast_call_expr &call, const symbol &bi
     for (std::size_t index = parameter_offset; index < binding.params.size(); ++index) {
       const auto &parameter = binding.params[index];
       result.parameters.push_back({parameter.name, parameter.type_name.value_or("any"),
-                                   parameter.is_variadic, parameter.name_span});
+                                   parameter.is_variadic, parameter.name_span, parameter.is_mut,
+                                   parameter.is_ref});
     }
   } else if (node.kind == ast_node_kind::variable_decl_node && binding.type_name &&
              binding.checked_callable_parameters && !binding.is_mut) {
@@ -4753,17 +4774,43 @@ void type_checker::visit(ast_call_expr &e) {
   e.class_instance_call = false;
   e.class_argument_types.clear();
   const bool saved_class_call = checking_class_call_;
+  const auto *saved_direct_callee = direct_call_callee_;
   checking_class_call_ = true;
+  direct_call_callee_ = e.callee.get();
   if (e.callee && !bounded_receiver)
     e.callee->accept(*this);
   checking_class_call_ = saved_class_call;
+  direct_call_callee_ = saved_direct_callee;
   const bool signature_eligible = signature_selected && diagnostics_.size() == signature_errors;
 
+  // A direct `ref local` argument can mean an object handle or a caller binding.
+  // Delay its handle proof until resolution selects the parameter mode. All
+  // other contexts retain the existing aggregate-only reference rules.
+  std::vector<ast_ref_expr *> pending_references;
+  struct reference_argument_guard {
+    std::function<void()> check;
+    ~reference_argument_guard() { check(); }
+  } reference_guard{[&] {
+    for (auto *reference : pending_references) {
+      if (!reference->checked_binding_reference && reference->operand)
+        check_reference_handle(*reference, *reference->operand,
+            resolve_type(reference->operand->inferred_type.value_or("<unknown>")));
+    }
+  }};
   // Visit arguments first to resolve their types for inference
   std::vector<type_info> arg_types;
   for (auto &arg : e.args) {
     if (arg) {
-      arg->accept(*this);
+      if (arg->kind == ast_node_kind::ref_expr_node) {
+        auto &reference = static_cast<ast_ref_expr &>(*arg);
+        reference.checked_binding_reference = false;
+        reference.checked_reference_handle = false;
+        if (reference.operand) reference.operand->accept(*this);
+        const auto operand = last_expr_type_.value_or(type_unknown);
+        last_expr_type_ = resolve_type("ref<" + operand.name + ">");
+        reference.inferred_type = last_expr_type_->name;
+        pending_references.push_back(&reference);
+      } else arg->accept(*this);
       arg_types.push_back(last_expr_type_.value_or(type_unknown));
     } else {
       arg_types.push_back(type_unknown);
@@ -4913,6 +4960,13 @@ void type_checker::visit(ast_call_expr &e) {
           const auto &parameter = callee.params[parameter_index];
           if (!parameter.type_name) continue;
           auto expected = resolve_type(instantiate_generic_type(*parameter.type_name, substitutions));
+          if (parameter.is_ref) {
+            if (!e.args[i] || e.args[i]->kind != ast_node_kind::ref_expr_node)
+              add_error(e.line, "Reference parameter '" + parameter.name +
+                  "' requires an explicit reference to a mutable local binding");
+            else check_binding_reference_argument(static_cast<ast_ref_expr &>(*e.args[i]), expected);
+            continue;
+          }
           // Variadic parameters are represented as array<T> in the body, but
           // every source argument in their tail must satisfy the element type.
           if (parameter.is_variadic) {
@@ -6183,8 +6237,8 @@ bool type_checker::check_reference_handle(ast_expr &reference, ast_expr &operand
   reference.checked_reference_handle = false;
   // REF_LOCAL preserves an aggregate object handle, not the address of a
   // binding. Primitive values must never be copied and then interpreted as
-  // heap addresses by READ_PTR/WRITE_PTR. A future scalar-reference feature
-  // requires its own cell/lifetime ABI rather than widening this proof.
+  // heap addresses by READ_PTR/WRITE_PTR. Binding-reference arguments use
+  // their separate checked cell/lifetime ABI rather than widening this proof.
   if (operand.kind != ast_node_kind::identifier_expr_node) {
     add_error(reference.line,
               "Reference target must be a local struct or class handle; "
@@ -6212,6 +6266,32 @@ bool type_checker::check_reference_handle(ast_expr &reference, ast_expr &operand
   }
   reference.checked_reference_handle = true;
   checked_reference_handles_.push_back(&reference);
+  return true;
+}
+
+bool type_checker::check_binding_reference_argument(ast_ref_expr &argument,
+                                                   const type_info &expected) {
+  argument.checked_binding_reference = false;
+  const auto errors_before = diagnostics_.size();
+  if (!argument.operand || argument.operand->kind != ast_node_kind::identifier_expr_node) {
+    add_error(argument.line, "Reference argument requires a mutable local binding, not a temporary, field or index");
+    return false;
+  }
+  const auto &identifier = static_cast<const ast_identifier_expr &>(*argument.operand);
+  const auto *local = symbols_.lookup_non_global(identifier.name);
+  if (!local || local->kind != symbol_kind::variable_symbol || identifier.resolved_global_name) {
+    add_error(argument.line, "Reference argument requires a mutable local binding; globals are unavailable");
+    return false;
+  }
+  if (!local->is_mut)
+    add_error(argument.line, "Cannot pass immutable binding '" + identifier.name + "' to a reference parameter");
+  const auto actual = resolve_type(local->type_name.value_or("<unknown>"));
+  if (actual.name != expected.name)
+    add_error(argument.line, "Reference argument requires the exact type '" + expected.name +
+        "', got '" + actual.name + "'; references do not perform numeric or handle conversions");
+  if (diagnostics_.size() != errors_before) return false;
+  argument.checked_binding_reference = true;
+  checked_binding_references_.push_back(&argument);
   return true;
 }
 
@@ -6573,6 +6653,9 @@ void type_checker::visit(ast_identifier_expr &e) {
     if (value.kind == symbol_kind::function_symbol &&
         (!value.defining_node ||
          value.defining_node->kind == ast_node_kind::function_decl_node)) {
+      if (direct_call_callee_ != &e && std::any_of(value.params.begin(), value.params.end(),
+            [](const ast_param &parameter) { return parameter.is_ref; }))
+        add_error(e.line, "Functions with reference parameters must be called directly; reference-parameter function values are unavailable");
       e.checked_callable_parameters = callable_parameters(value.params);
       // Function references are structural values even when found through a
       // type alias or a copied module-member symbol. Their return type alone
@@ -9114,6 +9197,11 @@ void type_checker::visit(ast_ref_expr &e) {
 }
 
 void type_checker::visit(ast_lambda_expr &e) {
+  for (auto &parameter : e.params) {
+    parameter.checked_binding_reference = false;
+    if (parameter.is_ref)
+      add_error(parameter.line, "Reference parameters are unavailable on anonymous functions");
+  }
   e.checked_callable_parameters = callable_parameters(e.params);
   // Build function type: fn(T1, T2, ...) -> R
   std::string fn_type = "fn(";

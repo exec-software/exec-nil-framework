@@ -48,6 +48,8 @@ struct signature_parameter {
   std::string name, type;
   bool variadic = false;
   std::optional<source_span> span;
+  bool mutable_binding = false;
+  bool binding_reference = false;
 };
 struct signature_result {
   bool available = false;

@@ -1098,8 +1098,33 @@ std::vector<LocalVariable> Debugger::get_source_locals(int frame_idx) const {
         for (const auto& entry : visible) {
             const auto& binding = *entry.second;
             const auto value = locals.find(binding.storage);
-            if (value != locals.end()) result.push_back(
-                {binding.name, binding.storage, binding.type, value->second});
+            if (value == locals.end()) continue;
+            LocalVariable local{binding.name, binding.storage, binding.type, value->second};
+            // Reference parameters and addressed locals use a compiler-owned
+            // cell. Source inspection exposes the binding's scalar value,
+            // while instruction-only NIL still shows exact runtime storage.
+            if (binding.type.rfind("binding_ref<", 0) == 0 && binding.type.back() == '>') {
+                const auto type = binding.type.substr(12, binding.type.size() - 13);
+                const auto* cell = std::get_if<StructValue>(&value->second);
+                if (cell && cell->data && cell->type_name == "$nil.binding.cell." + type) {
+                    std::optional<Value> referent;
+                    if (type == "i32" || type == "i64" || type == "u8" || type == "bool") {
+                        const auto field = cell->fields().find("value");
+                        if (field != cell->fields().end()) referent = Value{field->second};
+                    } else if (type == "f64") {
+                        const auto field = cell->double_fields().find("value");
+                        if (field != cell->double_fields().end()) referent = Value{field->second};
+                    } else if (type == "text") {
+                        const auto field = cell->string_fields().find("value");
+                        if (field != cell->string_fields().end()) referent = Value{field->second};
+                    }
+                    if (referent) {
+                        local.type = type;
+                        local.value = std::move(*referent);
+                    }
+                }
+            }
+            result.push_back(std::move(local));
         }
     } else {
         for (const auto& entry : locals) result.push_back(

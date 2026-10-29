@@ -1398,7 +1398,8 @@ parser::parse_function_declaration(visibility_kind vis, bool is_abstract,
     while (true) {
       bool is_mut = false;
       bool is_variadic = false;
-      if (match(token_kind::mut_kw)) {
+      const bool is_ref = match(token_kind::ref_kw);
+      if (is_ref || match(token_kind::mut_kw)) {
         is_mut = true;
       }
       // Variadic rest parameter: ..name: type
@@ -1420,6 +1421,7 @@ parser::parse_function_declaration(visibility_kind vis, bool is_abstract,
       param.line = p.line;
       param.is_mut = is_mut;
       param.is_variadic = is_variadic;
+      param.is_ref = is_ref;
 
       // Optional type annotation: support `param: type` (MVP)
       if (match(token_kind::colon)) {
@@ -3111,6 +3113,8 @@ std::shared_ptr<ast_expr> parser::parse_unary() {
       match(token_kind::tilde)) {
     auto op = previous();
     auto right = parse_unary();
+    if (op.kind == token_kind::ref_kw)
+      return std::make_shared<ast_ref_expr>(right, op.line);
     if (op.kind == token_kind::minus && right &&
         right->kind == ast_node_kind::number_literal_node) {
       auto &number = static_cast<ast_number_literal &>(*right);

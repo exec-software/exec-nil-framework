@@ -190,6 +190,54 @@ def asynchronous_session(debugger, program):
         client.close()
 
 
+def reference_parameter_session(debugger, compiler, root):
+    sources = {
+        "ny": "module reference_debug\nfn mutate(ref amount: i64)\n"
+              " amount = amount + 1\n println(amount)\nend fn\n"
+              "fn main() -> i32\n let mut total: i64 = 40\n mutate(ref total)\n"
+              " println(total)\n return 0\nend fn\n",
+        "matrix": "book reference-debug\nmutate receives reference amount as number begin paragraph\n"
+                  " set amount to amount plus 1\n say amount\nend paragraph\n"
+                  "main returns override integer begin paragraph\n variable total as number is 40\n"
+                  " evaluate mutate with reference to total\n say total\n give 0\nend paragraph\n",
+    }
+    for language, contents in sources.items():
+        source = root / ("reference-debug." + language)
+        source.write_text(contents, encoding="utf-8")
+        for binary in (False, True):
+            program = root / ("reference-" + language + ("-binary.nil" if binary else "-text.nil"))
+            compile_program(compiler, program, source, binary=binary)
+            client = Client(debugger)
+            try:
+                client.initialize(program, stop_on_entry=False)
+                points = client.breakpoints(source, 4, 9)
+                assert len(points) == 2 and all(point["verified"] for point in points), points
+                client.request("configurationDone")
+                assert client.event("stopped")["reason"] == "breakpoint"
+                frames = client.stack()
+                assert len(frames) == 2 and frames[0]["line"] == 4 and frames[1]["line"] == 8, frames
+                for frame, name in ((frames[0], "amount"), (frames[1], "total")):
+                    assert Path(frame["source"]["path"]) == source, frame
+                    assert client.evaluate(name, frame["id"]) == "41", (language, binary, name)
+                    scope = client.request("scopes", {"frameId": frame["id"]})["body"]["scopes"][0]
+                    variables = client.request("variables", {
+                        "variablesReference": scope["variablesReference"]})["body"]["variables"]
+                    # The source-level reference remains a scalar in both
+                    # frames, with no compiler cell object or child handle.
+                    assert [(item["name"], item["value"], item["variablesReference"])
+                            for item in variables] == [(name, "41", 0)], variables
+                client.request("continue", {"threadId": 1})
+                assert client.event("stopped")["reason"] == "breakpoint"
+                frames = client.stack()
+                assert len(frames) == 1 and frames[0]["line"] == 9, frames
+                assert client.evaluate("total", frames[0]["id"]) == "41"
+                client.request("continue", {"threadId": 1})
+                assert client.event("exited")["exitCode"] == 0
+                client.event("terminated")
+            finally:
+                client.close()
+
+
 def binary_library_session(debugger, compiler, root):
     producer = root / "producer"
     consumer = root / "consumer"
@@ -289,12 +337,13 @@ def main():
         compile_program(compiler, loop_nil, loop)
         asynchronous_session(debugger, loop_nil)
         binary_library_session(debugger, compiler, root)
+        reference_parameter_session(debugger, compiler, root)
         for malformed in (b"Content-Length: 1048577\r\n\r\n", b"Content-Length: 2\r\nContent-Length: 2\r\n\r\n{}",
                           b"Content-Length: -1\r\n\r\n", b"Content-Length: 10\r\n\r\n{}", b"Content-Length: 1\r\n\r\nx",
                           b"Bad\r\n\r\n", b"Content-Length: 2\n\n{}", b"X: " + b"a" * 8193):
             result = subprocess.run([str(debugger), "--dap"], input=malformed, capture_output=True, timeout=5)
             assert result.returncode != 0 and result.stdout == b"", result
-    print("DAP: text/binary source paths, shadows, frames, stepping, output, pause, termination, and malformed framing passed")
+    print("DAP: text/binary source paths, shadows, reference parameters, frames, stepping, output, pause, termination, and malformed framing passed")
 
 
 if __name__ == "__main__":

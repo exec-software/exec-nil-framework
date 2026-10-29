@@ -28,6 +28,7 @@ std::string matrix_type_base(std::string type) {
     // References expose the referent, but arrays and pointers do not pretend
     // to be records just because their element type is a record.
     if (matrix_key(type).rfind("reference to ", 0) == 0) type.erase(0, 13);
+    else if (matrix_key(type).rfind("ref to ", 0) == 0) type.erase(0, 7);
     const auto generic = matrix_key(type).find(" of ");
     if (generic != std::string::npos) {
         // Locate in the original spelling (the key may remove separators).
@@ -113,7 +114,9 @@ std::vector<Token> lex(const std::string& text, ParseResult& out) {
 }
 
 std::string type_base(std::string type) {
-    if (type.rfind("ref<", 0) == 0 || type.rfind("ptr<", 0) == 0)
+    if (type.rfind("reference<", 0) == 0)
+        type = type.substr(10, type.size() > 11 ? type.size() - 11 : 0);
+    else if (type.rfind("ref<", 0) == 0 || type.rfind("ptr<", 0) == 0)
         type = type.substr(4, type.size() > 5 ? type.size() - 5 : 0);
     const auto generic = type.find('<');
     if (generic != std::string::npos) type.resize(generic);
@@ -184,8 +187,11 @@ class Indexer {
     void parameters(std::size_t begin, std::size_t end, int scope, int parent,
                     const std::string& owner) {
         while (begin < end) {
-            while (begin < end && (tokens[begin].text == "mut" || tokens[begin].text == ".." ||
-                                   tokens[begin].text == "\n" || tokens[begin].text == ",")) ++begin;
+            while (begin < end && (tokens[begin].text == "\n" || tokens[begin].text == ",")) ++begin;
+            const auto declaration_begin = begin;
+            while (begin < end && (tokens[begin].text == "mut" || tokens[begin].text == "mutable" ||
+                                   tokens[begin].text == "ref" || tokens[begin].text == "reference" ||
+                                   tokens[begin].text == ".." || tokens[begin].text == "\n")) ++begin;
             if (begin == end) break;
             const auto name = begin++;
             const auto type_begin = begin < end && tokens[begin].text == ":" ? ++begin : begin;
@@ -199,10 +205,11 @@ class Indexer {
             }
             if (!name_start(tokens[name].text.front())) continue;
             const auto id = add(tokens[name], symbol_kind::Variable, scope, parent,
-                                tokens[name].start, tokens[begin - 1].end);
+                                tokens[declaration_begin].start, tokens[begin - 1].end);
             out.symbols[id].type = joined(type_begin, begin);
             if (tokens[name].text == "self" && out.symbols[id].type.empty()) out.symbols[id].type = owner;
-            if (out.symbols[id].type == "Self" || out.symbols[id].type == "ref<Self>")
+            if (out.symbols[id].type == "Self" || out.symbols[id].type == "ref<Self>" ||
+                out.symbols[id].type == "reference<Self>")
                 out.symbols[id].type = owner;
         }
     }
@@ -252,7 +259,7 @@ class Indexer {
     void variable(int scope, int parent, std::size_t declaration_start) {
         const bool constant = at("const");
         ++cursor;
-        if (at("mut")) ++cursor;
+        if (at("mut") || at("mutable")) ++cursor;
         if (at("(")) {
             std::vector<Token> names;
             ++cursor;

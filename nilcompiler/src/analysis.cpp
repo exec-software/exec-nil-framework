@@ -566,13 +566,22 @@ std::string analysis_session::signature_json() const {
       if (matrix::nil_symbol(written) == name) name = written;
     }
     const auto type = surface(parameter.type);
-    const std::string parameter_label = (parameter.variadic ? (matrix_language ? "more " : "..") : "") +
-        name + (matrix_language ? " as " : ": ") + type;
+    auto declared_type = parameter.type;
+    if (parameter.variadic && declared_type.rfind("array<", 0) == 0 &&
+        declared_type.size() > 7 && declared_type.back() == '>')
+      declared_type = declared_type.substr(6, declared_type.size() - 7);
+    const std::string mode = parameter.binding_reference ? (matrix_language ? "reference " : "ref ") :
+        parameter.mutable_binding ? (matrix_language ? "mutable " : "mut ") : "";
+    const std::string variadic = parameter.variadic ? (matrix_language ? "more " : "..") : "";
+    const std::string parameter_label = (matrix_language ? variadic + mode : mode + variadic) +
+        name + (matrix_language ? " as " : ": ") + surface(declared_type);
     if (index) { label += ", "; parameters += ','; }
     label += parameter_label;
     parameters += "{\"name\":" + quoted(static_cast<const std::string &>(name)) + ",\"type\":" + quoted(type) +
         ",\"label\":" + quoted(parameter_label) + ",\"variadic\":" +
-        (parameter.variadic ? "true" : "false") + '}';
+        (parameter.variadic ? "true" : "false") + ",\"mutable\":" +
+        (parameter.mutable_binding ? "true" : "false") + ",\"reference\":" +
+        (parameter.binding_reference ? "true" : "false") + '}';
   }
   const auto return_type = surface(query.return_type);
   label += (matrix_language ? " returns " : ") -> ") + return_type;

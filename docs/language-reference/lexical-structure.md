@@ -24,7 +24,8 @@ Examples: `x`, `myFunction`, `counter_1`, `_private`
 |---------|-------------|
 | `fn` | Function declaration |
 | `let` | Immutable variable |
-| `mut` | Mutable variable |
+| `mut`, `mutable` | Mutable binding modifier |
+| `ref`, `reference` | Reference type, expression, or parameter modifier |
 | `const` | Constant |
 | `if` | Conditional |
 | `else` | Alternative branch |

@@ -264,7 +264,7 @@
           }
         },
         {
-          "match": "\\b(let)(?:\\s+(mut))?\\s+(\\*?)([A-Za-z_][A-Za-z0-9_]*)",
+          "match": "\\b(let)(?:\\s+(mut|mutable))?\\s+(\\*?)([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": {
               "name": "storage.type.variable.ny"
@@ -305,11 +305,11 @@
         },
         {
           "name": "storage.modifier.ny",
-          "match": "\\b(pub|mut|abstract|virtual|override|inherits)\\b"
+          "match": "\\b(pub|mut|mutable|abstract|virtual|override|inherits)\\b"
         },
         {
           "name": "keyword.operator.word.ny",
-          "match": "\\b(not|mod|as|ref)\\b"
+          "match": "\\b(not|mod|as|ref|reference)\\b"
         },
         {
           "name": "variable.language.self.ny",

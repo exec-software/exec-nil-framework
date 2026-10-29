@@ -74,8 +74,10 @@ const keyword_entry keyword_table[] = {
   // cannot rescue it ('a-b' is a different name). The receiver clauses are
   // spelled without it.
   {"on", kw::on, "on"},
-  {"mutable", kw::mutable_, "mutable"}, {"without", kw::without, "without"},
-  {"reference", kw::reference, "reference"}, {"my", kw::my, "my"},
+  {"mutable", kw::mutable_, "mutable"}, {"mut", kw::mutable_, "mutable"},
+  {"without", kw::without, "without"},
+  {"reference", kw::reference, "reference"}, {"ref", kw::reference, "reference"},
+  {"my", kw::my, "my"},
   {"receives", kw::receives, "receives"}, {"returns", kw::returns, "returns"},
   {"more", kw::more, "more"}, {"defaulting", kw::defaulting, "defaulting"},
   {"anonymous", kw::anonymous, "anonymous"}, {"the", kw::the, "the"},

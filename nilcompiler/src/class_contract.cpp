@@ -121,6 +121,9 @@ void validate_nil_class_contract(const nil_module &module) {
       for (const auto &instruction : function.body)
         if (instruction.opname == "CLASS_UPCAST" || instruction.opname == "CALL_METHOD")
           invalid("class instructions require explicit class metadata");
+    // Binding-reference cells use the same CFG provenance engine even when
+    // the program declares no classes.
+    validate_nil_class_provenance(module);
     return;
   }
   std::unordered_map<std::string, const nil_function *> functions;

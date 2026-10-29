@@ -35,7 +35,8 @@ end paragraph
 
 !!! A mutable parameter is the callee's own binding. It does not mutate the
 !!! caller's scalar, exactly as Ny's "mut" parameter does not.
-increment_local receives variable amount as number returns number begin paragraph
+!!! The older "variable amount" spelling remains a parameter alias.
+increment_local receives mutable amount as number returns number begin paragraph
     set amount to amount plus 1
     give amount
 end paragraph

@@ -564,6 +564,50 @@ void test_json_value_serialization() {
                      "array field serialization");
 }
 
+void test_source_binding_reference_inspection() {
+  for (const auto& type : {"i32", "i64", "u8", "bool", "f64", "text"}) {
+    const std::string scalar_type = type;
+    const std::string code =
+        "module reference_inspection\nfunction main:\n"
+        "LOAD_GLOBAL CELL ; line 1\nSTORE_LOCAL hidden_cell ; line 1\n"
+        "# source_debug 2 \"/source/reference.ny\" 1 \"amount\" \"hidden_cell\" \"binding_ref<" +
+        scalar_type + ">\" 1\nNOP ; line 2\nRET ; line 3\nend function\n";
+    TempNilFile fixture("binding-reference-" + scalar_type, code);
+    Debugger debugger;
+    require(debugger.load_program(fixture.path().string()), "could not load reference inspection fixture");
+    StructValue cell;
+    cell.type_name = "$nil.binding.cell." + scalar_type;
+    if (scalar_type == "f64") cell.double_fields()["value"] = 1.25;
+    else if (scalar_type == "text") cell.string_fields()["value"] = "hello";
+    else cell.fields()["value"] = scalar_type == "bool" ? 1 : 42;
+    auto& vm = debugger.get_vm();
+    vm.resetExecution("main");
+    vm.setGlobal("CELL", Value{cell});
+    for (int step = 0; step < 8 && vm.getProgram().at(vm.getPC()).op != ny::Opcode::NOP; ++step)
+      require(vm.stepInstruction(), "reference inspection fixture ended before its source stop");
+    const auto locals = debugger.get_source_locals();
+    require(locals.size() == 1 && locals[0].name == "amount" && locals[0].type == scalar_type,
+            "source reference inspection exposed its internal cell type");
+    const auto expected = scalar_type == "f64" ? "1.25" : scalar_type == "text" ? "\"hello\"" :
+                          scalar_type == "bool" ? "1" : "42";
+    require(debugger.evaluate_expression("amount") == expected,
+            "source reference expression did not unwrap its scalar value");
+    require(debugger.get_locals_json().find("$nil.binding.cell.") == std::string::npos,
+            "source locals JSON leaked its reference cell");
+    if (scalar_type == "i64") {
+      cell.fields()["value"] = 43;
+      require(debugger.evaluate_expression("amount") == "43", "reference inspection cached a stale value");
+    }
+    cell.type_name = "OrdinaryRecord";
+    vm.resetExecution("main");
+    vm.setGlobal("CELL", Value{cell});
+    for (int step = 0; step < 8 && vm.getProgram().at(vm.getPC()).op != ny::Opcode::NOP; ++step)
+      require(vm.stepInstruction(), "record inspection fixture ended before its source stop");
+    require(std::holds_alternative<StructValue>(debugger.get_source_locals().at(0).value),
+            "reference metadata incorrectly unwrapped an unrelated record");
+  }
+}
+
 void test_vm_input_routing() {
   std::istringstream source(R"NIL(module input_routing
 function main:
@@ -718,6 +762,7 @@ int main() {
     test_per_vm_callback_isolation(path);
     test_step_over_out_and_frame_cleanup(path);
     test_json_value_serialization();
+    test_source_binding_reference_inspection();
     test_vm_input_routing();
     test_execute_true_preserves_injected_globals();
     test_rejects_missing_main_and_v2_library(path);

@@ -1,5 +1,6 @@
 #include "nil_loader.hpp"
 #include "nil_contract.hpp"
+#include "binding_reference.hpp"
 #include "concurrency_contract.hpp"
 #include "owned_contract.hpp"
 #include "numeric_literal.hpp"
@@ -545,16 +546,28 @@ struct fault_flow_state {
   std::map<std::string, std::set<std::string>> initialized_fields;
 };
 
+static std::optional<std::pair<std::vector<std::string>, std::string>>
+fault_callable_signature(const std::string &raw);
+
 bool class_sensitive_type(const std::string &raw, const nil_module &module) {
   std::unordered_set<std::string> visited;
-  std::vector<std::string> pending{raw};
+  std::vector<std::string> pending{compact_binding_type(raw)};
   while (!pending.empty()) {
     auto type = pending.back(); pending.pop_back();
     if (type.rfind("ref<", 0) == 0 && type.back() == '>') type = type.substr(4, type.size() - 5);
     if (!visited.insert(type).second) continue;
+    // Compiler-owned binding cells carry stack storage in native code. Use
+    // the existing exact-provenance CFG analysis for these handles too, so
+    // casts, unknown calls, globals, arrays and raw pointers cannot erase the
+    // bounded lifetime proven by their reference-parameter contract.
+    if (contains_binding_cell_type(type)) return true;
     if (find_nil_class(module, type)) return true;
+    if (const auto signature = fault_callable_signature(type)) {
+      pending.push_back(signature->second);
+      pending.insert(pending.end(), signature->first.begin(), signature->first.end());
+    }
     for (const auto &schema : module.structs) if (schema.name == type)
-      for (const auto &field : schema.fields) pending.push_back(field.second);
+      for (const auto &field : schema.fields) pending.push_back(compact_binding_type(field.second));
   }
   return false;
 }
@@ -562,6 +575,10 @@ bool class_sensitive_type(const std::string &raw, const nil_module &module) {
 constexpr const char *unproven_class_value = "#class-unproven";
 bool class_provenance_type(const std::string &type, const nil_module &module) {
   if (type == unproven_class_value) return true;
+  // An opaque cast of a callable must not disguise a class-returning target
+  // as a scalar callback, including through nested callable signatures.
+  if (type.rfind("#callable:", 0) == 0)
+    return class_sensitive_type(type.substr(10), module);
   if (!type.empty() && (type.front() == '@' || type.front() == '!')) {
     const auto marker = type.find('@');
     if (marker != std::string::npos) return class_sensitive_type(type.substr(marker + 1), module);
@@ -580,7 +597,57 @@ bool same_regions(const std::vector<nil_fault_region> &a,
   return true;
 }
 
+// Function values are VM strings at runtime, but their checked structural
+// signature must survive this analysis. An ordinary callback in a function
+// that also uses a binding reference still has its existing VM contract.
+static std::optional<std::pair<std::vector<std::string>, std::string>>
+fault_callable_signature(const std::string &raw) {
+  const auto type = compact_binding_type(raw);
+  if (type.rfind("fn(", 0) != 0) return std::nullopt;
+  std::vector<std::string> parameters;
+  std::size_t start = 3;
+  unsigned parentheses = 1, angles = 0;
+  for (std::size_t index = start; index < type.size(); ++index) {
+    const char c = type[index];
+    if (c == '(') ++parentheses;
+    else if (c == ')') {
+      if (--parentheses != 0) continue;
+      if (index != start) parameters.push_back(type.substr(start, index - start));
+      else if (!parameters.empty()) return std::nullopt;
+      if (type.substr(index + 1, 2) != "->" || index + 3 == type.size()) return std::nullopt;
+      return std::make_pair(std::move(parameters), type.substr(index + 3));
+    } else if (c == '<') ++angles;
+    else if (c == '>' && index && type[index - 1] != '-' && angles) --angles;
+    else if (c == ',' && parentheses == 1 && angles == 0) {
+      if (index == start) return std::nullopt;
+      parameters.push_back(type.substr(start, index - start));
+      start = index + 1;
+    }
+  }
+  return std::nullopt;
+}
+
+static std::string fault_callable_type(const nil_function &function) {
+  std::string signature = "fn(";
+  for (const auto &parameter : function.params) {
+    const auto colon = parameter.find(':');
+    if (colon == std::string::npos) return "#text";
+    if (signature.size() != 3) signature += ',';
+    signature += compact_binding_type(parameter.substr(colon + 1));
+  }
+  signature += ")->" + compact_binding_type(function.return_type);
+  return fault_callable_signature(signature) ? "#callable:" + signature : "#text";
+}
+
 std::string fault_stack_type(const std::string &type, const nil_module &module) {
+  if (contains_binding_cell_type(type)) {
+    const auto canonical = compact_binding_type(type);
+    for (const auto &schema : module.structs)
+      if (canonical == schema.name || canonical == "ref<" + schema.name + ">")
+        return "@" + canonical;
+    return unproven_class_value;
+  }
+  if (fault_callable_signature(type)) return "#callable:" + compact_binding_type(type);
   if (type == "i32" || type == "i64" || type == "u8" || type == "bool") return "#word";
   if (type == "f64") return "#float";
   if (type == "text") return "#text";
@@ -638,6 +705,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       if (!labels.count(args[0])) fail("jump target must exist in the owning function", pc);
     if (ops[pc] == Opcode::FAULT_RAISE || ops[pc] == Opcode::FAULT_MATCH || ops[pc] == Opcode::FAULT_BIND) {
       const auto &type = args.back();
+      if (contains_binding_cell_type(type)) fail("binding-reference cells cannot be fault payloads", pc);
       if (find_nil_class(module, type)) fail("classes cannot be fault payloads", pc);
       if (type == "void" || type == "any" || type == "bool" || type == "i32" ||
           type == "i64" || type == "u8" || type == "f64" || type == "text" ||
@@ -746,6 +814,14 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       const auto checked = fault_stack_type(expected, module);
       if ((class_type(checked) || class_type(actual)) && checked != actual)
         fail("class argument or storage requires its exact checked static view", pc);
+      if (checked.rfind("#callable:", 0) == 0 && checked != actual)
+        fail("callable argument or storage requires its exact checked signature", pc);
+    };
+    const auto opaque_stack_type = [&](const std::string &raw) {
+      const auto type = fault_stack_type(raw, module);
+      if (type.rfind("#callable:", 0) == 0)
+        fail("opaque result metadata cannot establish a checked callable signature", pc);
+      return type;
     };
     const auto exception_edge = [&](fault_flow_state exceptional) {
       if (exceptional.regions.empty()) return;
@@ -807,8 +883,14 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     }
     case Opcode::PUSH_CONST:
       state.stack.push_back(is_floating_literal_spelling(args[0]) ? "#float" : "#word"); break;
-    case Opcode::PUSH_CONST_STR: case Opcode::PUSH_FN_PTR:
+    case Opcode::PUSH_CONST_STR:
       state.stack.push_back("#text"); break;
+    case Opcode::PUSH_FN_PTR: {
+      const auto target = std::find_if(module.functions.begin(), module.functions.end(),
+          [&](const auto &candidate) { return candidate.name == args[0]; });
+      state.stack.push_back(target == module.functions.end() ? "#text" : fault_callable_type(*target));
+      break;
+    }
     case Opcode::LOAD_LOCAL: {
       const auto local = state.locals.find(args[0]);
       state.stack.push_back(local == state.locals.end() ? "?" : local->second); break;
@@ -825,10 +907,15 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
           std::any_of(module.structs.begin(), module.structs.end(),
                       [&](const auto &schema) { return schema.name == local->second.substr(1); }))
         state.stack.push_back("@ref<" + local->second.substr(1) + ">");
+      else if (local != state.locals.end() && class_provenance_type(local->second, module))
+        state.stack.push_back(unproven_class_value);
       else state.stack.push_back("?");
       break;
     }
-    case Opcode::LOAD_GLOBAL: state.stack.push_back(args.size() == 2 ? fault_stack_type(args[1], module) : "?"); break;
+    case Opcode::LOAD_GLOBAL: {
+      const auto type = args.size() == 2 ? opaque_stack_type(args[1]) : "?";
+      state.stack.push_back(type); break;
+    }
     case Opcode::STORE_GLOBAL:
       reject_class_operands(1); pop(1); break;
     case Opcode::POP: pop(1); break;
@@ -857,7 +944,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
         for (const auto &schema : module.structs)
           if (schema.name == owner.substr(1))
             for (const auto &field : schema.fields)
-              if (field.first == args[0]) { field_type = fault_stack_type(field.second, module); known_field = true; }
+              if (field.first == args[0]) { field_type = opaque_stack_type(field.second); known_field = true; }
       if (class_type(owner) && !known_field) fail("class field read requires a declared field", pc);
       state.stack.push_back(field_type); break;
     }
@@ -870,6 +957,9 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       bool known_field = false;
       for (const auto &schema : module.structs) if (schema.name == nominal)
         for (const auto &field : schema.fields) if (field.first == args[0]) {
+          if (binding_cell_value_type(nominal) &&
+              fault_stack_type(field.second, module) != state.stack.back())
+            fail("binding-reference cell write requires its exact scalar value category", pc);
           check_class_argument(field.second, state.stack.back()); known_field = true;
         }
       if ((class_type(owner) || class_type(state.stack.back())) && !known_field)
@@ -911,13 +1001,34 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       if (args.size() == 3 && class_sensitive_type(args[2], module))
         fail("enum payload metadata cannot fabricate class provenance", pc);
       pop(1); const auto count = args.empty() ? 0 : std::stoull(args[0]);
-      for (std::size_t i = 0; i < count; ++i) state.stack.push_back(args.size() == 3 ? fault_stack_type(args[2], module) : "?");
+      for (std::size_t i = 0; i < count; ++i) state.stack.push_back(args.size() == 3 ? opaque_stack_type(args[2]) : "?");
       break;
     }
     case Opcode::CALL: {
       exception_edge(state);
       const auto count = static_cast<std::size_t>(std::stoull(args[1]));
       if (state.stack.size() < count) fail("call argument underflow", pc);
+      const auto local_callable = state.locals.find(args[0]);
+      if (local_callable != state.locals.end() && local_callable->second.rfind("#callable:", 0) == 0) {
+        const auto signature = fault_callable_signature(local_callable->second.substr(10));
+        if (!signature || signature->first.size() != count)
+          fail("indirect call requires its exact callable signature and argument count", pc);
+        // Reference parameters deliberately require direct calls. A known
+        // ordinary callback signature can establish its result category but
+        // cannot authorize passing caller storage or class provenance.
+        reject_class_operands(count);
+        for (const auto &type : signature->first)
+          if (class_sensitive_type(type, module))
+            fail("indirect calls cannot receive binding-reference or class storage", pc);
+        if (class_sensitive_type(signature->second, module))
+          fail("indirect calls cannot return binding-reference or class storage", pc);
+        pop(count);
+        if (signature->second != "void")
+          state.stack.push_back(fault_stack_type(signature->second, module));
+        break;
+      }
+      if (local_callable != state.locals.end())
+        fail("indirect call lacks a checked callable signature", pc);
       const auto callee = std::find_if(module.functions.begin(), module.functions.end(), [&](const auto &fn) { return fn.name == args[0]; });
       if (callee != module.functions.end()) {
         if (callee->return_type.empty() || callee->params.size() != count)
@@ -932,12 +1043,34 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       } else reject_class_operands(count);
       pop(count);
       if (callee != module.functions.end()) {
-        if (callee->return_type != "void") state.stack.push_back(fault_stack_type(callee->return_type, module));
+        if (callee->return_type != "void") {
+          const auto result_type = fault_stack_type(callee->return_type, module);
+          if (result_type.rfind("#callable:", 0) == 0 &&
+              (callee->body.empty() || std::any_of(callee->annotations.begin(), callee->annotations.end(),
+                  [](const auto &annotation) {
+                    const auto dispatch = compact_binding_type(annotation);
+                    return dispatch.rfind("@intrinsic", 0) == 0 || dispatch.rfind("@interop", 0) == 0 ||
+                        dispatch.rfind("@ritual", 0) == 0 || dispatch.rfind("@native", 0) == 0;
+                  })))
+            fail("external calls cannot establish a checked callable result", pc);
+          state.stack.push_back(result_type);
+        }
       } else if (args[0] == "println" || args[0] == "core__print" ||
                  args[0] == "console__writeln" || args[0] == "console__write" ||
                  args[0] == "console__sys_write" || args[0] == "array__push" || args[0] == "array__set") {
         // Historical adapters with a fixed void result.
       } else if (args[0] == "panic" || args[0] == "ny__lang__core__panic") terminal = true;
+      else if (args[0] == "String__substr" || args[0] == "String__substring" ||
+               args[0] == "String__to_uppercase" || args[0] == "String__to_upper" ||
+               args[0] == "String__to_lowercase" || args[0] == "String__to_lower" ||
+               args[0] == "String__trim" || args[0] == "String__replace" ||
+               args[0] == "core__to_string" || args[0] == "core__to_string_i64" ||
+               args[0] == "core__to_string_f64")
+        state.stack.push_back("#text");
+      else if (args[0] == "String__len" || args[0] == "String__length" ||
+               args[0] == "String__contains" || args[0] == "String__starts_with" ||
+               args[0] == "String__ends_with" || args[0] == "String__find")
+        state.stack.push_back("#word");
       else if (args[0].rfind("__ritual_", 0) == 0 || args[0].rfind("String__", 0) == 0 ||
                args[0].rfind("array__", 0) == 0 || args[0].rfind("core__to_string", 0) == 0)
         state.stack.push_back("?");
@@ -972,7 +1105,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       pop(static_cast<std::size_t>(std::stoull(args[2])));
       if (args.size() < 4) fail("interop in a fault-bearing function requires explicit result metadata", pc);
       if (class_sensitive_type(args[3], module)) fail("interop cannot synthesize class provenance", pc);
-      if (args[3] != "void") state.stack.push_back(fault_stack_type(args[3], module));
+      if (args[3] != "void") state.stack.push_back(opaque_stack_type(args[3]));
       break;
     }
     case Opcode::INLINE_ASM:
@@ -986,6 +1119,8 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       const auto target_type = fault_stack_type(args[0], module);
       if (class_type(source_type) || class_type(target_type))
         fail("CAST cannot fabricate or erase class provenance; use CLASS_UPCAST", pc);
+      if (target_type.rfind("#callable:", 0) == 0 && source_type != target_type)
+        fail("CAST cannot fabricate or change a callable signature", pc);
       if (!target_type.empty() && target_type.front() == '@' && source_type != target_type)
         fail("cast cannot fabricate a concrete fault payload", pc);
       pop(1); state.stack.push_back(target_type); break;
@@ -1012,7 +1147,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     case Opcode::LABEL: case Opcode::NOP: break;
     case Opcode::NEG:
       reject_class_operands(1);
-      pop(1); state.stack.push_back(args.empty() ? "?" : fault_stack_type(args[0], module)); break;
+      pop(1); state.stack.push_back(args.empty() ? "?" : opaque_stack_type(args[0])); break;
     case Opcode::MATH_SIN: case Opcode::MATH_COS: case Opcode::MATH_TAN:
     case Opcode::MATH_ASIN: case Opcode::MATH_ACOS: case Opcode::MATH_ATAN:
     case Opcode::MATH_SQRT: case Opcode::MATH_EXP: case Opcode::MATH_LOG:
@@ -1029,7 +1164,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     case Opcode::MOD: case Opcode::BIT_AND: case Opcode::BIT_OR: case Opcode::BIT_XOR:
     case Opcode::SHL: case Opcode::SHR: case Opcode::PTR_ADD: case Opcode::PTR_SUB:
       reject_class_operands(2);
-      pop(2); state.stack.push_back(args.empty() ? "?" : fault_stack_type(args[0], module)); break;
+      pop(2); state.stack.push_back(args.empty() ? "?" : opaque_stack_type(args[0])); break;
     case Opcode::COUNT: fail("invalid opcode", pc); break;
     }
     if (!terminal) enqueue(pc + 1, state, false, pc);
@@ -1051,36 +1186,121 @@ void validate_nil_fault_contract(const nil_module &module) {
 
 void validate_nil_class_provenance(const nil_module &module) {
   std::unordered_set<std::string> related;
+  const auto invalid_binding = [](const std::string &message) {
+    throw std::runtime_error("NIL binding-reference contract: " + message);
+  };
+  std::set<std::string> binding_schemas;
+  for (const auto &schema : module.structs) {
+    if (contains_binding_cell_type(schema.name)) {
+      const auto type = binding_cell_value_type(schema.name);
+      if (!type || compact_binding_type(schema.name) != schema.name ||
+          schema.fields != std::vector<std::pair<std::string, std::string>>{{"value", *type}} ||
+          std::find(schema.annotations.begin(), schema.annotations.end(), "@nil_binding_cell") == schema.annotations.end() ||
+          !binding_schemas.insert(schema.name).second || find_nil_class(module, schema.name))
+        invalid_binding("storage requires one exact compiler-owned scalar cell schema");
+      related.insert(schema.name);
+      related.insert("ref<" + schema.name + ">");
+    }
+    for (const auto &field : schema.fields)
+      if (contains_binding_cell_type(field.second))
+        invalid_binding("a binding-reference cell cannot be stored in an aggregate field");
+  }
+  for (const auto &enumeration : module.enums)
+    for (const auto &variant : enumeration.variants)
+      if (contains_binding_cell_type(variant.associated_type))
+        invalid_binding("a binding-reference cell cannot be stored in an enum payload");
+  for (const auto &klass : module.classes)
+    for (const auto &method : klass.methods) {
+      if (contains_binding_cell_type(method.receiver_type) || contains_binding_cell_type(method.return_type))
+        invalid_binding("binding references are unavailable in virtual method signatures");
+      for (const auto &type : method.parameter_types)
+        if (contains_binding_cell_type(type))
+          invalid_binding("binding references are unavailable in virtual method signatures");
+    }
+  std::set<std::string> binding_callable_names;
+  for (const auto &function : module.functions) {
+    if (!binding_schemas.empty() && !binding_callable_names.insert(function.name).second)
+      invalid_binding("function names must be unambiguous when binding references are present");
+    if (contains_binding_cell_type(function.return_type))
+      invalid_binding("a function cannot return binding-reference storage");
+    bool has_reference_parameter = false;
+    for (const auto &parameter : function.params) {
+      const auto colon = parameter.find(':');
+      const auto type = colon == std::string::npos ? std::string{} : compact_binding_type(parameter.substr(colon + 1));
+      if (!contains_binding_cell_type(type)) continue;
+      const auto scalar = binding_reference_value_type(type);
+      if (!scalar || !binding_schemas.count(std::string(nil_binding_cell_prefix) + *scalar))
+        invalid_binding("parameters require an exact ref<cell> scalar storage contract");
+      has_reference_parameter = true;
+    }
+    if (has_reference_parameter)
+      for (const auto &annotation : function.annotations) {
+        const auto dispatch = compact_binding_type(annotation);
+        if (dispatch.rfind("@intrinsic", 0) == 0 || dispatch.rfind("@interop", 0) == 0 ||
+            dispatch.rfind("@ritual", 0) == 0 || dispatch.rfind("@native", 0) == 0)
+          invalid_binding("binding references cannot cross an external or intrinsic boundary");
+      }
+    // Native storage is one alloca per constructor. Re-entering a constructor
+    // in a loop would reuse its address while an earlier alias is still live.
+    // Compiler constructors occur in the straight-line invocation prologue.
+    bool in_prologue = true;
+    for (const auto &instruction : function.body) {
+      if (binding_schemas.empty() &&
+          std::any_of(instruction.args.begin(), instruction.args.end(),
+                      [](const auto &argument) { return contains_binding_cell_type(argument); }))
+        invalid_binding("binding-reference instructions require explicit cell schemas");
+      if (instruction.opname == "LABEL" || instruction.opname == "JMP" ||
+          instruction.opname == "JMP_IF" || instruction.opname == "JMP_IF_NOT" ||
+          instruction.opname == "CALL" || instruction.opname == "CALL_METHOD" ||
+          instruction.opname == "RET" || instruction.opname.rfind("FAULT_", 0) == 0)
+        in_prologue = false;
+      if (instruction.opname == "NEW_STRUCT" && !instruction.args.empty() &&
+          contains_binding_cell_type(instruction.args[0]) &&
+          (!in_prologue || !binding_schemas.count(instruction.args[0])))
+        invalid_binding("cells must be constructed from an exact schema in the invocation prologue");
+    }
+  }
   for (const auto &klass : module.classes) {
     related.insert(klass.name);
     related.insert("ref<" + klass.name + ">");
   }
+  // Most modules have neither classes nor binding cells. Their ordinary call
+  // graphs need no provenance walk after the metadata checks above.
+  if (related.empty()) return;
   bool changed = true;
   while (changed) {
     changed = false;
     for (const auto &schema : module.structs)
       if (!related.count(schema.name) && std::any_of(schema.fields.begin(), schema.fields.end(),
-              [&](const auto &field) { return related.count(field.second) != 0; }))
+              [&](const auto &field) {
+                return related.count(compact_binding_type(field.second)) != 0 ||
+                    class_sensitive_type(field.second, module) || fault_callable_signature(field.second).has_value();
+              }))
         changed = related.insert(schema.name).second || changed;
   }
+  const auto related_type = [&](const std::string &raw) {
+    const auto type = compact_binding_type(raw);
+    return related.count(type) != 0 || contains_binding_cell_type(type) ||
+        fault_callable_signature(type).has_value();
+  };
   for (const auto &function : module.functions) {
-    bool relevant = related.count(function.return_type) != 0;
+    bool relevant = related_type(function.return_type);
     for (const auto &parameter : function.params) {
       const auto colon = parameter.find(':');
       const auto start = colon == std::string::npos ? std::string::npos : parameter.find_first_not_of(" \t", colon + 1);
-      if (start != std::string::npos && related.count(parameter.substr(start))) relevant = true;
+      if (start != std::string::npos && related_type(parameter.substr(start))) relevant = true;
     }
     for (const auto &instruction : function.body) {
       if (instruction.opname == "CLASS_UPCAST" || instruction.opname == "CALL_METHOD") relevant = true;
       for (const auto &argument : instruction.args)
-        if (related.count(argument)) relevant = true;
-      if (instruction.opname == "CALL" && !instruction.args.empty())
+        if (related_type(argument)) relevant = true;
+      if ((instruction.opname == "CALL" || instruction.opname == "PUSH_FN_PTR") && !instruction.args.empty())
         for (const auto &target : module.functions) if (target.name == instruction.args[0]) {
-          if (related.count(target.return_type)) relevant = true;
+          if (related_type(target.return_type)) relevant = true;
           for (const auto &parameter : target.params) {
             const auto colon = parameter.find(':');
             const auto start = colon == std::string::npos ? std::string::npos : parameter.find_first_not_of(" \t", colon + 1);
-            if (start != std::string::npos && related.count(parameter.substr(start))) relevant = true;
+            if (start != std::string::npos && related_type(parameter.substr(start))) relevant = true;
           }
         }
     }
@@ -1107,6 +1327,7 @@ static void validate_fault_program(const std::vector<Instruction> &program,
       function = &module.functions.back();
       function->name = instruction.args[0];
       function->return_type = instruction.function_return_type;
+      function->annotations = instruction.function_annotations;
       for (std::size_t i = 0; i < instruction.function_param_count; ++i)
         function->params.push_back("arg" + std::to_string(i) + ":" +
             (i < instruction.function_parameter_types.size() ? instruction.function_parameter_types[i] : "any"));
@@ -1141,6 +1362,7 @@ static void attach_class_metadata(std::vector<Instruction> &program, nil_module 
       function = &metadata.functions.back();
       function->name = instruction.args.at(0);
       function->return_type = instruction.function_return_type;
+      function->annotations = instruction.function_annotations;
       for (std::size_t i = 0; i < instruction.function_param_count; ++i)
         function->params.push_back("arg" + std::to_string(i) + ":" +
             (i < instruction.function_parameter_types.size() ? instruction.function_parameter_types[i] : "any"));
@@ -1167,6 +1389,14 @@ void validate_nil_class_contract(const std::vector<Instruction> &program) {
     for (const auto &instruction : program)
       if (instruction.op == Opcode::CLASS_UPCAST || instruction.op == Opcode::CALL_METHOD)
         throw std::runtime_error("NIL class instructions require explicit module metadata");
+      else {
+        for (const auto &argument : instruction.args)
+          if (contains_binding_cell_type(argument))
+            throw std::runtime_error("NIL binding-reference instructions require explicit module metadata");
+        for (const auto &type : instruction.function_parameter_types)
+          if (contains_binding_cell_type(type))
+            throw std::runtime_error("NIL binding-reference parameters require explicit module metadata");
+      }
     return;
   }
   auto declarations = *metadata;

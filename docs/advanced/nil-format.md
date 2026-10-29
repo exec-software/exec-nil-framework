@@ -271,6 +271,11 @@ reference semantics. `ref<Struct>` and aggregate-only `REF_LOCAL` preserve that
 object identity across calls, returns, fields, and local aliases. They are not
 raw pointer reinterpretations, scalar stack references, or a borrow/lifetime
 checker. Recursive layouts and references to unsupported targets fail closed.
+Explicit scalar/text binding-reference parameters use a separate compiler-owned
+cell schema and nonescaping call contract described in
+[NIL-0019](../design/NIL-0019-binding-reference-parameters.md). They reuse typed
+record field operations and pass a cell handle to another checked reference
+parameter; they do not reinterpret `REF_LOCAL` as a raw scalar stack address.
 Native construction checks intersect initialized fields across control-flow
 paths. An object must be fully initialized before a read, local store, call,
 return, or other escape; one branch's stores cannot prove another branch safe.
