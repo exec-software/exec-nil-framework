@@ -89,7 +89,8 @@ NIL-0006 is only one part of the framework's AI tooling direction:
   evaluation. It is currently the more developed automation surface for NIL
   debugging.
 - `nilaix/src/ny_crash.ny` contains explicit helpers for writing `.nycrash`
-  artifacts in NyData form. These helpers are not automatic crash reporting for
+  artifacts in an older INI-like report format, historically labeled NyData.
+  That format is distinct from NILData 1. These helpers are not automatic crash reporting for
   every Ny binary.
 
 ## Remaining proposal

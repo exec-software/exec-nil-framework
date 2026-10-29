@@ -7,6 +7,34 @@ function readJson(relativePath: string): unknown {
   return JSON.parse(fs.readFileSync(path.join(process.cwd(), relativePath), "utf8"));
 }
 
+test("NILData contributes independent syntax assets without source tool registration", () => {
+  const manifest = readJson("package.json") as {
+    activationEvents: string[];
+    contributes: {
+      languages: Array<{ id: string; configuration: string }>;
+      grammars: Array<{ language: string; scopeName: string; path: string }>;
+      breakpoints: Array<{ language: string }>;
+      debuggers: Array<{ languages: string[] }>;
+    };
+  };
+  const language = manifest.contributes.languages.find(item => item.id === "nildata");
+  assert.deepEqual(language, {
+    id: "nildata", aliases: ["NILData", "nildata"], extensions: [".nildata"],
+    configuration: "./language-configuration.nildata.json"
+  });
+  assert.ok(language);
+  assert.ok(readJson(language.configuration));
+  const grammar = manifest.contributes.grammars.find(item => item.language === "nildata");
+  assert.deepEqual(grammar, {
+    language: "nildata", scopeName: "source.nildata", path: "./syntaxes/nildata.tmLanguage.json"
+  });
+  assert.ok(grammar);
+  assert.ok(readJson(grammar.path));
+  assert.equal(manifest.activationEvents.some(event => event.includes("nildata")), false);
+  assert.equal(manifest.contributes.breakpoints.some(item => item.language === "nildata"), false);
+  assert.equal(manifest.contributes.debuggers.some(item => item.languages.includes("nildata")), false);
+});
+
 test("manifest contributes both frontends, shared tasks, and source debugger integration", () => {
   const manifest = readJson("package.json") as {
     activationEvents: string[];

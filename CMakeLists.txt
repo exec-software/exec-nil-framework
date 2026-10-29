@@ -145,6 +145,13 @@ if(BUILD_TESTING)
     target_compile_features(nil_pattern_engine_tests PRIVATE cxx_std_17)
     add_test(NAME nil.pattern-engine COMMAND $<TARGET_FILE:nil_pattern_engine_tests>)
 
+    add_executable(nil_nildata_engine_tests tests/nildata_engine_tests.cpp)
+    target_link_libraries(nil_nildata_engine_tests PRIVATE nilruntime)
+    target_include_directories(nil_nildata_engine_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    target_compile_features(nil_nildata_engine_tests PRIVATE cxx_std_17)
+    add_test(NAME nil.nildata-engine COMMAND $<TARGET_FILE:nil_nildata_engine_tests>)
+    set_tests_properties(nil.nildata-engine PROPERTIES LABELS "serialization;runtime;rc" TIMEOUT 60)
+
     add_executable(nil_pattern_syntax_tests tests/pattern_syntax_tests.cpp)
     target_link_libraries(nil_pattern_syntax_tests PRIVATE nilcompiler_core)
     target_compile_features(nil_pattern_syntax_tests PRIVATE cxx_std_17)
@@ -2449,6 +2456,7 @@ if(BUILD_TESTING)
                                         tuple-arrays tuple-arrays-matrix
                                         text-patterns text-patterns-matrix
                                         pattern-operations pattern-operations-matrix
+                                        nildata-roundtrip nildata-roundtrip-matrix
                                         indexed-expression-types
                                         bugpass-allocation-types
                                         bugpass-grouped-expressions
@@ -2492,6 +2500,20 @@ if(BUILD_TESTING)
                     LABELS "tools;native;rc" SKIP_RETURN_CODE 77 TIMEOUT 240)
             endif()
         endforeach()
+        add_test(NAME nil.nildata-cli-contract
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/nildata_cli_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler>)
+        set_tests_properties(nil.nildata-cli-contract PROPERTIES LABELS "serialization;tools;rc" TIMEOUT 120)
+        add_test(NAME nil.nildata-intrinsic-contract
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/nildata_intrinsic_contract.py"
+                --interpreter $<TARGET_FILE:nilinterpreter>
+                --assembler $<TARGET_FILE:nilassembler>
+                --linker $<TARGET_FILE:nillinker>
+                --runtime $<TARGET_FILE:nilruntime>
+                --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.nildata-intrinsic-contract PROPERTIES LABELS "serialization;native;interpreter;rc" TIMEOUT 120)
         foreach(bugpass_contract IN ITEMS lexer argument)
             add_test(NAME nil.bugpass-${bugpass_contract}-contract
                 COMMAND "${Python3_EXECUTABLE}"

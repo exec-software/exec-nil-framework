@@ -2,7 +2,8 @@
 
 This extension provides editing and toolchain integration for Ny (`.ny`) and
 Matrix (`.matrix`, `.mat`). Both languages use the NIL Framework compiler, interpreter,
-native backend, and source debugger. The extension launches `nillsp` over
+native backend, and source debugger. NILData (`.nildata`) has dedicated data-format
+highlighting, comments, indentation, and folding. The extension launches `nillsp` over
 standard input/output for saved and untitled documents in either language.
 
 The installed extension identifier remains `exec-software.ny-language-support`,
@@ -23,6 +24,10 @@ the compiler-backed source debugger.
 - Interpolated expression highlighting for Ny `$"..."` and Matrix
   `formatted "..."`, including nested strings and literal doubled braces.
   Tuple bindings, destructuring and formatted text have matching snippets.
+- NILData highlighting distinguishes object members, array items, JSON strings and
+  escapes, numbers, booleans, null, and `#` comments. NILData files are data, so
+  compiler analysis, build/run commands, and source debugging apply only to Ny
+  and Matrix sources.
 - Bracket, quote, comment, indentation, and folding configuration.
 - Snippets for modules, functions, data types, control flow, faults, tests,
   interop, documentation, and `@ai_context` metadata.
@@ -465,6 +470,12 @@ stdin, and variable mutation remain separate future work. `nildebugger --json`
 is still available for the older synchronous JSON Lines automation interface.
 
 ## Extension development
+
+The scoped `@azure/identity` override pins `@azure/msal-node` to 7.1.1 to
+address [GHSA-xcx6-jx8p-x3h5](https://github.com/AzureAD/microsoft-authentication-library-for-js/security/advisories/GHSA-xcx6-jx8p-x3h5).
+This dependency belongs to VSIX packaging/publishing tools and is excluded
+from the extension bundle. Remove the override when the upstream dependency
+range includes a patched version, after checking local packaging again.
 
 ```sh
 cd vscode

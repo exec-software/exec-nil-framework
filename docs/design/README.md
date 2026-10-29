@@ -40,6 +40,7 @@ not assigned architecture identifiers.
 | NIL-0014 | [Explicit formatted text with original expression locations](NIL-0014-formatted-text.md) | Implemented initial scalar/text profile |
 | NIL-0015 | [Structural tuples](NIL-0015-structural-tuples.md) | Implemented nonempty typed values and local destructuring |
 | NIL-0016 | [Shared text patterns and collected queries](NIL-0016-patterns-and-queries.md) | Implemented initial byte-pattern and eager array-query profiles |
+| NIL-0017 | [Versioned NILData and one shared value model](NIL-0017-nildata.md) | Implemented initial bounded document profile |
 | NIL-0019 | [Explicit binding-reference parameters](NIL-0019-binding-reference-parameters.md) | Accepted; initial scalar/text implementation |
 | NIL-0020 | [Declaration annotations as shared metadata](NIL-0020-declaration-annotations.md) | Accepted; initial scalar metadata profile |
 | NIL-0021 | [Switch statements and expressions with automatic fallthrough](NIL-0021-fallthrough-switch.md) | Accepted; initial literal and payload-free enum selector profile |

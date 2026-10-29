@@ -1,6 +1,3 @@
-object root
-  field greeting
-    hello
-  end greeting
-end root
-
+{"greeting":"hello"}
+1
+{"greeting":"hello"}

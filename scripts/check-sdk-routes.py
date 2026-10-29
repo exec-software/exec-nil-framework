@@ -47,6 +47,7 @@ FIXTURES = ("scalar-array-parity", "stl-array-primitives", "native-nested-refere
             "tuple-arrays", "tuple-arrays-matrix",
             "text-patterns", "text-patterns-matrix",
             "pattern-operations", "pattern-operations-matrix",
+            "nildata-roundtrip", "nildata-roundtrip-matrix", "nydata-roundtrip",
             "indexed-expression-types",
             "bugpass-allocation-types", "bugpass-grouped-expressions",
             "bugpass-constructor-context", "bugpass-call-context",

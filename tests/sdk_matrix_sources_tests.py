@@ -66,6 +66,9 @@ value `library` is 1
         self.assertEqual(module_declarations("book ny.lang.math\nlibrary nil.std.math\n", ".matrix"), {"nil.std.math"})
         self.assertEqual(module_artifact_path("nil.std.core").as_posix(), "core.nil")
         self.assertEqual(module_artifact_path("ny.lang.core").as_posix(), "core.nil")
+        self.assertEqual(module_artifact_path("ny.lang.nydata").as_posix(), "nildata.nil")
+        self.assertEqual(module_artifact_path("nil.std.nydata").as_posix(), "nildata.nil")
+        self.assertEqual(module_artifact_path("nil.std.nydata_extra").as_posix(), "nydata_extra.nil")
         self.assertEqual(module_artifact_path("demo.core").as_posix(), "demo/core.nil")
         self.assertEqual(module_artifact_path("ny.language.core").as_posix(), "ny/language/core.nil")
 
