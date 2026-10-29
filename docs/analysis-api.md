@@ -473,6 +473,9 @@ publish diagnostics or make edits. See [NIL-0012](design/NIL-0012-signature-quer
 - `declaration_info`: `kind`, `name`, `qualified_name`, `type_name`,
   `source_path`, `line`, `parent_id`, `is_public`, `semantic_checked`.
 - `annotation_info`: `owner_id`, `name`, `arguments`, `line`.
+- `annotation_argument_info`: `annotation_id`, `name`, `is_named`, `kind`,
+  `value`. Matrix spells this record `annotation-argument-info` and its fields
+  `annotation-id` and `is-named`.
 
 The JSON snapshot assigns each declaration an `id`. IDs are local to one
 snapshot; never persist them across edits. A missing parent is `-1`, an
@@ -484,6 +487,56 @@ control-flow graph, or runtime object reflection. `semantic_checked` means the
 whole compilation passed checking; it does not promise that every type string
 has been fully elaborated.
 
+### Typed annotation arguments
+
+The `nil.reflection.v1` JSON annotation records retain `owner_id`, `name`,
+`arguments`, and `line`, and add `arguments_parsed` and `parsed_arguments`:
+
+```json
+{
+  "owner_id": 0,
+  "name": "Company::review",
+  "arguments": "\"runtime\",revision=2,approved=true",
+  "line": 3,
+  "arguments_parsed": true,
+  "parsed_arguments": [
+    {"name": null, "kind": "text", "value": "runtime"},
+    {"name": "revision", "kind": "integer", "value": "2"},
+    {"name": "approved", "kind": "boolean", "value": "true"}
+  ]
+}
+```
+
+`arguments` remains the retained argument text for existing consumers; it is
+not a source-exact formatting contract. `parsed_arguments` preserves argument
+order. Its `name` is null for positional values and a string for named
+properties. Every `value` is a string: decoded text or the validated scalar or
+qualified-symbol spelling. The kinds are `text`, `boolean`, `integer`,
+`floating`, and `symbol`. Symbols describe metadata and are not resolved as
+program variables.
+
+Positional arguments precede named properties, duplicate keys are rejected,
+integers fit signed 64-bit storage, and floating-point values must be finite
+and representable as `f64`. Lists, maps, and computed expressions are outside
+the scalar profile. Legacy Ny composite and nested payloads remain available
+for any annotation name, including custom names. For example,
+`@custom(outer(inner("payload")))` retains inert argument text; no nested call
+is executed. Such payloads report `arguments_parsed: false` with an empty
+`parsed_arguments` array. Matrix remains scalar-only and rejects these nested
+forms. A successfully parsed marker annotation with no arguments reports true
+and an empty array.
+Consumers must check the flag rather than interpreting an empty array as a
+guarantee that no metadata exists.
+
+These fields are additive; the schema remains `nil.reflection.v1` and the
+existing `annotation_info` record is unchanged. Older compiler output may omit
+the new JSON fields; treat that as unavailable parsed metadata. The annotation
+ID is its index in `reflection.annotations`, while `owner_id` indexes
+`reflection.declarations`. See the [annotation reference](language-reference/annotations.md)
+for source syntax and language-specific string rules.
+
+### Generated snapshot functions
+
 Successful `--emit-reflection` writes an ordinary Ny module named
 `analysis_snapshot`, atomically, with these exported functions:
 
@@ -492,7 +545,19 @@ count() -> i32
 declaration(id: i32) -> declaration_info
 annotation_count() -> i32
 annotation(id: i32) -> annotation_info
+annotation_arguments_parsed(id: i32) -> bool
+annotation_argument_count() -> i32
+annotation_argument(id: i32) -> annotation_argument_info
 ```
+
+`annotation_arguments_parsed` takes an annotation ID, not a declaration ID.
+`annotation_argument_count` counts parsed arguments across the entire snapshot.
+`annotation_argument` addresses that flat sequence, ordered first by annotation
+ID and then by argument order. Its `annotation_id` refers back to `annotation`.
+For positional arguments the value record has `name: ""` and `is_named: false`;
+named properties have `is_named: true`. `kind` and `value` use the same strings
+as the JSON representation. Opaque annotations contribute no entries, so use
+`annotation_arguments_parsed` to distinguish them from empty parsed annotations.
 
 Invalid IDs panic. Truncated snapshots cannot be exported. A failed analysis
 does not replace an existing snapshot, so build scripts must check exit status.

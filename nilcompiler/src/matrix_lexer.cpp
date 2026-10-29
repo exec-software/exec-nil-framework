@@ -501,6 +501,38 @@ token lexer::scan_text_block(int line, int col) {
   return t;
 }
 
+token lexer::scan_annotation() {
+  const int line = line_, col = col_;
+  advance(); // '@'
+  while (name_part(static_cast<unsigned char>(peek())) || peek() == '-' || peek() == '.' ||
+         (peek() == ':' && peek(1) == ':')) {
+    if (peek() == ':') advance();
+    advance();
+  }
+  const auto name_end = pos_;
+  auto opening = pos_;
+  while (opening < src_.size() && (src_[opening] == ' ' || src_[opening] == '\t')) ++opening;
+  if (opening < src_.size() && src_[opening] == '(') {
+    while (pos_ <= opening) advance();
+    unsigned depth = 1;
+    bool quoted = false;
+    while (!at_end() && depth) {
+      const char c = advance();
+      // Matrix strings are raw here just as they are in ordinary code.
+      if (c == '"') quoted = !quoted;
+      else if (quoted && (c == '\n' || c == '\r')) {
+        error(line_, col_, "annotation text literals must stay on one line");
+        break;
+      } else if (!quoted && c == '(') ++depth;
+      else if (!quoted && c == ')') --depth;
+    }
+    if (depth) error(line, col, "unclosed annotation arguments; expected ')'");
+  }
+  if (name_end == token_start_ + 1)
+    error(line, col, "expected an annotation name after '@'");
+  return make(token_kind::annotation, src_.substr(token_start_, pos_ - token_start_), line, col);
+}
+
 std::vector<token> lexer::scan() {
   std::vector<token> tokens;
   for (;;) {
@@ -537,6 +569,7 @@ std::vector<token> lexer::scan() {
     }
     if (c == '"') { tokens.push_back(scan_string()); continue; }
     if (c == '`') { tokens.push_back(scan_backtick_identifier()); continue; }
+    if (c == '@') { tokens.push_back(scan_annotation()); continue; }
 
     switch (c) {
     case '(': advance(); tokens.push_back(make(token_kind::left_paren, "(", line, col)); continue;

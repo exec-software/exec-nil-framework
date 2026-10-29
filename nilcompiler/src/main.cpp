@@ -915,6 +915,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     std::string module_name;
     std::vector<std::string> imports;
     bool primary = false;
+    bool original_spans_available = true;
   };
 
   std::vector<unit> units;
@@ -1178,48 +1179,66 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     // Matrix front end, everything else through Ny's. Both produce the same
     // ast.hpp program, so the type checker, codegen and every contract
     // checker below run unchanged.
+    const auto configure_preprocessing = [&](ny::preprocessor_options &preprocessing) {
+      if (analysis && (analysis->workspace_stdin || analysis->semantic_requested || analysis->completion_cursor || analysis->signature_cursor)) {
+        preprocessing.resolve_source = [analysis](const std::filesystem::path &path)
+            -> std::optional<std::filesystem::path> {
+          if (!analysis->workspace_source_exists(path.string())) return std::nullopt;
+          return ny::analysis_source_identity(path.string());
+        };
+        preprocessing.read_source = [analysis](const std::filesystem::path &path) {
+          return analysis->read_workspace_source(path.string());
+        };
+        preprocessing.max_output_bytes = 8 * 1024 * 1024;
+        preprocessing.max_include_depth = 32;
+        preprocessing.max_include_visits = 1024;
+      }
+    };
     std::shared_ptr<ny::ast_program> prog;
     bool parse_failed = false;
+    bool original_spans_available = true;
     if (analysis && p == analysis->primary_path ? analysis->language == "matrix" : is_matrix_source(p)) {
       matrix::parser_options matrix_options;
       matrix_options.filename = diagnostic_path;
+      configure_preprocessing(matrix_options.preproc_options);
       if (analysis && p == analysis->primary_path) matrix_options.signature_cursor = analysis->signature_cursor;
       matrix::parser matrix_parser(src, matrix_options);
       prog = matrix_parser.parse_program();
+      original_spans_available = matrix_parser.has_original_spans();
       if (analysis && matrix_parser.recovered_signature_call()) {
         analysis->signature_recovered = true;
         analysis->add("MX0001", "error", "Expected arguments after 'with'", p);
       }
-      if (matrix_parser.has_errors()) {
+      if (!matrix_parser.rich_diagnostics().empty()) {
         // Render through matrix_diagnostics: a span with a caret, the source
         // line, the surface's own type vocabulary, and a hint. See
         // matrix/docs/diagnostics-and-analyzers.md for why this record is
         // also the analyzer surface.
         const bool colour = ny_stderr_is_terminal();
         for (const auto &d : matrix_parser.rich_diagnostics()) {
-          if (analysis) analysis->add(d.code.empty() ? "MX0001" : d.code, "error",
-              matrix::to_surface_vocabulary(d.message), p, d.primary.line,
-              d.primary.column, d.primary.length, d.hint);
-          std::cerr << matrix::render_diagnostic(d, src, p, colour);
+          const bool original_diagnostic = d.code == "MX0002" || matrix_parser.has_original_spans();
+          if (analysis) analysis->add(d.code.empty() ? "MX0001" : d.code,
+              d.level == matrix::severity::error ? "error" :
+              d.level == matrix::severity::warning ? "warning" : "note",
+              matrix::to_surface_vocabulary(d.message), p,
+              original_diagnostic ? d.primary.line : 0,
+              original_diagnostic ? d.primary.column : 0,
+              original_diagnostic ? d.primary.length : 0, d.hint);
+          auto rendered = d;
+          if (!original_diagnostic) {
+            rendered.primary = {};
+            rendered.secondary.clear();
+            rendered.fix.reset();
+          }
+          std::cerr << matrix::render_diagnostic(rendered,
+              d.code == "MX0002" ? src : matrix_parser.diagnostic_source(), p, colour);
         }
-        parse_failed = true;
+        parse_failed = matrix_parser.has_errors();
       }
     } else {
       ny::parser_options parse_options;
       parse_options.filename = diagnostic_path;
-      if (analysis && (analysis->workspace_stdin || analysis->semantic_requested || analysis->completion_cursor || analysis->signature_cursor)) {
-        parse_options.preproc_options.resolve_source = [analysis](const std::filesystem::path &path)
-            -> std::optional<std::filesystem::path> {
-          if (!analysis->workspace_source_exists(path.string())) return std::nullopt;
-          return ny::analysis_source_identity(path.string());
-        };
-        parse_options.preproc_options.read_source = [analysis](const std::filesystem::path &path) {
-          return analysis->read_workspace_source(path.string());
-        };
-        parse_options.preproc_options.max_output_bytes = 8 * 1024 * 1024;
-        parse_options.preproc_options.max_include_depth = 32;
-        parse_options.preproc_options.max_include_visits = 1024;
-      }
+      configure_preprocessing(parse_options.preproc_options);
       ny::parser parser(src, parse_options);
       prog = parser.parse_program();
       if (parser.has_errors()) {
@@ -1244,6 +1263,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     u.module_name = find_module_name(prog, p);
     u.imports = collect_import_paths(prog);
     u.primary = primary_paths.count(p) != 0;
+    u.original_spans_available = original_spans_available;
 
     // Dynamically resolve missing imports
     for (const auto &imp : u.imports) {
@@ -1481,6 +1501,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
         owner = nullptr;
         for (const auto &u : units) if (u.path == diag.source_file) { owner = &u; break; }
       }
+      if (owner && !owner->original_spans_available) rich.primary.line = 0;
       std::cerr << matrix::render_diagnostic(
           rich, owner ? owner->source : std::string(),
           owner ? owner->path : diag.source_file, colour);
@@ -1504,10 +1525,14 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
           ? analysis->language == "matrix" : is_matrix_source(path);
       const auto message = matrix_diagnostic
           ? matrix::to_surface_vocabulary(d.message) : d.message;
-      analysis->add("NIL0002", "error", message, path, d.line);
+      int line = d.line;
+      for (const auto &u : units)
+        if (u.path == path && !u.original_spans_available) line = 0;
+      analysis->add("NIL0002", "error", message, path, line);
     }
     if (checked) for (const auto &u : units)
-      if (u.path == analysis->primary_path) ny::run_default_analyzer(*u.program, *analysis);
+      if (u.path == analysis->primary_path && u.original_spans_available)
+        ny::run_default_analyzer(*u.program, *analysis);
     return checked && !analysis->signature_recovered ? 0 : 1;
   }
   if (!checked) {

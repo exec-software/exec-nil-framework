@@ -73,6 +73,9 @@ struct ParseResult {
     std::vector<Diagnostic> diagnostics;
     std::vector<Scope> scopes;
     std::vector<ExcludedSpan> excluded;
+    // Metadata is not a lexical value use. Matrix still offers annotation
+    // vocabulary here, but ordinary completion/navigation must ignore it.
+    std::vector<ExcludedSpan> annotations;
 };
 
 struct Completion {

@@ -26,6 +26,7 @@ struct reflected_annotation {
   int owner_id;
   std::string name, arguments;
   int line;
+  std::optional<std::vector<annotation_argument>> typed_arguments;
 };
 struct analysis_session {
   std::string primary_path, logical_path, language, stdin_source;

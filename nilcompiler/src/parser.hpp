@@ -88,12 +88,12 @@ public:
 
 private:
   // Internal helpers and grammar entry points
-  std::vector<std::string> parse_leading_annotations();
+  std::vector<ast_annotation> parse_leading_annotations();
   std::shared_ptr<ast_decl> parse_declaration();
   std::shared_ptr<ast_decl> parse_function_declaration(
       visibility_kind visibility = visibility_kind::visibility_private,
       bool is_abstract = false,
-      const std::vector<std::string> &annotations = {});
+      const std::vector<ast_annotation> &annotations = {});
   std::shared_ptr<ast_decl> parse_text_pattern_declaration(
       visibility_kind visibility = visibility_kind::visibility_private);
   std::shared_ptr<ast_decl> parse_variable_declaration(

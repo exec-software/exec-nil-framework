@@ -77,6 +77,19 @@ def completion(source: str, marker: str = "|", *, extra: list[dict] | None = Non
 
 
 class SemanticProtocol(unittest.TestCase):
+    def test_qualified_multiline_annotation_metadata_does_not_bind_names(self) -> None:
+        source = '@Company.review(\n summary="metadata",\n enabled=true\n)\nfn main(summary: text)\n println(sum|mary)\nend fn\n'
+        result, notes = completion(source)
+        self.assertEqual(set(result), {'summary'})
+        self.assertFalse([note for note in notes if note['params']['diagnostics']])
+        replies, _ = session([opened(source.replace('|', '')), query('definition', source, '|')])
+        self.assertEqual(replies[2][0]['range']['start'], {'line': 4, 'character': 8})
+        source = source.replace('sum|mary)', 'summary)').replace('summary="metadata"', 'sum|mary="metadata"')
+        result, _ = completion(source)
+        self.assertEqual(result, {})
+        replies, _ = session([opened(source.replace('|', '')), query('definition', source, '|')])
+        self.assertIsNone(replies[2])
+
     def test_reference_parameter_name_and_definition(self) -> None:
         for modifier in ('ref', 'reference', 'mut', 'mutable'):
             with self.subTest(modifier=modifier):

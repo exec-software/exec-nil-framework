@@ -41,6 +41,7 @@ do not assume every documented combination is accepted by every backend yet.
 - [Statements](language-reference/statements.md)
 - [Faults and cleanup](language-reference/faults.md)
 - [Functions](language-reference/functions.md)
+- [Annotations](language-reference/annotations.md)
 - [Modules](language-reference/modules.md)
 - [Traits](language-reference/traits.md)
 

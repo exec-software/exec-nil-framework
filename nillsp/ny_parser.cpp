@@ -446,12 +446,18 @@ class Indexer {
                 continue;
             }
             if (at("@") && cursor + 1 < tokens.size()) {
+                const auto annotation_start = tokens[cursor].start;
                 intrinsic = intrinsic || tokens[cursor + 1].text == "intrinsic";
                 cursor += 2;
+                while ((at(".") || at("::")) && cursor + 1 < tokens.size()) cursor += 2;
+                bool closed = true;
                 if (at("(")) {
                     const auto close = balanced(cursor, "(", ")");
+                    closed = close < tokens.size();
                     cursor = close < tokens.size() ? close + 1 : close;
                 }
+                out.annotations.push_back({annotation_start,
+                    closed ? tokens[cursor - 1].end : text.size(), closed});
                 continue;
             }
             while (at("pub") || at("private") || at("protected") || at("virtual") ||
@@ -510,6 +516,8 @@ public:
 };
 
 bool excluded(const ParseResult& parsed, std::size_t offset) {
+    for (const auto& span : parsed.annotations)
+        if (offset >= span.start && (offset < span.end || (offset == span.end && !span.closed))) return true;
     for (const auto& span : parsed.excluded)
         if (offset >= span.start && (offset < span.end || (offset == span.end && !span.closed))) return true;
     return false;

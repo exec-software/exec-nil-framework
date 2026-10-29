@@ -197,8 +197,45 @@
           }
         },
         {
+          "name": "meta.annotation.ny",
+          "begin": "(@[A-Za-z_][A-Za-z0-9_]*(?:(?:::|\\.)[A-Za-z_][A-Za-z0-9_]*)*)(\\s*\\()",
+          "beginCaptures": {
+            "1": {
+              "name": "storage.type.annotation.ny"
+            },
+            "2": {
+              "name": "punctuation.section.arguments.begin.ny"
+            }
+          },
+          "end": "\\)",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.section.arguments.end.ny"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#strings"
+            },
+            {
+              "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*=)",
+              "name": "variable.parameter.annotation.ny"
+            },
+            {
+              "include": "#numbers"
+            },
+            {
+              "include": "#constants"
+            },
+            {
+              "match": "\\b(?:true|false)\\b",
+              "name": "constant.language.boolean.ny"
+            }
+          ]
+        },
+        {
           "name": "storage.type.annotation.ny",
-          "match": "@[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*"
+          "match": "@[A-Za-z_][A-Za-z0-9_]*(?:(?:::|\\.)[A-Za-z_][A-Za-z0-9_]*)*"
         },
         {
           "name": "variable.parameter.annotation.ny",

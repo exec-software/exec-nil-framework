@@ -26,6 +26,19 @@ public annotation-info begin record
     field line as override integer
 end record
 
+!!! Literal annotation properties exported by a generated analysis snapshot.
+!!! annotation-id indexes snapshot.annotation, not snapshot.declaration.
+!!! kind is text, boolean, integer, floating or symbol; value is decoded text
+!!! or the validated scalar/symbol spelling. A positional argument has no name.
+!!! Legacy opaque composite metadata has arguments-parsed false and no entries.
+public annotation-argument-info begin record
+    field annotation-id as override integer
+    field name as text
+    field is-named as boolean
+    field kind as text
+    field `value` as text
+end record
+
 public is-function receives info as declaration-info returns boolean begin paragraph
     give info.kind equals "function"
 end paragraph

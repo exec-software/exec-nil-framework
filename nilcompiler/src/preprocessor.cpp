@@ -20,6 +20,7 @@ Notes:
 
 #include "preprocessor.hpp"
 #include "diagnostics.hpp"
+#include "formatted_text.hpp"
 #include "nil_version.hpp"
 
 #include <algorithm>
@@ -65,6 +66,113 @@ static inline std::string rtrim(const std::string &s) {
   return (end == std::string::npos) ? std::string() : s.substr(0, end + 1);
 }
 static inline std::string trim(const std::string &s) { return rtrim(ltrim(s)); }
+
+namespace {
+bool matrix_name_letter(unsigned char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 0x80;
+}
+
+bool matrix_name_start(unsigned char c) {
+  return matrix_name_letter(c) || c == '_';
+}
+
+bool matrix_name_part(unsigned char c) {
+  return matrix_name_start(c) || (c >= '0' && c <= '9');
+}
+
+// Include malformed hyphen tails in the candidate, too: preprocessing must
+// not rewrite part of an invalid source name into a different valid token.
+std::size_t matrix_name_end(const std::string &source, std::size_t start) {
+  auto end = start;
+  while (end < source.size() && (matrix_name_part(source[end]) || source[end] == '-')) ++end;
+  return end;
+}
+
+bool valid_matrix_macro_name(const std::string &name) {
+  if (name.empty() || !matrix_name_start(name.front())) return false;
+  for (std::size_t i = 1; i < name.size(); ++i) {
+    if (matrix_name_part(name[i])) continue;
+    if (name[i] != '-' || i + 1 == name.size() || !matrix_name_letter(name[i + 1])) return false;
+  }
+  return true;
+}
+
+std::string matrix_normalized_line(const std::string &source) {
+  std::string result;
+  bool space = false;
+  for (unsigned char c : source) {
+    if (c == ' ' || c == '\t' || c == '\r') {
+      if (!result.empty()) space = true;
+      continue;
+    }
+    if (space) { result.push_back(' '); space = false; }
+    result.push_back(c >= 'A' && c <= 'Z' ? static_cast<char>(c + 'a' - 'A') : c);
+  }
+  return result;
+}
+
+// Return the end of a source range whose bytes are opaque to macros. On a
+// malformed literal, leave the rest intact for the Matrix lexer to diagnose.
+std::optional<std::size_t> matrix_protected_end(const std::string &source,
+                                               std::size_t start) {
+  if (source.compare(start, 3, "!!!") == 0) return source.size();
+  if (source[start] == '"' || source[start] == '`') {
+    const auto end = source.find(source[start], start + 1);
+    return end == std::string::npos ? source.size() : end + 1;
+  }
+  if (matrix_name_start(source[start])) {
+    const auto end = matrix_name_end(source, start);
+    const auto word = matrix_normalized_line(source.substr(start, end - start));
+    if (word == "formatted") {
+      auto quote = end;
+      while (quote < source.size() && (source[quote] == ' ' || source[quote] == '\t')) ++quote;
+      if (quote < source.size() && source[quote] == '"')
+        return scan_formatted_text(source, quote, true).end;
+    }
+    if (word == "begin" && matrix_normalized_line(source.substr(end)) == "text")
+      return source.size();
+  }
+  return std::nullopt;
+}
+
+bool matrix_opens_text_block(const std::string &source) {
+  for (std::size_t at = 0; at < source.size();) {
+    if (matrix_name_start(source[at])) {
+      const auto end = matrix_name_end(source, at);
+      if (matrix_normalized_line(source.substr(at, end - at)) == "begin" &&
+          matrix_normalized_line(source.substr(end)) == "text") return true;
+      if (const auto protected_end = matrix_protected_end(source, at)) at = *protected_end;
+      else at = end;
+    } else if (const auto protected_end = matrix_protected_end(source, at)) {
+      at = *protected_end;
+    } else {
+      ++at;
+    }
+  }
+  return false;
+}
+
+int matrix_annotation_depth(const std::string &source, int depth) {
+  for (std::size_t at = 0; at < source.size();) {
+    if (const auto end = matrix_protected_end(source, at)) {
+      at = *end;
+      continue;
+    }
+    if (matrix_name_start(source[at])) {
+      at = matrix_name_end(source, at);
+      continue;
+    }
+    if (source[at] == '(') ++depth;
+    else if (source[at] == ')' && depth > 0) --depth;
+    ++at;
+  }
+  return depth;
+}
+
+struct matrix_macro_error : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
+} // namespace
 
 // Canonicalize a path in a robust manner (avoid exceptions and be tolerant of
 // missing files). Return an absolute, lexically-normalized string.
@@ -254,6 +362,8 @@ preproc_result preprocessor::preprocess_text(const std::string &source,
   std::istringstream iss(source);
   std::string line;
   int line_no = 0;
+  bool matrix_text_block = false;
+  int matrix_metadata_depth = 0;
   // Local collection for `@pragma link` directives found within this
   // preprocessor textual unit. This collects pragma links per input unit and is
   // used to populate the `result.pragma_links` field. Only top-level
@@ -294,6 +404,20 @@ preproc_result preprocessor::preprocess_text(const std::string &source,
     std::string raw_line = line; // preserve the original raw line
     std::string stripped = ltrim(line);
 
+    if (options_.matrix_surface && matrix_text_block) {
+      if (parent_is_active()) out << raw_line;
+      out << "\n";
+      if (matrix_normalized_line(raw_line) == "end text") matrix_text_block = false;
+      continue;
+    }
+    if (options_.matrix_surface && matrix_metadata_depth > 0) {
+      if (parent_is_active()) out << raw_line;
+      out << "\n";
+      matrix_metadata_depth = matrix_annotation_depth(raw_line, matrix_metadata_depth);
+      if (matrix_opens_text_block(raw_line)) matrix_text_block = true;
+      continue;
+    }
+
     // If the line is empty, preserve newline and continue.
     if (stripped.empty()) {
       out << "\n";
@@ -312,7 +436,19 @@ preproc_result preprocessor::preprocess_text(const std::string &source,
       }
       std::string rest = trim(stripped.substr(pos));
 
-      // `@pragma` is considered always processed (useful for include guards).
+      const bool parent_active = parent_is_active();
+      // Disabled branches must not add link requirements or mark an include
+      // as already processed. Conditional directives below still run so their
+      // nesting remains balanced.
+      if (!parent_active && (directive == "pragma" || directive == "schema")) {
+        if (options_.keep_directives_in_output)
+          out << raw_line << "\n";
+        else
+          out << "\n";
+        continue;
+      }
+
+      // Active pragmas provide include guards and linker metadata.
       if (directive == "pragma") {
         if (rest.rfind("once", 0) == 0) {
           std::string canonical = (!filename.empty() && filename != "<input>")
@@ -432,10 +568,6 @@ preproc_result preprocessor::preprocess_text(const std::string &source,
         continue;
       }
 
-      // Evaluate the parent active state (if the parent block is inactive,
-      // most directives should be ignored).
-      bool parent_active = parent_is_active();
-
       // `@include` - only processed when active (explicit active check). Use
       // resolve_include_path + preprocess_file to gather the included content.
       if (directive == "include") {
@@ -539,15 +671,18 @@ preproc_result preprocessor::preprocess_text(const std::string &source,
         // Parse the macro name & optional param list
         std::string name;
         size_t ri = 0;
-        while (ri < rest.size() &&
-               (std::isalnum(static_cast<unsigned char>(rest[ri])) ||
-                rest[ri] == '_')) {
-          name.push_back(rest[ri++]);
+        if (options_.matrix_surface && !rest.empty() && matrix_name_start(rest[0])) {
+          ri = matrix_name_end(rest, 0);
+          name = rest.substr(0, ri);
+        } else {
+          while (ri < rest.size() &&
+                 (std::isalnum(static_cast<unsigned char>(rest[ri])) || rest[ri] == '_'))
+            name.push_back(rest[ri++]);
         }
 
-        if (name.empty()) {
+        if (name.empty() || (options_.matrix_surface && !valid_matrix_macro_name(name))) {
           record_diagnostic(preproc_diag_kind::error, filename, line_no,
-                            "Malformed @define: missing macro name");
+                            "Malformed @define: expected a valid macro name");
           if (options_.keep_directives_in_output)
             out << raw_line << "\n";
           else
@@ -564,8 +699,13 @@ preproc_result preprocessor::preprocess_text(const std::string &source,
                std::isspace(static_cast<unsigned char>(rest[ri])))
           ++ri;
 
-        // Function-like macro?
+        // Function-like macro? Keep the presence of () separate from its
+        // parameter count so zero-argument Matrix macros remain callable.
+        bool function_like = false;
+        bool closed_parameters = false;
+        bool malformed_parameters = false;
         if (ri < rest.size() && rest[ri] == '(') {
+          function_like = true;
           ++ri; // skip '('
           std::string params_text;
           int depth = 0;
@@ -575,6 +715,7 @@ preproc_result preprocessor::preprocess_text(const std::string &source,
               ++depth;
               params_text.push_back(c);
             } else if (c == ')' && depth == 0) {
+              closed_parameters = true;
               break;
             } else if (c == ')' && depth > 0) {
               --depth;
@@ -588,8 +729,10 @@ preproc_result preprocessor::preprocess_text(const std::string &source,
           std::string p;
           while (std::getline(pstream, p, ',')) {
             p = trim(p);
-            if (p.empty())
+            if (p.empty()) {
+              if (!trim(params_text).empty()) malformed_parameters = true;
               continue;
+            }
             if (p == "...") {
               md.variadic = true;
               md.params.push_back("...");
@@ -597,6 +740,7 @@ preproc_result preprocessor::preprocess_text(const std::string &source,
               md.params.push_back(p);
             }
           }
+          if (!trim(params_text).empty() && trim(params_text).back() == ',') malformed_parameters = true;
         }
 
         // Remaining text is replacement
@@ -605,7 +749,23 @@ preproc_result preprocessor::preprocess_text(const std::string &source,
           ++ri;
         md.replacement =
             (ri < rest.size()) ? trim(rest.substr(ri)) : std::string();
-        md.function_like = !md.params.empty();
+        md.function_like = options_.matrix_surface ? function_like : !md.params.empty();
+        if (options_.matrix_surface) {
+          std::unordered_set<std::string> parameter_names;
+          for (std::size_t index = 0; index < md.params.size(); ++index)
+            if (!parameter_names.insert(md.params[index]).second ||
+                (md.params[index] == "..." && index + 1 != md.params.size())) malformed_parameters = true;
+        }
+        if (options_.matrix_surface && function_like &&
+            (!closed_parameters || malformed_parameters || std::any_of(md.params.begin(), md.params.end(),
+                [](const auto &parameter) {
+                  return parameter != "..." && !valid_matrix_macro_name(parameter);
+                }))) {
+          record_diagnostic(preproc_diag_kind::error, filename, line_no,
+                            "Malformed Matrix function macro parameter list");
+          out << "\n";
+          continue;
+        }
 
         define_macro(md);
 
@@ -673,8 +833,10 @@ preproc_result preprocessor::preprocess_text(const std::string &source,
         active_stack.push_back(new_active);
         branch_taken_stack.push_back(new_active);
 
-        // Preserve directive line for mapping/trace
-        out << raw_line << "\n";
+        if (options_.keep_directives_in_output)
+          out << raw_line << "\n";
+        else
+          out << "\n";
         continue;
       } // ifdef/ifndef
 
@@ -800,13 +962,22 @@ preproc_result preprocessor::preprocess_text(const std::string &source,
         continue;
       }
 
-      // Unrecognized directive: preserve as-is (likely a user annotation
-      // like @interop, @test, @inline for the parser/codegen)
-      out << raw_line << "\n";
+      // Unknown @ lines belong to the language (usually annotations), so
+      // retain them only in active branches. A disabled annotation must not
+      // drift onto the next active declaration after its own code is removed.
+      if (options_.matrix_surface) {
+        matrix_metadata_depth = matrix_annotation_depth(raw_line, 0);
+        if (matrix_opens_text_block(raw_line)) matrix_text_block = true;
+      }
+      if (parent_active)
+        out << raw_line << "\n";
+      else
+        out << "\n";
       continue;
     } // directive
 
     // Regular code line
+    if (options_.matrix_surface && matrix_opens_text_block(raw_line)) matrix_text_block = true;
     bool active = !active_stack.empty() ? active_stack.back() : true;
     if (!active) {
       // preserve blank mapping for line numbers when inactive
@@ -814,7 +985,14 @@ preproc_result preprocessor::preprocess_text(const std::string &source,
       continue;
     }
     // Expand macros on active lines
-    out << expand_macros(raw_line) << "\n";
+    try {
+      const auto expanded = expand_macros(raw_line);
+      if (options_.matrix_surface && matrix_opens_text_block(expanded)) matrix_text_block = true;
+      out << expanded << "\n";
+    } catch (const matrix_macro_error &error) {
+      record_diagnostic(preproc_diag_kind::error, filename, line_no, error.what());
+      out << raw_line << "\n";
+    }
   } // while lines
 
   // Finalize result
@@ -1152,6 +1330,7 @@ preprocessor::evaluate_condition(const std::string &expr,
 }
 
 std::string preprocessor::expand_macros(const std::string &text) const {
+  if (!options_.expand_macros) return text;
   std::string out;
   out.reserve(text.size());
   const auto append = [this](std::string &target, const std::string &value) {
@@ -1195,6 +1374,13 @@ std::string preprocessor::expand_macros(const std::string &text) const {
 
   size_t i = 0;
   while (i < text.size()) {
+    if (options_.matrix_surface) {
+      if (const auto end = matrix_protected_end(text, i)) {
+        append(out, text.substr(i, *end - i));
+        i = *end;
+        continue;
+      }
+    }
     // Check for string literal and skip it (don't expand macros inside strings)
     if (text[i] == '"') {
       append_character(out, text[i++]);
@@ -1217,12 +1403,12 @@ std::string preprocessor::expand_macros(const std::string &text) const {
     }
 
     // Identify an identifier start
-    if (std::isalpha(static_cast<unsigned char>(text[i])) || text[i] == '_') {
+    if (options_.matrix_surface ? matrix_name_start(text[i]) :
+        (std::isalpha(static_cast<unsigned char>(text[i])) || text[i] == '_')) {
       size_t start = i;
-      while (
-          i < text.size() &&
-          (std::isalnum(static_cast<unsigned char>(text[i])) || text[i] == '_'))
-        ++i;
+      if (options_.matrix_surface) i = matrix_name_end(text, i);
+      else while (i < text.size() &&
+          (std::isalnum(static_cast<unsigned char>(text[i])) || text[i] == '_')) ++i;
       std::string ident = text.substr(start, i - start);
 
       // Check for macro presence
@@ -1256,9 +1442,45 @@ std::string preprocessor::expand_macros(const std::string &text) const {
             std::vector<std::string> args;
             std::string current_arg;
             int depth = 0;
+            std::vector<char> matrix_delimiters;
+            bool closed_arguments = false;
 
             while (i < text.size()) {
               char c = text[i];
+              if (options_.matrix_surface) {
+                if (const auto end = matrix_protected_end(text, i)) {
+                  current_arg += text.substr(i, *end - i);
+                  i = *end;
+                  continue;
+                }
+                if (matrix_name_start(c)) {
+                  const auto end = matrix_name_end(text, i);
+                  current_arg += text.substr(i, end - i);
+                  i = end;
+                  continue;
+                }
+                if (c == '(' || c == '[' || c == '{') {
+                  matrix_delimiters.push_back(c == '(' ? ')' : c == '[' ? ']' : '}');
+                } else if (c == ')' || c == ']' || c == '}') {
+                  if (c == ')' && matrix_delimiters.empty()) {
+                    if (!trim(current_arg).empty() || !args.empty()) args.push_back(trim(current_arg));
+                    ++i;
+                    closed_arguments = true;
+                    break;
+                  }
+                  if (matrix_delimiters.empty() || matrix_delimiters.back() != c)
+                    throw matrix_macro_error("Mismatched delimiter in Matrix macro '" + ident + "'");
+                  matrix_delimiters.pop_back();
+                } else if (c == ',' && matrix_delimiters.empty()) {
+                  args.push_back(trim(current_arg));
+                  current_arg.clear();
+                  ++i;
+                  continue;
+                }
+                current_arg += c;
+                ++i;
+                continue;
+              }
               if (c == '(') {
                 depth++;
                 current_arg += c;
@@ -1291,6 +1513,14 @@ std::string preprocessor::expand_macros(const std::string &text) const {
             // Handle variadic: last param is "..."
             bool is_variadic = md.variadic;
             size_t param_count = md.params.size();
+            if (options_.matrix_surface) {
+              if (!closed_arguments)
+                throw matrix_macro_error("Unterminated Matrix macro call '" + ident + "'");
+              const auto fixed = is_variadic ? param_count - 1 : param_count;
+              if ((!is_variadic && args.size() != fixed) || (is_variadic && args.size() < fixed) ||
+                  std::any_of(args.begin(), args.end(), [](const auto &arg) { return arg.empty(); }))
+                throw matrix_macro_error("Wrong argument count or empty argument in Matrix macro '" + ident + "'");
+            }
 
             // Perform substitution with # and ## support
             // Using token-based approach for proper handling
@@ -1306,6 +1536,13 @@ std::string preprocessor::expand_macros(const std::string &text) const {
 
             size_t p = 0;
             while (p < replacement.size()) {
+              if (options_.matrix_surface) {
+                if (const auto end = matrix_protected_end(replacement, p)) {
+                  tokens.push_back({replacement.substr(p, *end - p), false, -1});
+                  p = *end;
+                  continue;
+                }
+              }
               if (std::isspace(static_cast<unsigned char>(replacement[p]))) {
                 tokens.push_back({std::string(1, replacement[p]), false, -1});
                 p++;
@@ -1313,15 +1550,12 @@ std::string preprocessor::expand_macros(const std::string &text) const {
                 const auto end = numeric_end(replacement, p);
                 tokens.push_back({replacement.substr(p, end - p), false, -1});
                 p = end;
-              } else if (std::isalpha(
-                             static_cast<unsigned char>(replacement[p])) ||
-                         replacement[p] == '_') {
+              } else if (options_.matrix_surface ? matrix_name_start(replacement[p]) :
+                  (std::isalpha(static_cast<unsigned char>(replacement[p])) || replacement[p] == '_')) {
                 size_t start = p;
-                while (
-                    p < replacement.size() &&
-                    (std::isalnum(static_cast<unsigned char>(replacement[p])) ||
-                     replacement[p] == '_'))
-                  p++;
+                if (options_.matrix_surface) p = matrix_name_end(replacement, p);
+                else while (p < replacement.size() &&
+                    (std::isalnum(static_cast<unsigned char>(replacement[p])) || replacement[p] == '_')) ++p;
                 std::string txt = replacement.substr(start, p - start);
 
                 int idx = -1;
@@ -1344,6 +1578,11 @@ std::string preprocessor::expand_macros(const std::string &text) const {
                 p++;
               }
             }
+
+            if (options_.matrix_surface && std::any_of(tokens.begin(), tokens.end(), [](const auto &token) {
+                  return token.text == "#" || token.text == "##";
+                }))
+              throw matrix_macro_error("Matrix function macros do not support stringification or token pasting");
 
             // 2. Process # (stringify)
             // Look for # followed by param (ignoring whitespace)

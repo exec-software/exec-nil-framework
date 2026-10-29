@@ -124,6 +124,26 @@ std::vector<Token> lex(const std::string& text, ParseResult& out) {
             tokens.push_back({value, value, start, i});
         }
     }
+    // Annotation arguments may span lines and contain words such as `value`
+    // or `begin`. They are metadata, never declarations or value references.
+    for (std::size_t begin = 0; begin < tokens.size(); ++begin) {
+        if (tokens[begin].word != "@" && tokens[begin].word != "note" && tokens[begin].word != "context") continue;
+        auto end = begin + 1;
+        int depth = 0;
+        bool parenthesized = false, closed = false;
+        for (; end < tokens.size(); ++end) {
+            const auto& word = tokens[end].word;
+            if (tokens[begin].word == "@") {
+                if (word == "(") { ++depth; parenthesized = true; }
+                else if (word == ")" && depth > 0 && --depth == 0) { ++end; closed = true; break; }
+            }
+            if (word == "\n" && depth == 0) { closed = true; break; }
+        }
+        const auto finish = end == tokens.size() ? text.size() : (tokens[end].word == "\n"
+            ? tokens[end].start : (end > begin ? tokens[end - 1].end : tokens[begin].end));
+        out.annotations.push_back({tokens[begin].start, finish, closed && (!parenthesized || depth == 0)});
+        begin = end == 0 ? 0 : end - 1;
+    }
     return tokens;
 }
 
@@ -441,6 +461,13 @@ class Indexer {
         if (outline_parent < 0) outline_parent = parent;
         while (cursor < tokens.size()) {
             if (at("\n")) { ++cursor; continue; }
+            const auto annotation = std::find_if(out.annotations.begin(), out.annotations.end(), [&](const auto& span) {
+                return tokens[cursor].start >= span.start && tokens[cursor].start < span.end;
+            });
+            if (annotation != out.annotations.end()) {
+                while (cursor < tokens.size() && tokens[cursor].start < annotation->end) ++cursor;
+                continue;
+            }
             const auto start = cursor;
             if (at("end") && cursor + 1 < tokens.size()) {
                 if (ending.empty()) { cursor += 2; continue; }
@@ -645,7 +672,6 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
         if (*at >= span.start && (*at < span.end || (*at == span.end && !span.closed))) return {};
     const auto [begin, end] = matrix_name_span(text, *at);
     if (begin < text.size() && text[begin] == '`') return {};
-    if (begin > 0 && (text[begin - 1] == '.' || text[begin - 1] == ':' || text[begin - 1] == '`')) return {};
     ParseResult context;
     const auto before = lex(text.substr(0, begin), context);
     const auto last = before.empty() ? "" : before.back().word;
@@ -654,6 +680,43 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
     // These are language spellings, not speculative imported library symbols.
     std::vector<std::string> words;
     int kind = 14;
+    const bool annotation = !context.annotations.empty() && !context.annotations.back().closed;
+    if (annotation) {
+        const auto start = context.annotations.back().start;
+        auto token = std::find_if(before.begin(), before.end(), [&](const auto& item) { return item.start == start; });
+        const bool prose = token != before.end() && token->word == "note";
+        const bool context_text = token != before.end() && token->word == "context";
+        const auto first = token == before.end() ? token : token + 1;
+        auto arguments = first;
+        while (arguments != before.end() && arguments->word != "(" && arguments->word != "with") ++arguments;
+        if (context_text) return {};
+        if (first == before.end() || (!prose && arguments == before.end())) {
+            if (last == "." || last == "::") return {};
+            words = {"inline", "doc", "ai_context", "intrinsic", "interop", "test", "if_test_mode", "deprecated"};
+        } else if (prose && arguments == before.end()) words = {"with"};
+        else {
+            auto previous = before.rbegin();
+            while (previous != before.rend() && previous->word == "\n") ++previous;
+            const auto value = previous == before.rend() ? "" : previous->word;
+            if (value == "=" || value == "being") words = {"true", "false"};
+            else if (value == "(" || value == "with" || value == ",") {
+                std::string spelling;
+                for (auto part = first; part != arguments; ++part) spelling += part->text;
+                const auto name = matrix_key(spelling);
+                if (name == "doc") words = {"summary", "description", "returns", "throws", "examples", "complexity", "author", "since", "see_also"};
+                else if (name == "aicontext") words = {"intent", "assumptions", "constraints", "trade_offs", "related_topics", "typical_usage"};
+                if (prose) for (auto& word : words) word += " being";
+                kind = 10; // Property names; custom annotations remain open-ended.
+                words.push_back("true"); words.push_back("false");
+            } else if (prose && previous != before.rend() && previous->name) words = {"being"};
+        }
+        std::vector<MatrixKeyword> result;
+        const Range edit{NyParser::position_at(text, offsets, begin), NyParser::position_at(text, offsets, end)};
+        for (const auto& word : words)
+            if (word.compare(0, prefix.size(), prefix) == 0) result.push_back({word, kind, edit});
+        return result;
+    }
+    if (begin > 0 && (text[begin - 1] == '.' || text[begin - 1] == ':' || text[begin - 1] == '`')) return {};
     bool parameter_clause = false;
     for (auto token = before.rbegin(); token != before.rend(); ++token) {
         if (token->word == "receives") { parameter_clause = true; break; }
@@ -683,7 +746,7 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
         words = {"to"};
     }
     else if (last == "value" || last == "variable" || last == "mutable" || last == "constant" || last == "field" || last == "book") return {};
-    else if (last.empty() || last == "\n") words = {"value", "variable", "constant", "set", "say", "give", "evaluate", "when", "otherwise", "repeat", "consider", "attempt", "caught", "always", "raise", "append", "allocate", "release", "own", "borrow", "move", "stop repeating", "continue repeating", "book", "library", "read", "cite", "public", "end"};
+    else if (last.empty() || last == "\n") words = {"value", "variable", "constant", "set", "say", "give", "evaluate", "when", "otherwise", "repeat", "consider", "attempt", "caught", "always", "raise", "append", "allocate", "release", "own", "borrow", "move", "stop repeating", "continue repeating", "book", "library", "read", "cite", "public", "note", "context", "end"};
     else words = {"true", "false", "nothing", "build", "my", "the length of", "the paragraph", "anonymous", "formatted", "quote", "newline", "tab", "negative", "plus", "minus", "times", "over", "remainder", "equals", "does not equal", "is less than", "is greater than", "is at least", "is at most", "and", "or", "not", "bitwise", "shifted", "becomes", "with", "receives", "returns", "begin"};
     std::vector<MatrixKeyword> result;
     const Range edit{NyParser::position_at(text, offsets, begin), NyParser::position_at(text, offsets, end)};

@@ -105,6 +105,10 @@ struct macro_def {
 
 // Preprocessor options to control behavior
 struct preprocessor_options {
+  // Respect Matrix raw text, escaped names, comments and identifier boundaries.
+  // Directive and macro names retain the preprocessor's exact spelling rules.
+  bool matrix_surface = false;
+
   // If set, macros will be expanded in textual output (default true).
   bool expand_macros = true;
 

@@ -64,14 +64,25 @@ name_list       = identifier { ',' identifier } ;
 (* Declarations: <modifiers> <name> <clauses> begin <kind> ... end <kind> *)
 (* ------------------------------------------------------------------ *)
 
-declaration     = { annotation }
-                  ( paragraph_decl | record_decl | choice_decl
-                  | class_decl | contract_decl | impl_decl | extension_decl
-                  | test_decl | alias_decl | global_decl | pattern_decl ) ;
+declaration     = { annotation } ( paragraph_decl | record_decl | choice_decl | class_decl )
+                | contract_decl | impl_decl | extension_decl
+                | test_decl | alias_decl | global_decl | pattern_decl ;
 
+(* Annotations are metadata, not executable decorators. Parenthesized @ forms
+ * may span lines; prose note forms stay on one line. Matrix quoted text stays
+ * raw in both. Positional values precede named values; duplicate keys reject.
+ * Arrays, maps, and expressions are outside the initial scalar profile. *)
 annotation      = 'context' string_literal
-                | 'note' identifier { annotation_arg } ;
-annotation_arg  = string_literal | number_literal | identifier ;
+                | '@' annotation_name [ '(' [ annotation_args ] ')' ]
+                | 'note' annotation_name 'with' prose_annotation_args
+                | 'note' annotation_name { annotation_value } ;
+annotation_name = identifier { ( '.' | '::' ) identifier } ;
+annotation_args = annotation_arg { ',' annotation_arg } ;
+annotation_arg  = [ identifier '=' ] annotation_value ;
+prose_annotation_args = prose_annotation_arg { ',' prose_annotation_arg } ;
+prose_annotation_arg = [ identifier 'being' ] annotation_value ;
+annotation_value = string_literal | number_literal | signed_number
+                 | 'true' | 'false' | annotation_name ;
 
 (* 'replaces' is the class-method override marker.  It is not spelled
  * 'override' because 'override' is the machine-type escape hatch, and two
@@ -145,13 +156,15 @@ choice_decl     = { modifier } identifier [ generic_clause ]
 variant_decl    = 'when' identifier [ 'holding' type ] ;
 
 class_decl      = { modifier } identifier [ 'inherits' nominal_type { ',' nominal_type } ]
-                  'begin' 'class' { field_decl | paragraph_decl } 'end' 'class' ;
+                  'begin' 'class' { field_decl | annotated_method } 'end' 'class' ;
+
+annotated_method = { annotation } paragraph_decl ;
 
 contract_decl   = { modifier } identifier [ generic_clause ]
                   'begin' 'contract' { paragraph_decl } 'end' 'contract' ;
 
 impl_decl       = type_name [ generic_clause ] [ 'provides' nominal_type ]
-                  'begin' 'implementation' { paragraph_decl }
+                  'begin' 'implementation' { annotated_method }
                   'end' 'implementation' ;
 
 (* An EXTENSION adds paragraphs to a type this book does not declare --
@@ -181,7 +194,7 @@ impl_decl       = type_name [ generic_clause ] [ 'provides' nominal_type ]
  * unmarked paragraphs remain private to the extending book. The extension
  * block itself has no export modifier. *)
 extension_decl  = nominal_type [ generic_clause ]
-                  'begin' 'extension' { paragraph_decl }
+                  'begin' 'extension' { annotated_method }
                   'end' 'extension' ;
 
 test_decl       = identifier 'begin' 'test' { statement } 'end' 'test' ;
