@@ -1,0 +1,86 @@
+book nil2.counter
+
+read nil.std.ui
+read nil.std.core.option
+read nil.std.core.result
+read nil.std.threading
+
+!!! Startup and unrecoverable provider errors include their operation. Runtime
+!!! teardown still releases the surface if a failure ends the application.
+ui-value of type T receives outcome as Result of T, text, operation as text returns T begin paragraph
+    consider outcome
+        when Result.Ok holding found then give found
+        when Result.Error holding failure then evaluate panic with ("NIL²: " plus operation plus ": " plus failure)
+    end consider
+end paragraph
+
+refresh-view receives display as Widget, increment as Widget, reset as Widget, name as TextModel, large-step as FlagModel, count as number begin paragraph
+    evaluate ui-value of boolean with outcome being (set-widget-text with display, formatted "Hello, {name.content}. Count: {count}"), operation being "refresh counter"
+    variable action-label as text is "Add 1"
+    when large-step.enabled then set action-label to "Add 10" end when
+    evaluate ui-value of boolean with outcome being (set-widget-text with increment, action-label), operation being "refresh increment label"
+    evaluate ui-value of boolean with outcome being (set-sensitive with reset, count does not equal 0), operation being "refresh reset button"
+end paragraph
+
+main returns override integer begin paragraph
+    value surface is ui-value of Window with outcome being (create-window with "NIL² — Counter and settings", 560, 320), operation being "open window"
+    value root is window-root with surface
+    evaluate ui-value of boolean with outcome being (set-margin with root, 20), operation being "set window margin"
+    evaluate ui-value of boolean with outcome being (set-spacing with root, 12), operation being "set window spacing"
+    value heading is ui-value of Widget with outcome being (create-label with root, "NIL² · Counter and settings"), operation being "create heading"
+    value display is ui-value of Widget with outcome being (create-label with root, ""), operation being "create counter display"
+    value settings is ui-value of Widget with outcome being (create-grid with root), operation being "create settings grid"
+    evaluate ui-value of boolean with outcome being (set-spacing with settings, 8), operation being "space settings"
+    value name-label is ui-value of Widget with outcome being (create-label with settings, "Your name"), operation being "create name label"
+    value name-entry is ui-value of Widget with outcome being (create-entry with settings, "Matrix"), operation being "create name entry"
+    value step-checkbox is ui-value of Widget with outcome being (create-checkbox with settings, "Count in steps of ten"), operation being "create step checkbox"
+    evaluate ui-value of boolean with outcome being (attach-grid with settings, name-label, 0, 0, 1, 1), operation being "place name label"
+    evaluate ui-value of boolean with outcome being (attach-grid with settings, name-entry, 1, 0, 1, 1), operation being "place name entry"
+    evaluate ui-value of boolean with outcome being (attach-grid with settings, step-checkbox, 0, 1, 2, 1), operation being "place checkbox"
+    evaluate ui-value of boolean with outcome being (set-expansion with name-entry, yes, no), operation being "expand name entry"
+    value actions is ui-value of Widget with outcome being (create-row with root), operation being "create actions"
+    evaluate ui-value of boolean with outcome being (set-spacing with actions, 8), operation being "space actions"
+    value increment is ui-value of Widget with outcome being (create-button with actions, "Add 1"), operation being "create increment button"
+    value reset is ui-value of Widget with outcome being (create-button with actions, "Reset"), operation being "create reset button"
+    value finish is ui-value of Widget with outcome being (create-button with actions, "Close"), operation being "create close button"
+    value explanation is ui-value of Widget with outcome being (create-label with root, "Edit your name, choose a step, and update the counter."), operation being "create explanation"
+
+    value name is create-text-model with "Matrix"
+    value large-step is create-flag-model with no
+    variable count as number is 0
+    variable running as boolean is yes
+    evaluate refresh-view with display, increment, reset, name, large-step, count
+    evaluate ui-value of boolean with outcome being (show-window with surface), operation being "show window"
+    evaluate ui-value of boolean with outcome being (focus-widget with name-entry), operation being "focus name entry"
+
+    repeat while running
+        value pending is ui-value of PendingEvent with outcome being (poll-event with surface), operation being "poll events"
+        consider pending
+            when Option.None then evaluate sleep-ms with 16
+            when Option.Some holding notification then begin block
+                variable changed as boolean is no
+                when is-close-request with notification then
+                    set running to no
+                otherwise when (is-click with notification) and (event-for with notification, finish) then
+                    set running to no
+                otherwise when (is-click with notification) and (event-for with notification, increment) then
+                    when large-step.enabled then set count to count plus 10
+                    otherwise set count to count plus 1 end when
+                    set changed to yes
+                otherwise when (is-click with notification) and (event-for with notification, reset) then
+                    set count to 0
+                    set changed to yes
+                otherwise when apply-text-event with name, name-entry, notification then
+                    set changed to yes
+                otherwise when apply-flag-event with large-step, step-checkbox, notification then
+                    set changed to yes
+                end when
+                when changed then
+                    evaluate refresh-view with display, increment, reset, name, large-step, count
+                end when
+            end block
+        end consider
+    end repeat
+    evaluate ui-value of boolean with outcome being (close-window with surface), operation being "close window"
+    give 0
+end paragraph

@@ -25,6 +25,8 @@ command-line help, and executable tests as bugs.
 - [Standard-library status](standard-library/index.md) — layout, maturity, and
   what is deliberately outside the core library.
 - [NILData](standard-library/nildata.md) — structured data, JSON interchange and explicit NyData migration.
+- [Tests beside code](tools/testing.md) — co-located suites, inline checks and VM/native execution.
+- [Desktop UI](standard-library/ui.md) — Matrix windows, layouts, controls and typed events.
 - [Examples](../examples/README.md) — small examples tied to repository fixtures.
 - [Matrix](../matrix/README.md) — prose-oriented frontend, syntax, and examples.
 - [Ny](../ny/README.md) — systems-language frontend and reference entry point.

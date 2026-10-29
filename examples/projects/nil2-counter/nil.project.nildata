@@ -1,0 +1,7 @@
+nildata 1
+object
+  schema is "nil.project.v1"
+  name is "nil2-counter"
+  entry is "src/main.matrix"
+  outputDirectory is "build"
+end object

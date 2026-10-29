@@ -6,6 +6,7 @@
 #include "type_checker.hpp"
 #include "diagnostics.hpp"
 #include "dynamic_type.hpp"
+#include "ui_intrinsic.hpp"
 #include "nil_contract.hpp"
 #include "numeric_literal.hpp"
 #include "scalar_text.hpp"
@@ -2656,6 +2657,41 @@ void type_checker::visit(ast_program &p) {
     diagnostic_source_scope source_scope(diagnostic_source_file_, declaration->source_file);
     check_test_target(*declaration);
   }
+  // A value/function cannot replace a nominal type's symbol. Otherwise
+  // module-member preregistration can erase a record's fields before any body
+  // is checked. Repeated imports of the same kind remain harmless here.
+  std::unordered_map<std::string, const ast_decl *> declaration_owners;
+  std::string declaration_module;
+  bool declaration_conflict = false;
+  for (const auto &declaration : p.declarations) {
+    if (!declaration) continue;
+    if (declaration->kind == ast_node_kind::module_decl_node) {
+      declaration_module = static_cast<const ast_module_decl &>(*declaration).name;
+      continue;
+    }
+    std::string name;
+    switch (declaration->kind) {
+    case ast_node_kind::function_decl_node: name = static_cast<const ast_function_decl &>(*declaration).name; break;
+    case ast_node_kind::variable_decl_node: name = static_cast<const ast_variable_decl &>(*declaration).name; break;
+    case ast_node_kind::struct_decl_node: name = static_cast<const ast_struct_decl &>(*declaration).name; break;
+    case ast_node_kind::class_decl_node: name = static_cast<const ast_class_decl &>(*declaration).name; break;
+    case ast_node_kind::enum_decl_node: name = static_cast<const ast_enum_decl &>(*declaration).name; break;
+    case ast_node_kind::trait_decl_node: name = static_cast<const ast_trait_decl &>(*declaration).name; break;
+    case ast_node_kind::type_alias_decl_node: name = static_cast<const ast_type_alias_decl &>(*declaration).name; break;
+    default: continue;
+    }
+    const auto qualified = declaration_module.empty() ? name : declaration_module + "::" + name;
+    const auto [previous, inserted] = declaration_owners.emplace(qualified, declaration.get());
+    if (!inserted && previous->second->kind != declaration->kind) {
+      diagnostic_source_scope source_scope(diagnostic_source_file_, declaration->source_file);
+      add_error(declaration->line, "Declaration '" + qualified +
+          "' conflicts with another declaration kind on line " + std::to_string(previous->second->line) +
+          "; types, functions, and values in one module must have distinct names");
+      declaration_conflict = true;
+    }
+  }
+  if (declaration_conflict) return;
+
   // Keep declared module identities independently of symbol registration
   // order. Never select a global merely because its suffix matches a name.
   std::string global_module;
@@ -3179,6 +3215,41 @@ void type_checker::visit(ast_function_decl &p) {
     current_function_return_type_ = type_void;
   }
 
+  for (const auto &annotation : p.annotations) {
+    if (!annotation.has_name("intrinsic")) continue;
+    const auto parsed = parse_annotation_arguments(annotation.args.value_or(""));
+    const auto &arguments = annotation.typed_arguments ? *annotation.typed_arguments : parsed.arguments;
+    if (arguments.size() != 1 || arguments.front().name || arguments.front().kind != "text") continue;
+    const auto &provider = arguments.front().value;
+    if (provider.rfind("ui.v1.", 0) != 0) continue;
+    const auto contract = ui::intrinsic(provider);
+    if (!contract) {
+      add_error(p.line, "Unknown UI intrinsic '" + provider + "'");
+      continue;
+    }
+    // Core Result may remain a short built-in name after ordinary import
+    // resolution. Prove its declaration owner before qualifying the ABI;
+    // never accept an unrelated user enum merely because its leaf is Result.
+    if (contract->output != ui::Output::capability && p.return_type) {
+      const auto parts = parse_generic_type_string(*p.return_type);
+      const auto *owner = resolve_pattern_type_symbol(parts.base_name);
+      if (owner && canonical_std_namespace(owner->name) == "nil::std::core::Result" &&
+          parts.type_args.size() == 2) {
+        p.return_type = "nil::std::core::Result<" + parts.type_args[0] + "," + parts.type_args[1] + ">";
+        current_function_return_type_ = type_info{*p.return_type, true};
+      }
+    }
+    std::vector<std::string> parameters;
+    bool ordinary = !current_class_name_ && p.generic_params.empty();
+    for (const auto &parameter : p.params) {
+      parameters.push_back(parameter.type_name.value_or(""));
+      ordinary = ordinary && !parameter.is_ref && !parameter.is_variadic && !parameter.default_value;
+    }
+    if (!ordinary || !ui::signature_matches(*contract, parameters, p.return_type.value_or("void")))
+      add_error(p.line, provider + " requires the exact UI ABI " + ui::signature(*contract) +
+          "; use a module-level, non-generic function without reference, variadic, or default parameters and import nil.std.core.result");
+  }
+
   if (p.body) {
     p.body->accept(*this);
   }
@@ -3333,6 +3404,12 @@ void type_checker::visit(ast_variable_decl &p) {
            type == "bool" || type == "f64";
   };
   const auto canonical_variable_type = resolve_type(var_type_name).name;
+  // Lowering must see the same nominal identities as the checked binding.
+  // Keeping a written Option<Widget> here while the symbol holds a qualified
+  // Widget lets its initializer materialize a different generic enum schema.
+  if (p.type_name && canonical_variable_type != "any" &&
+      !canonical_variable_type.empty() && canonical_variable_type.front() != '<')
+    p.type_name = canonical_variable_type;
   if (contains_ownership_type(canonical_variable_type))
     p.type_name = canonical_variable_type;
   if (scalar_type(canonical_variable_type) || canonical_variable_type == "anything") {

@@ -38,7 +38,8 @@ jobs:
           sudo apt-get install --no-install-recommends -y \
             build-essential cmake ninja-build python3 pandoc \
             libffi-dev libtinfo-dev libx11-dev zlib1g-dev libzstd-dev \
-            libsqlite3-dev libpq-dev postgresql-16
+            libsqlite3-dev libpq-dev postgresql-16 \
+            libgtk-4-1 xvfb xauth libxtst6 dbus-daemon
           if [ "$NIL_CI_LLVM" = ON ]; then
             sudo apt-get install --no-install-recommends -y llvm-18-dev
           fi

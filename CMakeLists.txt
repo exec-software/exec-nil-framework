@@ -131,6 +131,16 @@ if(BUILD_TESTING)
     add_test(NAME nil.database-runtime COMMAND $<TARGET_FILE:ny_database_runtime_tests>)
     set_tests_properties(nil.database-runtime PROPERTIES LABELS "database;runtime" SKIP_RETURN_CODE 77 TIMEOUT 60)
 
+    add_executable(nil_ui_runtime_tests tests/ui_runtime_tests.cpp)
+    target_link_libraries(nil_ui_runtime_tests PRIVATE nilruntime Threads::Threads)
+    target_include_directories(nil_ui_runtime_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    target_compile_features(nil_ui_runtime_tests PRIVATE cxx_std_17)
+    add_test(NAME nil.ui-runtime COMMAND $<TARGET_FILE:nil_ui_runtime_tests>)
+    set_tests_properties(nil.ui-runtime PROPERTIES LABELS "ui;runtime" TIMEOUT 30)
+    add_executable(nil_ui_lifecycle_tests tests/ui_lifecycle_tests.cpp)
+    target_link_libraries(nil_ui_lifecycle_tests PRIVATE nilcompiler_core nilruntime ${CMAKE_DL_LIBS})
+    target_compile_features(nil_ui_lifecycle_tests PRIVATE cxx_std_17)
+
     add_executable(ny_native_owned_tests tests/native_owned_tests.cpp)
     target_link_libraries(ny_native_owned_tests PRIVATE nilruntime Threads::Threads)
     target_include_directories(ny_native_owned_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
@@ -433,6 +443,39 @@ if(BUILD_TESTING)
     # test suite when testing was explicitly enabled.
     find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
+        find_program(NIL_UI_XVFB NAMES Xvfb DOC "Optional Xvfb for isolated desktop UI tests")
+        add_test(NAME nil.ui-display
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/ui_display_contract.py"
+                --xvfb "${NIL_UI_XVFB}"
+                --tester $<TARGET_FILE:niltest> --compiler $<TARGET_FILE:nilcompiler>
+                --interpreter $<TARGET_FILE:nilinterpreter>
+                --sdk "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/ui/gtk_desktop.matrix"
+                --interaction-source "${CMAKE_CURRENT_SOURCE_DIR}/tests/ui/gtk_interaction.matrix"
+                --provider-test $<TARGET_FILE:nil_ui_runtime_tests>
+                --lifecycle-test $<TARGET_FILE:nil_ui_lifecycle_tests>
+                --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.ui-display PROPERTIES LABELS "ui;routes" SKIP_RETURN_CODE 77 TIMEOUT 240)
+        add_test(NAME nil.ui-intrinsic-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/ui_intrinsic_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.ui-intrinsic-contract PROPERTIES LABELS "ui;routes;typecheck" TIMEOUT 180)
+        add_test(NAME matrix.consider-block-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/consider_block_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --tester $<TARGET_FILE:niltest> --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(matrix.consider-block-contract PROPERTIES LABELS "matrix;routes" TIMEOUT 120)
+        set(NIL_UI_TEST_ROUTES vm)
+        if(NIL_ENABLE_LLVM)
+            set(NIL_UI_TEST_ROUTES all)
+        endif()
+        add_test(NAME nil.ui-models
+            COMMAND $<TARGET_FILE:niltest> run
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --target ${NIL_UI_TEST_ROUTES} --filter nil.std.ui.models
+                "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src/ui/models.matrix")
+        set_tests_properties(nil.ui-models PROPERTIES LABELS "ui;routes" TIMEOUT 60)
         set(NY_IDENTITY_TEST_ARGUMENTS)
         foreach(tool IN ITEMS nilcompiler nilinterpreter nilassembler nillinker nillsp nildebugger nilschema nilagent nilbuild niltest)
             if(TARGET ${tool})
@@ -1916,6 +1959,15 @@ if(BUILD_TESTING)
             --expected-exit 0
             --routes all
         )
+        foreach(nil_enum_language IN ITEMS ny matrix)
+            add_ny_route_test(
+                nil.routes.enum-assignment-context-${nil_enum_language}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/enum-assignment-context.${nil_enum_language}"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/enum-assignment-context.stdout"
+                --expected-exit 0 --routes all
+                --compiler-arg=--sdk-path
+                --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src)
+        endforeach()
         add_ny_route_test(
             ny.routes.native-rejects-unknown-nominal-signature
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/native-unknown-nominal-signature.ny"

@@ -136,8 +136,9 @@
     "description": "Match a value against choices",
     "body": [
       "consider ${1:subject}",
-      "    when ${2:pattern} then",
+      "    when ${2:pattern} then begin block",
       "        ${0}",
+      "    end block",
       "end consider"
     ]
   },

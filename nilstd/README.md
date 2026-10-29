@@ -17,17 +17,18 @@ nilstd/
 The standard namespace root is omitted on disk. For example,
 `nil.std.io.console` belongs under `src/io/`. The parser treats legacy
 `ny.lang.*` imports as aliases of `nil.std.*`, including qualified names;
-there is one module identity and one copy of each implementation. Engine and UI prototypes
+there is one module identity and one copy of each implementation. The active
+Matrix desktop library lives under `src/ui`. Earlier engine and UI prototypes
 are first-party packages rather than standard-library modules and live in
 `packages/ny.engine` and `packages/ny.ui.mimic`.
 
 ## Current status
 
-The active tree contains 75 sources (68 Ny and seven Matrix) organized into 16
+The active tree contains 80 sources (68 Ny and 12 Matrix) organized into 18
 logical SDK modules:
 `prelude` plus `nil.std.core`, `collections`, `datetime`, `db`, `diagnostics`,
-`io`, `math`, `net`, `nildata`, `reflection`, `runtime`, `security`, `system`, `text`, and
-`threading`. The SDK packaging gate compiles every logical module with normal
+`io`, `math`, `net`, `nildata`, `reflection`, `runtime`, `security`, `system`, `testing`, `text`,
+`threading`, and `ui`. The SDK packaging gate compiles every logical module with normal
 type checking, emits a NIL library (v2, or v4 when carrying classes), and fails
 atomically rather than publishing a partial set. Matrix sources retain their
 extensions in installed `nilstd` and embedded NIL interfaces, allowing both
@@ -45,12 +46,18 @@ below.
 
 | Area | Files | Status |
 | --- | ---: | --- |
-| `src/` | 68 Ny files, 7 Matrix files | Sixteen logical SDK modules. Matrix contributes checked arrays/text spans, stable sorting, reflection values, vector helpers and independent random generators, consumed from both frontends. |
+| `src/` | 68 Ny files, 12 Matrix files | Eighteen logical SDK modules. Matrix contributes checked arrays/text spans, sorting, reflection values, vector helpers, random generators, testing helpers and the desktop UI library, consumed from both frontends. |
 | `experimental/` | 65 Ny files | Design sources excluded from `nilstd`/`nillib` because language semantics, executable providers, or behavioral evidence are incomplete. |
 | `tests/` | 8 Ny files | Preserved design-era tests; these are still separate from the registered route fixtures under the repository-level `tests/` tree. |
 | `native/` | 14 C/C++ files | Preserved platform/provider shims; source presence alone is neither a build, shipment, nor native-support claim. |
 
 ### Active evidence boundary
+
+`nil.std.testing` supplies checks and checked value extraction with co-located
+niltest cases. `nil.std.ui` supplies typed windows, layouts, controls, events and
+model synchronization through the optional Linux GTK 4 provider. See the
+[testing guide](../docs/tools/testing.md) and [UI reference](../docs/standard-library/ui.md)
+for execution evidence and current scope.
 
 `nil.std.nildata` replaces NyData with versioned data blocks, one array kind,
 exact numeric tokens and checked JSON interchange. The compiler conversions and

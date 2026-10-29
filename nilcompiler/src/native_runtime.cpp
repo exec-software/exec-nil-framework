@@ -1,6 +1,7 @@
 #include "native_runtime.hpp"
 #include "dynamic_type.hpp"
 #include "database_runtime.hpp"
+#include "ui_runtime.hpp"
 #include "integer_conversion.hpp"
 #include "memory_profile.hpp"
 #include "pattern_engine.hpp"
@@ -80,6 +81,7 @@ struct nyrt_any_box {
 struct runtime_context {
   ny::memory_profile::Session profile;
   ny::database::Context databases;
+  ny::ui::Context ui;
   struct allocation {
     void *data;
     std::size_t size;
@@ -588,7 +590,98 @@ const char *integer_to_text(Integer value) noexcept {
 
 } // namespace
 
+namespace {
+template <typename Invoke>
+std::int32_t ui_number_result(std::int64_t *value, const char **error,
+                             Invoke invoke) noexcept {
+  if (!value || !error) return 0;
+  *value = 0; *error = nullptr;
+  try {
+    auto result = invoke();
+    if (!result) { set_error(error, result.error); return 0; }
+    *value = result.number;
+    return 1;
+  } catch (const std::invalid_argument &invalid) { set_error(error, invalid.what()); return 0; }
+  catch (...) { *error = "ui: host allocation failed"; return 0; }
+}
+template <typename Invoke>
+std::int32_t ui_text_result(const char **value, const char **error,
+                           Invoke invoke) noexcept {
+  if (!value || !error) return 0;
+  *value = nullptr; *error = nullptr;
+  try {
+    auto result = invoke();
+    if (!result) { set_error(error, result.error); return 0; }
+    // The snapshot may be released immediately after this call. Never return
+    // provider storage, even when its lifetime presently spans the caller.
+    *value = own_string(result.text);
+    if (!*value) { *error = "ui: host allocation failed"; return 0; }
+    return 1;
+  } catch (const std::invalid_argument &invalid) { set_error(error, invalid.what()); return 0; }
+  catch (...) { *error = "ui: host allocation failed"; return 0; }
+}
+const char *ui_text_argument(const char *text) {
+  if (!text) throw std::invalid_argument("ui: expected text argument");
+  return text;
+}
+} // namespace
+
 extern "C" {
+
+std::int64_t nyrt_ui_v1_available() noexcept { return ny::ui::available() ? 1 : 0; }
+std::int32_t nyrt_ui_v1_window(const char *title, std::int64_t width, std::int64_t height,
+    std::int64_t *value, const char **error) noexcept {
+  return ui_number_result(value, error, [&] { return context.ui.window(ui_text_argument(title), width, height); });
+}
+std::int32_t nyrt_ui_v1_widget(const char *kind, std::int64_t parent, const char *label,
+    std::int64_t *value, const char **error) noexcept {
+  return ui_number_result(value, error, [&] { return context.ui.widget(ui_text_argument(kind), parent, ui_text_argument(label)); });
+}
+std::int32_t nyrt_ui_v1_grid_attach(std::int64_t grid, std::int64_t child, std::int64_t column, std::int64_t row, std::int64_t column_span, std::int64_t row_span,
+    std::int64_t *value, const char **error) noexcept {
+  return ui_number_result(value, error, [&] { return context.ui.grid_attach(grid, child, column, row, column_span, row_span); });
+}
+std::int32_t nyrt_ui_v1_set_text(std::int64_t handle, const char *text,
+    std::int64_t *value, const char **error) noexcept {
+  return ui_number_result(value, error, [&] { return context.ui.set_text(handle, ui_text_argument(text)); });
+}
+std::int32_t nyrt_ui_v1_read_text(std::int64_t handle,
+    const char **value, const char **error) noexcept {
+  return ui_text_result(value, error, [&] { return context.ui.read_text(handle); });
+}
+std::int32_t nyrt_ui_v1_set_number(std::int64_t handle, const char *property, std::int64_t number,
+    std::int64_t *value, const char **error) noexcept {
+  return ui_number_result(value, error, [&] { return context.ui.set_number(handle, ui_text_argument(property), number); });
+}
+std::int32_t nyrt_ui_v1_read_number(std::int64_t handle, const char *property,
+    std::int64_t *value, const char **error) noexcept {
+  return ui_number_result(value, error, [&] { return context.ui.read_number(handle, ui_text_argument(property)); });
+}
+std::int32_t nyrt_ui_v1_activate(std::int64_t handle,
+    std::int64_t *value, const char **error) noexcept {
+  return ui_number_result(value, error, [&] { return context.ui.activate(handle); });
+}
+std::int32_t nyrt_ui_v1_poll(std::int64_t window,
+    std::int64_t *value, const char **error) noexcept {
+  return ui_number_result(value, error, [&] { return context.ui.poll(window); });
+}
+std::int32_t nyrt_ui_v1_event_number(std::int64_t snapshot, const char *field,
+    std::int64_t *value, const char **error) noexcept {
+  return ui_number_result(value, error, [&] { return context.ui.event_number(snapshot, ui_text_argument(field)); });
+}
+std::int32_t nyrt_ui_v1_event_text(std::int64_t snapshot,
+    const char **value, const char **error) noexcept {
+  return ui_text_result(value, error, [&] { return context.ui.event_text(snapshot); });
+}
+std::int32_t nyrt_ui_v1_release_event(std::int64_t snapshot,
+    std::int64_t *value, const char **error) noexcept {
+  return ui_number_result(value, error, [&] { return context.ui.release_event(snapshot); });
+}
+std::int32_t nyrt_ui_v1_close(std::int64_t window,
+    std::int64_t *value, const char **error) noexcept {
+  return ui_number_result(value, error, [&] { return context.ui.close(window); });
+}
+
 
 
 std::int64_t nyrt_db2_available(const char *driver) noexcept {
@@ -745,6 +838,7 @@ void nyrt_context_end() noexcept {
   if (!context.profile.finish())
     nyrt_fail("NIL native runtime error: memory capture failed\n");
   context.databases.clear();
+  context.ui.clear();
   nyrt_owned_v1_unwind(0);
   context.pending_fault.reset();
   std::vector<runtime_context::fault_frame>().swap(context.fault_frames);
@@ -765,6 +859,7 @@ void nyrt_profile_site(const char *file, const char *function,
 }
 
 [[noreturn]] void nyrt_fail(const char *message) noexcept {
+  context.ui.clear();
   (void)context.profile.finish("failed", false);
   if (message != nullptr)
     std::fputs(message, stderr);

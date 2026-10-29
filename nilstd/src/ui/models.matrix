@@ -1,0 +1,52 @@
+@pragma once
+book nil.std.ui
+
+!!! Explicit binding state. Records share identity when assigned; construct a
+!!! new model for independent state. Updates return whether the value changed.
+public TextModel begin record
+    field content as text
+end record
+
+public FlagModel begin record
+    field enabled as boolean
+end record
+
+public create-text-model receives initial as text returns TextModel begin paragraph
+    give build TextModel with content being initial
+end paragraph
+
+public create-flag-model receives initial as boolean returns FlagModel begin paragraph
+    give build FlagModel with enabled being initial
+end paragraph
+
+public update-text-model receives model as TextModel, next-value as text returns boolean begin paragraph
+    when model.content equals next-value then give no end when
+    set model.content to next-value
+    give yes
+end paragraph
+
+public update-flag-model receives model as FlagModel, next-value as boolean returns boolean begin paragraph
+    when model.enabled equals next-value then give no end when
+    set model.enabled to next-value
+    give yes
+end paragraph
+
+note suite "nil.std.ui.models"
+text_updates_only_when_changed begin test
+    value model is create-text-model with "first"
+    expect not (update-text-model with model being model, next-value being "first")
+    expect update-text-model with model being model, next-value being "Matrix"
+    expect model.content equals "Matrix"
+    value independent is create-text-model with model.content
+    expect update-text-model with model being model, next-value being "changed"
+    expect independent.content equals "Matrix"
+end test
+
+note suite "nil.std.ui.models"
+flag_updates_only_when_changed begin test
+    value model is create-flag-model with no
+    expect not (update-flag-model with model being model, next-value being no)
+    expect update-flag-model with model being model, next-value being yes
+    expect model.enabled
+    expect not (update-flag-model with model being model, next-value being yes)
+end test
