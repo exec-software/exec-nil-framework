@@ -120,3 +120,43 @@ window_ownership_and_size_errors begin test
     expect (require-ok of text, text with (widget-text with foreign), "second owner remains live") equals "other window"
     evaluate require-ok of boolean, text with (close-window with second), "close second owner"
 end test
+
+note suite "nil.std.ui.gtk.desktop"
+dynamic_subtrees_and_effective_state begin test
+    value surface is require-ok of Window, text with (create-window with "NIL2 dynamic controls", 400, 240), "create dynamic window"
+    value root is window-root with surface
+    value group is require-ok of Widget, text with (create-column with root), "create removable group"
+    value nested is require-ok of Widget, text with (create-grid with group), "create nested grid"
+    value removed is require-ok of Widget, text with (create-checkbox with nested, "temporary"), "create temporary checkbox"
+    value sibling is require-ok of Widget, text with (create-checkbox with root, "retained"), "create sibling checkbox"
+    expect not (require-ok of boolean, text with (widget-visible with removed), "hidden window affects descendants")
+    evaluate require-ok of boolean, text with (show-window with surface), "show dynamic window"
+    expect require-ok of boolean, text with (widget-visible with removed), "visible descendant"
+    evaluate require-ok of boolean, text with (set-visible with group, no), "hide group"
+    expect not (require-ok of boolean, text with (widget-visible with removed), "hidden ancestor")
+    expect require-ok of boolean, text with (widget-visible with sibling), "sibling visibility"
+    evaluate require-ok of boolean, text with (set-visible with group, yes), "restore group"
+    evaluate require-ok of boolean, text with (set-sensitive with group, no), "disable group"
+    expect not (require-ok of boolean, text with (widget-sensitive with removed), "disabled ancestor")
+    expect require-ok of boolean, text with (widget-sensitive with sibling), "sibling sensitivity"
+    evaluate require-ok of boolean, text with (set-sensitive with group, yes), "restore group sensitivity"
+    expect require-ok of boolean, text with (widget-sensitive with removed), "restored descendant"
+    evaluate require-ok of boolean, text with (activate-widget with removed), "snapshot before removal"
+    value retained is next-event with surface
+    expect event-for with retained, removed
+    evaluate require-ok of boolean, text with (activate-widget with removed), "queue removed event"
+    evaluate require-ok of boolean, text with (activate-widget with sibling), "queue retained event"
+    evaluate require-ok of boolean, text with (destroy-widget with group), "destroy subtree"
+    value remaining is next-event with surface
+    expect event-for with remaining, sibling
+    evaluate expect-empty-queue with surface
+    expect event-for with retained, removed
+    evaluate expect-ui-error of text with (widget-text with removed)
+    evaluate expect-ui-error of boolean with (destroy-widget with nested)
+    evaluate expect-ui-error of boolean with (destroy-widget with group)
+    evaluate expect-ui-error of boolean with (destroy-widget with root)
+    expect (require-ok of text, text with (widget-text with sibling), "sibling survived") equals "retained"
+    value replacement is require-ok of Widget, text with (create-label with root, "new content"), "replace subtree"
+    expect (require-ok of text, text with (widget-text with replacement), "new child") equals "new content"
+    evaluate require-ok of boolean, text with (close-window with surface), "close dynamic window"
+end test

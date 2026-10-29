@@ -38,7 +38,7 @@ inline std::optional<Intrinsic> intrinsic(const std::string &name) {
   else if (op == "set_number") value.parameters = {"i64", "text", "i64"};
   else if (op == "read_text" || op == "event_text") {
     value.parameters = {"i64"}; value.output = Output::text;
-  } else if (op == "activate" || op == "poll" || op == "release_event" || op == "close")
+  } else if (op == "activate" || op == "poll" || op == "release_event" || op == "close" || op == "destroy_widget")
     value.parameters = {"i64"};
   else return std::nullopt;
   return value;

@@ -39,6 +39,7 @@ def main():
             'arity': ('@intrinsic("ui.v1.available")\nfn provider(unused: i64) -> bool\n', 'exact UI ABI'),
             'scalar-width': (imported + '@intrinsic("ui.v1.read_text")\nfn provider(handle: i32) -> Result<text,text>\n', 'exact UI ABI'),
             'capability-result': ('@intrinsic("ui.v1.available")\nfn provider() -> i64\n', 'exact UI ABI'),
+            'destroy-result': (imported + '@intrinsic("ui.v1.destroy_widget")\nfn provider(handle: i64) -> Result<bool,text>\n', 'exact UI ABI'),
             'number-result': (imported + '@intrinsic("ui.v1.poll")\nfn provider(handle: i64) -> Result<bool,text>\n', 'exact UI ABI'),
             'text-result': (imported + '@intrinsic("ui.v1.read_text")\nfn provider(handle: i64) -> Result<i64,text>\n', 'exact UI ABI'),
             'error-payload': (imported + '@intrinsic("ui.v1.poll")\nfn provider(handle: i64) -> Result<i64,i64>\n', 'exact UI ABI'),
@@ -149,8 +150,15 @@ end paragraph
 fn provider_available() -> flag
 @intrinsic("ui.v1.read_text")
 fn provider_text(handle: i64) -> Result<text,text>
+@intrinsic("ui.v1.destroy_widget")
+fn provider_destroy(handle: i64) -> Result<i64,text>
 fn main() -> i32
  let capability: bool = provider_available()
+ let destroyed = provider_destroy(0)
+ match destroyed
+  Result.Ok(status) -> return 8
+  Result.Error(message) -> println("checked destroy failure")
+ end match
  let result = provider_text(0)
  match result
   Result.Ok(value) -> return 9
@@ -168,7 +176,7 @@ end fn
             if route != 'jit':
                 command = [interpreter, '--no-ai', output] if route in ('text', 'binary') else [output]
                 result = run(command)
-            assert result.stdout == 'checked UI failure\n', (route, result.stdout, result.stderr)
+            assert result.stdout == 'checked destroy failure\nchecked UI failure\n', (route, result.stdout, result.stderr)
     print(f'UI intrinsic ABI: {checks} checks passed')
 
 

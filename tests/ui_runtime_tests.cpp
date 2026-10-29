@@ -48,6 +48,7 @@ void basic_validation() {
   rejected(context.window(std::string("\xf4\x90\x80\x80", 4), 100, 100), "UTF-8");
   rejected(context.window(std::string(1048577, 'x'), 100, 100), "1048576");
   rejected(context.read_text(1), "foreign");
+  rejected(context.destroy_widget(1), "foreign");
   rejected(context.set_number(-1, "checked", 1), "foreign");
   rejected(context.event_text(1), "snapshot");
   rejected(context.release_event(1), "snapshot");
@@ -66,6 +67,100 @@ void no_display() {
   ny::ui::Context context;
   auto result = context.window("unavailable display", 300, 200);
   rejected(result, ny::ui::available() ? "display" : "provider");
+}
+
+void subtree_lifetime_tests(ny::ui::Context &context) {
+  const auto window = ok(context.window("Dynamic widget lifecycle", 320, 240));
+  const auto elsewhere = ok(context.window("Unrelated window", 160, 100));
+  const auto unrelated = ok(context.widget("checkbox", elsewhere, "Keep this event"));
+  ok(context.activate(unrelated));
+  const auto unrelated_snapshot = wait_event(context, elsewhere);
+
+  const auto sibling = ok(context.widget("checkbox", window, "Keep this sibling"));
+  const auto subtree = ok(context.widget("column", window, ""));
+  const auto nested = ok(context.widget("row", subtree, ""));
+  const auto checkbox = ok(context.widget("checkbox", nested, "Remove this control"));
+  const auto label = ok(context.widget("label", nested, "Remove this label"));
+  ok(context.activate(sibling));
+  const auto sibling_snapshot = wait_event(context, window);
+  ok(context.activate(checkbox));
+  const auto removed_snapshot = wait_event(context, window);
+  // Leave a second event queued on each side of the removal boundary.
+  ok(context.activate(checkbox));
+  ok(context.activate(sibling));
+  rejected(context.destroy_widget(window), "use close for windows");
+  require(ok(context.event_number(removed_snapshot, "target")) == checkbox,
+      "rejected window destruction must preserve descendant snapshots");
+  ny::ui::Context other_context;
+  rejected(other_context.destroy_widget(subtree), "foreign");
+  ok(context.destroy_widget(subtree));
+  for (auto handle : {subtree, nested, checkbox, label}) {
+    rejected(context.read_number(handle, "kind"), "closed");
+    rejected(context.destroy_widget(handle), "closed");
+    rejected(context.widget("label", handle, "Stale parent"), "closed");
+  }
+  rejected(context.event_number(removed_snapshot, "target"), "snapshot");
+  rejected(context.release_event(removed_snapshot), "snapshot");
+  require(ok(context.event_number(sibling_snapshot, "target")) == sibling,
+      "sibling event snapshots survive subtree removal");
+  require(ok(context.event_number(unrelated_snapshot, "target")) == unrelated,
+      "another window's event snapshots survive subtree removal");
+  const auto queued_sibling = wait_event(context, window);
+  require(ok(context.event_number(queued_sibling, "target")) == sibling,
+      "only events targeting removed descendants are discarded");
+  require(ok(context.poll(window)) == 0, "removed subtree must not retain queued events");
+  ok(context.release_event(queued_sibling));
+  ok(context.release_event(sibling_snapshot));
+  ok(context.release_event(unrelated_snapshot));
+  const auto replacement = ok(context.widget("column", window, ""));
+  require(replacement != subtree, "removed subtree handle must never be reused");
+  ok(context.widget("entry", replacement, "Replacement control"));
+  ok(context.destroy_widget(replacement));
+  // The surviving window/root can still create and dispatch controls.
+  ok(context.activate(sibling));
+  const auto final_sibling = wait_event(context, window);
+  require(ok(context.event_number(final_sibling, "target")) == sibling, "surviving sibling remains interactive");
+  ok(context.release_event(final_sibling));
+  ok(context.close(window));
+  require(context.read_text(unrelated).text == "Keep this event", "closing one window preserves another");
+  ok(context.close(elsewhere));
+
+  const auto grid_window = ok(context.window("Dynamic grid lifecycle", 200, 140));
+  const auto grid = ok(context.widget("grid", grid_window, ""));
+  const auto last = ok(context.widget("label", grid, "Last row"));
+  ok(context.grid_attach(grid, last, 0, 65535, 1, 1));
+  const auto first = ok(context.widget("column", grid, ""));
+  ok(context.widget("label", first, "Nested grid child"));
+  // The explicit last row must leave room for automatic placement at row zero.
+  rejected(context.grid_attach(grid, last, 0, 0, 1, 1), "overlaps");
+  ok(context.destroy_widget(first));
+  const auto replacement_first = ok(context.widget("label", grid, "First row reused"));
+  rejected(context.grid_attach(grid, last, 0, 0, 1, 1), "overlaps");
+  ok(context.destroy_widget(replacement_first));
+  ok(context.grid_attach(grid, last, 0, 0, 1, 65536));
+  rejected(context.widget("label", grid, "No free rows"), "grid row limit");
+  ok(context.destroy_widget(last));
+  ok(context.widget("label", grid, "Recovered all grid rows"));
+  ok(context.destroy_widget(grid));
+  ok(context.close(grid_window));
+}
+
+void event_overflow_tests(ny::ui::Context &context) {
+  const auto crowded = ok(context.window("Crowded event queue", 180, 100));
+  const auto quiet = ok(context.window("Quiet event queue", 180, 100));
+  const auto toggle = ok(context.widget("checkbox", crowded, "Fill event queue"));
+  for (int index = 0; index < 4097; ++index) ok(context.activate(toggle));
+  require(ok(context.poll(quiet)) == 0, "a quiet window must not consume another window's lost-event error");
+  rejected(context.poll(crowded), "events were lost");
+  ok(context.destroy_widget(toggle));
+  require(ok(context.poll(crowded)) == 0, "removing a control releases its queued events");
+  const auto recovered = ok(context.widget("checkbox", quiet, "Recovered event queue"));
+  ok(context.activate(recovered));
+  const auto event = wait_event(context, quiet);
+  require(ok(context.event_number(event, "target")) == recovered, "event queue recovers after subtree removal");
+  ok(context.release_event(event));
+  ok(context.close(crowded));
+  ok(context.close(quiet));
 }
 
 void display_tests() {
@@ -134,6 +229,18 @@ void display_tests() {
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
   require(ok(context.read_number(entry, "width")) > 0, "GTK must allocate entry width");
+  require(ok(context.read_number(entry, "focus")) == 1, "entry focus includes its internal text widget");
+  require(ok(context.read_number(label, "focus")) == 0, "unfocused label does not own focus");
+  ok(context.set_number(checkbox, "focus", 1));
+  require(ok(context.read_number(checkbox, "focus")) == 1, "focus moves to a checkbox");
+  require(ok(context.read_number(entry, "focus")) == 0, "entry loses logical focus after transfer");
+  require(ok(context.read_number(button, "visible")) == 1, "button local visibility");
+  require(ok(context.read_number(button, "effective_visible")) == 1, "shown ancestors make button effectively visible");
+  ok(context.set_number(column, "visible", 0));
+  require(ok(context.read_number(button, "visible")) == 1, "hidden ancestor preserves local visibility flag");
+  require(ok(context.read_number(button, "effective_visible")) == 0, "hidden ancestor suppresses effective visibility");
+  rejected(context.set_number(button, "effective_visible", 1), "read-only");
+  ok(context.set_number(column, "visible", 1));
 
   ok(context.activate(checkbox));
   auto snapshot = wait_event(context, window);
@@ -152,6 +259,9 @@ void display_tests() {
   rejected(context.activate(button), "insensitive");
   ok(context.set_number(button, "sensitive", 1));
   ok(context.set_number(column, "sensitive", 0));
+  require(ok(context.read_number(button, "sensitive")) == 1, "insensitive ancestor preserves local sensitivity flag");
+  require(ok(context.read_number(button, "effective_sensitive")) == 0, "insensitive ancestor suppresses effective sensitivity");
+  rejected(context.set_number(button, "effective_sensitive", 1), "read-only");
   rejected(context.activate(button), "insensitive container");
   rejected(context.activate(checkbox), "insensitive container");
   require(ok(context.poll(window)) == 0, "disabled ancestor must prevent activation events");
@@ -171,6 +281,9 @@ void display_tests() {
     thread_error = foreign_context.window("Wrong thread", 100, 100);
   }); foreign_thread.join();
   rejected(thread_error, "process UI thread");
+
+  subtree_lifetime_tests(context);
+  event_overflow_tests(context);
 
   ok(context.close(window));
   rejected(context.close(window), "closed");

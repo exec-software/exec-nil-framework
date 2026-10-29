@@ -48,6 +48,8 @@ std::int32_t nyrt_ui_v1_event_text(std::int64_t snapshot,
     const char **value, const char **error) noexcept;
 std::int32_t nyrt_ui_v1_release_event(std::int64_t snapshot,
     std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_ui_v1_destroy_widget(std::int64_t handle,
+    std::int64_t *value, const char **error) noexcept;
 std::int32_t nyrt_ui_v1_close(std::int64_t window,
     std::int64_t *value, const char **error) noexcept;
 

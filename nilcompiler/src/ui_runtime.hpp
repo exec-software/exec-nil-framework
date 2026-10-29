@@ -48,6 +48,8 @@ public:
   // margin_top/margin_bottom 0..4096; width/height 1..16384 (window only).
   // Read supports those properties, plus kind, parent, width and height
   // (allocated widget size, or requested window size before realization).
+  // effective_visible/effective_sensitive include ancestor flags. focus reads
+  // the window's focus target, including a compound widget's internal child.
   // kind codes: window=0,column=1,row=2,grid=3,label=4,button=5,entry=6,checkbox=7.
   Result set_number(std::int64_t handle, const std::string &property, std::int64_t value);
   Result read_number(std::int64_t handle, const std::string &property);
@@ -62,6 +64,10 @@ public:
   Result event_number(std::int64_t snapshot, const std::string &field);
   Result event_text(std::int64_t snapshot);
   Result release_event(std::int64_t snapshot);
+  // Removes a non-window widget and its subtree from its parent layout,
+  // invalidating all descendant handles and their queued/saved events.
+  // Unrelated controls and windows remain live; use close for windows.
+  Result destroy_widget(std::int64_t handle);
   // Destroys a window and invalidates its descendants and queued/saved events.
   Result close(std::int64_t window);
 

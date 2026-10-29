@@ -45,6 +45,9 @@ ui-provider-event-text receives snapshot as number returns Result of text, text
 note intrinsic "ui.v1.release_event"
 ui-provider-release-event receives snapshot as number returns Result of number, text
 
+note intrinsic "ui.v1.destroy_widget"
+ui-provider-destroy-widget receives handle as number returns Result of number, text
+
 note intrinsic "ui.v1.close"
 ui-provider-close receives handle as number returns Result of number, text
 
@@ -123,6 +126,36 @@ end paragraph
 
 public close-window receives surface as Window returns Result of boolean, text begin paragraph
     give ui-success with (ui-provider-close with surface.handle)
+end paragraph
+
+!!! Remove this widget and its descendants. Removed handles and pending events
+!!! are invalidated; the containing window and sibling controls remain usable.
+public destroy-widget receives control as Widget returns Result of boolean, text begin paragraph
+    give ui-success with (ui-provider-destroy-widget with control.handle)
+end paragraph
+
+ui-read-flag receives control as Widget, property as text returns Result of boolean, text begin paragraph
+    consider ui-provider-read-number with control.handle, property
+        when Result.Ok holding status then begin block
+            when status equals 0 then give Result.Ok holding no end when
+            when status equals 1 then give Result.Ok holding yes end when
+            give Result.Error holding "UI provider returned an invalid flag"
+        end block
+        when Result.Error holding failure then give Result.Error holding failure
+    end consider
+end paragraph
+
+!!! Effective state includes ancestors, unlike the control's own local flag.
+public widget-visible receives control as Widget returns Result of boolean, text begin paragraph
+    give ui-read-flag with control, "effective_visible"
+end paragraph
+
+public widget-sensitive receives control as Widget returns Result of boolean, text begin paragraph
+    give ui-read-flag with control, "effective_sensitive"
+end paragraph
+
+public widget-focused receives control as Widget returns Result of boolean, text begin paragraph
+    give ui-read-flag with control, "focus"
 end paragraph
 
 public set-widget-text receives control as Widget, content as text returns Result of boolean, text begin paragraph

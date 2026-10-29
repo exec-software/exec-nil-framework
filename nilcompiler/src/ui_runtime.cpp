@@ -43,9 +43,11 @@ struct Api {
   X(void, gtk_window_set_default_size, (GtkWindow *, int, int)) \
   X(void, gtk_window_set_child, (GtkWindow *, GtkWidget *)) \
   X(void, gtk_window_present, (GtkWindow *)) \
+  X(GtkWidget *, gtk_window_get_focus, (GtkWindow *)) \
   X(void, gtk_window_destroy, (GtkWindow *)) \
   X(GtkWidget *, gtk_box_new, (GtkOrientation, int)) \
   X(void, gtk_box_append, (GtkBox *, GtkWidget *)) \
+  X(void, gtk_box_remove, (GtkBox *, GtkWidget *)) \
   X(void, gtk_box_set_spacing, (GtkBox *, int)) \
   X(GtkWidget *, gtk_grid_new, ()) \
   X(void, gtk_grid_attach, (GtkGrid *, GtkWidget *, int, int, int, int)) \
@@ -67,11 +69,12 @@ struct Api {
   X(int, gtk_widget_activate, (GtkWidget *)) \
   X(void, gtk_widget_set_visible, (GtkWidget *, int)) \
   X(int, gtk_widget_get_visible, (GtkWidget *)) \
+  X(int, gtk_widget_is_visible, (GtkWidget *)) \
   X(void, gtk_widget_set_sensitive, (GtkWidget *, int)) \
   X(int, gtk_widget_get_sensitive, (GtkWidget *)) \
   X(int, gtk_widget_is_sensitive, (GtkWidget *)) \
   X(int, gtk_widget_grab_focus, (GtkWidget *)) \
-  X(int, gtk_widget_has_focus, (GtkWidget *)) \
+  X(int, gtk_widget_is_ancestor, (GtkWidget *, GtkWidget *)) \
   X(void, gtk_widget_set_hexpand, (GtkWidget *, int)) \
   X(void, gtk_widget_set_vexpand, (GtkWidget *, int)) \
   X(void, gtk_widget_set_margin_start, (GtkWidget *, int)) \
@@ -176,6 +179,7 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
     std::vector<unsigned long> signals;
     Placement placement;
     unsigned suppress = 0;
+    bool event_failure = false; // Window-local: another window must not consume this error.
   };
   struct SignalData { std::weak_ptr<Impl> context; std::int64_t handle; std::int64_t kind; };
   std::thread::id owner = std::this_thread::get_id();
@@ -184,7 +188,6 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
   std::map<std::int64_t, Event> snapshots;
   std::size_t event_bytes = 0, snapshot_bytes = 0;
   std::size_t text_bytes = 0;
-  bool event_failure = false;
   std::atomic<bool> active{true};
 
   // Deferred teardown keeps GTK calls on its UI thread even when an embedding
@@ -255,23 +258,27 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
     node.signals.push_back(signal);
   }
   void enqueue(std::int64_t handle, std::int64_t kind) noexcept {
+    const auto mark_failure = [&] {
+      if (const auto *node = find(handle))
+        if (auto *window = find(node->window)) window->event_failure = true;
+    };
     try {
       auto *node = find(handle);
       if (!node || node->suppress) return;
       Event event{kind, handle, node->window, 0, {}};
       if (kind == 2) {
         const char *value = api().gtk_editable_get_text(reinterpret_cast<GtkEditable *>(node->object));
-        if (!value) { event_failure = true; return; }
+        if (!value) { mark_failure(); return; }
         event.text = value;
-        if (!valid_text(event.text)) { event_failure = true; return; }
+        if (!valid_text(event.text)) { mark_failure(); return; }
       } else if (kind == 3)
         event.checked = api().gtk_check_button_get_active(reinterpret_cast<GtkCheckButton *>(node->object)) ? 1 : 0;
       if (events.size() >= max_events || event.text.size() > max_event_text_bytes - event_bytes) {
-        event_failure = true; return;
+        mark_failure(); return;
       }
       events.push_back(std::move(event));
       event_bytes += events.back().text.size();
-    } catch (...) { event_failure = true; }
+    } catch (...) { mark_failure(); }
   }
   void disconnect(Node &node) noexcept {
     for (auto signal : node.signals) api().g_signal_handler_disconnect(node.object, signal);
@@ -375,8 +382,18 @@ Result Context::widget(const std::string &kind, std::int64_t parent, const std::
       a.gtk_editable_set_text(reinterpret_cast<GtkEditable *>(node.object), label.c_str());
     }
     if (owner->kind == Kind::grid) {
-      for (const auto &[id, sibling] : impl_->nodes) if (sibling.parent == parent)
-        node.placement.row = std::max(node.placement.row, sibling.placement.row + sibling.placement.rows);
+      // Reuse the first free cell in column zero. A child explicitly placed at
+      // the last row must not make all the empty rows before it unusable, and
+      // dynamically removed controls must not leave permanent allocation holes.
+      std::vector<std::pair<std::int64_t, std::int64_t>> occupied;
+      for (const auto &[id, sibling] : impl_->nodes)
+        if (sibling.parent == parent && sibling.placement.column == 0)
+          occupied.emplace_back(sibling.placement.row, sibling.placement.row + sibling.placement.rows);
+      std::sort(occupied.begin(), occupied.end());
+      for (const auto &[start, end] : occupied) {
+        if (node.placement.row < start) break;
+        node.placement.row = std::max(node.placement.row, end);
+      }
       if (node.placement.row > 65535) { a.g_object_unref(node.object); return failure("grid row limit exceeded"); }
     }
     impl_->nodes.emplace(handle, std::move(node));
@@ -517,8 +534,14 @@ Result Context::read_number(std::int64_t handle, const std::string &property) {
     return success(a.gtk_check_button_get_active(reinterpret_cast<GtkCheckButton *>(node->object)) ? 1 : 0);
   }
   if (property == "visible") return success(a.gtk_widget_get_visible(node->object) ? 1 : 0);
+  if (property == "effective_visible") return success(a.gtk_widget_is_visible(node->object) ? 1 : 0);
   if (property == "sensitive") return success(a.gtk_widget_get_sensitive(node->object) ? 1 : 0);
-  if (property == "focus") return success(a.gtk_widget_has_focus(node->object) ? 1 : 0);
+  if (property == "effective_sensitive") return success(a.gtk_widget_is_sensitive(node->object) ? 1 : 0);
+  if (property == "focus") {
+    const auto *window = impl_->find(node->window);
+    auto *focused = a.gtk_window_get_focus(reinterpret_cast<GtkWindow *>(window->object));
+    return success(focused && (focused == node->object || a.gtk_widget_is_ancestor(focused, node->object)) ? 1 : 0);
+  }
   if (property == "width" || property == "height") {
     if (node->kind == Kind::window && !a.gtk_widget_get_realized(node->object)) return success(node->properties.at(property));
     return success(property == "width" ? a.gtk_widget_get_width(node->object) : a.gtk_widget_get_height(node->object));
@@ -557,8 +580,8 @@ Result Context::poll(std::int64_t window) {
   auto *node = impl_->find(window); if (!node) return Impl::bad_handle();
   if (node->kind != Kind::window) return failure("poll requires a window");
   for (unsigned count = 0; count < 128; ++count) if (!api().g_main_context_iteration(nullptr, 0)) break;
-  if (impl_->event_failure) {
-    impl_->event_failure = false;
+  if (node->event_failure) {
+    node->event_failure = false;
     return failure("event queue limit or allocation exceeded; one or more events were lost");
   }
   auto found = std::find_if(impl_->events.begin(), impl_->events.end(), [window](const auto &event) { return event.window == window; });
@@ -596,6 +619,52 @@ Result Context::release_event(std::int64_t snapshot) {
   auto found = impl_->snapshots.find(snapshot);
   if (found == impl_->snapshots.end()) return failure("unknown, released, or foreign event snapshot");
   impl_->snapshot_bytes -= found->second.text.size(); impl_->snapshots.erase(found);
+  return success();
+}
+Result Context::destroy_widget(std::int64_t handle) {
+  if (!impl_) return failure("context allocation failed");
+  if (auto result = impl_->check(); !result) return result;
+  auto *node = impl_->find(handle); if (!node) return Impl::bad_handle();
+  if (node->kind == Kind::window)
+    return failure("destroy_widget requires a non-window widget; use close for windows");
+  auto *parent = impl_->find(node->parent);
+  if (!parent || !container(parent->kind)) return failure("widget parent is no longer a live container");
+
+  // Handles increase monotonically and children are always created after their
+  // parent. A single ordered pass therefore collects the complete subtree.
+  // Allocate its bookkeeping before changing GTK or invalidating any handles.
+  std::vector<std::int64_t> removed;
+  try {
+    removed.reserve(impl_->nodes.size());
+    for (const auto &[id, child] : impl_->nodes)
+      if (id == handle || std::binary_search(removed.begin(), removed.end(), child.parent))
+        removed.push_back(id);
+  } catch (...) { return failure("widget removal allocation failed"); }
+  for (auto id : removed) impl_->disconnect(impl_->nodes.at(id));
+
+  auto &a = api();
+  if (parent->kind == Kind::grid)
+    a.gtk_grid_remove(reinterpret_cast<GtkGrid *>(parent->object), node->object);
+  else
+    a.gtk_box_remove(reinterpret_cast<GtkBox *>(parent->kind == Kind::window ? parent->root : parent->object), node->object);
+  // Each registered node owns a reference independent of the parent tree.
+  // Disconnect first, detach only the subtree root, then release leaves before
+  // parents so no callback can observe a partially invalidated subtree.
+  for (auto it = removed.rbegin(); it != removed.rend(); ++it) {
+    auto found = impl_->nodes.find(*it);
+    impl_->text_bytes -= found->second.text.size();
+    a.g_object_unref(found->second.object);
+    impl_->nodes.erase(found);
+  }
+  const auto targeted = [&](std::int64_t target) { return std::binary_search(removed.begin(), removed.end(), target); };
+  for (auto it = impl_->events.begin(); it != impl_->events.end();) {
+    if (!targeted(it->target)) { ++it; continue; }
+    impl_->event_bytes -= it->text.size(); it = impl_->events.erase(it);
+  }
+  for (auto it = impl_->snapshots.begin(); it != impl_->snapshots.end();) {
+    if (!targeted(it->second.target)) { ++it; continue; }
+    impl_->snapshot_bytes -= it->second.text.size(); it = impl_->snapshots.erase(it);
+  }
   return success();
 }
 Result Context::close(std::int64_t window) {

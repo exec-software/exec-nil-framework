@@ -677,6 +677,10 @@ std::int32_t nyrt_ui_v1_release_event(std::int64_t snapshot,
     std::int64_t *value, const char **error) noexcept {
   return ui_number_result(value, error, [&] { return context.ui.release_event(snapshot); });
 }
+std::int32_t nyrt_ui_v1_destroy_widget(std::int64_t handle,
+    std::int64_t *value, const char **error) noexcept {
+  return ui_number_result(value, error, [&] { return context.ui.destroy_widget(handle); });
+}
 std::int32_t nyrt_ui_v1_close(std::int64_t window,
     std::int64_t *value, const char **error) noexcept {
   return ui_number_result(value, error, [&] { return context.ui.close(window); });

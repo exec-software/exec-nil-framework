@@ -8907,6 +8907,7 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_ui_v1_event_number", &nyrt_ui_v1_event_number);
   expose_runtime_symbol("nyrt_ui_v1_event_text", &nyrt_ui_v1_event_text);
   expose_runtime_symbol("nyrt_ui_v1_release_event", &nyrt_ui_v1_release_event);
+  expose_runtime_symbol("nyrt_ui_v1_destroy_widget", &nyrt_ui_v1_destroy_widget);
   expose_runtime_symbol("nyrt_ui_v1_close", &nyrt_ui_v1_close);
   expose_runtime_symbol("nyrt_db2_available", &nyrt_db2_available);
   expose_runtime_symbol("nyrt_db2_open", &nyrt_db2_open);

@@ -4181,6 +4181,7 @@ void VM::executeInstruction(const Instruction &instr) {
       else if (op == "event_number") result = ui_.event_number(word_arg(0), text_arg(1));
       else if (op == "event_text") result = ui_.event_text(word_arg(0));
       else if (op == "release_event") result = ui_.release_event(word_arg(0));
+      else if (op == "destroy_widget") result = ui_.destroy_widget(word_arg(0));
       else if (op == "close") result = ui_.close(word_arg(0));
       EnumValue value;
       value.variant_name = result ? "Result::Ok" : "Result::Error";
