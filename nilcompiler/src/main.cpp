@@ -1073,7 +1073,9 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
           return std::nullopt;
         }
         try {
-          const auto metadata = ny::parseBinaryLibraryMetadata(library);
+          std::string library_digest;
+          const auto metadata = ny::parseBinaryLibraryMetadata(library, analysis ? &library_digest : nullptr);
+          if (analysis) analysis->record_dependency_digest(library_key, library_digest);
           for (const auto &source : metadata.sources) {
             const std::string source_key =
                 "nillib://" + ny::canonical_std_namespace(metadata.module_name) + "/" + source.path;
@@ -1162,6 +1164,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     }
 
     if (analysis) {
+      if (embedded == embedded_sources.end()) analysis->record_dependency(p, src);
       ny::validate_analysis_utf8(src);
       if (units.size() >= 256) throw std::runtime_error("analysis exceeds 256 source units");
       if (analysis->workspace_stdin || analysis->semantic_requested || analysis->completion_cursor || analysis->signature_cursor)
@@ -1180,6 +1183,10 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     // ast.hpp program, so the type checker, codegen and every contract
     // checker below run unchanged.
     const auto configure_preprocessing = [&](ny::preprocessor_options &preprocessing) {
+      if (analysis) preprocessing.source_read = [analysis](const std::filesystem::path &path,
+                                                          const std::string &source) {
+        analysis->record_dependency(path.string(), source);
+      };
       if (analysis && (analysis->workspace_stdin || analysis->semantic_requested || analysis->completion_cursor || analysis->signature_cursor)) {
         preprocessing.resolve_source = [analysis](const std::filesystem::path &path)
             -> std::optional<std::filesystem::path> {
@@ -1510,6 +1517,33 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
 
   const bool checked = checker.check(*combined);
   if (analysis) {
+#if defined(__linux__)
+    // Loaded code is part of the toolchain identity, including libLLVM when
+    // the compiler is dynamically linked. A system library upgrade must not
+    // leave an executable-only build fingerprint looking current.
+    std::ifstream mappings("/proc/self/maps");
+    std::string mapping;
+    while (std::getline(mappings, mapping)) {
+      std::istringstream fields(mapping);
+      std::string address, permissions, offset, device, inode, path;
+      if (!(fields >> address >> permissions >> offset >> device >> inode)) continue;
+      std::getline(fields >> std::ws, path);
+      if (!path.empty() && path.front() == '/' && path.find(" (deleted)") == std::string::npos) {
+        std::error_code error;
+        if (std::filesystem::is_regular_file(path, error)) analysis->compiler_files.insert(path);
+      }
+    }
+#endif
+#if defined(NY_HAS_LLVM)
+    if (const auto runtime = find_native_runtime_archive(argv[0]))
+      analysis->native_runtime = runtime->string();
+#if !defined(_WIN32)
+    const std::filesystem::path driver = NIL_NATIVE_LINKER_DRIVER;
+    const auto linker = driver.has_parent_path() ? existing_executable_path(driver)
+                                                 : find_executable_on_path(driver);
+    if (linker) analysis->native_linker = linker->string();
+#endif
+#endif
     analysis->semantic_checked = checked && !analysis->signature_recovered;
     if (analysis->signature_cursor) analysis->signature = checker.get_signature();
     if (analysis->completion_cursor) analysis->completion = checker.get_completion();

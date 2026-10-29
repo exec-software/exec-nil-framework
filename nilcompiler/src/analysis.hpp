@@ -43,6 +43,13 @@ struct analysis_session {
   std::set<std::string> disabled_rules;
   std::size_t reflection_bytes = 0;
   std::map<std::string, std::string> sources;
+  // Digests describe the exact disk bytes consumed by analysis, including
+  // textual preprocessor includes and binary library containers. They are
+  // separate from the bounded diagnostic/editor source snapshots.
+  std::map<std::string, std::string> dependencies;
+  bool dependencies_consistent = true;
+  std::optional<std::string> native_runtime, native_linker;
+  std::set<std::string> compiler_files;
   // Canonical native source paths only. Binary-library identities never use
   // this map, and unrelated buffers are not added to the compilation graph.
   std::map<std::string, std::string> workspace_sources;
@@ -64,6 +71,8 @@ struct analysis_session {
   bool workspace_source_exists(const std::string &path) const;
   std::optional<std::string> read_workspace_source(const std::string &path);
   void record_workspace_source(const std::string &path, const std::string &source);
+  void record_dependency(const std::string &path, const std::string &contents);
+  void record_dependency_digest(const std::string &path, const std::string &digest);
 };
 std::string analysis_source_identity(const std::string &path);
 void validate_analysis_utf8(const std::string &text);

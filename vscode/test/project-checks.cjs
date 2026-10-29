@@ -19,9 +19,15 @@ exports.run = async ({ check, workspace }) => {
     const directory = path.join(workspace, `project ${language}`);
     await fs.mkdir(path.join(directory, "src"), { recursive: true });
     await fs.mkdir(path.join(directory, "lib"), { recursive: true });
-    const manifestFile = path.join(directory, "nil.project.json");
+    const manifestFile = path.join(directory, language === "matrix" ? "nil.project.nildata" : "nil.project.json");
     const manifest = { schema: "nil.project.v1", name: "hello", entry: `src/main.${language}`, includePaths: ["lib"] };
-    await fs.writeFile(manifestFile, JSON.stringify(manifest));
+    const saveManifest = () => fs.writeFile(manifestFile, language === "ny" ? JSON.stringify(manifest) :
+      `nildata 1\nobject\n  schema is "nil.project.v1"\n  name is "hello"\n  entry is "${manifest.entry}"\n` +
+      `  includePaths is an array\n    item is "lib"\n  end array\n` +
+      (manifest.analysis ? `  analysis is an object\n    warningsAsErrors is ${manifest.analysis.warningsAsErrors}\n` +
+        `    disabledRules is an array\n${manifest.analysis.disabledRules.map(rule => `      item is "${rule}"\n`).join("")}` +
+        `    end array\n  end object\n` : "") + `end object\n`);
+    await saveManifest();
     await fs.writeFile(path.join(directory, "lib", "answer.ny"), 'module answer\npub fn answer() -> i32\n return 42\nend fn\n');
     // Distinguish nilbuild's project cwd and explicit import-root ordering from
     // the entry directory. Choosing either shadow makes compiler checks fail.
@@ -63,13 +69,13 @@ exports.run = async ({ check, workspace }) => {
       await eventually(() => vscode.commands.executeCommand("ny.analyzeCurrentFile"), "current compiler check");
       assert.deepEqual(findings(document.uri).map(item => item.code).sort(), ["NIL2001", "NIL2002"]);
       manifest.analysis = { warningsAsErrors: true, disabledRules: [] };
-      await fs.writeFile(manifestFile, JSON.stringify(manifest));
+      await saveManifest();
       await eventually(() => vscode.commands.executeCommand("ny.analyzeCurrentFile"), "current compiler check");
       assert.ok(findings(document.uri).every(item => item.severity === vscode.DiagnosticSeverity.Error));
       assert.equal(await vscode.commands.executeCommand("ny.checkProject"), 1);
       assert.equal(await vscode.commands.executeCommand("ny.checkNativeProject"), 1);
       manifest.analysis.disabledRules = ["NIL2001", "NIL2002"];
-      await fs.writeFile(manifestFile, JSON.stringify(manifest));
+      await saveManifest();
       await eventually(() => vscode.commands.executeCommand("ny.analyzeCurrentFile"), "current compiler check");
       assert.deepEqual(findings(document.uri), []);
       assert.equal(await vscode.commands.executeCommand("ny.checkProject"), 0);

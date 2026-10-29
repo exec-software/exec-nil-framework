@@ -30,7 +30,8 @@ test("NILData contributes independent syntax assets without source tool registra
   });
   assert.ok(grammar);
   assert.ok(readJson(grammar.path));
-  assert.equal(manifest.activationEvents.some(event => event.includes("nildata")), false);
+  assert.deepEqual(manifest.activationEvents.filter(event => event.includes("nildata")),
+    ["workspaceContains:**/nil.project.nildata"]);
   assert.equal(manifest.contributes.breakpoints.some(item => item.language === "nildata"), false);
   assert.equal(manifest.contributes.debuggers.some(item => item.languages.includes("nildata")), false);
 });
@@ -203,7 +204,7 @@ test("snippet catalog covers core, testing, fault, interop, and AI constructs", 
 });
 
 test("project manifests have packaged schema completion and project commands", () => {
-  const manifest = readJson("package.json") as { contributes: {
+  const manifest = readJson("package.json") as { activationEvents: string[]; contributes: {
     jsonValidation: Array<{ fileMatch: string[]; url: string }>;
     commands: Array<{ command: string }>;
     configuration: { properties: Record<string, unknown> };
@@ -214,7 +215,10 @@ test("project manifests have packaged schema completion and project commands", (
   const schema = readJson(validation.url) as { additionalProperties: boolean; required: string[]; properties: Record<string, unknown> };
   assert.equal(schema.additionalProperties, false);
   assert.deepEqual(schema.required, ["schema", "name", "entry"]);
-  assert.ok(schema.properties.analysis && schema.properties.includePaths);
+  assert.ok(schema.properties.analysis && schema.properties.includePaths && schema.properties.projectReferences);
+  for (const extension of ["nildata", "json", "yaml", "yml"]) {
+    assert.ok(manifest.activationEvents.includes(`workspaceContains:**/nil.project.${extension}`));
+  }
   for (const command of ["checkProject", "checkNativeProject", "buildProject", "buildNativeProject", "runProject", "runNativeProject"]) {
     assert.ok(manifest.contributes.commands.some(item => item.command === `ny.${command}`));
   }

@@ -4,6 +4,10 @@
 - **Scope:** Compiler, project driver, SDK and editor integration
 - **Date:** 2026-10-18
 
+The initial behavior below is extended by
+[NIL-0022](NIL-0022-incremental-project-builds.md), which adds project references,
+incremental and parallel builds, and NILData as the preferred manifest format.
+
 ## Context
 
 Compiler analysis already exists, but single-file editor tasks and framework

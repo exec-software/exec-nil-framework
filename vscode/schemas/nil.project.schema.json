@@ -90,6 +90,19 @@
           "default": false
         }
       }
+    },
+    "projectReferences": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "not": {
+          "pattern": "\u0000"
+        }
+      },
+      "default": [],
+      "description": "Distinct referenced project manifests, relative to this file. nilbuild orders their builds before this project."
     }
   }
 }

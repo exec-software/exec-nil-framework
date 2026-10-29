@@ -145,8 +145,8 @@ source: `NIL2001` reports unreachable statements after unconditional exits, and
 `NIL2002` reports standalone calls whose standard `Option`/`Result` outcomes
 are discarded. These are warnings without automatic fixes. Imported modules
 receive compiler checks but are not recursively linted by these rules.
-These rules traverse named function/method and test bodies; expression-embedded
-lambda bodies remain outside this initial traversal.
+These rules traverse named function/method and test bodies, nested lambdas,
+and switches in expression position.
 
 `nilcompiler --list-analysis-rules` returns a `nil.analyzers.v1` catalog with
 the `nil.default` analyzer and each rule's code, title, description, default
@@ -168,6 +168,46 @@ at 512 with a 256 KiB message budget. Reflection retains at most 8,192
 declarations/annotations and 1 MiB of metadata, and marks truncation explicitly.
 The full JSON response is limited to 8 MiB. These are representation limits,
 not a compiler execution sandbox or time budget.
+
+## Build input dependencies
+
+Analysis reports also expose metadata for incremental build clients:
+
+| Field | Meaning |
+| --- | --- |
+| `dependencies` | Sorted, unique `{path, digest}` entries for consumed native files. `path` is canonical and absolute; `digest` is lowercase hexadecimal SHA-256 of the exact consumed bytes. |
+| `dependenciesComplete` | True only after successful disk-based analysis with a complete, consistent dependency list containing the primary source. |
+| `compilerFiles` | Sorted paths of regular files mapped into the compiler on Linux, including its executable and loaded shared libraries. Empty when unavailable on another host. |
+| `nativeRuntime` | Resolved native runtime archive path, or null when unavailable. |
+| `nativeLinker` | Resolved configured native linker driver path, or null when unavailable. |
+
+Dependencies include the primary file, imported source modules, textual
+preprocessor includes regardless of filename extension, and binary library
+containers. Embedded `nillib://` source identities do not appear as filesystem
+dependencies; the containing library supplies their content identity. This
+list is independent of `sources`, which remains the bounded diagnostic snapshot
+array and is not a complete build input inventory.
+
+The list is bounded to 4,096 distinct files. Failed checks, inconsistent reads,
+or exceeding that count set `dependenciesComplete` to false. `--source-stdin`
+and `--workspace-stdin` always leave it false because their checked bytes need
+not match disk. Clients must also treat missing completeness metadata from an
+older compiler as unavailable, not as an empty complete graph.
+
+Digests describe what analysis read; clients must compare them against the
+current filesystem before reusing an artifact. They do not establish an
+immutable snapshot. Native runtime/linker fields identify tools without hashing
+them; a build client accounts for their current contents and its effective
+settings separately. On Linux, `compilerFiles` lets a client include the loaded
+compiler libraries, such as a dynamically linked LLVM, in its toolchain
+identity. Those paths also require content hashing; they are not dependency
+digests or a complete inventory of the native linker's own inputs. Fresh
+analysis is required to discover
+changed import resolution before considering an incremental cache entry.
+
+`nilcompiler --analyze` and editor request/response protocols remain JSON. The
+project driver's optional NILData/YAML presentation does not change that IPC
+contract.
 
 ## Semantic source index
 
@@ -601,7 +641,7 @@ and applies fixes only to the same document version that produced them.
 Compiler `extraArgs` are deliberately
 not forwarded to analysis. Existing structural LSP diagnostics remain separate.
 
-Within a `nil.project.json` project, live checks inherit project import roots,
+Within a `nil.project.nildata` project, live checks inherit project import roots,
 SDK location and rule policy. Project build/run tasks use `nilbuild` and saved
 files. The current-file command keeps the active file as its primary source;
 other open source buffers supply dependencies. Live analysis requests the

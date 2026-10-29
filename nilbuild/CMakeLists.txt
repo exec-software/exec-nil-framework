@@ -6,7 +6,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 
 include(GNUInstallDirs)
-add_executable(nilbuild main.cpp)
+add_executable(nilbuild main.cpp ../nilcompiler/src/nildata.cpp)
 nil_apply_version(nilbuild)
 target_compile_features(nilbuild PRIVATE cxx_std_17)
 install(TARGETS nilbuild RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
