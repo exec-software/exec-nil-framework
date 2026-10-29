@@ -1,0 +1,122 @@
+book nil2.ui.desktop
+
+read nil.std.ui
+read nil.std.testing
+read nil.std.threading
+read nil.std.core.option
+read nil.std.core.result
+
+expect-ui-error of type T receives outcome as Result of T, text begin paragraph
+    consider outcome
+        when Result.Error holding failure then expect (the length of failure) is greater than 0
+        when Result.Ok holding unexpected then expect no
+    end consider
+end paragraph
+
+expect-empty-queue receives surface as Window begin paragraph
+    variable checks as number is 0
+    repeat while checks is less than 3
+        value pending is require-ok of PendingEvent, text with (poll-event with surface), "poll quiet window"
+        consider pending
+            when Option.None then expect yes
+            when Option.Some holding unexpected then expect no
+        end consider
+        evaluate sleep-ms with 5
+        set checks to checks plus 1
+    end repeat
+end paragraph
+
+next-event receives surface as Window returns Event begin paragraph
+    variable attempts as number is 0
+    repeat while attempts is less than 200
+        value pending is require-ok of PendingEvent, text with (poll-event with surface), "poll activated widget"
+        consider pending
+            when Option.Some holding notification then give notification
+            when Option.None then evaluate sleep-ms with 5
+        end consider
+        set attempts to attempts plus 1
+    end repeat
+    evaluate panic with "GTK widget activation did not produce an event"
+end paragraph
+
+note suite "nil.std.ui.gtk.desktop"
+widgets_layout_and_model_binding begin test
+    expect available with nothing
+    value surface is require-ok of Window, text with (create-window with "NIL2 desktop contract", 460, 300), "create desktop window"
+    value root is window-root with surface
+    value column is require-ok of Widget, text with (create-column with root), "create column"
+    value row is require-ok of Widget, text with (create-row with column), "create row"
+    value label is require-ok of Widget, text with (create-label with row, "before"), "create label"
+    value button is require-ok of Widget, text with (create-button with row, "Click"), "create button"
+    value grid is require-ok of Widget, text with (create-grid with column), "create grid"
+    value entry is require-ok of Widget, text with (create-entry with grid, "initial"), "create entry"
+    value checkbox is require-ok of Widget, text with (create-checkbox with grid, "Enabled"), "create checkbox"
+    evaluate require-ok of boolean, text with (attach-grid with grid, entry, 0, 0, 2, 1), "attach entry"
+    evaluate require-ok of boolean, text with (attach-grid with grid, checkbox, 0, 1, 2, 1), "attach checkbox"
+    evaluate require-ok of boolean, text with (set-margin with column, 12), "set margin"
+    evaluate require-ok of boolean, text with (set-spacing with column, 6), "set column spacing"
+    evaluate require-ok of boolean, text with (set-spacing with row, 8), "set row spacing"
+    evaluate require-ok of boolean, text with (set-spacing with grid, 4), "set grid spacing"
+    evaluate require-ok of boolean, text with (set-expansion with entry, yes, no), "set expansion"
+    evaluate require-ok of boolean, text with (set-sensitive with button, no), "disable button"
+    evaluate require-ok of boolean, text with (set-sensitive with button, yes), "enable button"
+    evaluate require-ok of boolean, text with (set-visible with label, no), "hide label"
+    evaluate require-ok of boolean, text with (set-visible with label, yes), "show label"
+    evaluate require-ok of boolean, text with (set-widget-text with label, "NIL²"), "change label"
+    expect (require-ok of text, text with (widget-text with label), "read label") equals "NIL²"
+    evaluate require-ok of boolean, text with (show-window with surface), "show desktop window"
+
+    value name is create-text-model with "initial"
+    value flag is create-flag-model with no
+    expect not (require-ok of boolean, text with (sync-text with entry, name), "sync equal text")
+    expect not (require-ok of boolean, text with (sync-flag with checkbox, flag), "sync equal flag")
+    expect update-text-model with name, "Matrix"
+    expect update-flag-model with flag, yes
+    expect require-ok of boolean, text with (sync-text with entry, name), "sync changed text"
+    expect require-ok of boolean, text with (sync-flag with checkbox, flag), "sync changed flag"
+    expect (require-ok of text, text with (widget-text with entry), "read entry") equals "Matrix"
+    expect require-ok of boolean, text with (widget-checked with checkbox), "read checkbox"
+    evaluate expect-empty-queue with surface
+
+    evaluate require-ok of boolean, text with (activate-widget with button), "activate button"
+    value click is next-event with surface
+    expect is-click with click
+    expect event-for with click, button
+    expect not (apply-text-event with name, entry, click)
+    expect not (apply-flag-event with flag, checkbox, click)
+    evaluate require-ok of boolean, text with (activate-widget with checkbox), "activate checkbox"
+    value toggled is next-event with surface
+    expect is-toggle with toggled
+    expect event-for with toggled, checkbox
+    expect not toggled.checked
+    expect apply-flag-event with flag, checkbox, toggled
+    expect not flag.enabled
+    evaluate require-ok of boolean, text with (set-checked with checkbox, yes), "set after snapshot"
+    expect not toggled.checked
+    evaluate expect-empty-queue with surface
+
+    evaluate expect-ui-error of boolean with (set-margin with column, -1)
+    evaluate expect-ui-error of boolean with (set-spacing with row, 4097)
+    evaluate expect-ui-error of boolean with (set-checked with label, yes)
+    evaluate expect-ui-error of boolean with (attach-grid with grid, button, 0, 0, 1, 1)
+    evaluate expect-ui-error of boolean with (attach-grid with grid, entry, 0, 0, 0, 1)
+    evaluate require-ok of boolean, text with (close-window with surface), "close desktop window"
+    evaluate expect-ui-error of text with (widget-text with entry)
+    evaluate expect-ui-error of boolean with (close-window with surface)
+    evaluate expect-ui-error of PendingEvent with (poll-event with surface)
+    expect is-click with click
+    expect click.window.handle equals surface.handle
+end test
+
+note suite "nil.std.ui.gtk.desktop"
+window_ownership_and_size_errors begin test
+    evaluate expect-ui-error of Window with (create-window with "invalid size", 0, 200)
+    value first is require-ok of Window, text with (create-window with "NIL2 first owner", 320, 180), "create first owner"
+    value second is require-ok of Window, text with (create-window with "NIL2 second owner", 320, 180), "create second owner"
+    value grid is require-ok of Widget, text with (create-grid with (window-root with first)), "create owned grid"
+    value foreign is require-ok of Widget, text with (create-label with (window-root with second), "other window"), "create other child"
+    evaluate expect-ui-error of boolean with (attach-grid with grid, foreign, 0, 0, 1, 1)
+    evaluate require-ok of boolean, text with (close-window with first), "close first owner"
+    expect (require-ok of text, text with (widget-text with foreign), "second owner remains live") equals "other window"
+    evaluate require-ok of boolean, text with (close-window with second), "close second owner"
+end test

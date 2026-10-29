@@ -53,6 +53,7 @@ add_library(nilruntime_objects OBJECT
     src/owned_runtime.cpp
     src/secure_file_io.cpp
     src/database_runtime.cpp
+    src/ui_runtime.cpp
     src/pattern_engine.cpp
     src/nildata.cpp
 )

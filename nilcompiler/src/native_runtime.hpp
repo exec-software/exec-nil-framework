@@ -21,6 +21,36 @@ enum nyrt_array_kind : std::uint32_t {
   NYRT_ARRAY_ANYTHING = 8,
 };
 
+// Versioned UI ABI. Success is 1, failure 0. Text outputs are copied into
+// managed context storage; toolkit pointers never cross this boundary.
+std::int64_t nyrt_ui_v1_available() noexcept;
+std::int32_t nyrt_ui_v1_window(const char *title, std::int64_t width, std::int64_t height,
+    std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_ui_v1_widget(const char *kind, std::int64_t parent, const char *label,
+    std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_ui_v1_grid_attach(std::int64_t grid, std::int64_t child, std::int64_t column, std::int64_t row, std::int64_t column_span, std::int64_t row_span,
+    std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_ui_v1_set_text(std::int64_t handle, const char *text,
+    std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_ui_v1_read_text(std::int64_t handle,
+    const char **value, const char **error) noexcept;
+std::int32_t nyrt_ui_v1_set_number(std::int64_t handle, const char *property, std::int64_t number,
+    std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_ui_v1_read_number(std::int64_t handle, const char *property,
+    std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_ui_v1_activate(std::int64_t handle,
+    std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_ui_v1_poll(std::int64_t window,
+    std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_ui_v1_event_number(std::int64_t snapshot, const char *field,
+    std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_ui_v1_event_text(std::int64_t snapshot,
+    const char **value, const char **error) noexcept;
+std::int32_t nyrt_ui_v1_release_event(std::int64_t snapshot,
+    std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_ui_v1_close(std::int64_t window,
+    std::int64_t *value, const char **error) noexcept;
+
 // Additive database ABI. Success is 1, failure 0; outputs are context-owned.
 std::int64_t nyrt_db2_available(const char *driver) noexcept;
 std::int32_t nyrt_db2_open(const char *driver, const char *address,

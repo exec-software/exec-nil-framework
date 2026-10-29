@@ -311,8 +311,11 @@ repeat_head     = 'while' expression
  * such a body returns from the enclosing FUNCTION, as it does anywhere else
  * in a statement position. *)
 consider_stmt   = 'consider' expression { consider_arm }
-                  [ 'otherwise' { statement } ] 'end' 'consider' ;
-consider_arm    = 'when' pattern [ 'provided' expression ] 'then' { statement } ;
+                  [ 'otherwise' consider_body ] 'end' 'consider' ;
+consider_arm    = 'when' pattern [ 'provided' expression ] 'then' consider_body ;
+consider_body   = { statement } | 'begin' 'block' { statement } 'end' 'block' ;
+(* Unbracketed pattern arms end at the next when/otherwise/end consider.
+ * Use an explicit body for a nested when statement. block is contextual. *)
 pattern         = '(' pattern { ',' pattern } [ ',' ] ')'
                 | literal | signed_number | ( 'negative' | 'minus' ) number_literal
                 | type_name '.' identifier [ 'holding' identifier ]

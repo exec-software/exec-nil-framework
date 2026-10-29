@@ -3649,7 +3649,7 @@ public:
           if (reject_reference_dereference(*ue.operand, asn.line))
             break;
           emit_expr(*ue.operand); // Pushes ptr
-          emit_expr(*asn.value);  // Pushes value
+          emit_expr(*asn.value, asn.target->inferred_type);  // Pushes value
           push_instr("WRITE_PTR", {}, asn.line);
           break;
         }
@@ -3668,7 +3668,7 @@ public:
           }
           push_instr("PTR_ADD", {}, asn.line);
         }
-        emit_expr(*asn.value); // Value
+        emit_expr(*asn.value, asn.target->inferred_type); // Value
         if (owned) emit_scalar_boundary(ie.inferred_type, asn.line);
         push_instr(owned ? "WRITE_PTR" : "SET_INDEX", {}, asn.line);
         break;
@@ -3687,7 +3687,7 @@ public:
               break;
             emit_expr(*ue.operand); // Push the POINTER address (not
                                     // dereferenced value)
-            emit_expr(*asn.value);  // Push value
+            emit_expr(*asn.value, asn.target->inferred_type);  // Push value
             emit_scalar_boundary(ma.inferred_type, asn.line);
             push_instr("SET_FIELD_PTR", {ma.member_name}, asn.line);
             break;
@@ -3699,7 +3699,7 @@ public:
           const auto &obj_id =
               static_cast<const ast_identifier_expr &>(*ma.object);
           emit_member_receiver(*ma.object); // LOAD_LOCAL obj_id
-          emit_expr(*asn.value); // push value
+          emit_expr(*asn.value, asn.target->inferred_type); // push value
           emit_scalar_boundary(ma.inferred_type, asn.line);
           push_instr("SET_FIELD", {ma.member_name}, asn.line);
           push_instr("STORE_LOCAL", {obj_id.name}, asn.line); // write back
@@ -3721,7 +3721,7 @@ public:
             push_instr("LOAD_LOCAL", {root_id.name}, asn.line);
             push_instr("LOAD_LOCAL", {root_id.name}, asn.line);
             push_instr("GET_FIELD", {inner_ma.member_name}, asn.line);
-            emit_expr(*asn.value);
+            emit_expr(*asn.value, asn.target->inferred_type);
             emit_scalar_boundary(ma.inferred_type, asn.line);
             push_instr("SET_FIELD", {ma.member_name}, asn.line);
             push_instr("SET_FIELD", {inner_ma.member_name}, asn.line);
@@ -3731,14 +3731,14 @@ public:
         }
         // Fallback: emit as before, then discard leaked struct via temp store
         emit_member_receiver(*ma.object); // Push struct reference
-        emit_expr(*asn.value); // Push value
+        emit_expr(*asn.value, asn.target->inferred_type); // Push value
         emit_scalar_boundary(ma.inferred_type, asn.line);
         push_instr("SET_FIELD", {ma.member_name}, asn.line);
         push_instr("STORE_LOCAL", {new_temp("_sf_discard")}, asn.line);
         break;
       }
 
-      emit_expr(*asn.value);
+      emit_expr(*asn.value, asn.target->inferred_type);
       if (asn.target->kind == ast_node_kind::identifier_expr_node) {
         auto &id = static_cast<const ast_identifier_expr &>(*asn.target);
         emit_scalar_boundary(id.inferred_type, asn.line);
@@ -6880,7 +6880,8 @@ codegen::assemble_module(const ast_program &program,
 
           std::string ret_type_str = "void";
           if (intrinsic_name.rfind("regex.", 0) == 0 ||
-              intrinsic_name.rfind("nildata.", 0) == 0) {
+              intrinsic_name.rfind("nildata.", 0) == 0 ||
+              intrinsic_name.rfind("ui.v1.", 0) == 0) {
             ret_type_str = canonical_nil_type_name(fn.return_type);
           } else if (is_declared_enum_type(*this, fn.return_type)) {
             ret_type_str = canonical_nil_type_name(fn.return_type);

@@ -38,6 +38,45 @@ function assertScope(grammar: IGrammar, line: string, fragment: string, scope: s
     `${fragment} should have ${scope} in ${line}`);
 }
 
+test("Matrix explicit consider blocks highlight contextually and support folding", async () => {
+  const grammar = await loadMatrixGrammar();
+  for (const line of ["when Result.Ok holding found then begin block", "END BLOCK", "otherwise BeGiN BlOcK"]) {
+    const fragment = line.match(/block/i)![0];
+    assertScope(grammar, line, fragment, "keyword.control.block");
+  }
+  for (const name of ["block", "block-value", "begin-block", "end-block", "`block`"])
+    assertScope(grammar, "say " + name, name === "`block`" ? "block" : name, "variable.other.readwrite");
+  for (const line of ['say "begin block"', "!!! end block", "say item.block", "say begin-block"]) {
+    const result = grammar.tokenizeLine(line, INITIAL);
+    assert.equal(result.tokens.some(token => token.scopes.includes("keyword.control.block.matrix")), false, line);
+  }
+  let state = INITIAL;
+  for (const line of ["consider outcome", "when Result.Ok holding found then begin block",
+    "when found then", "say \"end block\"", "end when", "end block", "when Result.Error holding failure then say failure", "end consider"])
+    state = grammar.tokenizeLine(line, state).ruleStack;
+  const after = grammar.tokenizeLine("say block", state);
+  assert.ok(scopesAt(after, "say block", "block").includes("variable.other.readwrite.matrix"));
+
+  const config = JSON.parse(fs.readFileSync("language-configuration.matrix.json", "utf8")) as {
+    indentationRules: { increaseIndentPattern: string; decreaseIndentPattern: string };
+    folding: { markers: { start: string; end: string } };
+  };
+  const increase = new RegExp(config.indentationRules.increaseIndentPattern);
+  const decrease = new RegExp(config.indentationRules.decreaseIndentPattern);
+  const foldStart = new RegExp(config.folding.markers.start);
+  const foldEnd = new RegExp(config.folding.markers.end);
+  for (const line of ["when Result.Ok holding found then begin block", "otherwise BEGIN BLOCK !!! fallback"]) {
+    assert.ok(increase.test(line), line);
+    assert.ok(foldStart.test(line), line);
+  }
+  assert.ok(decrease.test("    end block"));
+  assert.ok(foldEnd.test("    END BLOCK"));
+  for (const line of ['say "begin block"', "value begin-block is 1", "when yes then begin block say 1 end block"]) {
+    assert.equal(increase.test(line), false, line);
+    assert.equal(foldStart.test(line), false, line);
+  }
+});
+
 test("Matrix prose patterns fold keywords, preserve capture names and nest safely", async () => {
   const grammar = await loadMatrixGrammar();
   const opened = grammar.tokenizeLine("price-pattern BEGIN PATTERN", INITIAL);
@@ -413,6 +452,8 @@ test("Matrix snippets use current paragraph, type, text, and extension spellings
   assert.match(snippets["Paragraph"]!.body.join("\n"), /give \$\{2:argument\}/);
   assert.match(snippets["Variable binding"]!.body.join("\n"), /is \$\{3:0\}/);
   assert.deepEqual(snippets["Raw text block"]!.body, ["begin text", "    ${0:text}", "end text"]);
+  assert.deepEqual(snippets["Consider block"]!.body, ["consider ${1:subject}",
+    "    when ${2:pattern} then begin block", "        ${0}", "    end block", "end consider"]);
   assert.deepEqual(snippets["Formatted text"]!.body, ['formatted "${1:Height}: {${2:height}}"']);
   assert.deepEqual(snippets["Metadata annotation"]!.body, ['@${1:custom}(${2:key}=${3:true})']);
   assert.deepEqual(snippets["Prose metadata annotation"]!.body, ['note ${1:custom} with ${2:key} being ${3:true}']);

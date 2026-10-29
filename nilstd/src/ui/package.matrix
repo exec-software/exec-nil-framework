@@ -1,0 +1,337 @@
+@pragma once
+book nil.std.ui
+
+read nil.std.core.option
+read nil.std.core.result
+read nil.std.ui.types
+read nil.std.ui.models
+
+note intrinsic "ui.v1.available"
+ui-provider-available returns boolean
+
+note intrinsic "ui.v1.window"
+ui-provider-window receives title as text, width as number, height as number returns Result of number, text
+
+note intrinsic "ui.v1.widget"
+ui-provider-widget receives kind as text, parent as number, label as text returns Result of number, text
+
+note intrinsic "ui.v1.grid_attach"
+ui-provider-grid-attach receives grid as number, child as number, column as number, row as number, column-span as number, row-span as number returns Result of number, text
+
+note intrinsic "ui.v1.set_text"
+ui-provider-set-text receives handle as number, content as text returns Result of number, text
+
+note intrinsic "ui.v1.read_text"
+ui-provider-read-text receives handle as number returns Result of text, text
+
+note intrinsic "ui.v1.set_number"
+ui-provider-set-number receives handle as number, property as text, content as number returns Result of number, text
+
+note intrinsic "ui.v1.read_number"
+ui-provider-read-number receives handle as number, property as text returns Result of number, text
+
+note intrinsic "ui.v1.activate"
+ui-provider-activate receives handle as number returns Result of number, text
+
+note intrinsic "ui.v1.poll"
+ui-provider-poll receives handle as number returns Result of number, text
+
+note intrinsic "ui.v1.event_number"
+ui-provider-event-number receives snapshot as number, property as text returns Result of number, text
+
+note intrinsic "ui.v1.event_text"
+ui-provider-event-text receives snapshot as number returns Result of text, text
+
+note intrinsic "ui.v1.release_event"
+ui-provider-release-event receives snapshot as number returns Result of number, text
+
+note intrinsic "ui.v1.close"
+ui-provider-close receives handle as number returns Result of number, text
+
+!!! Provider declarations are private. Public constructors never expose the
+!!! private zero sentinel used by an empty notification queue.
+ui-success receives outcome as Result of number, text returns Result of boolean, text begin paragraph
+    consider outcome
+        when Result.Ok holding status then begin block
+            when status does not equal 1 then give Result.Error holding "UI provider returned an invalid operation status" end when
+            give Result.Ok holding yes
+        end block
+        when Result.Error holding failure then give Result.Error holding failure
+    end consider
+end paragraph
+
+ui-flag-number receives enabled as boolean returns number begin paragraph
+    when enabled then give 1 end when
+    give 0
+end paragraph
+
+public available returns boolean begin paragraph
+    give ui-provider-available with nothing
+end paragraph
+
+public create-window receives title as text, width as number, height as number returns Result of Window, text begin paragraph
+    consider ui-provider-window with title, width, height
+        when Result.Ok holding handle then give Result.Ok holding (build nil.std.ui.Window with handle being handle)
+        when Result.Error holding failure then give Result.Error holding failure
+    end consider
+end paragraph
+
+!!! A surface owns its automatic column root. Children created below this
+!!! parent belong to the surface and are invalidated when it closes.
+public window-root receives surface as Window returns Widget begin paragraph
+    give build nil.std.ui.Widget with handle being surface.handle
+end paragraph
+
+ui-create-widget receives kind as text, parent as Widget, label as text returns Result of Widget, text begin paragraph
+    consider ui-provider-widget with kind, parent.handle, label
+        when Result.Ok holding handle then give Result.Ok holding (build nil.std.ui.Widget with handle being handle)
+        when Result.Error holding failure then give Result.Error holding failure
+    end consider
+end paragraph
+
+public create-column receives parent as Widget returns Result of Widget, text begin paragraph
+    give ui-create-widget with "column", parent, ""
+end paragraph
+
+public create-row receives parent as Widget returns Result of Widget, text begin paragraph
+    give ui-create-widget with "row", parent, ""
+end paragraph
+
+public create-grid receives parent as Widget returns Result of Widget, text begin paragraph
+    give ui-create-widget with "grid", parent, ""
+end paragraph
+
+public create-label receives parent as Widget, label as text returns Result of Widget, text begin paragraph
+    give ui-create-widget with "label", parent, label
+end paragraph
+
+public create-button receives parent as Widget, label as text returns Result of Widget, text begin paragraph
+    give ui-create-widget with "button", parent, label
+end paragraph
+
+public create-entry receives parent as Widget, label as text returns Result of Widget, text begin paragraph
+    give ui-create-widget with "entry", parent, label
+end paragraph
+
+public create-checkbox receives parent as Widget, label as text returns Result of Widget, text begin paragraph
+    give ui-create-widget with "checkbox", parent, label
+end paragraph
+
+public show-window receives surface as Window returns Result of boolean, text begin paragraph
+    give ui-success with (ui-provider-set-number with surface.handle, "visible", 1)
+end paragraph
+
+public close-window receives surface as Window returns Result of boolean, text begin paragraph
+    give ui-success with (ui-provider-close with surface.handle)
+end paragraph
+
+public set-widget-text receives control as Widget, content as text returns Result of boolean, text begin paragraph
+    give ui-success with (ui-provider-set-text with control.handle, content)
+end paragraph
+
+public set-checked receives control as Widget, checked as boolean returns Result of boolean, text begin paragraph
+    give ui-success with (ui-provider-set-number with control.handle, "checked", (ui-flag-number with checked))
+end paragraph
+
+public set-sensitive receives control as Widget, enabled as boolean returns Result of boolean, text begin paragraph
+    give ui-success with (ui-provider-set-number with control.handle, "sensitive", (ui-flag-number with enabled))
+end paragraph
+
+public set-visible receives control as Widget, visible as boolean returns Result of boolean, text begin paragraph
+    give ui-success with (ui-provider-set-number with control.handle, "visible", (ui-flag-number with visible))
+end paragraph
+
+public set-margin receives control as Widget, pixels as number returns Result of boolean, text begin paragraph
+    give ui-success with (ui-provider-set-number with control.handle, "margin", pixels)
+end paragraph
+
+public set-spacing receives control as Widget, pixels as number returns Result of boolean, text begin paragraph
+    give ui-success with (ui-provider-set-number with control.handle, "spacing", pixels)
+end paragraph
+
+public focus-widget receives control as Widget returns Result of boolean, text begin paragraph
+    give ui-success with (ui-provider-set-number with control.handle, "focus", 1)
+end paragraph
+
+public activate-widget receives control as Widget returns Result of boolean, text begin paragraph
+    give ui-success with (ui-provider-activate with control.handle)
+end paragraph
+
+public attach-grid receives grid as Widget, child as Widget, column as number, row as number, column-span as number, row-span as number returns Result of boolean, text begin paragraph
+    give ui-success with (ui-provider-grid-attach with grid.handle, child.handle, column, row, column-span, row-span)
+end paragraph
+
+public widget-text receives control as Widget returns Result of text, text begin paragraph
+    give ui-provider-read-text with control.handle
+end paragraph
+
+public widget-checked receives control as Widget returns Result of boolean, text begin paragraph
+    consider ui-provider-read-number with control.handle, "checked"
+        when Result.Error holding failure then give Result.Error holding failure
+        when Result.Ok holding state then begin block
+            when state equals 0 then give Result.Ok holding no end when
+            when state equals 1 then give Result.Ok holding yes end when
+            give Result.Error holding "UI provider returned an invalid checkbox state"
+        end block
+    end consider
+end paragraph
+
+public set-expansion receives control as Widget, horizontal as boolean, vertical as boolean returns Result of boolean, text begin paragraph
+    consider ui-provider-set-number with control.handle, "hexpand", (ui-flag-number with horizontal)
+        when Result.Error holding failure then give Result.Error holding failure
+        when Result.Ok holding changed then begin block
+            give ui-success with (ui-provider-set-number with control.handle, "vexpand", (ui-flag-number with vertical))
+        end block
+    end consider
+end paragraph
+
+public widget-width receives control as Widget returns Result of number, text begin paragraph
+    give ui-provider-read-number with control.handle, "width"
+end paragraph
+
+public widget-height receives control as Widget returns Result of number, text begin paragraph
+    give ui-provider-read-number with control.handle, "height"
+end paragraph
+
+ui-event-kind receives code as number returns Result of EventKind, text begin paragraph
+    when code equals 1 then give Result.Ok holding EventKind.Clicked end when
+    when code equals 2 then give Result.Ok holding EventKind.TextChanged end when
+    when code equals 3 then give Result.Ok holding EventKind.Toggled end when
+    when code equals 4 then give Result.Ok holding EventKind.CloseRequested end when
+    give Result.Error holding "UI provider returned an unknown event kind"
+end paragraph
+
+ui-copy-event receives snapshot as number, surface as Window returns Result of Event, text begin paragraph
+    consider ui-provider-event-number with snapshot, "window"
+        when Result.Error holding failure then give Result.Error holding failure
+        when Result.Ok holding origin then begin block
+            when origin does not equal surface.handle then give Result.Error holding "UI event belongs to another window" end when
+            consider ui-provider-event-number with snapshot, "kind"
+                when Result.Error holding failure then give Result.Error holding failure
+                when Result.Ok holding kind-code then begin block
+                    consider ui-event-kind with kind-code
+                        when Result.Error holding failure then give Result.Error holding failure
+                        when Result.Ok holding snapshot-kind then begin block
+                            consider ui-provider-event-number with snapshot, "target"
+                                when Result.Error holding failure then give Result.Error holding failure
+                                when Result.Ok holding target-handle then begin block
+                                    consider ui-provider-event-number with snapshot, "checked"
+                                        when Result.Error holding failure then give Result.Error holding failure
+                                        when Result.Ok holding checked-value then begin block
+                                            when checked-value does not equal 0 and checked-value does not equal 1 then give Result.Error holding "UI event has an invalid checked state" end when
+                                            consider ui-provider-event-text with snapshot
+                                                when Result.Error holding failure then give Result.Error holding failure
+                                                when Result.Ok holding content then begin block
+                                                    variable target as Option of Widget is Option.None
+                                                    when kind-code does not equal 4 then
+                                                        when target-handle is at most 0 then give Result.Error holding "UI event has an invalid widget target" end when
+                                                        set target to Option.Some holding (build nil.std.ui.Widget with handle being target-handle)
+                                                    end when
+                                                    give Result.Ok holding (build nil.std.ui.Event with kind being snapshot-kind, window being surface, target being target, content being content, checked being (checked-value equals 1))
+                                                end block
+                                            end consider
+                                        end block
+                                    end consider
+                                end block
+                            end consider
+                        end block
+                    end consider
+                end block
+            end consider
+        end block
+    end consider
+end paragraph
+
+!!! Copy all fields before releasing the provider snapshot, including when a
+!!! getter fails. An empty queue is Option.None, never a public zero handle.
+public poll-event receives surface as Window returns Result of PendingEvent, text begin paragraph
+    consider ui-provider-poll with surface.handle
+        when Result.Error holding failure then give Result.Error holding failure
+        when Result.Ok holding snapshot then begin block
+            when snapshot equals 0 then give Result.Ok holding Option.None end when
+            value copied is ui-copy-event with snapshot, surface
+            value released is ui-provider-release-event with snapshot
+            consider released
+                when Result.Error holding release-failure then begin block
+                    consider copied
+                        when Result.Error holding copy-failure then give Result.Error holding (copy-failure plus "; event release failed: " plus release-failure)
+                        when Result.Ok holding notification then give Result.Error holding release-failure
+                    end consider
+                end block
+                when Result.Ok holding released-status then begin block
+                    consider copied
+                        when Result.Error holding failure then give Result.Error holding failure
+                        when Result.Ok holding notification then give Result.Ok holding (Option.Some holding notification)
+                    end consider
+                end block
+            end consider
+        end block
+    end consider
+end paragraph
+
+public event-for receives notification as Event, control as Widget returns boolean begin paragraph
+    consider notification.target
+        when Option.Some holding target then give target.handle equals control.handle
+        when Option.None then give no
+    end consider
+end paragraph
+
+public is-click receives notification as Event returns boolean begin paragraph
+    consider notification.kind
+        when EventKind.Clicked then give yes
+        when _ then give no
+    end consider
+end paragraph
+
+public is-text-change receives notification as Event returns boolean begin paragraph
+    consider notification.kind
+        when EventKind.TextChanged then give yes
+        when _ then give no
+    end consider
+end paragraph
+
+public is-toggle receives notification as Event returns boolean begin paragraph
+    consider notification.kind
+        when EventKind.Toggled then give yes
+        when _ then give no
+    end consider
+end paragraph
+
+public is-close-request receives notification as Event returns boolean begin paragraph
+    consider notification.kind
+        when EventKind.CloseRequested then give yes
+        when _ then give no
+    end consider
+end paragraph
+
+!!! Synchronization compares the control and model before writing. GTK setters
+!!! also suppress programmatic changed/toggled events to avoid feedback loops.
+public sync-text receives control as Widget, model as TextModel returns Result of boolean, text begin paragraph
+    consider widget-text with control
+        when Result.Error holding failure then give Result.Error holding failure
+        when Result.Ok holding current then begin block
+            when current equals model.content then give Result.Ok holding no end when
+            give set-widget-text with control, model.content
+        end block
+    end consider
+end paragraph
+
+public sync-flag receives control as Widget, model as FlagModel returns Result of boolean, text begin paragraph
+    consider widget-checked with control
+        when Result.Error holding failure then give Result.Error holding failure
+        when Result.Ok holding current then begin block
+            when current equals model.enabled then give Result.Ok holding no end when
+            give set-checked with control, model.enabled
+        end block
+    end consider
+end paragraph
+
+public apply-text-event receives model as TextModel, control as Widget, notification as Event returns boolean begin paragraph
+    when not (is-text-change with notification) or not (event-for with notification, control) then give no end when
+    give update-text-model with model, notification.content
+end paragraph
+
+public apply-flag-event receives model as FlagModel, control as Widget, notification as Event returns boolean begin paragraph
+    when not (is-toggle with notification) or not (event-for with notification, control) then give no end when
+    give update-flag-model with model, notification.checked
+end paragraph

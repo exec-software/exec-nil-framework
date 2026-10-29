@@ -331,6 +331,25 @@ value label as text is consider state
 end consider
 ```
 
+Use an explicit arm block when a statement arm contains its own `when`:
+
+```matrix
+consider state
+    when job-state.Failed holding code then begin block
+        when code is at least 500 then
+            say "retry later"
+        otherwise
+            say "check the request"
+        end when
+    end block
+    otherwise say "ready"
+end consider
+```
+
+`end block` distinguishes a nested conditional from the next pattern arm.
+It creates the ordinary arm scope; `give` still returns from the paragraph.
+The value form of `consider` continues to require one expression per arm.
+
 Switching selects a literal case, then falls through subsequent case bodies
 until `stop switching` or the end. The selector runs once:
 

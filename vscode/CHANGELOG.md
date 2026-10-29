@@ -4,6 +4,11 @@ All notable changes to the NIL Framework VS Code extension are documented here.
 
 ## 1.0.0-rc.1
 
+- Highlight, indent and fold explicit Matrix `begin block` / `end block`
+  consider arms. The `consider` snippet now includes an explicit block so its
+  body can contain nested `when` conditions; `block` remains an ordinary name
+  outside the delimiter phrases.
+
 - Highlight `anything`, `boolean`/`flag`, and `yes`/`no` in Ny and Matrix.
   Infer Matrix Boolean literals for member completion and keep `flag` usable as
   an ordinary binding name outside type positions.

@@ -9,6 +9,7 @@
 #include "matrix_hag_bridge.hpp"
 #include "nil_contract.hpp"
 #include "dynamic_type.hpp"
+#include "ui_intrinsic.hpp"
 #include "numeric_literal.hpp"
 #include "scalar_text.hpp"
 #include "integer_conversion.hpp"
@@ -714,6 +715,9 @@ void VM::beginMemoryProfile() {
 }
 
 bool VM::finishMemoryProfile(const char *status, bool completed) noexcept {
+  // This hook runs at every invocation terminal, even without profiling.
+  // Paused debugger steps retain their UI until completion/reset.
+  ui_.clear();
   if (!memory_profile_started_ || memory_profile_finished_)
     return true;
   memory_profile_finished_ = true;
@@ -4127,6 +4131,63 @@ void VM::executeInstruction(const Instruction &instr) {
             std::string("file.copy: expected source and destination paths"));
         pushStack(result);
       }
+      return;
+    }
+
+    if (lib_name == "intrinsic" && fn_name.rfind("ui.v1.", 0) == 0) {
+      const auto contract = ui::intrinsic(fn_name);
+      if (!contract) throw std::runtime_error("ui: unknown intrinsic '" + fn_name + "'");
+      const auto declared = call_stack_.empty() ? functions_.end()
+          : functions_.find(call_stack_.back().fn_name);
+      if (declared == functions_.end() ||
+          !ui::signature_matches(*contract, declared->second.parameter_types,
+                                 declared->second.return_type) ||
+          instr.args.size() != 4 || ui::abi_type(instr.args[3]) != contract->return_type() ||
+          args.size() != contract->parameters.size())
+        throw std::runtime_error(fn_name + " requires the exact UI ABI " + ui::signature(*contract));
+      if (contract->output != ui::Output::capability) {
+        std::size_t schemas = 0;
+        if (class_metadata_)
+          for (const auto &definition : class_metadata_->enums)
+            if (ui::result_schema_matches(*contract, definition)) ++schemas;
+        if (schemas != 1)
+          throw std::runtime_error(fn_name + " requires the standard Result schema with exact Ok and Error payloads");
+      }
+      for (std::size_t index = 0; index < args.size(); ++index) {
+        const bool valid = contract->parameters[index] == "text"
+            ? std::holds_alternative<std::string>(args[index])
+            : std::holds_alternative<int64_t>(args[index]);
+        if (!valid) throw std::runtime_error(fn_name + " argument " +
+            std::to_string(index + 1) + " requires " + contract->parameters[index]);
+      }
+      auto text_arg = [&](std::size_t index) -> const std::string & {
+        return std::get<std::string>(args[index]);
+      };
+      auto word_arg = [&](std::size_t index) { return std::get<int64_t>(args[index]); };
+      if (contract->output == ui::Output::capability) {
+        pushStack(int64_t(ui::available())); return;
+      }
+      ui::Result result;
+      const auto &op = contract->operation;
+      if (op == "window") result = ui_.window(text_arg(0), word_arg(1), word_arg(2));
+      else if (op == "widget") result = ui_.widget(text_arg(0), word_arg(1), text_arg(2));
+      else if (op == "grid_attach") result = ui_.grid_attach(word_arg(0), word_arg(1), word_arg(2), word_arg(3), word_arg(4), word_arg(5));
+      else if (op == "set_text") result = ui_.set_text(word_arg(0), text_arg(1));
+      else if (op == "read_text") result = ui_.read_text(word_arg(0));
+      else if (op == "set_number") result = ui_.set_number(word_arg(0), text_arg(1), word_arg(2));
+      else if (op == "read_number") result = ui_.read_number(word_arg(0), text_arg(1));
+      else if (op == "activate") result = ui_.activate(word_arg(0));
+      else if (op == "poll") result = ui_.poll(word_arg(0));
+      else if (op == "event_number") result = ui_.event_number(word_arg(0), text_arg(1));
+      else if (op == "event_text") result = ui_.event_text(word_arg(0));
+      else if (op == "release_event") result = ui_.release_event(word_arg(0));
+      else if (op == "close") result = ui_.close(word_arg(0));
+      EnumValue value;
+      value.variant_name = result ? "Result::Ok" : "Result::Error";
+      if (!result) value.payloads.push_back(std::move(result.error));
+      else if (contract->output == ui::Output::text) value.payloads.push_back(std::move(result.text));
+      else value.payloads.push_back(result.number);
+      pushStack(std::move(value));
       return;
     }
 

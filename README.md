@@ -95,6 +95,15 @@ The framework includes:
   workspace snapshot. Compiler-resolved source bindings support Go to Definition
   for local variables, parameters and imported functions across both languages.
   Certified local variables also support references and checked rename.
+- **Tests beside code.** `niltest` discovers compiler-checked test declarations,
+  annotated functions, and suites in Ny and Matrix. Inline test regions can
+  check a function's local state. Cases run in isolated VM or native processes
+  and appear in VS Code's Test Explorer. See the
+  [testing guide](docs/tools/testing.md).
+- **Desktop applications.** The Matrix-authored
+  [`nil.std.ui`](docs/standard-library/ui.md) provides windows, layout containers,
+  standard controls, typed events, and explicit model synchronization. Its first
+  backend uses the optional GTK 4 runtime on Linux, on both execution routes.
 - **Aperture runtime diagnostics.** Memory profiles record runtime allocations,
   frees, retained storage, peaks and source locations for VM and native programs.
   Saved JSON reports support inspection and automated analysis. See
