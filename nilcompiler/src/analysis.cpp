@@ -762,7 +762,9 @@ std::string analysis_session::semantic_json() const {
       std::istringstream words("function fun let const if else elseif then return println while where for in break continue loop do mut import package module namespace using use pub type as end true false match when struct enum trait impl allocate deallocate ref fn mod class abstract virtual override inherits self attempt fault recover raise assert hotreload not test example property generate asm and or _");
       for (std::string word; words >> word;) source.reserved_keys.insert(word);
     }
-    for (const auto *reserved : {"owned", "owned_move", "owned_borrow", "owned_borrow_mut", "parallel_map", "assert", "hotreload"})
+    // Aliases share keyword tokens, so the Matrix canonical-name loop and
+    // Ny's retained list alone do not enumerate every reserved spelling.
+    for (const auto *reserved : {"owned", "owned_move", "owned_borrow", "owned_borrow_mut", "parallel_map", "assert", "hotreload", "mut", "mutable", "ref", "reference"})
       source.reserved_keys.insert(source.language == "matrix" ? matrix::fold_key(reserved) : reserved);
   }
   std::set<std::size_t> unlocated;

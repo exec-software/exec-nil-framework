@@ -670,7 +670,8 @@ std::string fault_stack_type(const std::string &type, const nil_module &module) 
 nil_fault_analysis analyze_fault_body(const nil_function &function,
                                      const nil_module &module,
                                      bool require_schemas,
-                                     bool force_class_validation = false) {
+                                     bool force_class_validation = false,
+                                     const std::unordered_set<std::size_t> *source_returns = nullptr) {
   nil_fault_analysis result;
   result.instructions.resize(function.body.size());
   std::vector<Opcode> ops;
@@ -1135,8 +1136,13 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     case Opcode::RET:
       if (!state.regions.empty() || !state.saved.empty() || state.pending)
         fail("return bypasses live fault state", pc);
-      if (args.empty() && state.stack.size() != (function.return_type == "void" ? 0U : 1U))
-        fail("return has the wrong operand stack height", pc);
+      if (args.empty()) {
+        const std::size_t expected = function.return_type == "void" ? 0U : 1U;
+        const bool compiler_source_return = source_returns && source_returns->count(pc);
+        if (state.stack.size() < expected ||
+            (state.stack.size() != expected && !compiler_source_return))
+          fail("return has the wrong operand stack height", pc);
+      }
       if (args.empty() && function.return_type != "void") {
         require_complete(state.stack.back()); check_class_argument(function.return_type, state.stack.back());
       }
@@ -1178,6 +1184,56 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
 nil_fault_analysis analyze_nil_fault_function(const nil_function &function,
                                               const nil_module &module) {
   return analyze_fault_body(function, module, true);
+}
+
+void finalize_nil_switch_returns(nil_module &module) {
+  for (auto &function : module.functions) {
+    std::unordered_set<std::size_t> source_returns;
+    for (std::size_t pc = 0; pc < function.body.size(); ++pc) {
+      const auto &instruction = function.body[pc];
+      if (instruction.opname == "RET" && instruction.args.size() == 1 &&
+          instruction.args.front() == nil_switch_return_marker)
+        source_returns.insert(pc);
+    }
+    if (source_returns.empty()) continue;
+    // Analyze a complete CFG with ordinary RET spelling. Only these exact
+    // compiler-owned source sites may temporarily carry extra operands;
+    // generated returns, underflow, region state, and class provenance retain
+    // their normal validation. No executable loader invokes this preparation.
+    auto prepared = function;
+    for (const auto pc : source_returns) prepared.body[pc].args.clear();
+    const auto analysis = analyze_fault_body(prepared, module, true, true, &source_returns);
+    std::vector<nil_instruction> body;
+    body.reserve(prepared.body.size());
+    for (std::size_t pc = 0; pc < prepared.body.size(); ++pc) {
+      const auto &instruction = prepared.body[pc];
+      const auto &state = analysis.instructions[pc];
+      if (source_returns.count(pc) && state.reachable) {
+        const std::size_t expected = function.return_type == "void" ? 0 : 1;
+        const auto surplus = state.stack_height - expected;
+        if (surplus) {
+          const auto saved = "$nil.switch.return." + std::to_string(pc);
+          const auto append = [&](const std::string &op, std::vector<std::string> args = {}) {
+            auto adjustment = instruction;
+            adjustment.opname = op;
+            adjustment.args = std::move(args);
+            body.push_back(std::move(adjustment));
+          };
+          // Cleanup has already completed. The old fault-protected operand
+          // prefix may now be retired, preserving the typed return value.
+          if (expected) append("STORE_LOCAL", {saved});
+          for (std::size_t count = 0; count < surplus; ++count) append("POP");
+          if (expected) append("LOAD_LOCAL", {saved});
+        }
+      }
+      body.push_back(instruction);
+    }
+    prepared.body = std::move(body);
+    // Assert the exact executable contract after finalization, including
+    // functions that would otherwise not need fault/class validation.
+    (void)analyze_fault_body(prepared, module, true, true);
+    function.body = std::move(prepared.body);
+  }
 }
 
 void validate_nil_fault_contract(const nil_module &module) {

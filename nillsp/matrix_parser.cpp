@@ -355,7 +355,7 @@ class Indexer {
             ++cursor;
             if (!at("is")) return;
             ++cursor;
-            skip_expression();
+            skip_expression(scope, parent);
             const auto end = tokens[cursor - 1].end;
             for (const auto& name : names) {
                 if (name.text == "_") continue;
@@ -394,10 +394,10 @@ class Indexer {
                 if (at("receives")) parameters(cursor + 1, returns, body, id);
                 cursor = begin + 2;
                 block(body, id, {}, "paragraph");
-            } else skip_expression();
-        } else if (at("consider") || at("when")) {
+            } else skip_expression(scope, parent);
+        } else if (at("consider") || at("when") || switch_start()) {
             control(scope, parent);
-        } else skip_expression();
+        } else skip_expression(scope, parent);
         const auto end = cursor > expression ? tokens[cursor - 1].end : name.end;
         out.symbols[id].range.end = range(end, end).end;
         out.symbols[id].detail = text.substr(tokens[start].start, end - tokens[start].start);
@@ -425,10 +425,21 @@ class Indexer {
         }
         cursor = end;
     }
-    void skip_expression() {
+    bool switch_start() const {
+        if (!at("switch") || cursor + 1 >= tokens.size() ||
+            (cursor > 0 && (tokens[cursor - 1].word == "." || tokens[cursor - 1].word == "::"))) return false;
+        const auto& next = tokens[cursor + 1];
+        static const std::set<std::string> continuation = {
+            "as", "is", "with", "plus", "times", "over", "remainder", "equals", "does",
+            "and", "or", "becomes", "at", "receives", "returns", "begin", "then", "give", "otherwise", "end"};
+        return (next.name && !continuation.count(next.word)) || next.word == "<number>" ||
+            next.word == "<text>" || next.word == "(" || next.word == "[";
+    }
+    void skip_expression(int scope, int parent) {
         int nested = 0;
         while (cursor < tokens.size()) {
             if (nested == 0 && (at("\n") || at("end") || at("otherwise"))) break;
+            if (switch_start()) { control(scope, parent); continue; }
             if (at("when") || at("consider")) ++nested;
             if (at("end") && (at("when", 1) || at("consider", 1))) {
                 if (nested == 0) break;
@@ -450,10 +461,16 @@ class Indexer {
             }
         }
         if (keyword.word == "when") {
-            while (cursor < tokens.size() && !at("then") && !at("give") && !at("\n")) ++cursor;
+            while (cursor < tokens.size() && !at("then") && !at("give") && !at("\n")) {
+                if (switch_start()) control(scope, parent);
+                else ++cursor;
+            }
             if (at("then") || at("give")) ++cursor;
         } else if (keyword.word != "attempt") {
-            while (cursor < tokens.size() && !at("\n") && !at("end")) ++cursor;
+            while (cursor < tokens.size() && !at("\n") && !at("end")) {
+                if (switch_start()) control(scope, parent);
+                else ++cursor;
+            }
         }
         block(body, -1, {}, keyword.word, parent);
     }
@@ -483,12 +500,17 @@ class Indexer {
             }
             if ((at("otherwise") && ending == "when") ||
                 ((at("when") || at("otherwise")) && ending == "consider") ||
+                ((at("case") || at("otherwise")) && ending == "switch" &&
+                 (cursor == 0 || (tokens[cursor - 1].word != "." && tokens[cursor - 1].word != "::"))) ||
                 ((at("caught") || at("always")) && ending == "attempt")) {
                 const auto arm = tokens[cursor++];
                 const auto scope_parent = out.scopes[scope].parent;
                 finish(scope, -1, arm.start);
                 scope = child(scope_parent, arm.start);
-                if (ending == "attempt" && arm.word == "caught") {
+                if (ending == "switch" && arm.word == "case") {
+                    while (cursor < tokens.size() && !at("then") && !at("\n")) ++cursor;
+                    if (at("then")) ++cursor;
+                } else if (ending == "attempt" && arm.word == "caught") {
                     const auto type_begin = cursor;
                     while (cursor < tokens.size() && !at("as") && !at("\n")) ++cursor;
                     const auto type = joined(type_begin, cursor);
@@ -566,11 +588,11 @@ class Indexer {
                 }
             } else if (declaration(scope, outline_parent, owner, ending)) {
                 // declaration consumed its header/body
-            } else if (at("when") || at("repeat") || at("consider") || at("attempt")) control(scope, outline_parent);
+            } else if (at("when") || at("repeat") || at("consider") || at("attempt") || switch_start()) control(scope, outline_parent);
             else {
                 // Unknown/import/annotation statements are intentionally not
                 // scanned as declarations. Their words may resemble names.
-                skip_expression();
+                skip_expression(scope, outline_parent);
             }
             if (cursor == start) ++cursor;
         }
@@ -729,7 +751,9 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
         kind = 25; // TypeParameter: language type vocabulary
     } else if (last == "override") words = {"integer", "long", "byte", "double"};
     else if (last == "begin") words = {"paragraph", "record", "class", "choice", "contract", "implementation", "extension", "test", "text"};
-    else if (last == "end") words = {"paragraph", "record", "class", "choice", "contract", "implementation", "extension", "test", "when", "repeat", "consider", "attempt"};
+    else if (last == "end") words = {"paragraph", "record", "class", "choice", "contract", "implementation", "extension", "test", "when", "repeat", "consider", "switch", "attempt"};
+    else if (last == "stop") words = {"repeating", "switching"};
+    else if (last == "switching") words = {"with"};
     else if (last == "repeat") words = {"while", "for each", "for", "forever"};
     else if (last == "bitwise") words = {"and", "or", "xor", "not"};
     else if (last == "shifted") words = {"left by", "right by"};
@@ -746,8 +770,8 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
         words = {"to"};
     }
     else if (last == "value" || last == "variable" || last == "mutable" || last == "constant" || last == "field" || last == "book") return {};
-    else if (last.empty() || last == "\n") words = {"value", "variable", "constant", "set", "say", "give", "evaluate", "when", "otherwise", "repeat", "consider", "attempt", "caught", "always", "raise", "append", "allocate", "release", "own", "borrow", "move", "stop repeating", "continue repeating", "book", "library", "read", "cite", "public", "note", "context", "end"};
-    else words = {"true", "false", "nothing", "build", "my", "the length of", "the paragraph", "anonymous", "formatted", "quote", "newline", "tab", "negative", "plus", "minus", "times", "over", "remainder", "equals", "does not equal", "is less than", "is greater than", "is at least", "is at most", "and", "or", "not", "bitwise", "shifted", "becomes", "with", "receives", "returns", "begin"};
+    else if (last.empty() || last == "\n") words = {"value", "variable", "constant", "set", "say", "give", "evaluate", "when", "otherwise", "repeat", "consider", "switch", "case", "attempt", "caught", "always", "raise", "append", "allocate", "release", "own", "borrow", "move", "stop repeating", "stop switching", "continue repeating", "book", "library", "read", "cite", "public", "note", "context", "end"};
+    else words = {"true", "false", "nothing", "build", "my", "the length of", "the paragraph", "anonymous", "formatted", "switch", "quote", "newline", "tab", "negative", "plus", "minus", "times", "over", "remainder", "equals", "does not equal", "is less than", "is greater than", "is at least", "is at most", "and", "or", "not", "bitwise", "shifted", "becomes", "with", "receives", "returns", "begin"};
     std::vector<MatrixKeyword> result;
     const Range edit{NyParser::position_at(text, offsets, begin), NyParser::position_at(text, offsets, end)};
     for (const auto& word : words)

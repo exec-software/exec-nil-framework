@@ -240,6 +240,10 @@ private:
   std::shared_ptr<ny::ast_stmt> parse_when_statement();
   std::shared_ptr<ny::ast_stmt> parse_repeat();
   std::shared_ptr<ny::ast_stmt> parse_consider_statement();
+  bool is_switch_start() const;
+  std::vector<ny::ast_switch_arm> parse_switch_arms();
+  std::shared_ptr<ny::ast_stmt> parse_switch_statement();
+  ny::ast_expr_ptr parse_switch_expression();
   std::shared_ptr<ny::ast_stmt> parse_allocate();
   std::shared_ptr<ny::ast_stmt> parse_release();
   // A 'when' arm pattern: a literal, a bare binding, '_' or

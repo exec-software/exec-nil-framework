@@ -194,7 +194,9 @@ in Ny. There is no implicit last-expression result.
 | `for x in items ... end for` | `repeat for each x in items ... end repeat` |
 | `for i in range(0, 10) ... end for` | `repeat for i from 0 to 10 ... end repeat` |
 | `loop ... end loop` | `repeat forever ... end repeat` |
-| `break` | `stop repeating` |
+| `break` targeting a loop | `stop repeating` |
+| `break` targeting a switch | `stop switching` |
+| `break value` in a switch expression | `stop switching with value` |
 | `continue` | `continue repeating` |
 | `match v ... end match` | `consider v ... end consider` |
 | `Pattern -> expr` (statement) | `when Pattern then <statements>` |
@@ -204,6 +206,10 @@ in Ny. There is no implicit last-expression result.
 | `Enum.Variant(binding) ->` | `when Enum.Variant holding binding then` |
 | `let x = if c then a else b end if` | `value x is when c give a otherwise give b end when` |
 | `match` as expression | `consider` as expression |
+| `switch v ... end switch` or `switch v { ... }` | `switch v ... end switch` |
+| `case literal:` | `case literal then` |
+| `default:` | `otherwise` |
+| `switch` as expression | `switch` as expression |
 
 Every loop form opens with `repeat` and closes with `end repeat`, so a loop
 terminator can never be mismatched to the wrong loop kind. `from 0 to 10`
@@ -223,6 +229,13 @@ parses. The residual cost is real and is stated in
 *target* of a `give` depends on whether an enclosing `consider` is in value
 position, which is the same hazard as `return` inside a closure in other
 languages.
+
+A switch has automatic fallthrough and statement bodies in both value and
+statement positions. `stop switching with value` supplies a switch result;
+`give` inside its cases remains a paragraph return. Its default is mandatory
+in value position. Ny's `break` targets the nearest loop or switch, while
+Matrix's explicit `stop switching` can cross an intervening loop. See the
+[switch reference](../../docs/language-reference/switch.md).
 
 Guards use `provided`, not a second `when`, so an arm and its guard are
 lexically distinct. A `consider` used as an expression requires a final

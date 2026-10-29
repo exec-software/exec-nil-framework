@@ -271,11 +271,13 @@ statement       = binding_decl
                 | when_stmt
                 | repeat_stmt
                 | consider_stmt
+                | switch_stmt
                 | attempt_stmt
                 | memory_stmt
                 | 'sleep' 'for' expression 'milliseconds'
                 | assembly_stmt
                 | 'stop' 'repeating'
+                | 'stop' 'switching' [ 'with' expression ]
                 | 'continue' 'repeating' ;
 
 (* The parenthesized destructuring form is local only. *)
@@ -311,6 +313,19 @@ pattern         = '(' pattern { ',' pattern } [ ',' ] ')'
                 | literal | signed_number | ( 'negative' | 'minus' ) number_literal
                 | type_name '.' identifier [ 'holding' identifier ]
                 | identifier ;          (* a bare identifier binds the value *)
+
+(* NIL-0021: both forms have statement bodies and automatic fallthrough.
+ * The value form requires one otherwise and a result on every normal exit.
+ * stop switching with yields the nearest switch expression; give still
+ * returns from the paragraph. switch/case/switching are contextual words. *)
+switch_stmt     = 'switch' expression { switch_case } 'end' 'switch' ;
+switch_expr     = 'switch' expression { switch_case } 'end' 'switch' ;
+switch_case     = 'case' switch_label 'then' { statement }
+                | 'otherwise' { statement } ;
+switch_label    = integer_literal | string_literal | 'true' | 'false'
+                | ( '-' | 'negative' | 'minus' ) integer_literal
+                | type_name '.' identifier ; (* payload-free choice variants *)
+integer_literal = digit { digit } | ('0x' | '0X') hex_digit { hex_digit } ;
 
 attempt_stmt    = 'attempt' { statement } { handler } [ cleanup ]
                   'end' 'attempt' ;
@@ -393,6 +408,7 @@ primary         = literal
                 | 'now' 'in' 'milliseconds'
                 | when_expr
                 | consider_expr
+                | switch_expr
                 | anonymous_paragraph ;
 
 (* Value form: a branch says 'give'.  'then' is NOT accepted here, and 'give'

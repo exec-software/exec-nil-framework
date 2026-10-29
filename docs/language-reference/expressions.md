@@ -178,6 +178,13 @@ raw NIL fails explicitly. Statement-form matches have a separate contract.
 `do` blocks do not provide expression values. Use an explicitly returning
 function when a computation needs several statements.
 
+### Switch Expression
+
+`switch` can run statements and fall through cases before producing a value.
+Ny uses `break value`; Matrix uses `stop switching with value`. Every normal
+exit must provide a compatible result, and a default is required. See the
+[switch reference](switch.md) for both surfaces and their exit rules.
+
 ## Formatted text
 
 An explicit formatted string evaluates expressions inside braces:

@@ -338,5 +338,30 @@
       "${0}",
       "@endif"
     ]
+  },
+  "Switch statement": {
+    "prefix": "switch",
+    "description": "Dispatch once, then fall through until stop switching or another exit",
+    "body": [
+      "switch ${1:subject}",
+      "    case ${2:1} then",
+      "        ${3:say \"matched\"}",
+      "        stop switching",
+      "    otherwise",
+      "        ${0}",
+      "end switch"
+    ]
+  },
+  "Switch expression": {
+    "prefix": "switch-value",
+    "description": "Produce a value with stop switching with value",
+    "body": [
+      "switch ${1:subject}",
+      "    case ${2:1} then",
+      "        stop switching with ${3:10}",
+      "    otherwise",
+      "        stop switching with ${4:0}",
+      "end switch"
+    ]
   }
 }

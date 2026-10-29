@@ -56,6 +56,8 @@ SOFT_WORDS = {
     "one", "zero", "optional", "exactly", "between", "fewest", "ascii", "digit",
     "digits", "letters", "whitespace", "any", "character", "through", "start",
     "input", "either",
+    # NIL-0021 switch vocabulary is contextual, including explicit exits.
+    "switch", "case", "switching",
 }
 
 # Lowercase markers inside a numeric token are not standalone word terminals.

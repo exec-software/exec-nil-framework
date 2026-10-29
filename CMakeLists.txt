@@ -549,6 +549,13 @@ if(BUILD_TESTING)
                     --interpreter $<TARGET_FILE:nilinterpreter>
                     --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(matrix.annotations PROPERTIES LABELS "matrix;reflection;routes" TIMEOUT 180)
+        add_test(NAME nil.switch-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/switch_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --debugger $<TARGET_FILE:nildebugger>
+                    --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.switch-contract PROPERTIES LABELS "matrix;ny;routes;typecheck;debugger" TIMEOUT 240)
         # Matrix execution conformance: each page lowers to NIL and runs on the
         # interpreter with exact expected output. Acceptance is covered by the
         # lexer test; this checks that the lowering means what the surface says.

@@ -275,6 +275,20 @@ private:
       ordinary_binding(value.name);
     for (const auto &child : value.subpatterns) pattern(child);
   }
+  void switch_cases(ast_expr *target, std::vector<ast_switch_arm> &arms, int line) {
+    expr(target);
+    const auto before = state_;
+    for (auto &arm : arms) {
+      state_ = before;
+      expr(arm.label.get());
+      scoped_stmt(arm.body.get());
+      // A case can be entered directly or through the preceding case. Until
+      // ownership has a general control-flow join, require outer owners to
+      // remain live on both paths. Case-local owners/borrows still end here.
+      require_invariant(before, arm.line ? arm.line : line, "switch");
+    }
+    state_ = before;
+  }
   void stmt(ast_stmt *statement) {
     if (!statement) return;
     switch (statement->kind) {
@@ -291,6 +305,8 @@ private:
       break;
     case ast_node_kind::return_stmt_node:
       expr(static_cast<ast_return_stmt &>(*statement).value.get()); break;
+    case ast_node_kind::break_stmt_node:
+      expr(static_cast<ast_break_stmt &>(*statement).value.get()); break;
     case ast_node_kind::if_stmt_node: {
       auto &value = static_cast<ast_if_stmt &>(*statement);
       expr(value.condition.get());
@@ -328,6 +344,11 @@ private:
         join(merged, state_); merged = state_;
       }
       state_ = merged; break;
+    }
+    case ast_node_kind::switch_stmt_node: {
+      auto &value = static_cast<ast_switch_stmt &>(*statement);
+      switch_cases(value.target.get(), value.arms, value.line);
+      break;
     }
     case ast_node_kind::attempt_stmt_node: {
       auto &value = static_cast<ast_attempt_stmt &>(*statement);
@@ -452,6 +473,11 @@ private:
         stmt(arm.body.get()); leave(); join(merged, state_); merged = state_;
       }
       state_ = merged; break;
+    }
+    case ast_node_kind::switch_expr_node: {
+      auto &value = static_cast<ast_switch_expr &>(*expression);
+      switch_cases(value.target.get(), value.arms, value.line);
+      break;
     }
     case ast_node_kind::lambda_expr_node: {
       auto &value = static_cast<ast_lambda_expr &>(*expression);
