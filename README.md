@@ -80,7 +80,9 @@ The framework includes:
   splitting and literal replacement.
 - **A shared standard library.** `nil.std.*` provides collections, text,
   mathematics, binary I/O, diagnostics, and reflection, alongside SQLite and
-  PostgreSQL access. Existing `ny.lang.*` imports remain compatible aliases.
+  PostgreSQL access. [NILData](docs/standard-library/nildata.md) provides
+  structured data with prose-style blocks, exact numeric values, one array type
+  and checked JSON interchange. Existing `ny.lang.*` imports remain aliases.
 - **Interpreted and native execution.** The toolchain supports NIL
   interpretation, LLVM JIT and ahead-of-time compilation, and separate
   assembly and linking through `nilassembler` and `nillinker`.

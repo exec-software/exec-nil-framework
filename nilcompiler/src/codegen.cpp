@@ -4357,7 +4357,8 @@ public:
               raw_ret = *fn_decl_for_intrinsic_check->return_type;
             }
             if (!raw_ret.empty() && raw_ret != "void") {
-              if (intrinsic_name_from_decl.rfind("regex.", 0) == 0) {
+              if (intrinsic_name_from_decl.rfind("regex.", 0) == 0 ||
+                  intrinsic_name_from_decl.rfind("nildata.", 0) == 0) {
                 ret_type_str = canonical_nil_type_name(raw_ret);
               } else if (is_declared_enum_type(cg_, raw_ret)) {
                 // Intrinsics return typed managed enum values. Their register
@@ -6542,7 +6543,8 @@ codegen::assemble_module(const ast_program &program,
           call.args.push_back(std::to_string(fn_decl.params.size()));
 
           std::string ret_type_str = "void";
-          if (intrinsic_name.rfind("regex.", 0) == 0) {
+          if (intrinsic_name.rfind("regex.", 0) == 0 ||
+              intrinsic_name.rfind("nildata.", 0) == 0) {
             ret_type_str = canonical_nil_type_name(fn.return_type);
           } else if (is_declared_enum_type(*this, fn.return_type)) {
             ret_type_str = canonical_nil_type_name(fn.return_type);

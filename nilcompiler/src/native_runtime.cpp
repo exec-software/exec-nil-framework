@@ -3,6 +3,7 @@
 #include "integer_conversion.hpp"
 #include "memory_profile.hpp"
 #include "pattern_engine.hpp"
+#include "nildata.hpp"
 #include "scalar_text.hpp"
 
 #include "secure_file_io.hpp"
@@ -1110,6 +1111,25 @@ const char *nyrt_read_line() noexcept {
 }
 
 void nyrt_flush_stdout() noexcept { std::fflush(stdout); }
+
+void *nyrt_nildata_v1_request(const char *operation, const char *source,
+                              const char *argument, std::int64_t index) noexcept {
+  try {
+    const auto result = nil::data::request(operation ? operation : "",
+        source ? source : "", argument ? argument : "", index);
+    auto *array = nyrt_array_new(NYRT_ARRAY_TEXT,
+                                 static_cast<std::int64_t>(result.size()));
+    if (!array) nyrt_fail("NIL native runtime error: NILData result allocation failed\n");
+    for (std::size_t i = 0; i < result.size(); ++i) {
+      const auto *text = own_string(result[i]);
+      if (!text || !nyrt_array_set(array, NYRT_ARRAY_TEXT, static_cast<std::int64_t>(i),
+                                   reinterpret_cast<std::uintptr_t>(text)))
+        nyrt_fail("NIL native runtime error: NILData result allocation failed\n");
+    }
+    return array;
+  } catch (...) {}
+  nyrt_fail("NIL native runtime error: NILData request failed\n");
+}
 
 const char *nyrt_regex_validate(const char *pattern) noexcept {
   try {

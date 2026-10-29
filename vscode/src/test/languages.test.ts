@@ -76,3 +76,21 @@ test("debug launches compile both source frontends but accept precompiled NIL di
   assert.equal(debugProgramKind("main.mat.backup"), undefined);
   assert.deepEqual(compilerProblemMatchers, ["$nilcompiler", "$matrixcompiler"]);
 });
+
+test("NILData stays outside analysis, compiler tasks, and source debugging", () => {
+  for (const source of ["settings.nildata", "settings.NILDATA"]) {
+    const absolute = path.resolve(source);
+    assert.equal(sourceLanguage(source), undefined);
+    assert.equal(debugProgramKind(source), undefined);
+    assert.equal(taskSourcePath(absolute, undefined), undefined);
+    for (const language of ["nildata", "ny", "matrix"]) {
+      for (const scheme of ["file", "untitled"]) {
+        const data = document(absolute, language, scheme);
+        assert.equal(savedSourcePath(data), undefined);
+        assert.equal(analysisSourcePath(data), undefined);
+        assert.equal(taskSourcePath("${file}", data), undefined);
+      }
+    }
+  }
+  assert.equal(languageDocumentSelector.some(item => item.language === "nildata"), false);
+});

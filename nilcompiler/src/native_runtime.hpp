@@ -116,6 +116,11 @@ void nyrt_write_stderr(const char *text, std::int32_t newline) noexcept;
 const char *nyrt_read_line() noexcept;
 void nyrt_flush_stdout() noexcept;
 
+// NILData v1 returns managed array<text> [error, payload]. An empty error
+// denotes success; no process-global document handles or borrowed text escape.
+void *nyrt_nildata_v1_request(const char *operation, const char *source,
+                              const char *argument, std::int64_t index) noexcept;
+
 // Regex results are [status, start0, length0, ...], with absent captures -1/-1.
 // Status: 0 no match, 1 match, 2 pattern, 3 offset, 4 budget, 5 engine error.
 const char *nyrt_regex_validate(const char *pattern) noexcept;

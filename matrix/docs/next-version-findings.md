@@ -656,7 +656,7 @@ on the native routes. The ordering below favors the 3D validation consumer.
 | 1 | Native application-data storage | F07 remains the prerequisite for arrays of records and nested arrays. Native array element support also excludes `f32`. Vertex records and many generic collections need compiler/runtime work, not just new STL declarations. |
 | 2 | Predictable buffers | [`vec.with_capacity`](../../nilstd/src/collections/vector.ny) ignores its argument; `capacity()` reports backing-array length. Implement actual reservation and resizing, fresh clone/subrange and append-range operations, then checked slices/views. A type-checker recognition of `resize` is not an implemented library contract. |
 | 3 | Collections that scale | [`HashMap`](../../nilstd/src/collections/hash_map.ny) stores hashes but still scans entries. [`map`](../../nilstd/src/collections/map.ny) explicitly uses linear storage. [`queue.dequeue`](../../nilstd/src/collections/queue.ny) removes index zero and shifts the tail. Add bucketed hashing and a ring queue/deque with measured growth and collision coverage. |
-| 4 | Strict serialization | [`NyData`](../../nilstd/src/nydata/parser.ny) can return partially parsed objects/lists at EOF, skip child errors, and return a first value without validating the remaining input. Add checked parsing, source locations, input/depth limits, and malformed-input fixtures. JSON is experimental; its current Unicode escape handling must be repaired before promotion. |
+| 4 | Strict serialization | The former NyData parser could return partially parsed objects/lists at EOF, skip child errors, and return a first value without validating the remaining input. Add checked parsing, source locations, input/depth limits, and malformed-input fixtures. The old experimental JSON module also lacked Unicode correctness. Superseded by F67 and the shared NILData engine. |
 | 5 | Numerically robust math | F27 adds scaled norms, checked normalization, and finite-value helpers to [`vec2`/`vec3`](../../nilstd/src/math/vector.ny). Interpolation and relative-plus-absolute comparison remain gaps; existing `approx_eq` uses absolute tolerance. Dot/cross products and squared lengths still use ordinary arithmetic. |
 | 6 | Reusable sequence algorithms | `vec.map`, `vec.filter`, and container-specific iterators exist. A common iterator contract, sequence zip/fold/chunks/windows, and comparator/key-based sorting remain gaps. Existing stable numeric/text sorts and checked copy/fill/gather should be reused. |
 | 7 | Asset binary and text utilities | Extend checked integer binary helpers with floating-point encoding and cursor readers. Add an efficient text builder, formatting, and explicitly defined UTF-8 operations; current text utilities are predominantly byte/ASCII based. The experimental builder currently concatenates on append, so promotion alone would not provide amortized growth. |
@@ -2155,3 +2155,67 @@ analyzer-defined annotation schemas, and documentation in hover/signature help
 need separate contracts. Preprocessor directives remain distinct from
 declaration metadata. The detailed scope is in
 [NIL-0020](../../docs/design/NIL-0020-declaration-annotations.md).
+
+## NILData migration — 2026-10-26
+
+### F67 — Serialization needs one model and full-input validation
+
+**Observation:** The compiler NyData converter represented arrays as numbered
+objects and guessed numbers/booleans/null from untyped fields. The library had
+separate list blocks and text-only scalars. Empty arrays, numeric-key objects,
+quoted-looking scalars, large integers and multiline strings could change type
+or content across conversion. Both implementations accepted incomplete input;
+child errors and trailing values could be silently dropped.
+
+**Implemented:** Replace both parsers with the bounded shared NILData v1 engine
+and `nil.std.nildata`. Arrays have one explicit kind. Quoted text, exact numeric
+tokens, booleans and null preserve their types. Full-input validation rejects
+invalid UTF-8, duplicate keys, bad escapes/numbers and incomplete or mismatched
+blocks. The checked library and CLI use the same engine on VM/native routes;
+legacy import is explicit and preserves ambiguous fields as text. The retired
+`--to-nydata` command diagnoses the replacement. See
+[NIL-0017](../../docs/design/NIL-0017-nildata.md).
+
+**Remaining friction:** The initial `Value` API reparses and copies its encoded
+document for each operation. Recursive native value layouts, streaming readers,
+comment-preserving edits, schemas, structured diagnostic paths and constant-time
+access remain future work. Encoded U+0000 round-trips, but extracting embedded
+NUL into runtime text is explicitly rejected on both routes. This fixes format
+ambiguity without claiming native text is length-aware or arbitrary record
+arrays are implemented.
+
+The quarantined `nilaix` crash-report experiment also labels its INI-like
+`.nycrash` payloads as NyData. Its format is distinct from both legacy block
+formats and NILData 1; migration must update its external consumer together.
+It is not shipped in the SDK. The source and manuals now identify that boundary.
+
+
+### F68 — Decoded text must retain intentional outer quotes
+
+**Observation:** The Ny lexer already decoded string literal delimiters and
+escapes, but the parser stripped a second pair of quotes whenever the decoded
+value itself began and ended with a quote. A string containing a JSON text value
+therefore lost its JSON delimiters before reaching NILData. Matrix did not have
+that parser path.
+
+**Implemented:** Keep the lexer's decoded string value unchanged. Regression
+coverage includes text deliberately wrapped in quotes and NILData scalar-text
+round trips on VM and native routes.
+
+NILData CLI conversion also now uses the existing bounded regular-file reader.
+A byte limit alone did not prevent opening a FIFO from blocking indefinitely;
+special files and symlinks now fail before reading.
+
+### F69 — Packaging tools need their own dependency checks
+
+**Observation:** GitHub reported GHSA-xcx6-jx8p-x3h5 in the VSIX packaging
+tool's transitive `@azure/msal-node` 5.6.0 dependency. This development dependency
+is excluded from the installed extension bundle, but still needs a patched
+version for packaging/publishing environments.
+
+**Implemented:** A scoped npm override selects MSAL 7.1.1 and its required common
+library. Clean installation, the dependency audit, extension tests and local
+VSIX packaging pass. The packaging check blocks credential construction and
+network access; it does not claim validation of credentialed Azure publishing.
+Remove the temporary override once the upstream dependency range admits a
+patched version. See the [upstream advisory](https://github.com/AzureAD/microsoft-authentication-library-for-js/security/advisories/GHSA-xcx6-jx8p-x3h5).

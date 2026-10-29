@@ -1,7 +1,7 @@
 {
   "name": "ny-language-support",
   "displayName": "NIL Framework (Ny + Matrix)",
-  "description": "Ny and Matrix language support, completion, and native/VM toolchain integration for the NIL Framework.",
+  "description": "Ny and Matrix language support, NILData highlighting, and native/VM toolchain integration for the NIL Framework.",
   "version": "1.0.0-rc.1",
   "publisher": "exec-software",
   "license": "MIT",
@@ -27,7 +27,8 @@
     "matrix",
     "systems programming",
     "language server",
-    "lsp"
+    "lsp",
+    "nildata"
   ],
   "main": "./dist/extension.js",
   "extensionKind": [
@@ -192,6 +193,17 @@
           ".mat"
         ],
         "configuration": "./language-configuration.matrix.json"
+      },
+      {
+        "id": "nildata",
+        "aliases": [
+          "NILData",
+          "nildata"
+        ],
+        "extensions": [
+          ".nildata"
+        ],
+        "configuration": "./language-configuration.nildata.json"
       }
     ],
     "grammars": [
@@ -216,6 +228,11 @@
         "tokenTypes": {
           "meta.embedded.expression.matrix": "other"
         }
+      },
+      {
+        "language": "nildata",
+        "scopeName": "source.nildata",
+        "path": "./syntaxes/nildata.tmLanguage.json"
       }
     ],
     "snippets": [
@@ -569,5 +586,10 @@
         "url": "./schemas/nil.project.schema.json"
       }
     ]
+  },
+  "overrides": {
+    "@azure/identity": {
+      "@azure/msal-node": "7.1.1"
+    }
   }
 }
