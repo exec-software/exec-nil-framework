@@ -6,6 +6,7 @@
 #include "matrix_parser.hpp"
 #include "lexer.hpp"
 #include "../../common/strict_json.hpp"
+#include "../../common/content_digest.hpp"
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
@@ -155,6 +156,27 @@ bool analysis_session::workspace_source_exists(const std::string &path) const {
     // candidate must not hide a valid source in a subsequent search root.
     return false;
   }
+}
+
+void analysis_session::record_dependency(const std::string &path, const std::string &contents) {
+  record_dependency_digest(path, nil::detail::content_digest(contents));
+}
+
+void analysis_session::record_dependency_digest(const std::string &path, const std::string &digest) {
+  if (path.empty() || path.rfind("nillib://", 0) == 0) return;
+  const auto canonical = analysis_source_identity(path);
+  const auto found = dependencies.find(canonical);
+  if (found != dependencies.end()) {
+    // A source changed between two reads within one analysis. Do not certify
+    // that graph for an incremental cache even if checking happened to pass.
+    if (found->second != digest) dependencies_consistent = false;
+    return;
+  }
+  if (dependencies.size() >= 4096) {
+    dependencies_consistent = false;
+    return;
+  }
+  dependencies.emplace(canonical, digest);
 }
 
 std::optional<std::string> analysis_session::read_workspace_source(const std::string &path) {
@@ -858,6 +880,25 @@ std::string analysis_session::json(bool success) const {
   std::ostringstream out;
   out << "{\"schema\":\"nil.analysis.v1\",\"source\":" << quoted(logical_path)
       << ",\"language\":" << quoted(language) << ",\"success\":" << (success ? "true" : "false")
+      << ",\"dependenciesComplete\":"
+      << (success && dependencies_consistent && !source_stdin && !workspace_stdin &&
+          dependencies.count(primary_path) ? "true" : "false")
+      << ",\"dependencies\":[";
+  bool first_dependency = true;
+  for (const auto &[path, digest] : dependencies) {
+    if (!first_dependency) out << ',';
+    first_dependency = false;
+    out << "{\"path\":" << quoted(path) << ",\"digest\":" << quoted(digest) << '}';
+  }
+  out << "],\"compilerFiles\":[";
+  bool first_compiler_file = true;
+  for (const auto &path : compiler_files) {
+    if (!first_compiler_file) out << ',';
+    first_compiler_file = false;
+    out << quoted(path);
+  }
+  out << "],\"nativeRuntime\":" << (native_runtime ? quoted(*native_runtime) : "null")
+      << ",\"nativeLinker\":" << (native_linker ? quoted(*native_linker) : "null")
       << ",\"diagnostics\":[";
   bool first = true;
   for (const auto &d : diagnostics) {

@@ -8,6 +8,7 @@ import * as vscode from "vscode";
 import { analysisInvocation, AnalysisResult, createByteRangeMapper, maxAnalysisOutputBytes, maxAnalysisSourceBytes,
   parseAnalysisOutput, serializeAnalysisWorkspace } from "./analysisModel";
 import { projectForResource } from "./projectContext";
+import { isProjectFile } from "./projectModel";
 import { analysisSourcePath, languageDocumentSelector, savedSourcePath, sourceLanguage } from "./languages";
 import { expandConfiguredPath } from "./toolchain";
 import { configuredSdkPath, nyConfiguration, resolveConfiguredTool, toolNotFoundMessage } from "./vscodeToolchain";
@@ -91,9 +92,9 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
         this.scheduleAll();
       }
     };
-    const watcher = vscode.workspace.createFileSystemWatcher("**/*.{ny,matrix,mat,json}");
+    const watcher = vscode.workspace.createFileSystemWatcher("**/*.{ny,matrix,mat,nildata,json,yaml,yml}");
     const changed = (uri: vscode.Uri) => {
-      if (/\.(ny|matrix|mat)$/i.test(uri.fsPath) || path.basename(uri.fsPath) === "nil.project.json") this.scheduleAll();
+      if (/\.(ny|matrix|mat)$/i.test(uri.fsPath) || isProjectFile(uri.fsPath)) this.scheduleAll();
     };
     this.subscriptions.push(watcher, watcher.onDidChange(changed), watcher.onDidCreate(changed), watcher.onDidDelete(changed),
       vscode.languages.registerCodeActionsProvider(languageDocumentSelector, this, {
@@ -119,17 +120,17 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
       }),
       vscode.commands.registerCommand("ny.showAnalysisOutput", () => this.showOutput()),
       vscode.workspace.onDidOpenTextDocument(document => {
-        if (this.supported(document) || path.basename(document.uri.fsPath) === "nil.project.json") this.scheduleAll();
+        if (this.supported(document) || isProjectFile(document.uri.fsPath)) this.scheduleAll();
       }),
       vscode.workspace.onDidChangeTextDocument(event => {
-        if (this.supported(event.document) || path.basename(event.document.uri.fsPath) === "nil.project.json") this.scheduleAll();
+        if (this.supported(event.document) || isProjectFile(event.document.uri.fsPath)) this.scheduleAll();
       }),
       // A saved import can affect any open entry document.
       vscode.workspace.onDidSaveTextDocument(document => {
-        if (this.supported(document) || path.basename(document.uri.fsPath) === "nil.project.json") this.scheduleAll();
+        if (this.supported(document) || isProjectFile(document.uri.fsPath)) this.scheduleAll();
       }),
       vscode.workspace.onDidCloseTextDocument(document => {
-        if (this.supported(document) || path.basename(document.uri.fsPath) === "nil.project.json") {
+        if (this.supported(document) || isProjectFile(document.uri.fsPath)) {
           this.invalidate(document.uri); this.scheduleAll();
         }
       }),
@@ -340,7 +341,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     const project = projectForResource(context);
     if (project && vscode.workspace.textDocuments.some(document => document.uri.scheme === "file" &&
       path.normalize(document.uri.fsPath) === path.normalize(project.projectFile) && document.isDirty)) {
-      throw new Error("Save nil.project.json before checking sources with its project settings.");
+      throw new Error(`Save ${path.basename(project.projectFile)} before checking sources with its project settings.`);
     }
     const configuredSdk = configuredSdkPath(context);
     const workspaceRoot = this.workspaceRoot(job.document);

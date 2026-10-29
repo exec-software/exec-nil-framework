@@ -2275,3 +2275,34 @@ VSIX packaging pass. The packaging check blocks credential construction and
 network access; it does not claim validation of credentialed Azure publishing.
 Remove the temporary override once the upstream dependency range admits a
 patched version. See the [upstream advisory](https://github.com/AzureAD/microsoft-authentication-library-for-js/security/advisories/GHSA-xcx6-jx8p-x3h5).
+
+## Project builds and configuration — 2026-10-29
+
+### F79 — Build reuse needs compiler input identities, not file extensions
+
+**Observation:** The initial driver recompiled every project after checking it.
+The analyzer's `sources` array contained only imported diagnostic snapshots, so
+it was not a usable build dependency inventory. Scanning only `.ny`/`.matrix`
+files would miss arbitrary-extension textual includes and binary libraries;
+tracking only previously resolved files would miss a newly shadowing import.
+The compiler also combines an executable's import graph into one program, so
+parallel source compilation cannot be added solely in the driver.
+
+**Implemented:** Fresh analysis now reports exact consumed-file SHA-256
+identities and explicit completeness. The driver keeps analysis fresh, then
+reuses a validated artifact when inputs, settings and tools agree. Independent
+project references and VM/native output targets provide bounded parallel work.
+NILData becomes the default project manifest, description and cache notation;
+JSON and a bounded YAML project reader/writer remain compatible. The standard
+library's serialization formats and editor/SDK protocols retain their contracts.
+See [NIL-0022](../../docs/design/NIL-0022-incremental-project-builds.md).
+
+**Remaining friction:** A warm build still parses and checks the complete graph,
+and a single executable remains one compilation job. Reusable library targets
+and finer-grained parallelism need a separate compilation contract. Dependency
+waves can leave workers idle while an unrelated slow project finishes. Output
+lock contention fails instead of waiting for another driver. Filesystem inputs
+and the host linker installation must remain stable during a build; dependency
+digests do not create a filesystem snapshot. NILData conversion also discards
+comments and formatting; schema-aware completion and comment-preserving edits
+remain useful follow-up work for human project authoring.

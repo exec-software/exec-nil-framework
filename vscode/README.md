@@ -44,7 +44,7 @@ the compiler-backed source debugger.
   and guarded quick fixes for the default analyzer. Unreachable statements and
   discarded checked outcomes receive semantic warnings in both languages.
 - Project check, build, and run commands using `nilbuild`, with VM/native targets
-  and a shared `nil.project.json` configuration.
+  and a shared `nil.project.nildata` configuration.
 - A `nildebugger --dap` source-debug adapter with source breakpoints, stepping,
   lexical locals, call stacks, incremental output, and cooperative pause.
 - Commands and a `ny` Task Provider for:
@@ -145,18 +145,35 @@ defaults to `build/cmake`.
 
 ## Projects
 
-Create `nil.project.json` in the project directory. The extension supplies JSON
-completion and validation for the manifest:
+Run `nilbuild init` to create `nil.project.nildata` in the project directory,
+or create the manifest directly. The extension supplies NILData highlighting
+and reads the same configuration as the project driver:
 
-```json
-{
-  "schema": "nil.project.v1",
-  "name": "hello",
-  "entry": "src/main.matrix",
-  "includePaths": ["lib"],
-  "analysis": { "disabledRules": [], "warningsAsErrors": false }
-}
+```nildata
+nildata 1
+object
+  schema is "nil.project.v1"
+  name is "hello"
+  entry is "src/main.matrix"
+  includePaths is an array
+    item is "lib"
+  end array
+  analysis is an object
+    disabledRules is an array
+    end array
+    warningsAsErrors is false
+  end object
+end object
 ```
+
+NILData is preferred for new projects. Legacy `nil.project.json`,
+`nil.project.yaml`, and `nil.project.yml` manifests remain readable; JSON schema
+completion and validation remain available. Discovery selects the nearest
+project directory, preferring NILData, JSON, YAML, then YML within that directory.
+YAML compatibility accepts block mappings and sequences, plain or quoted strings,
+JSON scalar and flow-container syntax, and comments. Tags, anchors, aliases,
+merge keys, multiline scalars, and multiple documents are rejected. All project
+readers use bounded local parsing without running a compiler.
 
 **Check Project**, **Build Project**, and **Build and Run Project** each have VM
 and Native variants in the Command Palette. They select the nearest ancestor
@@ -172,13 +189,16 @@ over file-only `ny.analysis.includePaths` and `ny.compiler.noStdlib` settings.
 Save manifest edits before checking sources. A project's SDK determines tool
 discovery unless an explicit tool setting overrides it.
 
+An optional `projectReferences` array names distinct project manifests relative
+to this file; `nilbuild` orders their builds before this project.
+
 A task can select a manifest and target explicitly:
 
 ```json
 {
   "type": "ny",
   "task": "project-run",
-  "project": "${workspaceFolder}/nil.project.json",
+  "project": "${workspaceFolder}/nil.project.nildata",
   "target": "vm",
   "programArgs": ["hello"]
 }

@@ -115,6 +115,8 @@ def main():
             # Test sibling tool discovery as installed SDKs depend on it.
             assert invoke('check', explicit_tools=False).returncode == 0
             (root / 'build/mixed.nil').unlink()
+            import shutil
+            shutil.rmtree(root / 'build/.nilbuild')
             (root / 'build').rmdir()
         save()
         if args.llvm.lower() in ('on', 'true', '1'):

@@ -7,6 +7,7 @@
 #include "numeric_literal.hpp"
 #include "scalar_text.hpp"
 #include "vm.hpp"
+#include "../../common/content_digest.hpp"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -3318,7 +3319,7 @@ std::unique_ptr<nil_module> parseBinaryNilModule(std::istream &is) {
   return module;
 }
 
-nil_library_metadata parseBinaryLibraryMetadata(std::istream &is) {
+nil_library_metadata parseBinaryLibraryMetadata(std::istream &is, std::string *content_digest) {
   const auto bytes = read_binary_bytes(is);
   if (bytes.size() < 16 || std::memcmp(bytes.data(), "NIL\0", 4) != 0)
     throw std::runtime_error("Invalid NIL library header");
@@ -3422,6 +3423,9 @@ nil_library_metadata parseBinaryLibraryMetadata(std::istream &is) {
     std::unordered_map<std::string, Value> constants;
     (void)parseBinaryProgram(checked, constants);
   }
+  if (content_digest)
+    *content_digest = nil::detail::content_digest(
+        std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
   return result;
 }
 

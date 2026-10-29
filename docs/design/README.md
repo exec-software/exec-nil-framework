@@ -44,6 +44,7 @@ not assigned architecture identifiers.
 | NIL-0019 | [Explicit binding-reference parameters](NIL-0019-binding-reference-parameters.md) | Accepted; initial scalar/text implementation |
 | NIL-0020 | [Declaration annotations as shared metadata](NIL-0020-declaration-annotations.md) | Accepted; initial scalar metadata profile |
 | NIL-0021 | [Switch statements and expressions with automatic fallthrough](NIL-0021-fallthrough-switch.md) | Accepted; initial literal and payload-free enum selector profile |
+| NIL-0022 | [Incremental project builds and NILData configuration](NIL-0022-incremental-project-builds.md) | Implemented initial local project graph and target scheduling profile |
 | NIL-0093 | [Executable context is artifact self-description](NIL-0093-executable-context.md) | Implemented within the documented inspection profile |
 
 ## Retained Ny feature references

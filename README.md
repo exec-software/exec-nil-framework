@@ -162,7 +162,7 @@ checked bindings across both languages; references and rename are available for
 locals whose complete occurrence sets the compiler can certify.
 
 For projects with multiple source modules, add a
-[`nil.project.json`](docs/tools/projects.md) manifest. Project check, build and
+[`nil.project.nildata`](docs/tools/projects.md) manifest. Project check, build and
 run commands use the same import paths and analyzer policy as live checks.
 
 ## Examples

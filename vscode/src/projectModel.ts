@@ -1,9 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ToolInvocation } from "./taskModel";
+import { maxProjectBytes, parseProjectDocument } from "./projectFormats";
+export { maxProjectBytes, parseProjectJson } from "./projectFormats";
 
-export const projectFilename = "nil.project.json";
-export const maxProjectBytes = 1024 * 1024;
+export const projectFilename = "nil.project.nildata";
+export const projectFilenames = [projectFilename, "nil.project.json", "nil.project.yaml", "nil.project.yml"] as const;
+export function isProjectFile(file: string): boolean {
+  return projectFilenames.some(name => path.basename(file) === name);
+}
 
 export interface ProjectAnalysis {
   readonly disabledRules: readonly string[];
@@ -19,77 +24,7 @@ export interface NilProject {
   readonly sdkPath?: string;
   readonly outputDirectory: string;
   readonly analysis: ProjectAnalysis;
-}
-
-// JSON.parse accepts duplicate keys, unlike the project driver. Parse objects
-// with decoded-key uniqueness so editor checks cannot use a different policy.
-export function parseProjectJson(text: string): unknown {
-  if (Buffer.byteLength(text, "utf8") > maxProjectBytes) throw new Error("Project file exceeds 1 MiB.");
-  let position = 0;
-  const fail = (message: string): never => { throw new Error(`Invalid project JSON at character ${position + 1}: ${message}`); };
-  const space = () => { while (/[\x20\t\r\n]/.test(text[position] ?? "\0")) position++; };
-  const string = (): string => {
-    const start = position++;
-    while (position < text.length) {
-      const next = text[position++];
-      if (next === "\\") position++;
-      else if (next === '"') {
-        try {
-          const decoded = JSON.parse(text.slice(start, position)) as string;
-          for (let i = 0; i < decoded.length; i++) {
-            const code = decoded.charCodeAt(i);
-            if (code >= 0xd800 && code <= 0xdbff) {
-              const trailing = decoded.charCodeAt(++i);
-              if (!(trailing >= 0xdc00 && trailing <= 0xdfff)) return fail("unpaired Unicode surrogate");
-            } else if (code >= 0xdc00 && code <= 0xdfff) return fail("unpaired Unicode surrogate");
-          }
-          return decoded;
-        }
-        catch { return fail("invalid string"); }
-      }
-    }
-    return fail("unterminated string");
-  };
-  const value = (depth: number): unknown => {
-    if (depth > 32) fail("nesting exceeds 32 levels");
-    space();
-    const next = text[position];
-    if (next === '"') return string();
-    if (next === "{" || next === "[") {
-      position++;
-      const object = next === "{";
-      const close = object ? "}" : "]";
-      const record: Record<string, unknown> = Object.create(null);
-      const array: unknown[] = [];
-      const keys = new Set<string>();
-      space();
-      if (text[position] === close) { position++; return object ? record : array; }
-      while (position < text.length) {
-        space();
-        if (object) {
-          if (text[position] !== '"') fail("expected an object key");
-          const key = string();
-          if (keys.has(key)) fail(`duplicate key '${key}'`);
-          keys.add(key);
-          space();
-          if (text[position++] !== ":") fail("expected ':'");
-          record[key] = value(depth + 1);
-        } else array.push(value(depth + 1));
-        space();
-        if (text[position] === close) { position++; return object ? record : array; }
-        if (text[position++] !== ",") fail(`expected ',' or '${close}'`);
-      }
-      return fail(`expected '${close}'`);
-    }
-    const token = /^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/.exec(text.slice(position))?.[0];
-    if (!token) return fail("expected a JSON value");
-    position += token.length;
-    return JSON.parse(token) as unknown;
-  };
-  const result = value(0);
-  space();
-  if (position !== text.length) fail("unexpected trailing content");
-  return result;
+  readonly projectReferences: readonly string[];
 }
 
 function record(value: unknown, label: string, keys: readonly string[]): Record<string, unknown> {
@@ -109,7 +44,7 @@ function strings(value: unknown, label: string): string[] {
 }
 
 export function parseProject(text: string, projectFile: string): NilProject {
-  const data = record(parseProjectJson(text), "project", ["schema", "name", "entry", "includePaths", "sdkPath", "outputDirectory", "analysis"]);
+  const data = record(parseProjectDocument(text, projectFile), "project", ["schema", "name", "entry", "includePaths", "sdkPath", "outputDirectory", "analysis", "projectReferences"]);
   if (data.schema !== "nil.project.v1") throw new Error("Project schema must be 'nil.project.v1'.");
   const name = nonempty(data.name, "Project name");
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) || Buffer.byteLength(name) > 128 || /\.(ny|matrix|mat)$/i.test(name)) {
@@ -126,12 +61,15 @@ export function parseProject(text: string, projectFile: string): NilProject {
     throw new Error("analysis.disabledRules must contain distinct NIL rule codes (for example NIL1001).");
   }
   if (analysis.warningsAsErrors !== undefined && typeof analysis.warningsAsErrors !== "boolean") throw new Error("analysis.warningsAsErrors must be boolean.");
+  const projectReferences = (data.projectReferences === undefined ? [] : strings(data.projectReferences, "projectReferences")).map(reference => path.resolve(directory, reference));
+  if (new Set(projectReferences).size !== projectReferences.length) throw new Error("projectReferences must contain distinct project paths.");
   return {
     projectFile: file, directory, name, entry: path.resolve(directory, entry),
     includePaths: [...new Set([directory, ...(data.includePaths === undefined ? [] : strings(data.includePaths, "includePaths").map(root => path.resolve(directory, root)))])],
     ...(data.sdkPath === undefined ? {} : { sdkPath: resolve(data.sdkPath, "sdkPath") }),
     outputDirectory: data.outputDirectory === undefined ? path.join(directory, "build") : resolve(data.outputDirectory, "outputDirectory"),
-    analysis: { disabledRules, warningsAsErrors: analysis.warningsAsErrors === true }
+    analysis: { disabledRules, warningsAsErrors: analysis.warningsAsErrors === true },
+    projectReferences
   };
 }
 
@@ -145,8 +83,10 @@ export function findProjectFile(source: string, workspace: string, exists: (file
   const boundary = path.resolve(workspace);
   let directory = path.dirname(path.resolve(source));
   while (pathWithin(directory, boundary)) {
-    const file = path.join(directory, projectFilename);
-    if (exists(file)) return file;
+    for (const name of projectFilenames) {
+      const file = path.join(directory, name);
+      if (exists(file)) return file;
+    }
     if (directory === boundary) break;
     directory = path.dirname(directory);
   }

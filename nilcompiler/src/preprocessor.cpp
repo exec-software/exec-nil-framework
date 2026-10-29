@@ -193,14 +193,21 @@ static inline std::string canonicalize_path(const std::filesystem::path &p) {
 // Read file content to an optional string
 std::optional<std::string>
 preprocessor::read_file_to_string(const std::filesystem::path &path) {
-  if (options_.read_source) return options_.read_source(path);
+  if (options_.read_source) {
+    auto source = options_.read_source(path);
+    if (source && options_.source_read) options_.source_read(path, *source);
+    return source;
+  }
   std::ifstream ifs(path, std::ios::binary);
   if (!ifs)
     return std::nullopt;
 
   std::ostringstream oss;
   oss << ifs.rdbuf();
-  return oss.str();
+  if (ifs.bad()) return std::nullopt;
+  auto source = oss.str();
+  if (options_.source_read) options_.source_read(path, source);
+  return source;
 }
 
 preprocessor::preprocessor(const preprocessor_options &opts) noexcept
