@@ -154,6 +154,30 @@ void test_variable_visibility_and_source_lines() {
   }
 }
 
+void test_decoded_string_quotes_are_content() {
+  ny::parser parser(R"ny(
+let quoted = "\"word\""
+let two_quotes = "\"\""
+let one_quote = "\""
+let left = "\"left"
+let right = "right\""
+let json_escape = "\"a\\u0000b\""
+)ny");
+  const auto program = parser.parse_program();
+  const std::vector<std::string> expected{
+      "\"word\"", "\"\"", "\"", "\"left", "right\"", "\"a\\u0000b\""};
+  check(program && !parser.has_errors() && program->declarations.size() == expected.size(),
+        "quoted string contents should parse without losing declarations");
+  if (!program || parser.has_errors() || program->declarations.size() != expected.size()) return;
+  for (std::size_t i = 0; i < expected.size(); ++i) {
+    const auto variable = std::dynamic_pointer_cast<ny::ast_variable_decl>(program->declarations[i]);
+    const auto literal = variable
+        ? std::dynamic_pointer_cast<ny::ast_string_literal>(variable->initializer) : nullptr;
+    check(literal && literal->value == expected[i],
+          "decoded quotes and backslashes remain literal contents at position " + std::to_string(i));
+  }
+}
+
 void test_bitwise_complement_precedence() {
   ny::parser parser("fn main() -> i32\nreturn ~~1 & 3\nend fn\n");
   const auto program = parser.parse_program();
@@ -596,6 +620,7 @@ void test_integer_literal_ranges_and_unchecked_arrays() {
 int main() {
   test_leading_method_annotations();
   test_variable_visibility_and_source_lines();
+  test_decoded_string_quotes_are_content();
   test_bitwise_complement_precedence();
   test_inline_assembly_ast();
   test_inline_assembly_operands();

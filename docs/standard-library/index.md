@@ -42,7 +42,7 @@ The active tree uses neutral family folders: `nil.std.io` lives under
 remain aliases of the same module identities.
 
 The active logical modules are `prelude` and `nil.std.core`, `collections`,
-`datetime`, `db`, `diagnostics`, `io`, `math`, `net`, `nydata`, `reflection`, `runtime`,
+`datetime`, `db`, `diagnostics`, `io`, `math`, `net`, `nildata`, `reflection`, `runtime`,
 `security`, `system`, `text`, and `threading`. Quarantine is broader than parser
 failure: an experimental source may compile yet still lack complete language
 semantics, an executable provider, or behavioral evidence.
@@ -68,11 +68,18 @@ packages/ny.ui.mimic/
 Other opt-in experiments, including `ny.godot`, also live under
 `packages`. `nilaix` is a separate UI/AI integration sandbox.
 
+## NILData
+
+`nil.std.nildata` provides checked, versioned data loading and serialization,
+exact integer/decimal tokens, a single array kind, typed accessors and functional
+updates. JSON interchange and explicit NyData migration share the same runtime
+engine on VM and native routes. See the [NILData contract](nildata.md).
+
 ## Current module families
 
 The active tree includes these deliberately scoped families:
 
-- core values and algorithms, collections, text, math, date/time, and NyData
+- core values and algorithms, collections, text, math, date/time, and NILData
 - Matrix-authored checked array access, bounded fill, overlap-safe copy, and gather
 - stable numeric and text index ordering for parallel attribute arrays
 - independent deterministic random generators with cloning and finite floating ranges

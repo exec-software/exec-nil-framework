@@ -53,6 +53,7 @@ add_library(nilruntime_objects OBJECT
     src/secure_file_io.cpp
     src/database_runtime.cpp
     src/pattern_engine.cpp
+    src/nildata.cpp
 )
 target_compile_features(nilruntime_objects PUBLIC cxx_std_17)
 target_link_libraries(nilruntime_objects PUBLIC Threads::Threads ${CMAKE_DL_LIBS})

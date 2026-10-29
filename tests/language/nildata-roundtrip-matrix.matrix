@@ -1,0 +1,152 @@
+book validation.nildata
+read everything from nil.std.core
+read everything from nil.std.nildata
+
+require receives ok as boolean, message as text returns nothing begin paragraph
+    when not ok then
+        evaluate panic with message
+    end when
+end paragraph
+
+main returns override integer begin paragraph
+    value source is begin text
+        nildata 1
+        object
+          name is "  title\nend object\t  "
+          big is 1234567890123456789012345678901234567890
+          decimal is 1.2300e+42
+          items is an array
+            item is 1
+            item is "1"
+            item is true
+            item is null
+            item is an array
+              item is 2.50e+3
+            end array
+          end array
+        end object
+    end text
+    value document is (loads with source).unwrap with nothing
+    value original is (to-json with document).unwrap with nothing
+    value written is (dumps with document).unwrap with nothing
+    value recovered is (loads with written).unwrap with nothing
+    evaluate require with ((kind with document).unwrap with nothing equals "object"), "root kind"
+    evaluate require with ((size with document).unwrap with nothing equals 4), "object size"
+    evaluate require with ((to-json with recovered).unwrap with nothing equals original), "NILData round trip"
+    value from-json-value is (from-json with original).unwrap with nothing
+    evaluate require with ((to-json with from-json-value).unwrap with nothing equals original), "JSON round trip"
+    value name is ((object-get with document, "name").unwrap with nothing).unwrap with nothing
+    evaluate require with ((text-value with name).unwrap with nothing equals ("  title" plus newline plus "end object" plus tab plus "  ")), "quoted whitespace and terminator text"
+    value big is ((object-get with document, "big").unwrap with nothing).unwrap with nothing
+    value decimal-number is ((object-get with document, "decimal").unwrap with nothing).unwrap with nothing
+    evaluate require with ((numeric-text with big).unwrap with nothing equals "1234567890123456789012345678901234567890"), "arbitrary precision integer"
+    evaluate require with ((as-i64 with big).is-error with nothing), "i64 overflow is explicit"
+    evaluate require with ((numeric-text with decimal-number).unwrap with nothing equals "1.2300e+42"), "exact decimal token"
+    evaluate require with ((kind with decimal-number).unwrap with nothing equals "decimal"), "decimal kind"
+    value items is ((object-get with document, "items").unwrap with nothing).unwrap with nothing
+    value integer-item is ((array-get with items, 0).unwrap with nothing).unwrap with nothing
+    value text-item is ((array-get with items, 1).unwrap with nothing).unwrap with nothing
+    value boolean-item is ((array-get with items, 2).unwrap with nothing).unwrap with nothing
+    value null-item is ((array-get with items, 3).unwrap with nothing).unwrap with nothing
+    value nested is ((array-get with items, 4).unwrap with nothing).unwrap with nothing
+    value nested-number is ((array-get with nested, 0).unwrap with nothing).unwrap with nothing
+    evaluate require with ((kind with integer-item).unwrap with nothing equals "integer"), "integer item"
+    evaluate require with ((text-value with text-item).unwrap with nothing equals "1"), "text stays text"
+    evaluate require with ((bool-value with boolean-item).unwrap with nothing), "boolean item"
+    evaluate require with ((kind with null-item).unwrap with nothing equals "null"), "null item"
+    evaluate require with ((numeric-text with nested-number).unwrap with nothing equals "2.50e+3"), "nested arrays"
+    evaluate require with (((array-get with items, 5).unwrap with nothing).is-none with nothing), "absent item"
+    evaluate require with (((object-get with document, "absent").unwrap with nothing).is-none with nothing), "absent member"
+    evaluate require with (((object-key with document, 0).unwrap with nothing).unwrap with nothing equals "big"), "sorted key enumeration"
+    say "Matrix NILData typed round trips passed"
+
+    value empty is (new-object with nothing).unwrap with nothing
+    value key is "quote" plus quote plus "slash\line" plus newline
+    value precise is (decimal-value with "-0.000e+2").unwrap with nothing
+    value changed is (object-set with empty, key, precise).unwrap with nothing
+    value escaped is ((object-get with changed, key).unwrap with nothing).unwrap with nothing
+    evaluate require with ((numeric-text with escaped).unwrap with nothing equals "-0.000e+2"), "escaped key and signed zero"
+    evaluate require with ((size with empty).unwrap with nothing equals 0), "object updates preserve original"
+    value text-content is (string-value with (" " plus newline plus "end object" plus newline plus " ")).unwrap with nothing
+    value empty-key is (object-set with changed, "", text-content).unwrap with nothing
+    evaluate require with (((object-key with empty-key, 0).unwrap with nothing).unwrap with nothing equals ""), "empty key is present"
+    value array-zero is (new-array with nothing).unwrap with nothing
+    value array-one is (array-append with array-zero, null-item).unwrap with nothing
+    value false-value is (boolean-value with false).unwrap with nothing
+    value array-two is (array-append with array-one, false-value).unwrap with nothing
+    value array-three is (array-append with array-two, empty-key).unwrap with nothing
+    evaluate require with ((size with array-zero).unwrap with nothing equals 0 and (size with array-three).unwrap with nothing equals 3), "array updates preserve original"
+    value seven is (integer-value with "7").unwrap with nothing
+    value edited is (array-set with array-two, 0, seven).unwrap with nothing
+    value edited-item is ((array-get with edited, 0).unwrap with nothing).unwrap with nothing
+    evaluate require with ((as-i64 with edited-item).unwrap with nothing equals 7), "array replacement"
+    value removed is (array-remove with edited, 0).unwrap with nothing
+    evaluate require with ((size with removed).unwrap with nothing equals 1), "array removal"
+    value removed-key is (object-remove with empty-key, "").unwrap with nothing
+    evaluate require with ((to-json with removed-key).unwrap with nothing equals (to-json with changed).unwrap with nothing), "object removal"
+    value arrays-written is (dumps with array-three).unwrap with nothing
+    value arrays-read is (loads with arrays-written).unwrap with nothing
+    evaluate require with ((to-json with arrays-read).unwrap with nothing equals (to-json with array-three).unwrap with nothing), "functional nested values"
+    !!! Retain the document and extracted child while crossing collection thresholds.
+    variable large-text is "x"
+    variable count as override integer is 0
+    repeat while count is less than 14
+        set large-text to large-text plus large-text
+        set count to count plus 1
+    end repeat
+    set count to 0
+    repeat while count is less than 400
+        value transient is (string-value with large-text).unwrap with nothing
+        evaluate require with ((text-value with transient).unwrap with nothing equals large-text), "transient text survives allocation"
+        set count to count plus 1
+    end repeat
+    evaluate require with ((to-json with document).unwrap with nothing equals original), "document survives collection"
+    evaluate require with ((numeric-text with nested-number).unwrap with nothing equals "2.50e+3"), "extracted child survives collection"
+    say "Matrix NILData functional construction passed"
+
+    value nul is (from-json with (quote plus "a\u0000b" plus quote)).unwrap with nothing
+    evaluate require with ((text-value with nul).is-error with nothing), "NUL text extraction"
+    value nul-written is (dumps with nul).unwrap with nothing
+    value nul-read is (loads with nul-written).unwrap with nothing
+    evaluate require with ((to-json with nul-read).unwrap with nothing equals (to-json with nul).unwrap with nothing), "encoded NUL round trip"
+    say "Matrix NILData NUL representation passed"
+
+    value duplicate is begin text
+        nildata 1
+        object
+        x is 1
+        x is 2
+        end object
+    end text
+    value bad-json is begin text
+        {"x":1,"x":2}
+    end text
+    evaluate require with ((loads with duplicate).is-error with nothing), "duplicate member rejected"
+    evaluate require with ((from-json with bad-json).is-error with nothing), "duplicate JSON member rejected"
+    evaluate require with ((loads with ("nildata 1" plus newline plus "array" plus newline plus "end object")).is-error with nothing), "mismatched terminator rejected"
+    evaluate require with ((loads with ("nildata 1" plus newline plus "null" plus newline plus "true")).is-error with nothing), "trailing value rejected"
+    evaluate require with ((integer-value with "1.0").is-error with nothing and (decimal-value with "1").is-error with nothing), "numeric constructor validation"
+    evaluate require with ((text-value with seven).is-error with nothing and (bool-value with seven).is-error with nothing), "typed scalar errors"
+    evaluate require with ((array-get with document, 0).is-error with nothing and (object-get with items, "x").is-error with nothing), "wrong container errors"
+    evaluate require with ((array-set with items, negative 1, seven).is-error with nothing and (array-remove with items, 5).is-error with nothing), "mutation bounds"
+    say "Matrix NILData errors passed"
+
+    value legacy is begin text
+        object root
+        field 0
+        001
+        end 0
+        field truth
+        true
+        end truth
+        end root
+    end text
+    value imported is (import-nydata with legacy).unwrap with nothing
+    value legacy-number is ((object-get with imported, "0").unwrap with nothing).unwrap with nothing
+    value legacy-boolean is ((object-get with imported, "truth").unwrap with nothing).unwrap with nothing
+    evaluate require with ((loads with legacy).is-error with nothing), "legacy requires explicit import"
+    evaluate require with ((kind with imported).unwrap with nothing equals "object"), "numeric key never guesses array"
+    evaluate require with ((text-value with legacy-number).unwrap with nothing equals "001" and (text-value with legacy-boolean).unwrap with nothing equals "true"), "legacy scalar text preserved"
+    say "Matrix NILData explicit legacy import passed"
+    give 0
+end paragraph

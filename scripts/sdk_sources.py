@@ -23,7 +23,9 @@ CANONICAL_MODULE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]
 def canonical_std_namespace(name: str) -> str:
     """Canonicalize a parsed module identity, never arbitrary source text."""
     if name == "ny.lang" or name.startswith("ny.lang."):
-        return "nil.std" + name[len("ny.lang"):]
+        name = "nil.std" + name[len("ny.lang"):]
+    if name == "nil.std.nydata" or name.startswith("nil.std.nydata."):
+        name = "nil.std.nildata" + name[len("nil.std.nydata"):]
     return name
 
 

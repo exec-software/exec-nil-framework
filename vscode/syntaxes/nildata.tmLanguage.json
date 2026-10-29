@@ -1,0 +1,278 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "NILData",
+  "scopeName": "source.nildata",
+  "fileTypes": [
+    "nildata"
+  ],
+  "patterns": [
+    {
+      "include": "#comment"
+    },
+    {
+      "include": "#header"
+    },
+    {
+      "include": "#root-object"
+    },
+    {
+      "include": "#root-array"
+    },
+    {
+      "include": "#value"
+    }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.number-sign.nildata",
+      "match": "#.*$"
+    },
+    "header": {
+      "match": "^[ \\t]*(nildata)[ \\t]+(1)(?=[ \\t]*(?:#.*)?$)",
+      "captures": {
+        "1": {
+          "name": "keyword.other.version.nildata"
+        },
+        "2": {
+          "name": "constant.numeric.version.nildata"
+        }
+      }
+    },
+    "escape": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.nildata",
+          "match": "\\\\(?:[\"\\\\/bfnrt]|u[0-9A-Fa-f]{4})"
+        },
+        {
+          "name": "invalid.illegal.escape.nildata",
+          "match": "\\\\."
+        },
+        {
+          "name": "invalid.illegal.control-character.nildata",
+          "match": "[\\x00-\\x1f]"
+        }
+      ]
+    },
+    "string": {
+      "name": "string.quoted.double.nildata",
+      "begin": "\"",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.nildata"
+        }
+      },
+      "end": "(\")|(?=$)",
+      "endCaptures": {
+        "1": {
+          "name": "punctuation.definition.string.end.nildata"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#escape"
+        }
+      ]
+    },
+    "number": {
+      "name": "constant.numeric.json.nildata",
+      "match": "(?<![A-Za-z0-9_.+\\-])-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+\\-]?[0-9]+)?(?=[ \\t]*(?:#|$))"
+    },
+    "literal": {
+      "name": "constant.language.nildata",
+      "match": "(?<![A-Za-z0-9_])(?:true|false|null)(?=[ \\t]*(?:#|$))"
+    },
+    "invalid": {
+      "name": "invalid.illegal.unexpected.nildata",
+      "match": "[^\\s#]+"
+    },
+    "value": {
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#object"
+        },
+        {
+          "include": "#array"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#number"
+        },
+        {
+          "include": "#literal"
+        },
+        {
+          "include": "#invalid"
+        }
+      ]
+    },
+    "member": {
+      "name": "meta.member.nildata",
+      "begin": "^[ \\t]*((?:[A-Za-z_][A-Za-z0-9_]*|\"(?:[^\"\\\\\\r\\n]|\\\\.)*\"))[ \\t]+(is)(?=[ \\t]|$)",
+      "beginCaptures": {
+        "1": {
+          "name": "support.type.property-name.nildata",
+          "patterns": [
+            {
+              "include": "#escape"
+            }
+          ]
+        },
+        "2": {
+          "name": "keyword.operator.assignment.nildata"
+        }
+      },
+      "end": "(?=$)",
+      "patterns": [
+        {
+          "include": "#value"
+        }
+      ]
+    },
+    "item": {
+      "name": "meta.item.nildata",
+      "begin": "^[ \\t]*(item)[ \\t]+(is)(?=[ \\t]|$)",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.other.array-item.nildata"
+        },
+        "2": {
+          "name": "keyword.operator.assignment.nildata"
+        }
+      },
+      "end": "(?=$)",
+      "patterns": [
+        {
+          "include": "#value"
+        }
+      ]
+    },
+    "object": {
+      "name": "meta.structure.object.nildata",
+      "begin": "(?<![A-Za-z0-9_])(an)[ \\t]+(object)(?=[ \\t]*(?:#.*)?$)",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.other.container.nildata"
+        },
+        "2": {
+          "name": "storage.type.container.nildata"
+        }
+      },
+      "end": "^[ \\t]*(end)[ \\t]+(object)(?=[ \\t]*(?:#.*)?$)",
+      "endCaptures": {
+        "1": {
+          "name": "keyword.control.end.nildata"
+        },
+        "2": {
+          "name": "storage.type.container.nildata"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#member"
+        },
+        {
+          "include": "#invalid"
+        }
+      ]
+    },
+    "root-object": {
+      "name": "meta.structure.object.nildata",
+      "begin": "^[ \\t]*(object)(?=[ \\t]*(?:#.*)?$)",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.container.nildata"
+        }
+      },
+      "end": "^[ \\t]*(end)[ \\t]+(object)(?=[ \\t]*(?:#.*)?$)",
+      "endCaptures": {
+        "1": {
+          "name": "keyword.control.end.nildata"
+        },
+        "2": {
+          "name": "storage.type.container.nildata"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#member"
+        },
+        {
+          "include": "#invalid"
+        }
+      ]
+    },
+    "array": {
+      "name": "meta.structure.array.nildata",
+      "begin": "(?<![A-Za-z0-9_])(an)[ \\t]+(array)(?=[ \\t]*(?:#.*)?$)",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.other.container.nildata"
+        },
+        "2": {
+          "name": "storage.type.container.nildata"
+        }
+      },
+      "end": "^[ \\t]*(end)[ \\t]+(array)(?=[ \\t]*(?:#.*)?$)",
+      "endCaptures": {
+        "1": {
+          "name": "keyword.control.end.nildata"
+        },
+        "2": {
+          "name": "storage.type.container.nildata"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#item"
+        },
+        {
+          "include": "#invalid"
+        }
+      ]
+    },
+    "root-array": {
+      "name": "meta.structure.array.nildata",
+      "begin": "^[ \\t]*(array)(?=[ \\t]*(?:#.*)?$)",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.container.nildata"
+        }
+      },
+      "end": "^[ \\t]*(end)[ \\t]+(array)(?=[ \\t]*(?:#.*)?$)",
+      "endCaptures": {
+        "1": {
+          "name": "keyword.control.end.nildata"
+        },
+        "2": {
+          "name": "storage.type.container.nildata"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#item"
+        },
+        {
+          "include": "#invalid"
+        }
+      ]
+    }
+  }
+}

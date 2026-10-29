@@ -3,6 +3,7 @@
 #include "owned_contract.hpp"
 #include "parallel_support.hpp"
 #include "pattern_engine.hpp"
+#include "nildata.hpp"
 #include "codegen.hpp"
 #include "array_intrinsic.hpp"
 #include "matrix_hag_bridge.hpp"
@@ -2888,6 +2889,33 @@ void VM::executeInstruction(const Instruction &instr) {
         }
         return;
       }
+    }
+    if (lib_name == "intrinsic" && fn_name.rfind("nildata.", 0) == 0) {
+      if (fn_name != "nildata.request" || args.size() != 4 || instr.args.size() != 4 || instr.args[3] != "array<text>")
+        throw std::runtime_error("nildata.request has an invalid ABI");
+      const auto *operation = std::get_if<std::string>(&args[0]);
+      const auto *source = std::get_if<std::string>(&args[1]);
+      const auto *argument = std::get_if<std::string>(&args[2]);
+      const auto *index = std::get_if<std::int64_t>(&args[3]);
+      if (!operation || !source || !argument || !index)
+        throw std::runtime_error("nildata.request requires (text, text, text, i64)");
+      const auto result = nil::data::request(*operation, *source, *argument, *index);
+      HeapBlock block;
+      block.type_name = "array";
+      block.element_type = "text";
+      block.element_count = result.size();
+      for (const auto &item : result) block.data.push_back(item);
+      const auto extent = block.element_count * 8U;
+      if (next_ptr_ < 0 || extent > static_cast<std::uint64_t>(
+              std::numeric_limits<std::int64_t>::max() - next_ptr_))
+        throw std::runtime_error("NILData result allocation is too large");
+      const auto handle = next_ptr_;
+      next_ptr_ += static_cast<std::int64_t>(extent);
+      storeHeapBlock(handle, std::move(block));
+      pushStack(ArrayHandle{handle});
+      if (memory_mode_ == MemoryMode::SAFE_GC && gc_critical_depth_ == 0 &&
+          ++alloc_count_ >= gc_threshold_) gcCollect();
+      return;
     }
     if (lib_name == "intrinsic" && fn_name.rfind("regex.", 0) == 0) {
       const bool validation = fn_name == "regex.validate";
