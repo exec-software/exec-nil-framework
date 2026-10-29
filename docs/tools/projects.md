@@ -104,6 +104,8 @@ version does not provide separate object compilation or parallel parsing inside
 that process. A single-project VM build therefore has one compilation job.
 
 Incremental state lives in `<outputDirectory>/.nilbuild/` as NILData documents.
+This directory is reserved: project inputs and artifact destinations cannot
+occupy it, including through another project reference.
 Its content identities use SHA-256, including the compiler-reported source,
 textual include and binary-library inputs, effective settings and toolchain,
 and the produced artifact. Native builds also account for the resolved runtime

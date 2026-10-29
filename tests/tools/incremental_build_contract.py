@@ -166,6 +166,36 @@ event('finish')
         for flags in (('--jobs','0'),('--jobs','65'),('--jobs','x'),('--jobs','2','-j','3')):
             build(*flags,status=2)
         run('run','--project',project,'--target','all',status=2)
+        # Metadata paths cannot be manifests, artifacts or consumed inputs.
+        reserved=root/'reserved';(reserved/'.nilbuild').mkdir(parents=True)
+        (reserved/'main.matrix').write_text('safe input\n')
+        state_manifest=reserved/'.nilbuild/app.nil.nildata'
+        template=reserved/'source.json'
+        template.write_text(json.dumps({'schema':'nil.project.v1','name':'app','entry':'../main.matrix','outputDirectory':'..'}))
+        # Conversion itself stays within the directory; relocate this fixture explicitly.
+        template.rename(reserved/'.nilbuild/source.json')
+        run('convert','--project',reserved/'.nilbuild/source.json','--output',state_manifest)
+        original=state_manifest.read_bytes()
+        run('build','--project',state_manifest,status=2)
+        assert state_manifest.read_bytes()==original
+        # The reservation also covers another project's output/lock locations.
+        nested=create(root/'metadata-output','metadata')
+        nested_data=json.loads((nested.parent/'nil.project.json').read_text())
+        nested_data.update(outputDirectory='../application/build/.nilbuild', name='artifact')
+        (nested.parent/'nil.project.json').write_text(json.dumps(nested_data));nested.unlink()
+        run('convert','--project',nested.parent/'nil.project.json')
+        parent_data=json.loads((project.parent/'nil.project.json').read_text())
+        parent_data['projectReferences']=['../metadata-output/nil.project.nildata']
+        conflict=root/'application/conflict.json';conflict.write_text(json.dumps(parent_data))
+        assert 'reserved .nilbuild' in run('build','--project',conflict,status=2).stderr
+        # Native toolchain uncertainty disables reuse, never input protection.
+        protected=create(root/'uncached-native','consumed.input')
+        data=json.loads((protected.parent/'nil.project.json').read_text());data['outputDirectory']='.'
+        (protected.parent/'nil.project.json').write_text(json.dumps(data));protected.unlink()
+        run('convert','--project',protected.parent/'nil.project.json')
+        consumed=protected.parent/'consumed.input';consumed.write_text('must survive\n')
+        run('build','--project',protected,'--target','native',status=2)
+        assert consumed.read_text()=='must survive\n'
         # Concurrent drivers never publish to the same artifact simultaneously.
         previous_starts=starts()
         process=subprocess.Popen([str(builder),'build','--project',str(project),'--compiler',str(fake),'--rebuild'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)

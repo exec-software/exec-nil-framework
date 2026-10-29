@@ -401,6 +401,20 @@ public:
   }
   ~staging_directory() { std::error_code error; fs::remove_all(path, error); }
 };
+bool within_directory(const fs::path &path, const fs::path &directory) {
+  const auto within = [](const fs::path &candidate, const fs::path &root) {
+    const auto relative = candidate.lexically_normal().lexically_relative(root.lexically_normal());
+    return !relative.empty() && !relative.is_absolute() && *relative.begin() != "..";
+  };
+  return within(fs::absolute(path), fs::absolute(directory)) ||
+      within(fs::weakly_canonical(path), fs::weakly_canonical(directory));
+}
+void protect_metadata_input(const fs::path &input, const std::vector<project> &projects) {
+  for (const auto &value : projects) {
+    if (within_directory(input, value.output_directory / ".nilbuild"))
+      throw std::runtime_error("project inputs and artifacts must stay outside the reserved .nilbuild state directory: " + input.string());
+  }
+}
 // Build graph nodes are whole programs: a reference establishes build order,
 // while normal include paths continue to define language import resolution.
 struct project_graph {
@@ -430,7 +444,10 @@ project_graph load_graph(const project &root, const options &opts, const fs::pat
   visit(root);
   std::vector<fs::path> outputs;
   for (const auto &value : graph.projects) {
+    protect_metadata_input(value.file, graph.projects);
+    protect_metadata_input(value.entry, graph.projects);
     for (const auto &output : {value.vm_output(), value.native_output()}) {
+      protect_metadata_input(output, graph.projects);
       for (const auto &previous : outputs) if (same_path(previous, output))
         throw std::runtime_error("projects share an output: " + output.string());
       for (const auto &other : graph.projects)
@@ -576,9 +593,9 @@ std::optional<input_map> reported_inputs(const json &report) {
 // host installation layout. Missing identities disable reuse, not compilation.
 bool native_inputs(input_map &inputs, const json &report, const project &value) {
   const auto runtime = report.object.find("nativeRuntime"), linker = report.object.find("nativeLinker");
-  if (runtime == report.object.end() || linker == report.object.end() ||
-      runtime->second.type != json::kind::string || linker->second.type != json::kind::string) return false;
+  if (runtime == report.object.end() || runtime->second.type != json::kind::string) return false;
   add_input(inputs, runtime->second.text);
+  if (linker == report.object.end() || linker->second.type != json::kind::string) return false;
   const auto files = nilbuild::native_toolchain_files(linker->second.text, value.directory);
   if (!files) return false;
   for (const auto &file : *files) add_input(inputs, file);
@@ -591,6 +608,7 @@ struct build_task {
   std::optional<input_map> inputs;
   std::string key;
   std::unique_ptr<staging_directory> staging;
+  bool cacheable = false;
 };
 std::string build_key(const project &value, const build_task &task, const std::vector<std::string> &references) {
   auto description = describe(value);
@@ -609,7 +627,7 @@ std::string build_key(const project &value, const build_task &task, const std::v
   return nil::detail::content_digest(nilbuild::dump(description));
 }
 bool reusable(const build_task &task) {
-  if (!task.inputs || !fs::is_regular_file(fs::symlink_status(task.output)) || (task.native && !executable(task.output))) return false;
+  if (!task.cacheable || !fs::is_regular_file(fs::symlink_status(task.output)) || (task.native && !executable(task.output))) return false;
   try {
     const auto state = state_path(task.output);
     if (!fs::is_regular_file(fs::symlink_status(state))) return false;
@@ -620,7 +638,7 @@ bool reusable(const build_task &task) {
 }
 void publish_state(const build_task &task) {
   const auto state = state_path(task.output);
-  if (!task.inputs) {
+  if (!task.cacheable) {
     std::error_code ignored; fs::remove(state, ignored); return;
   }
   auto data = json::map();
@@ -671,6 +689,15 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
       const auto index = ready[i];
       const auto &value = graph.projects[index];
       const auto sources = reported_inputs(reports[i]);
+      if (sources) for (const auto &[input, digest] : *sources) {
+        (void)digest;
+        protect_metadata_input(input, graph.projects);
+        for (std::size_t other = 0; other < graph.projects.size(); ++other) {
+          const auto &project = graph.projects[other];
+          if (!complete.count(other) && ((opts.target != "native" && same_path(input, project.vm_output())) || (opts.target != "vm" && same_path(input, project.native_output()))))
+            throw std::runtime_error("output would overwrite a consumed build input; declare projectReferences to order generated imports: " + input);
+        }
+      }
       if (nil::detail::file_digest(value.file) != value.manifest_digest) throw std::runtime_error("project manifest changed during the build; retry");
       std::vector<std::string> references;
       for (const auto dependency : graph.dependencies[index]) {
@@ -680,24 +707,25 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
       }
       for (const bool native : {false, true}) {
         if ((native && opts.target == "vm") || (!native && opts.target == "native")) continue;
-        build_task task{index, native, native ? value.native_output() : value.vm_output(), sources, {}, {}};
+        build_task task{index, native, native ? value.native_output() : value.vm_output(), sources.value_or(input_map{}), {}, {}, sources.has_value()};
         if (task.inputs) {
-          add_input(*task.inputs, value.file); add_input(*task.inputs, compiler); add_input(*task.inputs, self);
+          add_input(*task.inputs, value.file); add_input(*task.inputs, value.entry); add_input(*task.inputs, compiler); add_input(*task.inputs, self);
           if (reports[i].object.count("compilerFiles")) {
             for (const auto &file : string_list(reports[i].at("compilerFiles"), "compilerFiles")) add_input(*task.inputs, file);
           }
-          if (native && !native_inputs(*task.inputs, reports[i], value)) task.inputs.reset();
+          if (native && !native_inputs(*task.inputs, reports[i], value)) task.cacheable = false;
         }
         if (task.inputs) {
           for (const auto &[input, digest] : *task.inputs) {
             (void)digest;
+            protect_metadata_input(input, graph.projects);
             for (std::size_t other = 0; other < graph.projects.size(); ++other) {
               const auto &project = graph.projects[other];
               if (!complete.count(other) && ((opts.target != "native" && same_path(input, project.vm_output())) || (opts.target != "vm" && same_path(input, project.native_output()))))
                 throw std::runtime_error("output would overwrite a consumed build input; declare projectReferences to order generated imports: " + input);
             }
           }
-          task.key = build_key(value, task, references);
+          if (task.cacheable) task.key = build_key(value, task, references);
         }
         protect_inputs(value);
         if (!opts.rebuild && reusable(task)) {
@@ -721,7 +749,7 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
       // artifacts. This catches new shadowing files as well as modified inputs.
       for (std::size_t i = 0; i < ready.size(); ++i) {
         const auto index = ready[i];
-        if (std::none_of(tasks.begin(), tasks.end(), [&](const auto &task) { return task.project_index == index && task.inputs.has_value(); })) continue;
+        if (std::none_of(tasks.begin(), tasks.end(), [&](const auto &task) { return task.project_index == index; }) || !reported_inputs(reports[i])) continue;
         json current;
         const auto &value = graph.projects[index];
         const auto checked = analysis_result(value, nilbuild::execute(analysis_arguments(value, compiler), value.directory), std::nullopt, current);

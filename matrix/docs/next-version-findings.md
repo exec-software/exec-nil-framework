@@ -2295,6 +2295,8 @@ project references and VM/native output targets provide bounded parallel work.
 NILData becomes the default project manifest, description and cache notation;
 JSON and a bounded YAML project reader/writer remain compatible. The standard
 library's serialization formats and editor/SDK protocols retain their contracts.
+Input protection remains active when cache reuse is unavailable, and reserved
+state paths cannot overlap project inputs or artifacts.
 See [NIL-0022](../../docs/design/NIL-0022-incremental-project-builds.md).
 
 **Remaining friction:** A warm build still parses and checks the complete graph,
