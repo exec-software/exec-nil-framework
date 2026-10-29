@@ -23,10 +23,10 @@ are first-party packages rather than standard-library modules and live in
 
 ## Current status
 
-The active tree contains 76 sources (69 Ny and seven Matrix) organized into 16
+The active tree contains 75 sources (68 Ny and seven Matrix) organized into 16
 logical SDK modules:
 `prelude` plus `nil.std.core`, `collections`, `datetime`, `db`, `diagnostics`,
-`io`, `math`, `net`, `nydata`, `reflection`, `runtime`, `security`, `system`, `text`, and
+`io`, `math`, `net`, `nildata`, `reflection`, `runtime`, `security`, `system`, `text`, and
 `threading`. The SDK packaging gate compiles every logical module with normal
 type checking, emits a NIL library (v2, or v4 when carrying classes), and fails
 atomically rather than publishing a partial set. Matrix sources retain their
@@ -45,12 +45,18 @@ below.
 
 | Area | Files | Status |
 | --- | ---: | --- |
-| `src/` | 69 Ny files, 7 Matrix files | Sixteen logical SDK modules. Matrix contributes checked arrays/text spans, stable sorting, reflection values, vector helpers and independent random generators, consumed from both frontends. |
+| `src/` | 68 Ny files, 7 Matrix files | Sixteen logical SDK modules. Matrix contributes checked arrays/text spans, stable sorting, reflection values, vector helpers and independent random generators, consumed from both frontends. |
 | `experimental/` | 65 Ny files | Design sources excluded from `nilstd`/`nillib` because language semantics, executable providers, or behavioral evidence are incomplete. |
 | `tests/` | 8 Ny files | Preserved design-era tests; these are still separate from the registered route fixtures under the repository-level `tests/` tree. |
 | `native/` | 14 C/C++ files | Preserved platform/provider shims; source presence alone is neither a build, shipment, nor native-support claim. |
 
 ### Active evidence boundary
+
+`nil.std.nildata` replaces NyData with versioned data blocks, one array kind,
+exact numeric tokens and checked JSON interchange. The compiler conversions and
+VM/native library share one engine. Legacy imports are explicit. See the
+[NILData contract](../docs/standard-library/nildata.md) for syntax, accessors,
+mutation, limits and API migration.
 
 `nil.std.text` provides bounded conventional regex and readable pattern sources,
 named captures, byte spans, search/full-match, safe next-match iteration,
@@ -76,7 +82,7 @@ for exact bounds, errors and representation limits.
 Registered textual/binary interpreter fixtures cover the exercised core
 algorithms and conversions, canonical `Option`/`Result` operations, collections,
 date/time, SQL construction, diagnostics, file/path/stream I/O, math, HTTP
-values, NyData, safe-mode GC, Base64/hex encoding, environment, program
+values, NILData, safe-mode GC, Base64/hex encoding, environment, program
 arguments, configuration, text utilities, and timed suspension. They do not
 establish every declaration in those families.
 

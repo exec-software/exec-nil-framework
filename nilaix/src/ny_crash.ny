@@ -2,7 +2,7 @@ module ny_crash
 # =============================================================================
 # ny_crash.ny — Structured crash reporter for Ny binaries
 #
-# Writes .nycrash files (NyData format) that can be ingested by the Enigma MCP
+# Writes legacy .nycrash files (INI-like; not NILData 1) for the Enigma MCP
 # tool `parse_nycrash` for immediate agent-level analysis.
 #
 # Usage:

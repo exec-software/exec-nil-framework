@@ -53,6 +53,17 @@ fs.writeFileSync(path.join(workspace, "editor.matrix"), fixture("editor.validati
 fs.writeFileSync(path.join(workspace, "brief.mat"), fixture("brief.validation"));
 fs.writeFileSync(path.join(workspace, "invalid.mat"),
   'book diagnostic.editor\nmain returns number begin paragraph\n    value count as number is "wrong"\n    give 0\nend paragraph\n');
+fs.writeFileSync(path.join(workspace, "settings.nildata"), `nildata 1
+object
+  name is "NILData editor validation"
+  enabled is true
+  code is "book data.example {literal} # text"
+  items is an array
+    item is -1.6
+    item is null
+  end array
+end object
+`);
 const env = { ...process.env, NIL_VSCODE_TEST_WORKSPACE: workspace, NIL_VSCODE_TEST_REPORT: report };
 delete env.ELECTRON_RUN_AS_NODE;
 const args = [

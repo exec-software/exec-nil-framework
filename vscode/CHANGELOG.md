@@ -4,6 +4,13 @@ All notable changes to the NIL Framework VS Code extension are documented here.
 
 ## 1.0.0-rc.1
 
+- Pin the VSIX packaging tool's MSAL dependency to patched 7.1.1; the local
+  dependency audit reports no known vulnerabilities.
+
+- Add `.nildata` syntax highlighting, comments, indentation, and folding for the
+  versioned NILData format, with strict JSON scalar and escape highlighting. Keep
+  data documents outside compiler analysis, source tasks, and debugging.
+
 - Highlight explicit Ny and Matrix interpolation, tuple types and Matrix numeric
   signs; add tuple/destructuring/formatted-text snippets. The tolerant language
   service indexes flat tuple bindings and preserves completion inside supported

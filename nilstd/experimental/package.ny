@@ -50,6 +50,6 @@ pub use nil.std.system
 pub use nil.std.runtime
 pub use nil.std.concurrency
 pub use nil.std.testing
-pub use nil.std.nydata
+pub use nil.std.nildata
 pub use ny.ui.mimic
 pub use ny.engine

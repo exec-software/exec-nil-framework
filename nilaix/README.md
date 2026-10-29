@@ -30,7 +30,8 @@ external ABI names remain until compatible `ny_*` bridge exports exist.
   `experimental/ai_ui.ny` is quarantined because it depends on the unavailable
   legacy `nilagentcc` module.
 - `src/ny_crash.ny` provides explicit helpers for writing `.nycrash` reports in
-  NyData form, including reports synthesized by a host from interpreter stderr. It does
+  an older INI-like format historically labeled NyData, including reports
+  synthesized by a host from interpreter stderr. This is not NILData 1 and does
   not install a universal crash handler.
 - `src/nycromicon_integration.ny` and `src/language_server.ny` contain editor
   integration experiments; they are distinct from the supported core-tool names
