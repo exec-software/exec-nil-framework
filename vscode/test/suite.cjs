@@ -305,6 +305,7 @@ exports.run = async function run() {
     await require("./member-signature-checks.cjs").run({ check, workspace });
     await require("./language-values-checks.cjs").run({ check, workspace });
     await require("./memory-profile-checks.cjs").run({ check, workspace });
+    await require("./niltest-checks.cjs").run({ check, workspace });
     report.status = "PASS";
   } catch (error) {
     report.status = "FAIL";

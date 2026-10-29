@@ -1855,6 +1855,17 @@ public:
 
   void emit_stmt(const ast_stmt &s) {
     switch (s.kind) {
+    case ast_node_kind::inline_test_stmt_node: {
+      if (!cg_.test_mode()) break;
+      const auto &region = static_cast<const ast_inline_test_stmt &>(s);
+      if (!region.checked_test) {
+        cg_.reject_codegen_construct(s.line, "inline tests require checked lexical and control-flow boundaries",
+            "fix the test diagnostics before generating NIL");
+        break;
+      }
+      if (region.test && region.test->body) emit_stmt(*region.test->body);
+      break;
+    }
     case ast_node_kind::block_stmt_node: {
       const auto &blk = static_cast<const ast_block_stmt &>(s);
       lexical_scope scope(*this);
@@ -3009,7 +3020,8 @@ public:
 
   bool expression_statement_produces_value(const ast_expr &expression,
                                            std::size_t first_instruction) {
-    if (expression.kind == ast_node_kind::assignment_expr_node)
+    if (expression.kind == ast_node_kind::assignment_expr_node ||
+        expression.kind == ast_node_kind::assert_expr_node)
       return false;
 
     const nil_instruction *last = out_fn.body.size() > first_instruction
@@ -5569,13 +5581,71 @@ public:
     }
     case ast_node_kind::assert_expr_node: {
       const auto &assertion = static_cast<const ast_assert_expr &>(e);
-      cg_.reject_codegen_construct(
-          assertion.line,
-          "intrinsic assertions are unavailable: NIL has no lowering for "
-          "assert." +
-              assertion.method,
-          "use an explicit conditional until assertion lowering is "
-          "implemented");
+      if (!assertion.checked_assertion) {
+        cg_.reject_codegen_construct(e.line, "assertions require checked argument types and arity",
+            "fix the assertion diagnostics before generating NIL");
+        break;
+      }
+      lexical_scope scope(*this);
+      const bool boolean = assertion.method == "true" || assertion.method == "false";
+      const std::size_t arity = boolean ? 1 : 2;
+      std::vector<std::string> slots, types;
+      for (const auto &argument : assertion.args) {
+        const auto type = substitute_nil_type_name(argument->inferred_type.value_or(""), substitutions);
+        const auto slot = new_label("$niltest.argument");
+        emit_expr(*argument);
+        emit_scalar_boundary(type, argument->line);
+        declare_local(slot, type);
+        push_instr("STORE_LOCAL", {slot}, argument->line);
+        slots.push_back(slot); types.push_back(type);
+      }
+      const auto pass = new_label("L_assert_pass");
+      if (boolean) {
+        push_instr("LOAD_LOCAL", {slots[0]}, e.line);
+        push_instr(assertion.method == "true" ? "JMP_IF" : "JMP_IF_NOT", {pass}, e.line);
+      } else {
+        const bool numeric = types[0] != "String" && types[0] != "text" && types[0] != "bool";
+        const auto common = (types[0] == "f32" || types[0] == "f64" ||
+                             types[1] == "f32" || types[1] == "f64") ? "f64" : "i64";
+        for (std::size_t index = 0; index < 2; ++index) {
+          push_instr("LOAD_LOCAL", {slots[index]}, e.line);
+          if (numeric) push_instr("CAST", {common}, e.line);
+        }
+        const std::map<std::string, std::string> operations{
+          {"equal", "CMP_EQ"}, {"not_equal", "CMP_NE"},
+          {"greater_than", "CMP_GT"}, {"greater_or_equal", "CMP_GE"},
+          {"less_than", "CMP_LT"}, {"less_or_equal", "CMP_LE"}};
+        const auto operation = operations.find(assertion.method);
+        if (operation == operations.end()) {
+          cg_.reject_codegen_construct(e.line, "unsupported assertion method", "use a supported scalar assertion");
+          break;
+        }
+        push_instr(operation->second, {}, e.line);
+        push_instr("JMP_IF", {pass}, e.line);
+      }
+      const auto text = [&](const std::string &value) {
+        push_instr("PUSH_CONST_STR", {get_or_add_const_string_name(value)}, e.line);
+      };
+      const auto append_text = [&](const std::string &value) {
+        text(value); push_instr("STR_CONCAT", {}, e.line);
+      };
+      const auto append_value = [&](std::size_t index) {
+        push_instr("LOAD_LOCAL", {slots[index]}, e.line);
+        if (types[index] != "String" && types[index] != "text") {
+          if (types[index] == "f32") push_instr("CAST", {"f64"}, e.line);
+          push_instr("TO_STRING", {types[index] == "f32" ? "f64" : types[index]}, e.line);
+        }
+        push_instr("STR_CONCAT", {}, e.line);
+      };
+      const auto file = assertion.source_file.empty() ? out_fn.source_file : assertion.source_file;
+      text(file + ":" + std::to_string(e.line) + ": assertion failed: assert." + assertion.method + "; actual=");
+      append_value(0);
+      append_text("; expected=");
+      if (boolean) append_text(assertion.method);
+      else append_value(1);
+      if (slots.size() > arity) { append_text("; "); append_value(arity); }
+      push_instr("CALL", {"panic", "1"}, e.line);
+      push_instr("LABEL", {pass}, e.line);
       break;
     }
     case ast_node_kind::hotreload_expr_node: {
@@ -6049,144 +6119,85 @@ public:
 // Ny test code-generation helpers
 // =============================================================================
 
-// Emit a standalone function containing the test body.
-// Returns the name of the generated function.
+// FNV-1a is specified here rather than implementation-defined std::hash so
+// discovery identities remain stable between compiler processes and platforms.
+static std::string test_identity(const std::string &file, int line,
+                                 const std::string &owner, const std::string &name) {
+  const std::string key = file + "\n" + std::to_string(line) + "\n" + owner + "\n" + name;
+  std::uint64_t hash = 14695981039346656037ull;
+  for (unsigned char byte : key) { hash ^= byte; hash *= 1099511628211ull; }
+  std::ostringstream result;
+  result << std::hex << hash;
+  return result.str();
+}
+
+static std::string test_suite(const std::vector<ast_annotation> &annotations,
+                              const std::string &fallback) {
+  for (const auto &annotation : annotations) {
+    if (!annotation.has_name("suite")) continue;
+    const auto parsed = parse_annotation_arguments(annotation.args.value_or(""));
+    const auto &arguments = annotation.typed_arguments ? *annotation.typed_arguments : parsed.arguments;
+    if (arguments.size() == 1 && arguments.front().kind == "text" && !arguments.front().name)
+      return arguments.front().value;
+  }
+  return fallback;
+}
+
+static void add_test_case(codegen &cg, nil_module &mod, nil_test_case value) {
+  for (const auto &existing : mod.test_cases) {
+    if (existing.id == value.id) {
+      cg.reject_codegen_construct(value.line, "duplicate test identity for '" + value.name + "'",
+          "give colocated tests distinct names or source lines");
+      return;
+    }
+  }
+  mod.tests.push_back(value.function);
+  mod.test_cases.push_back(std::move(value));
+}
+
 static std::string emit_test_body_wrapper(codegen &cg, nil_module &mod,
                                           const ast_test_block &test,
                                           const std::string &parent_func_name,
-                                          const std::string &current_module) {
-  // Generate unique name: __nytest_body_<parent>_<line>_<desc_hash>
-  // We use simple mangling to ensure uniqueness.
-  std::string suffix = parent_func_name.empty() ? "top" : parent_func_name;
-  std::hash<std::string> hasher;
-  size_t desc_hash = hasher(test.description);
-
-  std::string func_name = "__nytest_body_" + cg.sanitize_identifier(suffix) +
-                          "_" + std::to_string(test.line) + "_" +
-                          std::to_string(desc_hash);
-
+                                          const std::string &current_module,
+                                          const std::string &parent_file = "",
+                                          const std::string &parent_suite = "") {
+  if (test.type == test_type::property || !test.generators.empty() ||
+      std::any_of(test.annotations.begin(), test.annotations.end(), [](const auto &annotation) {
+        return annotation.has_name("generate") || annotation.has_name("property");
+      })) {
+    cg.reject_codegen_construct(test.line, "property generators are not supported by niltest",
+        "write deterministic test cases");
+    return "";
+  }
+  if (!test.checked_test) {
+    cg.reject_codegen_construct(test.line, "test bodies require checked lexical, type, and ownership boundaries",
+        "fix the test diagnostics before generating NIL");
+    return "";
+  }
+  const auto file = test.source_file.empty() ? parent_file : test.source_file;
+  const auto name = test.description.empty() ? "test at line " + std::to_string(test.line) : test.description;
+  const auto id = test_identity(file, test.line, current_module + "::" + parent_func_name, name);
   nil_function fn;
-  fn.name = func_name;
+  fn.name = "__niltest_case_" + id;
   fn.return_type = "void";
   fn.source_line = test.line;
-  // Mark as internal/test.
+  fn.source_file = file;
   fn.is_test = true;
-
-  // Create emitter
   emitter em(fn, mod, cg, {}, current_module);
-
-  if (test.type == test_type::property) {
-    // Property test wrapper logic
-    // 1. Initialize PropertyTester
-    // The Ny testing runtime owns property-test orchestration. The runtime
-    // target remains explicit so an unavailable harness fails at link/load
-    // time instead of masquerading as an intrinsic.
-
-    // em.emit_stmt(*test.body); // Still emit body for now to verify parsing
-
-    // Just emit a comment or dummy call to satisfy the test for now
-    // Real logic:
-    // CALL ny::testing::PropertyTester::new 0
-    // STORE_LOCAL tester
-
-    // Using a simplified instruction emission for the stub
-    nil_instruction init_tester;
-    init_tester.opname = "CALL";
-    init_tester.args.push_back("ny::testing::PropertyTester::new");
-    init_tester.args.push_back("0");
-    init_tester.debug_line = test.line;
-    fn.body.push_back(init_tester);
-
-    // Emit body inside (conceptually inside loop)
-    if (test.body) {
-      em.emit_stmt(*test.body);
-    }
-
-  } else {
-    if (test.body) {
-      em.emit_stmt(*test.body);
-    }
-  }
-
-  // Ensure RET
+  em.ownership_checked = test.checked_test;
+  if (test.body) em.emit_stmt(*test.body);
   append_implicit_function_return(fn, test.line);
-
-  mod.functions.push_back(fn);
-  return func_name;
-}
-
-// Emit a registration function that calls
-// `ny::testing::register_test_internal`. Returns the name of the generated
-// registration function.
-static std::string emit_test_registration_func(
-    codegen &cg, nil_module &mod, const std::string &test_name,
-    const std::string &module_name_arg, const std::string &parent_func_name,
-    int test_type, const std::string &test_body_name,
-    const std::string &file_name, int line, const std::string &current_module) {
-  std::string suffix = parent_func_name.empty() ? "top" : parent_func_name;
-  // Unique registration function name
-  static int reg_counter = 0;
-  std::string prefix = "__nytest_register_";
-  if (test_type == 2)
-    prefix = "__nytest_register_property_"; // Property
-  else if (test_type == 1)
-    prefix = "__nytest_register_example_"; // Example
-  else if (test_type == 3)
-    prefix = "__nytest_register_integration_"; // Integration
-
-  std::string func_name = prefix + cg.sanitize_identifier(suffix) + "_" +
-                          std::to_string(++reg_counter);
-
-  nil_function fn;
-  fn.name = func_name;
-  fn.return_type = "void";
-  fn.source_line = line;
-  fn.is_test = true;
-
-  // Emitter
-  emitter em(fn, mod, cg, {}, current_module);
-
-  // Call ny::testing::register_test_internal(...)
-  // Args order: name, module, function, test_type, test_fn, file, line
-
-  // 1. name
-  std::string name_const = cg.make_const_string_name(test_name);
-  em.push_instr("PUSH_CONST_STR", {name_const}, line);
-
-  // 2. module
-  std::string mod_val = module_name_arg.empty() ? "root" : module_name_arg;
-  std::string mod_const = cg.make_const_string_name(mod_val);
-  em.push_instr("PUSH_CONST_STR", {mod_const}, line);
-
-  // 3. function
-  std::string func_val = parent_func_name; // can be empty
-  std::string func_const = cg.make_const_string_name(func_val);
-  em.push_instr("PUSH_CONST_STR", {func_const}, line);
-
-  // 4. test_type (int)
-  em.push_instr("PUSH_CONST", {std::to_string(test_type)}, line);
-
-  // 5. test_fn (load global function pointer)
-  // We assume runtime can handle function loaded via LOAD_GLOBAL (or AddressOf)
-  em.push_instr("LOAD_GLOBAL", {test_body_name}, line);
-
-  // 6. file
-  std::string file_const = cg.make_const_string_name(file_name);
-  em.push_instr("PUSH_CONST_STR", {file_const}, line);
-
-  // 7. line
-  em.push_instr("PUSH_CONST", {std::to_string(line)}, line);
-
-  // Call register_test_internal. 7 args.
-  // The target is supplied by the Ny testing runtime.
-  // We use simple "CALL" assuming it resolves.
-  em.push_instr("CALL", {"ny::testing::register_test_internal", "7"}, line);
-
-  // RET
-  em.push_instr("RET", {}, line);
-
-  mod.functions.push_back(fn);
-  return func_name;
+  const bool integration = test.type == test_type::integration ||
+      std::any_of(test.annotations.begin(), test.annotations.end(), [](const auto &annotation) {
+        return annotation.has_name("integration");
+      });
+  const auto kind = integration ? "integration" : test.type == test_type::example ? "example" : "unit";
+  add_test_case(cg, mod, {"niltest-" + id, name,
+      test_suite(test.annotations, parent_suite.empty() ? current_module : parent_suite),
+      kind, fn.name, file, test.line});
+  const auto function = fn.name;
+  mod.functions.push_back(std::move(fn));
+  return function;
 }
 
 static std::string emit_ai_context_registration_func(
@@ -6288,7 +6299,7 @@ codegen::assemble_module(const ast_program &program,
   mod->module_name = "root";
 
   // Collection of generated registration functions to call at init
-  std::vector<std::string> registration_funcs;
+  std::vector<std::string> registration_funcs; // AI context registrations only
 
   // Track current module for qualified names
   std::string current_module;
@@ -6578,8 +6589,8 @@ codegen::assemble_module(const ast_program &program,
           if (ann.name == "inline")
             fn.is_inline = true;
           if (ann.name == "test") {
-            fn.is_test = true;
-            mod->tests.push_back(fn.name);
+            reject_codegen_construct(fn_decl->line, "@test requires a module-level function",
+                "move the test outside the implementation");
           }
         }
 
@@ -6603,6 +6614,25 @@ codegen::assemble_module(const ast_program &program,
       }
     } else if (decl->kind == ast_node_kind::function_decl_node) {
       auto &fn_decl = static_cast<const ast_function_decl &>(*decl);
+      const bool declared_test = std::any_of(fn_decl.annotations.begin(), fn_decl.annotations.end(),
+          [](const auto &annotation) { return annotation.has_name("test"); });
+      if (options_.mode == build_mode::test_mode && declared_test && !fn_decl.checked_test_function) {
+        reject_codegen_construct(fn_decl.line, "test functions require a checked zero-argument, non-generic void signature",
+            "fix test function diagnostics before generating NIL");
+        continue;
+      }
+      // Attached cases are independent of the function's type parameters and
+      // are discovered once even when the function itself is monomorphized.
+      if (options_.mode == build_mode::test_mode) {
+        const auto suite = test_suite(fn_decl.annotations, current_module);
+        for (const auto &test : fn_decl.test_blocks)
+          if (test) emit_test_body_wrapper(*this, *mod, *test, fn_decl.name,
+              current_module, fn_decl.source_file, suite);
+        for (const auto &test : fn_decl.example_blocks)
+          if (test) emit_test_body_wrapper(*this, *mod, *test, fn_decl.name,
+              current_module, fn_decl.source_file, suite);
+      }
+
       // Skip generic function definitions; they are emitted via specialization
       if (!fn_decl.generic_params.empty()) {
         continue;
@@ -6653,14 +6683,18 @@ codegen::assemble_module(const ast_program &program,
         // module's test list for downstream test harness generation.
         if (ann.name == "test") {
           fn.is_test = true;
-          mod->tests.push_back(fn.name);
+          if (options_.mode == build_mode::test_mode) {
+            const auto id = test_identity(fn.source_file, fn.source_line, current_module, fn_decl.name);
+            add_test_case(*this, *mod, {"niltest-" + id, fn_decl.name,
+                test_suite(fn_decl.annotations, current_module), "unit", fn.name, fn.source_file, fn.source_line});
+          }
         }
       }
 
       // Check for @if_test_mode annotation
       bool is_test_only = false;
       for (const auto &ann : fn_decl.annotations) {
-        if (ann.name == "if_test_mode") {
+        if (ann.name == "if_test_mode" || ann.name == "test") {
           is_test_only = true;
           break;
         }
@@ -6690,38 +6724,6 @@ codegen::assemble_module(const ast_program &program,
         }
       }
 
-      // Process attached Ny test/example/property blocks.
-      // Release mode: Strip all test bodies and registration
-      if (options_.mode != build_mode::release_mode) {
-        for (const auto &test_block : fn_decl.test_blocks) {
-          if (test_block) {
-            std::string body_name = emit_test_body_wrapper(
-                *this, *mod, *test_block, fn_decl.name, current_module);
-            // Only register in Test Mode
-            if (options_.mode == build_mode::test_mode) {
-              std::string reg_name = emit_test_registration_func(
-                  *this, *mod, test_block->description, current_module,
-                  fn_decl.name, (int)test_block->type, body_name, "src",
-                  test_block->line, current_module);
-              registration_funcs.push_back(reg_name);
-            }
-          }
-        }
-        for (const auto &test_block : fn_decl.example_blocks) {
-          if (test_block) {
-            std::string body_name = emit_test_body_wrapper(
-                *this, *mod, *test_block, fn_decl.name, current_module);
-            // Only register in Test Mode
-            if (options_.mode == build_mode::test_mode) {
-              std::string reg_name = emit_test_registration_func(
-                  *this, *mod, test_block->description, current_module,
-                  fn_decl.name, (int)test_block->type, body_name, "src",
-                  test_block->line, current_module);
-              registration_funcs.push_back(reg_name);
-            }
-          }
-        }
-      }
 
       // Register AI context when present.
       // Extract from annotations directly to be robust against parser
@@ -7106,54 +7108,9 @@ codegen::assemble_module(const ast_program &program,
         mod->functions.push_back(std::move(fn));
       }
     } else if (decl->kind == ast_node_kind::test_block_node) {
-      // Top-level Ny test blocks, such as integration tests.
-      // Release mode: Strip all test bodies and registration
-      if (options_.mode != build_mode::release_mode) {
-        const auto &test = static_cast<const ast_test_block &>(*decl);
-        std::string body_name =
-            emit_test_body_wrapper(*this, *mod, test, "", current_module);
-        // Only register in Test Mode
-        if (options_.mode == build_mode::test_mode) {
-          // Integration tests usually don't have a parent function name (empty)
-          std::string desc = test.description;
-          int type = (int)test.type;
-          if (desc.empty()) {
-            for (const auto &ann : test.annotations) {
-              if ((ann.name == "test" || ann.name == "property" ||
-                   ann.name == "example" || ann.name == "integration") &&
-                  ann.args.has_value()) {
-                desc = *ann.args;
-                if (desc.size() >= 2 && desc.front() == '"' &&
-                    desc.back() == '"') {
-                  desc = desc.substr(1, desc.size() - 2);
-                }
-                // If parsed as unit but has @integration annotation, switch
-                // type
-                if (ann.name == "integration")
-                  type = 3;
-                break;
-              } else if (ann.name == "integration") {
-                // Annotation without args, just marking it
-                type = 3;
-              }
-            }
-          }
-          // Double check for integration annotation if description was found
-          // early or not empty
-          if (type != 3) {
-            for (const auto &ann : test.annotations) {
-              if (ann.name == "integration") {
-                type = 3;
-                break;
-              }
-            }
-          }
-          std::string reg_name = emit_test_registration_func(
-              *this, *mod, desc, current_module, "", type, body_name, "src",
-              test.line, current_module);
-          registration_funcs.push_back(reg_name);
-        }
-      }
+      if (options_.mode == build_mode::test_mode)
+        emit_test_body_wrapper(*this, *mod,
+            static_cast<const ast_test_block &>(*decl), "", current_module);
     } else if (decl->kind == ast_node_kind::struct_decl_node) {
       auto &struct_decl = static_cast<const ast_struct_decl &>(*decl);
       if (struct_decl.concrete_generic_type) {
@@ -7320,13 +7277,12 @@ codegen::assemble_module(const ast_program &program,
     mod->string_constants.emplace_back(kv.second, kv.first);
   }
 
-  // Generate module initialization when test registrations are present.
-  // Only generate init if in Test Mode (and registration funcs exist)
+  // Preserve optional AI context initialization; niltest itself uses direct calls.
   if (!registration_funcs.empty() && options_.mode == build_mode::test_mode) {
     nil_function init_fn; // Removed explicit type-specifier to match container
                           // value_type if needed, but it's nil_function
     std::string suffix = current_module.empty() ? "root" : current_module;
-    init_fn.name = "__nytest_init_" + sanitize_identifier(suffix) + "_" +
+    init_fn.name = "__nilaix_init_" + sanitize_identifier(suffix) + "_" +
                    std::to_string(registration_funcs.size());
     init_fn.return_type = "void";
     init_fn.is_test = true;

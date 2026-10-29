@@ -30,6 +30,7 @@ add_subdirectory(nildebugger)
 add_subdirectory(nilassembler)
 add_subdirectory(nillinker)
 add_subdirectory(nilbuild)
+add_subdirectory(niltest)
 add_subdirectory(aperture)
 
 if(NIL_BUILD_EXPERIMENTAL_TOOLS)
@@ -433,7 +434,7 @@ if(BUILD_TESTING)
     find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
         set(NY_IDENTITY_TEST_ARGUMENTS)
-        foreach(tool IN ITEMS nilcompiler nilinterpreter nilassembler nillinker nillsp nildebugger nilschema nilagent nilbuild)
+        foreach(tool IN ITEMS nilcompiler nilinterpreter nilassembler nillinker nillsp nildebugger nilschema nilagent nilbuild niltest)
             if(TARGET ${tool})
                 list(APPEND NY_IDENTITY_TEST_ARGUMENTS --tool "${tool}=$<TARGET_FILE:${tool}>")
             endif()
@@ -452,6 +453,7 @@ if(BUILD_TESTING)
             COMMAND "${Python3_EXECUTABLE}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/project_build_contract.py"
                     --builder $<TARGET_FILE:nilbuild>
+                    --tester $<TARGET_FILE:niltest>
                     --compiler $<TARGET_FILE:nilcompiler>
                     --interpreter $<TARGET_FILE:nilinterpreter>
                     --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
@@ -608,6 +610,20 @@ if(BUILD_TESTING)
                     --interpreter $<TARGET_FILE:nilinterpreter>
                     --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(nil.anything-contract PROPERTIES LABELS "matrix;ny;routes;typecheck" TIMEOUT 240)
+        add_test(NAME niltest.compiler-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/niltest_compiler_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(niltest.compiler-contract PROPERTIES LABELS "matrix;ny;testing;routes" TIMEOUT 240)
+        add_test(NAME niltest.source-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/niltest_source_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(niltest.source-contract PROPERTIES LABELS "matrix;ny;testing;routes" TIMEOUT 240)
+        add_test(NAME niltest.process-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/niltest_process_contract.py"
+                --tester $<TARGET_FILE:niltest>)
+        set_tests_properties(niltest.process-contract PROPERTIES LABELS "testing;process" TIMEOUT 120 SKIP_RETURN_CODE 77)
         # Matrix execution conformance: each page lowers to NIL and runs on the
         # interpreter with exact expected output. Acceptance is covered by the
         # lexer test; this checks that the lowering means what the surface says.

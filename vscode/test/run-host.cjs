@@ -27,7 +27,7 @@ const settings = {
   "telemetry.telemetryLevel": "off"
 };
 for (const [setting, tool] of Object.entries({
-  server: "nillsp", compiler: "nilcompiler", interpreter: "nilinterpreter", debugger: "nildebugger", projectTool: "nilbuild", aperture: "aperture"
+  server: "nillsp", compiler: "nilcompiler", interpreter: "nilinterpreter", debugger: "nildebugger", projectTool: "nilbuild", testTool: "niltest", aperture: "aperture"
 })) {
   const executable = path.join(tools, tool + (process.platform === "win32" ? ".exe" : ""));
   fs.accessSync(executable, fs.constants.X_OK);

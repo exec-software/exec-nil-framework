@@ -729,11 +729,20 @@ std::optional<std::string> parser::parse_type() {
                            : nil_symbol(written);
     if (match(kw::of)) {
       std::vector<std::string> args;
-      do {
+      for (;;) {
         auto arg = parse_type();
         if (!arg) return std::nullopt;
         args.push_back(*arg);
-      } while (match(matrix::token_kind::comma));
+        if (!check(matrix::token_kind::comma)) break;
+        // A parameter separator is not another generic type argument. This
+        // lookahead also covers nested applications and mut/ref aliases.
+        std::size_t next = 1;
+        if (peek(next).is(kw::more)) ++next;
+        if (peek(next).is(kw::reference) || peek(next).is(kw::mutable_) ||
+            peek(next).is(kw::variable)) ++next;
+        if (peek(next).is_name() && peek(next + 1).is(kw::as)) break;
+        advance();
+      }
       name += "<";
       for (size_t i = 0; i < args.size(); ++i) {
         if (i) name += ", ";
@@ -1237,7 +1246,7 @@ std::vector<ny::ast_annotation> parser::parse_annotations() {
       annotation.name.replace(at, 1, "::");
     for (const auto *builtin : {"intrinsic", "interop", "inline", "test", "if_test_mode",
                                 "ai_context", "doc", "category", "performance", "deprecated",
-                                "generate", "property", "example", "integration"}) {
+                                "generate", "property", "example", "integration", "suite"}) {
       if (fold_key(annotation.name) == fold_key(builtin)) { annotation.name = builtin; break; }
     }
     const auto parsed_name = ny::parse_annotation_arguments("scope::" + annotation.name);
@@ -1412,8 +1421,9 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
     return named(parse_contract(is_public, line, name, std::move(generics)), name_token);
   }
   if (check(kw::begin) && peek(1).is(kw::test)) {
-    refuse_annotations("a test block");
-    return named(parse_test(line, name), name_token);
+    auto test = parse_test(line, name);
+    if (test) test->annotations = std::move(annotations);
+    return named(test, name_token);
   }
   if (check(kw::inherits) || (check(kw::begin) && peek(1).is(kw::class_))) {
     auto klass = parse_class(is_public, is_abstract, line, name, std::move(generics));
@@ -2047,8 +2057,10 @@ std::shared_ptr<ny::ast_decl> parser::parse_test(int line,
     if (auto stmt = parse_statement()) body->statements.push_back(stmt);
     if (pos_ == before) advance();
   }
-  return std::make_shared<ny::ast_test_block>(resolve_name(name), body,
+  auto test = std::make_shared<ny::ast_test_block>(name, body,
                                               ny::test_type::unit, line);
+  test->source_file = filename_;
+  return test;
 }
 
 // A bodyless declaration backed by the provider named in 'note intrinsic'.
@@ -2364,6 +2376,44 @@ std::shared_ptr<ny::ast_stmt> parser::parse_statement() {
   const token &start = peek();
   const int line = start.line;
 
+  if (check_word("expect")) {
+    advance();
+    auto condition = parse_expression();
+    std::string method = "true";
+    std::vector<ny::ast_expr_ptr> arguments;
+    if (condition && condition->kind == ny::ast_node_kind::binary_expr_node) {
+      const auto &comparison = static_cast<const ny::ast_binary_expr &>(*condition);
+      switch (comparison.op) {
+      case ny::token_kind::double_equal: method = "equal"; break;
+      case ny::token_kind::not_equal: method = "not_equal"; break;
+      case ny::token_kind::less: method = "less_than"; break;
+      case ny::token_kind::less_equal: method = "less_or_equal"; break;
+      case ny::token_kind::greater: method = "greater_than"; break;
+      case ny::token_kind::greater_equal: method = "greater_or_equal"; break;
+      default: break;
+      }
+      if (method != "true") arguments = {comparison.left, comparison.right};
+    }
+    if (arguments.empty()) arguments.push_back(condition);
+    auto assertion = std::make_shared<ny::ast_assert_expr>(method, std::move(arguments), line);
+    assertion->source_file = filename_;
+    skip_terminators();
+    return std::make_shared<ny::ast_expr_stmt>(assertion, line);
+  }
+  if ((peek().is_name() && peek(1).is(kw::begin) && peek(2).is(kw::test)) ||
+      check(kw::note) || check(matrix::token_kind::annotation)) {
+    const auto annotations = parse_annotations();
+    if (peek().is_name() && peek(1).is(kw::begin) && peek(2).is(kw::test)) {
+      const auto name = advance();
+      auto test = std::static_pointer_cast<ny::ast_test_block>(parse_test(name.line, name.lexeme));
+      test->annotations = annotations;
+      auto statement = std::make_shared<ny::ast_inline_test_stmt>(test, name.line);
+      statement->source_file = filename_;
+      return statement;
+    }
+    error(start, "only an inline test block can carry annotations within a paragraph");
+    return nullptr;
+  }
   if (peek().is_name() && peek(1).is(kw::begin) && exact_phrase_word(peek(2), "pattern")) {
     const auto name = advance();
     auto decl = parse_text_pattern(name, false);

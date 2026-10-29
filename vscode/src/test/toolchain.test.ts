@@ -11,7 +11,7 @@ import {
 } from "../toolchain";
 
 test("framework SDK discovery uses canonical NIL executable names", () => {
-  for (const tool of ["nilcompiler", "nilinterpreter", "nildebugger", "nillsp"] as const) {
+  for (const tool of ["nilcompiler", "nilinterpreter", "nildebugger", "nillsp", "niltest"] as const) {
     const result = resolveNyTool({
       tool, sdkPath: "/sdk", workspaceFolders: [], environment: {}, platform: "linux",
       isExecutable: (candidate) => candidate === `/sdk/${tool}`

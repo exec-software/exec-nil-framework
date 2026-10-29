@@ -268,6 +268,13 @@ test("Matrix scopes imports, named calls, and precise type overrides", async () 
   assertScope(grammar, "when total IS AT LEAST 1 then", "IS AT LEAST", "keyword.operator.word");
 });
 
+test("Matrix inline expectations highlight the statement without reserving names", async () => {
+  const grammar = await loadMatrixGrammar();
+  assertScope(grammar, "    expect total equals 42", "expect", "keyword.control.verb");
+  assertScope(grammar, "EXPECT yes", "EXPECT", "keyword.control.verb");
+  assertScope(grammar, "value expect-value is 42", "expect-value", "variable.other.readwrite");
+});
+
 test("Matrix scopes signed exponents within complete numeric literals", async () => {
   const grammar = await loadMatrixGrammar();
   for (const literal of ["1e3", "1.5E-3", "2E+2", "5e-324", "0e99999999999999999999"]) {

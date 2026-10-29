@@ -16,12 +16,14 @@ def main():
     parser.add_argument('--builder', required=True)
     parser.add_argument('--compiler', required=True)
     parser.add_argument('--interpreter', required=True)
+    parser.add_argument('--tester', required=True)
     parser.add_argument('--stdlib', required=True)
     parser.add_argument('--llvm', required=True)
     args = parser.parse_args()
     args.builder = str(Path(args.builder).resolve())
     args.compiler = str(Path(args.compiler).resolve())
     args.interpreter = str(Path(args.interpreter).resolve())
+    args.tester = str(Path(args.tester).resolve())
     args.stdlib = str(Path(args.stdlib).resolve())
     if sys.platform == 'win32':
         print('nilbuild execution currently supports POSIX hosts; Windows contract is descriptive only')
@@ -122,6 +124,82 @@ def main():
         if args.llvm.lower() in ('on', 'true', '1'):
             assert invoke('run', '--target', 'native').stdout == 'program executed\n42\n'
             assert (root / 'build/mixed').is_file()
+
+        # Project testing shares resolved SDK/include settings while keeping
+        # application artifacts untouched. Both the project and import root
+        # contain spaces/shell punctuation, so successful imports also verify
+        # that delegation preserves individual path arguments.
+        test_source = sources / 'project checks.matrix'
+        test_source.write_text('''book project.checks
+read everything from nyhelper
+read everything from matrixhelper
+read nil.std.core.option
+
+project-pass begin test
+ value present as Option of number is Option.Some holding 42
+ expect (ny-answer with nothing) plus (matrix-answer with nothing) equals 42
+ say "first project test"
+end test
+
+project-second begin test
+ expect yes
+ say "second project test"
+end test
+
+project-failure begin test
+ expect no
+ say "UNREACHABLE_PROJECT_FAILURE"
+end test
+
+main returns number begin paragraph
+ say "APPLICATION_ENTRY_MUST_NOT_RUN"
+ give 0
+end paragraph
+''', encoding='utf-8')
+        save({**base, 'entry': 'src/project checks.matrix', 'sdkPath': args.stdlib})
+        application_outputs = [root / 'build/mixed.nil', root / 'build/mixed']
+        previous_outputs = {path: path.read_bytes() if path.is_file() else None
+                            for path in application_outputs}
+        expected_routes = {'vm', 'native'} if args.llvm.lower() in ('on', 'true', '1') else {'vm'}
+        test_target = 'all' if 'native' in expected_routes else 'vm'
+        test_flags = ['--tester', args.tester, '--target', test_target,
+                      '--format', 'json', '--jobs', '2', '--timeout', '5']
+        result = invoke('test', *test_flags, '--filter', 'project-', status=1, sdk=False, timeout=120)
+        assert result.stderr == '', result
+        report = json.loads(result.stdout)
+        assert report['schema'] == 'nil.test.results.v1' and report['errors'] == [], report
+        assert len(report['tests']) == 3 * len(expected_routes), report
+        assert {case['route'] for case in report['tests']} == expected_routes, report
+        test_ids = {}
+        for case in report['tests']:
+            assert Path(case['file']) == test_source, case
+            test_ids[case['name']] = case['id']
+            if case['name'] == 'project-failure':
+                assert case['status'] == 'failed' and case['stdout'] == '', case
+                assert 'assertion failed' in case['stderr'], case
+            else:
+                assert case['status'] == 'passed' and case['exitCode'] == 77, case
+                expected_output = 'first project test\n' if case['name'] == 'project-pass' else 'second project test\n'
+                assert case['stdout'] == expected_output and case['stderr'] == '', case
+        assert set(test_ids) == {'project-pass', 'project-second', 'project-failure'}, test_ids
+        assert 'APPLICATION_ENTRY_MUST_NOT_RUN' not in result.stdout
+        assert 'UNREACHABLE_PROJECT_FAILURE' not in result.stdout
+
+        result = invoke('test', *test_flags, '--test-id', test_ids['project-pass'],
+                        '--test-id', test_ids['project-second'], sdk=False, timeout=120)
+        report = json.loads(result.stdout)
+        assert report['summary']['passed'] == 2 * len(expected_routes), report
+        assert all(case['status'] == 'passed' for case in report['tests']), report
+        result = invoke('test', *test_flags, '--filter', 'project-pass',
+                        '--test-id', test_ids['project-pass'], '--test-id', test_ids['project-second'],
+                        sdk=False, timeout=120)
+        report = json.loads(result.stdout)
+        assert len(report['tests']) == len(expected_routes), report
+        assert all(case['id'] == test_ids['project-pass'] and case['status'] == 'passed'
+                   for case in report['tests']), report
+        for path, previous in previous_outputs.items():
+            assert (path.read_bytes() if path.is_file() else None) == previous, path
+        save()
 
         # Program arguments and exit codes survive both execution routes.
         ny.write_text(

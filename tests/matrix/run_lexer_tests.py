@@ -60,6 +60,7 @@ SOFT_WORDS = {
     "switch", "case", "switching",
     # NIL-0023 keeps ordinary variables and parameters named flag valid.
     "flag",
+    "expect",
 }
 
 # Lowercase markers inside a numeric token are not standalone word terminals.

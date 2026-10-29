@@ -46,6 +46,7 @@ not assigned architecture identifiers.
 | NIL-0021 | [Switch statements and expressions with automatic fallthrough](NIL-0021-fallthrough-switch.md) | Accepted; initial literal and payload-free enum selector profile |
 | NIL-0022 | [Incremental project builds and NILData configuration](NIL-0022-incremental-project-builds.md) | Implemented initial local project graph and target scheduling profile |
 | NIL-0023 | [Dynamic values and Boolean vocabulary](NIL-0023-dynamic-values-and-booleans.md) | Implemented |
+| NIL-0024 | [Tests alongside source](NIL-0024-colocated-testing.md) | Implemented initial unit/integration profile |
 | NIL-0093 | [Executable context is artifact self-description](NIL-0093-executable-context.md) | Implemented within the documented inspection profile |
 
 ## Retained Ny feature references

@@ -162,6 +162,11 @@ struct nil_embedded_source {
   std::string contents;
 };
 
+struct nil_test_case {
+  std::string id, name, suite, kind, function, file;
+  int line = 0;
+};
+
 struct nil_module {
   std::string module_name;
   bool is_library = false;
@@ -179,6 +184,7 @@ struct nil_module {
   // as `@test` into the nil_function entries and registers their names
   // for test harness generation.
   std::vector<std::string> tests;
+  std::vector<nil_test_case> test_cases;
 
   // (Optional) type/trait/metadata sections may be added later
 };
@@ -255,6 +261,10 @@ class codegen {
 public:
   explicit codegen(const codegen_options &opts = codegen_options());
   ~codegen();
+  bool test_mode() const { return options_.mode == build_mode::test_mode; }
+  // Shared lowering helpers report through the same diagnostic channel.
+  void reject_codegen_construct(int line, std::string message,
+                                std::string hint);
 
   // Generate a nil_module from a full AST. The generator will walk the AST,
   // build instructions, and populate sections (string pool, functions).
@@ -458,8 +468,7 @@ public:
 private:
   friend class emitter;
 
-  void reject_codegen_construct(int line, std::string message,
-                                std::string hint);
+
   std::string materialize_struct_schema(const std::string &type,
                                         nil_module &module, int line,
                                         unsigned depth = 0,

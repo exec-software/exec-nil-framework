@@ -2201,7 +2201,15 @@ std::shared_ptr<ast_stmt> parser::parse_statement() {
   // a concise summary right before returning - this aids debugging and tests.
   std::shared_ptr<ast_stmt> result = nullptr;
 
-  if (is_switch_start()) {
+  if (match(token_kind::test_kw) || match(token_kind::example_kw) ||
+      match(token_kind::property_kw)) {
+    auto test = parse_test_block();
+    if (test) {
+      for (const auto &annotation : stmt_annotations) test->annotations.push_back(annotation);
+      result = std::make_shared<ast_inline_test_stmt>(test, test->line);
+      result->source_file = filename_;
+    }
+  } else if (is_switch_start()) {
     result = parse_switch_statement();
   } else if (check(token_kind::left_brace)) {
     result = parse_block_statement();
@@ -5529,7 +5537,9 @@ std::shared_ptr<ast_expr> parser::parse_assert_expr() {
     return nullptr;
   }
 
-  return std::make_shared<ast_assert_expr>(method, std::move(args), line);
+  auto assertion = std::make_shared<ast_assert_expr>(method, std::move(args), line);
+  assertion->source_file = filename_;
+  return assertion;
 }
 
 std::shared_ptr<ast_expr> parser::parse_hotreload_expr() {
@@ -5587,6 +5597,7 @@ std::shared_ptr<ast_expr> parser::parse_hotreload_expr() {
 // Ny test-block parsing
 // ----------------------------
 std::shared_ptr<ast_test_block> parser::parse_test_block() {
+  const int opening_line = previous().line;
   test_type type = test_type::unit;
   std::vector<ast_annotation> generators;
 
@@ -5626,9 +5637,117 @@ std::shared_ptr<ast_test_block> parser::parse_test_block() {
   }
 
   auto block = std::make_shared<ast_test_block>(description, test_body, type,
-                                                previous().line);
+                                                opening_line);
+  block->source_file = filename_;
   block->generators = generators;
   return block;
+}
+
+
+namespace {
+class production_test_pruner : public ast_node::ast_visitor {
+  static bool test_only(const ast_decl &declaration) {
+    if (declaration.kind == ast_node_kind::test_block_node) return true;
+    if (declaration.kind != ast_node_kind::function_decl_node) return false;
+    return std::any_of(declaration.annotations.begin(), declaration.annotations.end(),
+        [](const auto &annotation) { return annotation.has_name("test") ||
+            annotation.has_name("if_test_mode"); });
+  }
+  template<class T> void walk(const std::shared_ptr<T> &node) { if (node) node->accept(*this); }
+  template<class T> void declarations(std::vector<std::shared_ptr<T>> &nodes) {
+    nodes.erase(std::remove_if(nodes.begin(), nodes.end(), [](const auto &node) {
+      return node && test_only(*node);
+    }), nodes.end());
+    for (auto &node : nodes) walk(node);
+  }
+  void statement(ast_stmt_ptr &node) {
+    if (node && node->kind == ast_node_kind::inline_test_stmt_node)
+      node = std::make_shared<ast_block_stmt>(node->line);
+    else if (node && node->kind == ast_node_kind::decl_stmt_node) {
+      const auto &declaration = static_cast<const ast_decl_stmt &>(*node).declaration;
+      if (declaration && test_only(*declaration)) node = std::make_shared<ast_block_stmt>(node->line);
+      else walk(node);
+    } else walk(node);
+  }
+public:
+  void visit(ast_program &p) override { declarations(p.declarations); }
+  void visit(ast_function_decl &d) override {
+    d.test_blocks.clear(); d.example_blocks.clear();
+    for (auto &parameter : d.params) if (parameter.default_value) walk(*parameter.default_value);
+    statement(d.body);
+  }
+  void visit(ast_class_decl &d) override { declarations(d.methods); }
+  void visit(ast_trait_decl &d) override { declarations(d.methods); }
+  void visit(ast_impl_decl &d) override { declarations(d.methods); }
+  void visit(ast_variable_decl &d) override { walk(d.initializer); }
+  void visit(ast_block_stmt &s) override {
+    s.statements.erase(std::remove_if(s.statements.begin(), s.statements.end(), [](const auto &node) {
+      if (!node) return false;
+      if (node->kind == ast_node_kind::inline_test_stmt_node) return true;
+      if (node->kind == ast_node_kind::decl_stmt_node) {
+        const auto &d = static_cast<const ast_decl_stmt &>(*node).declaration;
+        return d && test_only(*d);
+      }
+      return false;
+    }), s.statements.end());
+    for (auto &node : s.statements) statement(node);
+  }
+  void visit(ast_decl_stmt &s) override { walk(s.declaration); }
+  void visit(ast_expr_stmt &s) override { walk(s.expression); }
+  void visit(ast_println_stmt &s) override { for (auto &arg : s.args) walk(arg); }
+  void visit(ast_asm_stmt &s) override { for (auto &arg : s.inputs) walk(arg); }
+  void visit(ast_return_stmt &s) override { walk(s.value); }
+  void visit(ast_break_stmt &s) override { walk(s.value); }
+  void visit(ast_if_stmt &s) override { walk(s.condition); statement(s.then_branch); statement(s.else_branch); }
+  void visit(ast_while_stmt &s) override { walk(s.condition); statement(s.body); }
+  void visit(ast_loop_stmt &s) override { statement(s.body); }
+  void visit(ast_for_in_stmt &s) override { walk(s.iterable); statement(s.body); }
+  void visit(ast_match_stmt &s) override {
+    walk(s.target); for (auto &arm : s.arms) { walk(arm.guard); statement(arm.body); }
+  }
+  void visit(ast_switch_stmt &s) override {
+    walk(s.target); for (auto &arm : s.arms) { walk(arm.label); statement(arm.body); }
+  }
+  void visit(ast_attempt_stmt &s) override {
+    walk(s.body); walk(s.recover); for (auto &handler : s.handlers) walk(handler);
+  }
+  void visit(ast_fault_handler &s) override { walk(s.guard); walk(s.body); }
+  void visit(ast_raise_stmt &s) override { walk(s.fault_expr); }
+  void visit(ast_deallocate_stmt &s) override { walk(s.ptr); }
+  void visit(ast_call_expr &e) override { walk(e.callee); for (auto &arg : e.args) walk(arg); }
+  void visit(ast_assert_expr &e) override { for (auto &arg : e.args) walk(arg); }
+  void visit(ast_hotreload_expr &e) override { for (auto &arg : e.args) walk(arg); }
+  void visit(ast_unary_expr &e) override { walk(e.operand); }
+  void visit(ast_binary_expr &e) override { walk(e.left); walk(e.right); }
+  void visit(ast_assignment_expr &e) override { walk(e.target); walk(e.value); }
+  void visit(ast_cast_expr &e) override { walk(e.operand); }
+  void visit(ast_ref_expr &e) override { walk(e.operand); }
+  void visit(ast_try_expr &e) override { walk(e.inner); }
+  void visit(ast_struct_literal_expr &e) override { for (auto &field : e.fields) walk(field.second); }
+  void visit(ast_array_literal_expr &e) override { for (auto &element : e.elements) walk(element); }
+  void visit(ast_member_access_expr &e) override { walk(e.object); }
+  void visit(ast_index_expr &e) override { walk(e.object); walk(e.index); }
+  void visit(ast_allocate_expr &e) override { walk(e.size); }
+  void visit(ast_lambda_expr &e) override {
+    for (auto &parameter : e.params) if (parameter.default_value) walk(*parameter.default_value);
+    statement(e.body);
+  }
+  void visit(ast_interpolated_string_expr &e) override { for (auto &part : e.parts) walk(part.expression); }
+  void visit(ast_if_expr &e) override { walk(e.condition); walk(e.then_expr); walk(e.else_expr); }
+  void visit(ast_query_expr &e) override {
+    walk(e.source); walk(e.predicate); walk(e.order_key); walk(e.skip); walk(e.take); walk(e.projection);
+  }
+  void visit(ast_match_expr &e) override {
+    walk(e.target); for (auto &arm : e.cases) { walk(arm.pattern); walk(arm.guard); statement(arm.body); }
+  }
+  void visit(ast_switch_expr &e) override {
+    walk(e.target); for (auto &arm : e.arms) { walk(arm.label); statement(arm.body); }
+  }
+};
+} // namespace
+
+void prepare_test_program(ast_program &program, bool include_tests) {
+  if (!include_tests) { production_test_pruner prune; program.accept(prune); }
 }
 
 } // namespace ny

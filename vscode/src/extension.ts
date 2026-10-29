@@ -9,6 +9,7 @@ import { selectSdkFolder } from "./vscodeToolchain";
 import { projectForResource } from "./projectContext";
 import { ProjectTarget } from "./projectModel";
 import { savedSourcePath } from "./languages";
+import { NilTestIntegration } from "./testing";
 
 let languageClientManager: NyLanguageClientManager | undefined;
 
@@ -125,6 +126,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     languageClientManager,
     analyzer,
+    new NilTestIntegration(),
     debugIntegration,
     vscode.debug.registerDebugConfigurationProvider("ny", debugIntegration),
     vscode.debug.registerDebugAdapterDescriptorFactory("ny", debugIntegration),

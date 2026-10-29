@@ -1,6 +1,6 @@
 # Projects and the default analyzer
 
-`nilbuild` checks, builds and runs Ny/Matrix projects using the installed
+`nilbuild` checks, builds, runs and tests Ny/Matrix projects using the installed
 compiler. A `nil.project.nildata` manifest supplies the entrypoint, import
 roots, SDK selection and analyzer policy to the CLI and VS Code extension.
 Each project produces one executable; project references express the ordering
@@ -53,6 +53,7 @@ nilbuild build
 nilbuild run
 nilbuild run --target native
 nilbuild build --target all --jobs 4
+nilbuild test --target all
 ```
 
 `build` and `run` check the saved import graph on every invocation. Compiler
@@ -86,8 +87,9 @@ A project reference establishes build ordering. It does not add an import
 root, expose the referenced program's symbols, or link its executable into the
 caller. Configure `includePaths` for shared source modules as before. A project
 shared by several dependents is built once; each manifest must list distinct
-reference paths. Reference cycles are errors. Package resolution, remote downloads, arbitrary hooks, test discovery
-and publishing remain outside this profile.
+reference paths. Reference cycles are errors. Package resolution, remote downloads, arbitrary hooks
+and publishing remain outside this profile. Compiler-backed tests use the same
+entrypoint and import settings; see [testing](testing.md).
 
 ## Incremental and parallel builds
 
@@ -95,7 +97,8 @@ and publishing remain outside this profile.
 to four hardware threads. Independent projects in a dependency wave can be
 checked and compiled concurrently. References complete before their dependents
 are built. `--target all` builds both VM and native outputs and allows the two
-compilations to run concurrently; it is available only with `build`. `run`
+compilations to run concurrently. `test --target all` also supports both routes,
+using its separate test runner. `run`
 selects one target, and still builds that project's references first.
 
 Parallelism is across projects and output targets. A single executable's
@@ -182,7 +185,13 @@ nilbuild describe [--project FILE] [--format nildata|json|yaml]
 nilbuild check    [--project FILE] [--format nildata|json|yaml]
 nilbuild build    [--project FILE] [--target vm|native|all] [--jobs N] [--rebuild]
 nilbuild run      [--project FILE] [--target vm|native] [--jobs N] [--rebuild] [-- PROGRAM_ARGUMENTS...]
+nilbuild test     [--project FILE] [--target vm|native|all] [--jobs N] [--filter TEXT] [--test-id ID] [--timeout SECONDS] [--format human|json|nildata]
 ```
+
+`test` delegates to `niltest` and uses fresh temporary test artifacts. It does not
+run the application build pipeline or build project-reference executables.
+`--tester PATH` selects a runner override. Test selection, process isolation,
+reports, and editor integration are described in the [testing guide](testing.md).
 
 Tool overrides are `--compiler PATH` and `--interpreter PATH`; otherwise the
 driver looks beside itself and then on `PATH`. `--sdk PATH` resolves relative
@@ -264,6 +273,10 @@ the selected callable's parameter order. Both queries validate every consumed
 source snapshot before displaying results. Parse recovery remains limited;
 the language server retains tolerant completion for unsupported contexts and
 supplies hover and outline information.
+
+The Testing view also discovers compiler-backed tests and runs selected cases
+through interpreter or native profiles. See [testing in VS Code](testing.md#visual-studio-code)
+for the saved-source workflow and current limits.
 
 Find All References and rename are available for compiler-certified lexical
 locals; rename checks the proposed source and its bindings before returning

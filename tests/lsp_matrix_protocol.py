@@ -509,6 +509,7 @@ end paragraph
 
     def test_keyword_context_no_ny_spellings(self) -> None:
         for fragment, expected in (("value item as |", {"number", "floating", "text", "tuple of"}),
+                                   ("|", {"expect"}),
                                    ("value result is |", {"negative", "formatted"}),
                                    ("value item as override |", {"integer", "long", "byte", "double"}),
                                    ("repeat |", {"while", "for each", "forever"}),

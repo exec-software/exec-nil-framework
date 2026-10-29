@@ -2,10 +2,13 @@
 
 #include <array>
 #include <chrono>
+#include <cstdint>
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -26,6 +29,20 @@ struct process_result {
   std::string error;
   bool cancelled = false;
   bool started = false;
+  bool timed_out = false;
+  bool output_limited = false;
+  int signal = 0;
+  std::int64_t duration_ms = 0;
+};
+struct process_options {
+  bool fail_fast = true;
+  bool report_limits = false;
+  bool close_stdin = false;
+  bool cleanup_descendants = false;
+  int success_exit = 0;
+  std::chrono::milliseconds time_limit{300000};
+  std::size_t output_limit = 16 * 1024 * 1024;
+  std::size_t total_output_limit = std::numeric_limits<std::size_t>::max();
 };
 struct process_command {
   std::vector<std::string> args;
@@ -70,18 +87,22 @@ public:
 // The driver never invokes a shell. Compiler processes have bounded capture
 // and execution time, with cancellation forwarded to the child process group.
 // User programs replace the driver with execv after the build completes.
-// Results retain command order. After a failure, commands not yet launched
-// have started == false; active siblings are terminated and marked cancelled.
+// Results retain command order. Default fail-fast builds terminate active
+// siblings after a failure; test runners can request independent case results.
+// Commands not yet launched have started == false.
 // One poll loop owns every child and signal handler, so parallel execution
 // does not race process-global signal state or write interleaved build logs.
 inline std::vector<process_result> execute_many(const std::vector<process_command> &commands,
-                                               std::size_t jobs) {
+                                               std::size_t jobs,
+                                               const process_options &options = {}) {
 #ifdef _WIN32
-  (void)commands; (void)jobs;
+  (void)commands; (void)jobs; (void)options;
   throw std::runtime_error("nilbuild execution currently requires a POSIX host; Windows execution is not supported");
 #else
-  constexpr std::size_t output_limit = 16 * 1024 * 1024;
-  constexpr auto time_limit = std::chrono::seconds(300);
+  const auto output_limit = options.output_limit;
+  const auto time_limit = options.time_limit;
+  if (!output_limit || time_limit.count() <= 0)
+    throw std::runtime_error("child execution limits must be positive");
   using clock = std::chrono::steady_clock;
   if (!jobs) throw std::runtime_error("parallel process count must be greater than zero");
   for (const auto &command : commands) {
@@ -100,10 +121,10 @@ inline std::vector<process_result> execute_many(const std::vector<process_comman
     bool reaped = false;
     bool complete = false;
     std::size_t received = 0;
-    clock::time_point deadline;
+    clock::time_point deadline, start;
   };
   std::vector<child_state> children(commands.size());
-  std::size_t next = 0, active = 0;
+  std::size_t next = 0, active = 0, total_received = 0;
   bool stopping = false;
   int stop_signal = 0, external_signal = 0;
   auto cancellation_deadline = clock::time_point::max();
@@ -138,6 +159,15 @@ inline std::vector<process_result> execute_many(const std::vector<process_comman
     }
     signal_groups(signal);
   };
+  auto terminate_child = [&](std::size_t index) {
+    auto &child = children[index];
+    kill(-child.pid, SIGKILL);
+    if (!child.reaped) kill(child.pid, SIGKILL);
+    child.deadline = clock::time_point::max();
+    // Descendants may have inherited pipes. A bounded result must not wait
+    // forever for them after this case has already exceeded its limits.
+    for (int &fd : child.streams) if (fd >= 0) { close(fd); fd = -1; }
+  };
   auto launch = [&](std::size_t index) {
     const auto &command = commands[index];
     auto &child = children[index];
@@ -171,6 +201,11 @@ inline std::vector<process_result> execute_many(const std::vector<process_comman
       if (child.pid == 0) {
         signal(SIGINT, SIG_DFL);
         signal(SIGTERM, SIG_DFL);
+        if (options.close_stdin) {
+          const int input = open("/dev/null", O_RDONLY);
+          if (input < 0 || dup2(input, STDIN_FILENO) < 0) _exit(126);
+          if (input != STDIN_FILENO) close(input);
+        }
         if (setpgid(0, 0) != 0 || dup2(pipes[1], STDOUT_FILENO) == -1 ||
             dup2(pipes[3], STDERR_FILENO) == -1 || chdir(command.directory.c_str()) != 0)
           _exit(126);
@@ -184,7 +219,8 @@ inline std::vector<process_result> execute_many(const std::vector<process_comman
       setpgid(child.pid, child.pid);
       close(pipes[1]); close(pipes[3]);
       child.streams = {{pipes[0], pipes[2]}};
-      child.deadline = clock::now() + time_limit;
+      child.start = clock::now();
+      child.deadline = child.start + time_limit;
       results[index].started = true;
       ++active;
     } catch (...) {
@@ -202,14 +238,21 @@ inline std::vector<process_result> execute_many(const std::vector<process_comman
         launch(next++);
       if (!active) break;
       const auto now = clock::now();
-      if (now >= cancellation_deadline) signal_groups(SIGKILL);
+      if (now >= cancellation_deadline) {
+        signal_groups(SIGKILL);
+        if (options.report_limits) for (std::size_t i = 0; i < next; ++i)
+          if (!children[i].complete) terminate_child(i);
+      }
       std::vector<pollfd> descriptors;
       std::vector<std::pair<std::size_t, unsigned>> owners;
       for (std::size_t i = 0; i < next; ++i) {
-        const auto &child = children[i];
+        auto &child = children[i];
         if (child.complete) continue;
-        if (now >= child.deadline)
-          throw std::runtime_error("child execution exceeded 300 seconds");
+        if (now >= child.deadline) {
+          if (!options.report_limits) throw std::runtime_error("child execution exceeded 300 seconds");
+          results[i].timed_out = true;
+          terminate_child(i);
+        }
         for (unsigned channel = 0; channel < 2; ++channel) if (child.streams[channel] >= 0) {
           descriptors.push_back({child.streams[channel], POLLIN, 0});
           owners.push_back({i, channel});
@@ -224,13 +267,20 @@ inline std::vector<process_result> execute_many(const std::vector<process_comman
         auto &child = children[index];
         auto &result = results[index];
         auto &fd = child.streams[channel];
+        if (fd < 0) continue;
         char buffer[8192];
         for (;;) {
           const auto count = read(fd, buffer, sizeof(buffer));
           if (count > 0) {
-            child.received += static_cast<std::size_t>(count);
-            if (child.received > output_limit) throw std::runtime_error("child output exceeds 16 MiB");
-            (channel == 0 ? result.output : result.error).append(buffer, count);
+            const auto retained = std::min({static_cast<std::size_t>(count), output_limit - child.received,
+                options.total_output_limit - total_received});
+            child.received += retained; total_received += retained;
+            (channel == 0 ? result.output : result.error).append(buffer, retained);
+            if (retained != static_cast<std::size_t>(count)) {
+              if (!options.report_limits) throw std::runtime_error("child output exceeds 16 MiB");
+              result.output_limited = true;
+              terminate_child(index);
+            }
             // Bound each drain to keep stderr and cancellation responsive
             // even when a child continuously fills its stdout pipe.
             break;
@@ -249,17 +299,19 @@ inline std::vector<process_result> execute_many(const std::vector<process_comman
           const auto waited = waitpid(child.pid, &wait_status, WNOHANG);
           if (waited == child.pid) {
             child.reaped = true;
+            result.signal = WIFSIGNALED(wait_status) ? WTERMSIG(wait_status) : 0;
             result.status = WIFEXITED(wait_status) ? WEXITSTATUS(wait_status) :
                             WIFSIGNALED(wait_status) ? 128 + WTERMSIG(wait_status) : 1;
             if (result.cancelled && !result.status) result.status = 128 + stop_signal;
-            if (result.status && !stopping) stop(SIGTERM, i);
+            if (result.status != options.success_exit && !stopping && options.fail_fast) stop(SIGTERM, i);
           } else if (waited == -1 && errno != EINTR) {
             throw std::runtime_error("cannot collect child exit status");
           }
         }
         if (child.reaped && child.streams[0] < 0 && child.streams[1] < 0) {
-          if (stopping) kill(-child.pid, SIGKILL);
+          if (stopping || options.cleanup_descendants) kill(-child.pid, SIGKILL);
           child.complete = true;
+          result.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - child.start).count();
           --active;
         }
       }
@@ -267,9 +319,11 @@ inline std::vector<process_result> execute_many(const std::vector<process_comman
     // A signal can arrive during the final drain/reap or before the first fork.
     if (pending_signal) {
       signal_groups(SIGKILL);
-      for (auto &result : results) {
-        result.cancelled = true;
-        result.status = 128 + pending_signal;
+      for (std::size_t i = 0; i < results.size(); ++i) {
+        // A test that completed before interruption retains its result.
+        if (!options.fail_fast && children[i].complete && !results[i].cancelled) continue;
+        results[i].cancelled = true;
+        results[i].status = 128 + pending_signal;
       }
     } else if (stopping) {
       signal_groups(SIGKILL);

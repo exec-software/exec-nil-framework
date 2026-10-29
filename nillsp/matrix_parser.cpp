@@ -772,7 +772,7 @@ std::vector<MatrixKeyword> matrix_keywords(const ParseResult& parsed, const std:
         words = {"to"};
     }
     else if (last == "value" || last == "variable" || last == "mutable" || last == "constant" || last == "field" || last == "book") return {};
-    else if (last.empty() || last == "\n") words = {"value", "variable", "constant", "set", "say", "give", "evaluate", "when", "otherwise", "repeat", "consider", "switch", "case", "attempt", "caught", "always", "raise", "append", "allocate", "release", "own", "borrow", "move", "stop repeating", "stop switching", "continue repeating", "book", "library", "read", "cite", "public", "note", "context", "end"};
+    else if (last.empty() || last == "\n") words = {"value", "variable", "constant", "set", "say", "give", "evaluate", "expect", "when", "otherwise", "repeat", "consider", "switch", "case", "attempt", "caught", "always", "raise", "append", "allocate", "release", "own", "borrow", "move", "stop repeating", "stop switching", "continue repeating", "book", "library", "read", "cite", "public", "note", "context", "end"};
     else words = {"true", "false", "yes", "no", "nothing", "build", "my", "the length of", "the paragraph", "anonymous", "formatted", "switch", "quote", "newline", "tab", "negative", "plus", "minus", "times", "over", "remainder", "equals", "does not equal", "is less than", "is greater than", "is at least", "is at most", "and", "or", "not", "bitwise", "shifted", "becomes", "with", "receives", "returns", "begin"};
     std::vector<MatrixKeyword> result;
     const Range edit{NyParser::position_at(text, offsets, begin), NyParser::position_at(text, offsets, end)};

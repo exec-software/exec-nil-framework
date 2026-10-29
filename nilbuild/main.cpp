@@ -24,9 +24,10 @@ namespace {
 constexpr std::size_t manifest_limit = 1024 * 1024;
 struct options {
   std::string command;
-  std::optional<std::string> project, sdk, compiler, interpreter;
+  std::optional<std::string> project, sdk, compiler, interpreter, tester;
   std::string target = "vm";
-  std::optional<std::string> format, output, name, entry;
+  std::optional<std::string> format, output, name, entry, filter, timeout;
+  std::vector<std::string> test_ids;
   std::size_t jobs = std::min(4u, std::max(1u, std::thread::hardware_concurrency()));
   bool rebuild = false;
   std::vector<std::string> program_arguments;
@@ -197,14 +198,19 @@ json describe(const project &value) {
 }
 void usage() {
   std::cout << "NIL project driver\n\n"
-      "Usage: nilbuild <init|convert|describe|check|build|run> [options] [-- program arguments]\n"
+      "Usage: nilbuild <init|convert|describe|check|build|run|test> [options] [-- program arguments]\n"
       "  --project FILE       Manifest (nearest nil.project.nildata, .json, .yaml or .yml)\n"
-      "  --target vm|native|all  Artifact route (default: vm; all requires build)\n"
-      "  --jobs N, -j N       Concurrent compiler processes, 1..64 (default: up to 4)\n"
+      "  --target vm|native|all  Artifact route (default: vm; all requires build or test)\n"
+      "  --jobs N, -j N       Concurrent compiler processes/test cases, 1..64 (default: up to 4)\n"
       "  --rebuild            Ignore cached artifacts for this build/run\n"
       "  --sdk PATH           Override manifest SDK, relative to caller directory\n"
       "  --compiler PATH      Override nilcompiler executable\n"
       "  --interpreter PATH   Override nilinterpreter executable\n"
+      "  --tester PATH        Override niltest executable (test only)\n"
+      "  --filter TEXT        Test id/name/suite substring (test only)\n"
+      "  --test-id ID         Exact test id, repeatable (test only)\n"
+      "  --timeout SECONDS    Per-test deadline (test only, default 30)\n"
+      "  --format human|json|nildata  Test report serialization\n"
       "  --format nildata|json|yaml  init/convert/describe/check serialization\n"
       "  --output FILE        Destination for convert (default: nil.project.nildata)\n"
       "  --name NAME          init project name (default: hello)\n"
@@ -220,7 +226,7 @@ options parse_options(int argc, char **argv) {
   options result;
   if (argc < 2) throw std::runtime_error("expected a command; use --help");
   result.command = argv[1];
-  const std::set<std::string> commands{"init", "convert", "describe", "check", "build", "run"};
+  const std::set<std::string> commands{"init", "convert", "describe", "check", "build", "run", "test"};
   if (!commands.count(result.command)) throw std::runtime_error("unknown command: " + result.command);
   std::set<std::string> seen;
   for (int i = 2; i < argc; ++i) {
@@ -231,9 +237,9 @@ options parse_options(int argc, char **argv) {
       break;
     }
     if (option == "-j") option = "--jobs";
-    if (!seen.insert(option).second) throw std::runtime_error("duplicate option: " + option);
+    if (!seen.insert(option).second && option != "--test-id") throw std::runtime_error("duplicate option: " + option);
     if (option == "--rebuild") { result.rebuild = true; continue; }
-    const std::set<std::string> flags{"--project", "--sdk", "--compiler", "--interpreter", "--target", "--format", "--jobs", "--output", "--name", "--entry"};
+    const std::set<std::string> flags{"--project", "--sdk", "--compiler", "--interpreter", "--target", "--format", "--jobs", "--output", "--name", "--entry", "--tester", "--filter", "--test-id", "--timeout"};
     if (!flags.count(option)) throw std::runtime_error("unknown option: " + option);
     if (++i >= argc || std::string(argv[i]).empty()) throw std::runtime_error("missing value for " + option);
     const std::string value = argv[i];
@@ -241,6 +247,10 @@ options parse_options(int argc, char **argv) {
     else if (option == "--sdk") result.sdk = value;
     else if (option == "--compiler") result.compiler = value;
     else if (option == "--interpreter") result.interpreter = value;
+    else if (option == "--tester") result.tester = value;
+    else if (option == "--filter") result.filter = value;
+    else if (option == "--timeout") result.timeout = value;
+    else if (option == "--test-id") result.test_ids.push_back(value);
     else if (option == "--output") result.output = value;
     else if (option == "--name") result.name = value;
     else if (option == "--entry") result.entry = value;
@@ -252,14 +262,19 @@ options parse_options(int argc, char **argv) {
         throw std::runtime_error("jobs must be an integer from 1 to 64");
       result.jobs = std::stoul(value);
     } else {
-      if (value != "nildata" && value != "json" && value != "yaml") throw std::runtime_error("format must be nildata, json or yaml");
+      if (result.command == "test") {
+        if (value != "human" && value != "json" && value != "nildata") throw std::runtime_error("test format must be human, json or nildata");
+      } else if (value != "nildata" && value != "json" && value != "yaml") throw std::runtime_error("format must be nildata, json or yaml");
       result.format = value;
     }
   }
   const bool building = result.command == "build" || result.command == "run";
   if (result.format && building) throw std::runtime_error("--format requires init, convert, describe or check");
-  if ((result.rebuild || seen.count("--jobs")) && !building) throw std::runtime_error("--jobs and --rebuild require build or run");
-  if (result.target == "all" && result.command != "build") throw std::runtime_error("--target all requires build");
+  if (result.rebuild && !building) throw std::runtime_error("--rebuild requires build or run");
+  if (seen.count("--jobs") && !building && result.command != "test") throw std::runtime_error("--jobs requires build, run or test");
+  if (result.target == "all" && result.command != "build" && result.command != "test") throw std::runtime_error("--target all requires build or test");
+  if ((result.tester || result.filter || result.timeout || !result.test_ids.empty()) && result.command != "test")
+    throw std::runtime_error("--tester, --filter, --test-id and --timeout require test");
   if ((result.name || result.entry) && result.command != "init") throw std::runtime_error("--name and --entry require init");
   if (result.output && result.command != "convert") throw std::runtime_error("--output requires convert");
   return result;
@@ -315,7 +330,7 @@ fs::path tool_path(const std::string &name, const std::optional<std::string> &ov
   if (executable(sibling)) return sibling;
   if (const auto found = search_path(name, caller)) return *found;
   throw std::runtime_error("cannot find " + name + "; install it beside nilbuild or use --" +
-      (name == "nilcompiler" ? "compiler" : "interpreter") + " PATH");
+      (name == "nilcompiler" ? "compiler" : name == "niltest" ? "tester" : "interpreter") + " PATH");
 }
 fs::path self_path(const char *argument, const fs::path &caller) {
 #ifdef __linux__
@@ -796,6 +811,22 @@ int main(int argc, char **argv) {
     }
     const auto self = self_path(argv[0], caller);
     const auto compiler = tool_path("nilcompiler", opts.compiler, self, caller);
+    if (opts.command == "test") {
+      const auto tester = tool_path("niltest", opts.tester, self, caller);
+      std::vector<std::string> command{tester.string(), "run", "--compiler", compiler.string(),
+          "--target", opts.target, "--jobs", std::to_string(opts.jobs)};
+      if (opts.target != "native") {
+        command.push_back("--interpreter");
+        command.push_back(tool_path("nilinterpreter", opts.interpreter, self, caller).string());
+      }
+      add_project_arguments(command, value);
+      if (opts.format) command.insert(command.end(), {"--format", *opts.format});
+      if (opts.filter) command.insert(command.end(), {"--filter", *opts.filter});
+      if (opts.timeout) command.insert(command.end(), {"--timeout", *opts.timeout});
+      for (const auto &id : opts.test_ids) command.insert(command.end(), {"--test-id", id});
+      command.push_back(value.entry.string());
+      return nilbuild::run_program(command, value.directory);
+    }
     if (opts.command == "check") return check(value, compiler, opts.format);
     const bool native = opts.target == "native";
     // Resolve the interpreter before compilation, but never run a stale output.
@@ -818,8 +849,6 @@ int main(int argc, char **argv) {
     }
     command.insert(command.end(), opts.program_arguments.begin(), opts.program_arguments.end());
     return nilbuild::run_program(command, value.directory);
-  } catch (const nilbuild::process_cancelled &cancelled) {
-    return cancelled.status;
   } catch (const build_cancelled &cancelled) {
     return cancelled.status;
   } catch (const std::exception &error) {

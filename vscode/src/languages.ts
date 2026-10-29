@@ -32,6 +32,11 @@ export function savedSourcePath(document: SourceDocument | undefined): string | 
   return language && document.languageId === language ? document.uri.fsPath : undefined;
 }
 
+/** Disk-backed commands are unaffected by unrelated untitled scratch buffers. */
+export function isDirtySavedSource(document: SourceDocument & { readonly isDirty: boolean }): boolean {
+  return document.isDirty && savedSourcePath(document) !== undefined;
+}
+
 /** Named untitled files already have an import identity, without a disk write. */
 export function analysisSourcePath(document: SourceDocument | undefined): string | undefined {
   if (!document || !["file", "untitled"].includes(document.uri.scheme) || !path.isAbsolute(document.uri.fsPath)) return undefined;

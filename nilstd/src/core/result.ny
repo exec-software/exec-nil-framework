@@ -17,6 +17,9 @@
 
 module nil.std.core
 
+import nil.std.core.traits
+import nil.std.core.option
+
 
 # =============================================================================
 # Result<T, E> Enum

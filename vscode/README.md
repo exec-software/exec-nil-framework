@@ -58,6 +58,22 @@ the compiler-backed source debugger.
 - Workspace Trust integration. Syntax support remains available in untrusted
   workspaces, but no executable is launched until the workspace is trusted.
 
+## Tests alongside source
+
+Use **NIL Framework: Discover Tests in Current File or Project** to populate
+Test Explorer from the compiler's checked discovery results. Choose the
+**NIL interpreter** or **NIL native** run profile. Suite groups and individual
+cases open at their source locations. Failures retain assertion details and
+captured output; cancellation stops the runner and its test processes.
+
+Discovery requires a trusted workspace and saved Ny/Matrix sources. For a NIL
+project it follows the project's entrypoint and imports; otherwise it uses the
+active source file. Refresh discovery after adding, removing, or moving tests.
+The SDK must contain `niltest`, or set `ny.testTool.path`. Set
+`ny.testing.timeoutSeconds` to adjust each case's deadline (default 30 seconds).
+See the [testing guide](../docs/tools/testing.md) for source syntax and CLI use.
+Test debugging and coverage profiles are not yet implemented.
+
 ## Requirements
 
 Build or install a NIL Framework SDK containing these commands:

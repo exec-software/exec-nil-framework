@@ -150,11 +150,20 @@ def main():
                             'Protocol begin contract\nend contract',
                             'Parcel begin record\n@flag\nfield x as number\nend record',
                             'main begin paragraph\n @flag\n value local is 1\nend paragraph',
-                            'Task begin test\nend test', 'Parcel begin extension\nend extension', ''):
+                            'Parcel begin extension\nend extension', ''):
             path = root / 'target.matrix'
             path.write_text('book invalid\n@flag\n' + declaration + '\n')
             run([compiler, '--analyze', '--no-stdlib', path], status=1)
             checks += 1
+
+        # Named test declarations now retain declaration annotations too.
+        path = root / 'annotated-test.matrix'
+        path.write_text('book annotated\n@flag\nTask begin test\n expect yes\nend test\n')
+        report = json.loads(run([compiler, '--analyze', '--no-stdlib', path]).stdout)
+        assert report['success'], report
+        manifest = json.loads(run([compiler, '--test-list', '--no-stdlib', path]).stdout)
+        assert len(manifest['tests']) == 1 and manifest['tests'][0]['name'] == 'Task', manifest
+        checks += 1
 
         path = root / 'preprocessed.matrix'
         path.write_text('''book preprocessing

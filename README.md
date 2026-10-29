@@ -165,6 +165,19 @@ For projects with multiple source modules, add a
 [`nil.project.nildata`](docs/tools/projects.md) manifest. Project check, build and
 run commands use the same import paths and analyzer policy as live checks.
 
+### Tests beside the code
+
+[`niltest`](docs/tools/testing.md) discovers named tests and annotated test
+functions in Ny and Matrix, then runs each case in an isolated process through
+the interpreter, native code, or both. Inline test blocks share their enclosing
+function's locals and run when a test calls that function. Ordinary builds omit
+test-only code. `nilbuild test` uses the project configuration, and the VS Code
+Test Explorer offers interpreter and native run profiles.
+
+```sh
+sdk/niltest run --target all example.matrix
+```
+
 ## Examples
 
 [`validation/ny-3d`](validation/ny-3d) is an independent consumer of the SDK:

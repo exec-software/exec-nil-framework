@@ -14,6 +14,15 @@ or running. VS Code consumes that configuration for live analysis and project
 tasks, displays matching imported-file diagnostics, and offers guarded style
 fixes. See [projects](tools/projects.md) and the [analysis API](analysis-api.md).
 
+`niltest` now uses compiler-backed discovery and isolated per-case execution for
+Ny and Matrix. `nilbuild test` shares the project entrypoint and import settings,
+and VS Code's Testing view provides interpreter/native run profiles for saved
+sources in trusted workspaces. Colocated and inline lexical test blocks are
+excluded from production compilation. Assertions and `nil.std.testing` helpers
+supply the initial checked test API. See the [testing guide](tools/testing.md)
+for syntax, reports, process limits, and the current scope; property generators,
+coverage, and test-debug profiles remain future work.
+
 Project manifests now default to NILData. Local project references establish
 dependency ordering, and bounded parallel jobs build independent projects and
 VM/native targets. SHA-256 input and artifact identities avoid redundant
