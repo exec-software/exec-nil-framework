@@ -3674,12 +3674,9 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
                                                             str_tok.line);
     }
 
-    std::string literal_content = str_tok.lexeme;
-    if (literal_content.size() >= 2 && literal_content.front() == '"' &&
-        literal_content.back() == '"') {
-      literal_content = literal_content.substr(1, literal_content.size() - 2);
-    }
-    return std::make_shared<ast_string_literal>(literal_content, str_tok.line);
+    // The lexer already removed the delimiters and decoded escapes. Quotes
+    // at either end of this value are string content, including JSON strings.
+    return std::make_shared<ast_string_literal>(str_tok.lexeme, str_tok.line);
   }
   if (match(token_kind::identifier)) {
     auto id_tok = previous();

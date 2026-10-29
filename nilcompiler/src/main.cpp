@@ -10,6 +10,7 @@
 #include "nil_version.hpp"
 #include "diagnostics.hpp"
 #include "nil_loader.hpp"
+#include "nildata.hpp"
 #if !defined(_WIN32)
 #include <unistd.h>
 #endif
@@ -385,8 +386,10 @@ static void print_usage(std::ostream &out = std::cerr) {
       << "              [--emit-reflection <analysis_snapshot.ny>]\n"
       << "              [--disable-rule <code>] [--warnings-as-errors]\n"
       << "  nilcompiler --list-analysis-rules  List built-in analyzer rules as JSON\n"
-      << "  nilcompiler --to-nydata <input.json>\n"
-      << "  nilcompiler --to-json <input.nydata>\n"
+      << "  nilcompiler --to-nildata <input.json>\n"
+      << "  nilcompiler --to-json <input.nildata>\n"
+      << "  nilcompiler --import-nydata <legacy.nydata>\n"
+      << "  nilcompiler --import-nydata-compiler <legacy.nydata>\n"
       << "\nOptions:\n"
       << "  -o, --out, --output <path>     Set the output path\n"
       << "  --bundle[=true]                Bundle NIL with nilinterpreter "
@@ -415,8 +418,10 @@ static void print_usage(std::ostream &out = std::cerr) {
          "root\n"
       << "  --no-typecheck                 Continue after type-checking "
          "errors\n"
-      << "  --to-nydata <path>             Convert JSON to NyData on stdout\n"
-      << "  --to-json <path>               Convert NyData to JSON on stdout\n"
+      << "  --to-nildata <path>            Convert strict JSON to NILData 1 on stdout\n"
+      << "  --to-json <path>               Convert NILData 1 to strict JSON on stdout\n"
+      << "  --import-nydata <path>         Import the legacy library format as NILData 1\n"
+      << "  --import-nydata-compiler <path> Import legacy compiler member blocks as NILData 1\n"
       << "  -v, -vv, -vvv                  Increase diagnostic verbosity\n"
       << "  -q, --quiet                    Show errors only\n"
       << "  --version                      Show the compiler version\n"
@@ -593,35 +598,6 @@ resolve_import_to_known_module(const std::string &importpath,
   return std::nullopt;
 }
 
-static std::string json_escape(const std::string &s) {
-  std::string r;
-  for (char c : s) {
-    if (c == '"')
-      r += "\\\"";
-    else if (c == '\\')
-      r += "\\\\";
-    else if (c == '\n')
-      r += "\\n";
-    else if (c == '\t')
-      r += "\\t";
-    else if (c == '\r')
-      r += "\\r";
-    else
-      r += c;
-  }
-  return r;
-}
-
-struct json_val {
-  enum class T { null_t, bool_t, num_t, str_t, arr_t, obj_t };
-  T t = T::null_t;
-  bool b = false;
-  double n = 0;
-  std::string s;
-  std::shared_ptr<std::vector<json_val>> a;
-  std::shared_ptr<std::vector<std::pair<std::string, json_val>>> o;
-};
-
 // A page whose name ends in a Matrix extension is Matrix source. The
 // extension is the only selector: both front ends emit the same AST, so
 // nothing downstream needs to know which surface produced it.
@@ -653,344 +629,22 @@ static bool is_matrix_source(const std::string &path) {
   return extension == ".matrix" || extension == ".mat";
 }
 
-struct json_parser {
-  const std::string &src;
-  size_t pos = 0;
-  void skip_ws() {
-    while (pos < src.size() && (src[pos] == ' ' || src[pos] == '\t' ||
-                                src[pos] == '\n' || src[pos] == '\r'))
-      ++pos;
-  }
-  std::string parse_str() {
-    ++pos;
-    std::string r;
-    while (pos < src.size() && src[pos] != '"') {
-      if (src[pos] == '\\') {
-        ++pos;
-        if (pos < src.size()) {
-          switch (src[pos]) {
-          case '"':
-            r += '"';
-            break;
-          case '\\':
-            r += '\\';
-            break;
-          case '/':
-            r += '/';
-            break;
-          case 'n':
-            r += '\n';
-            break;
-          case 't':
-            r += '\t';
-            break;
-          case 'r':
-            r += '\r';
-            break;
-          default:
-            r += src[pos];
-            break;
-          }
-        }
-      } else {
-        r += src[pos];
-      }
-      ++pos;
-    }
-    ++pos;
-    return r;
-  }
-  json_val parse_val() {
-    skip_ws();
-    if (pos >= src.size())
-      return {};
-    char c = src[pos];
-    if (c == '"') {
-      json_val v;
-      v.t = json_val::T::str_t;
-      v.s = parse_str();
-      return v;
-    }
-    if (c == '{') {
-      ++pos;
-      json_val v;
-      v.t = json_val::T::obj_t;
-      v.o = std::make_shared<std::vector<std::pair<std::string, json_val>>>();
-      skip_ws();
-      while (pos < src.size() && src[pos] != '}') {
-        skip_ws();
-        std::string key = parse_str();
-        skip_ws();
-        ++pos;
-        v.o->push_back({key, parse_val()});
-        skip_ws();
-        if (pos < src.size() && src[pos] == ',')
-          ++pos;
-        skip_ws();
-      }
-      ++pos;
-      return v;
-    }
-    if (c == '[') {
-      ++pos;
-      json_val v;
-      v.t = json_val::T::arr_t;
-      v.a = std::make_shared<std::vector<json_val>>();
-      skip_ws();
-      while (pos < src.size() && src[pos] != ']') {
-        v.a->push_back(parse_val());
-        skip_ws();
-        if (pos < src.size() && src[pos] == ',')
-          ++pos;
-        skip_ws();
-      }
-      ++pos;
-      return v;
-    }
-    if (src.size() - pos >= 4 && src.substr(pos, 4) == "null") {
-      pos += 4;
-      return {};
-    }
-    if (src.size() - pos >= 4 && src.substr(pos, 4) == "true") {
-      pos += 4;
-      json_val v;
-      v.t = json_val::T::bool_t;
-      v.b = true;
-      return v;
-    }
-    if (src.size() - pos >= 5 && src.substr(pos, 5) == "false") {
-      pos += 5;
-      json_val v;
-      v.t = json_val::T::bool_t;
-      v.b = false;
-      return v;
-    }
-    json_val v;
-    v.t = json_val::T::num_t;
-    size_t start = pos;
-    if (src[pos] == '-')
-      ++pos;
-    while (pos < src.size() &&
-           (std::isdigit((unsigned char)src[pos]) || src[pos] == '.' ||
-            src[pos] == 'e' || src[pos] == 'E' || src[pos] == '+' ||
-            src[pos] == '-'))
-      ++pos;
-    v.n = std::stod(src.substr(start, pos - start));
-    return v;
-  }
-};
-
-static void emit_nydata(std::ostream &os, const std::string &name,
-                        const json_val &v, int depth = 0) {
-  std::string ind(depth * 2, ' ');
-  switch (v.t) {
-  case json_val::T::obj_t:
-    os << ind << "object " << name << "\n";
-    for (const auto &[k, child] : *v.o)
-      emit_nydata(os, k, child, depth + 1);
-    os << ind << "end " << name << "\n";
-    break;
-  case json_val::T::arr_t:
-    os << ind << "object " << name << "\n";
-    for (size_t i = 0; i < v.a->size(); ++i)
-      emit_nydata(os, std::to_string(i), (*v.a)[i], depth + 1);
-    os << ind << "end " << name << "\n";
-    break;
-  case json_val::T::null_t:
-    os << ind << "field " << name << "\n  null\n"
-       << ind << "end " << name << "\n";
-    break;
-  case json_val::T::bool_t:
-    os << ind << "field " << name << "\n  " << (v.b ? "true" : "false") << "\n"
-       << ind << "end " << name << "\n";
-    break;
-  case json_val::T::num_t: {
-    os << ind << "field " << name << "\n  ";
-    if (v.n == static_cast<long long>(v.n))
-      os << static_cast<long long>(v.n);
-    else
-      os << v.n;
-    os << "\n" << ind << "end " << name << "\n";
-    break;
-  }
-  case json_val::T::str_t:
-    os << ind << "field " << name << "\n  " << v.s << "\n"
-       << ind << "end " << name << "\n";
-    break;
-  }
-}
-
-static int cmd_to_nydata(const std::string &path) {
-  std::ifstream f(path);
-  if (!f.is_open()) {
-    std::cerr << "Cannot open: " << path << "\n";
+static int convert_nildata(const std::string &operation, const std::string &path) {
+  try {
+    const auto input = ny::detail::read_regular_file_bounded(path, nil::data::max_bytes);
+    if (!input.ok) throw std::runtime_error(input.error);
+    const std::string source(input.bytes.begin(), input.bytes.end());
+    // Complete conversion before writing anything, including the final newline.
+    std::string result;
+    if (operation == "--to-nildata") result = nil::data::from_json(source);
+    else if (operation == "--to-json") result = nil::data::to_json(source) + "\n";
+    else result = nil::data::import_legacy(source, operation == "--import-nydata-compiler");
+    std::cout << result;
+    return 0;
+  } catch (const std::exception &error) {
+    std::cerr << "NILData: " << error.what() << "\n";
     return 1;
   }
-  std::string src((std::istreambuf_iterator<char>(f)), {});
-  json_parser p{src};
-  json_val root = p.parse_val();
-  if (root.t == json_val::T::obj_t) {
-    for (const auto &[k, v] : *root.o)
-      emit_nydata(std::cout, k, v, 0);
-  } else {
-    emit_nydata(std::cout, "root", root, 0);
-  }
-  return 0;
-}
-
-struct nydata_node {
-  std::string name;
-  bool is_field = false;
-  std::string value;
-  std::vector<nydata_node> children;
-};
-
-static std::string nydata_trim(const std::string &s) {
-  const char *ws = " \t\r\n";
-  size_t b = s.find_first_not_of(ws);
-  if (b == std::string::npos)
-    return "";
-  return s.substr(b, s.find_last_not_of(ws) - b + 1);
-}
-
-static void parse_nydata_children(const std::vector<std::string> &lines,
-                                  size_t &i, std::vector<nydata_node> &out) {
-  while (i < lines.size()) {
-    std::string ln = nydata_trim(lines[i]);
-    if (ln.empty()) {
-      ++i;
-      continue;
-    }
-    if (ln.rfind("end ", 0) == 0) {
-      ++i;
-      return;
-    }
-    if (ln.rfind("object ", 0) == 0) {
-      nydata_node node;
-      node.name = ln.substr(7);
-      node.is_field = false;
-      ++i;
-      parse_nydata_children(lines, i, node.children);
-      out.push_back(std::move(node));
-    } else if (ln.rfind("field ", 0) == 0) {
-      nydata_node node;
-      node.name = ln.substr(6);
-      node.is_field = true;
-      ++i;
-      while (i < lines.size()) {
-        std::string vl = nydata_trim(lines[i]);
-        if (vl.empty()) {
-          ++i;
-          continue;
-        }
-        if (vl.rfind("end ", 0) == 0) {
-          ++i;
-          break;
-        }
-        node.value = vl;
-        ++i;
-      }
-      out.push_back(std::move(node));
-    } else {
-      ++i;
-    }
-  }
-}
-
-static void emit_json_node(std::ostream &os, const nydata_node &node,
-                           int depth) {
-  std::string ind2((depth + 1) * 2, ' ');
-  std::string ind(depth * 2, ' ');
-  if (node.is_field) {
-    const std::string &v = node.value;
-    if (v == "true" || v == "false") {
-      os << v;
-      return;
-    }
-    if (v == "null") {
-      os << "null";
-      return;
-    }
-    bool is_num = !v.empty();
-    size_t start_c = (v[0] == '-') ? 1 : 0;
-    bool has_dot = false;
-    for (size_t ci = start_c; ci < v.size() && is_num; ++ci) {
-      char c = v[ci];
-      if (c == '.' && !has_dot)
-        has_dot = true;
-      else if (!std::isdigit((unsigned char)c))
-        is_num = false;
-    }
-    if (is_num && v.size() > start_c) {
-      os << v;
-      return;
-    }
-    os << '"' << json_escape(v) << '"';
-  } else {
-    bool is_array = !node.children.empty();
-    for (size_t ci = 0; ci < node.children.size() && is_array; ++ci)
-      if (node.children[ci].name != std::to_string(ci))
-        is_array = false;
-    if (is_array) {
-      os << "[\n";
-      for (size_t ci = 0; ci < node.children.size(); ++ci) {
-        os << ind2;
-        emit_json_node(os, node.children[ci], depth + 1);
-        if (ci + 1 < node.children.size())
-          os << ",";
-        os << "\n";
-      }
-      os << ind << "]";
-    } else {
-      os << "{\n";
-      for (size_t ci = 0; ci < node.children.size(); ++ci) {
-        os << ind2 << '"' << json_escape(node.children[ci].name) << "\": ";
-        emit_json_node(os, node.children[ci], depth + 1);
-        if (ci + 1 < node.children.size())
-          os << ",";
-        os << "\n";
-      }
-      os << ind << "}";
-    }
-  }
-}
-
-static int cmd_to_json(const std::string &path) {
-  std::ifstream f(path);
-  if (!f.is_open()) {
-    std::cerr << "Cannot open: " << path << "\n";
-    return 1;
-  }
-  std::string src((std::istreambuf_iterator<char>(f)), {});
-  std::vector<std::string> lines;
-  std::string line;
-  for (char c : src) {
-    if (c == '\n') {
-      lines.push_back(line);
-      line.clear();
-    } else
-      line += c;
-  }
-  if (!line.empty())
-    lines.push_back(line);
-  size_t i = 0;
-  std::vector<nydata_node> roots;
-  parse_nydata_children(lines, i, roots);
-  if (roots.size() == 1) {
-    emit_json_node(std::cout, roots[0], 0);
-  } else {
-    std::cout << "{\n";
-    for (size_t ri = 0; ri < roots.size(); ++ri) {
-      std::cout << "  \"" << json_escape(roots[ri].name) << "\": ";
-      emit_json_node(std::cout, roots[ri], 1);
-      if (ri + 1 < roots.size())
-        std::cout << ",";
-      std::cout << "\n";
-    }
-    std::cout << "}";
-  }
-  std::cout << "\n";
-  return 0;
 }
 
 static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) {
@@ -1050,13 +704,17 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     } else if (a == "--version") {
       std::cout << "nilcompiler " << NIL_VERSION << "\n";
       return 0;
-    } else if (a == "--to-nydata" || a == "--to-json") {
-      if (i + 1 >= argc) {
-        std::cerr << "Missing input path after " << a << "\n";
+    } else if (a == "--to-nydata") {
+      std::cerr << "--to-nydata is retired: use --to-nildata for NILData 1; "
+                   "use --import-nydata or --import-nydata-compiler to migrate legacy files.\n";
+      return 1;
+    } else if (a == "--to-nildata" || a == "--to-json" ||
+               a == "--import-nydata" || a == "--import-nydata-compiler") {
+      if (i != 1 || argc != 3) {
+        std::cerr << a << " requires exactly one input path and no compilation options\n";
         return 1;
       }
-      return a == "--to-nydata" ? cmd_to_nydata(argv[++i])
-                                : cmd_to_json(argv[++i]);
+      return convert_nildata(a, argv[++i]);
     } else if (a == "-o" || a == "--out" || a == "--output") {
       if (i + 1 >= argc) {
         std::cerr << "Missing output path after " << a << "\n";

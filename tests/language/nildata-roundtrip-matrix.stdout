@@ -1,0 +1,5 @@
+Matrix NILData typed round trips passed
+Matrix NILData functional construction passed
+Matrix NILData NUL representation passed
+Matrix NILData errors passed
+Matrix NILData explicit legacy import passed

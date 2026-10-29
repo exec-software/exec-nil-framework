@@ -771,6 +771,20 @@ int main() {
   const char *arguments[] = {"", "--looks-like-option", "two words",
                              "snowman-\xE2\x98\x83", nullptr};
   nyrt_context_begin(5, arguments);
+  auto *data_reply = nyrt_nildata_v1_request("load",
+      "nildata 1\narray\nitem is null\nitem is \"true\"\nitem is 9007199254740993\nend array\n", "", 0);
+  ok &= expect(nyrt_array_length(data_reply, NYRT_ARRAY_TEXT) == 2,
+               "NILData reply must contain error and payload");
+  ok &= expect_text(reinterpret_cast<const char *>(nyrt_array_get(data_reply, NYRT_ARRAY_TEXT, 0)),
+                    "", "NILData load failed");
+  ok &= expect_text(reinterpret_cast<const char *>(nyrt_array_get(data_reply, NYRT_ARRAY_TEXT, 1)),
+                    "[null,\"true\",9007199254740993]", "NILData scalar types or precision changed");
+  auto *bad_data_reply = nyrt_nildata_v1_request("load", "nildata 1\narray\n", "", 0);
+  const auto *data_error = reinterpret_cast<const char *>(nyrt_array_get(bad_data_reply, NYRT_ARRAY_TEXT, 0));
+  ok &= expect(data_error && *data_error, "NILData accepted an unterminated array");
+  auto *nul_data_reply = nyrt_nildata_v1_request("text", "\"\\u0000\"", "", 0);
+  const auto *nul_error = reinterpret_cast<const char *>(nyrt_array_get(nul_data_reply, NYRT_ARRAY_TEXT, 0));
+  ok &= expect(nul_error && *nul_error, "NILData silently truncated embedded NUL text");
   ok &= expect(nyrt_arg_count() == 5, "argument count was not preserved");
   ok &= expect_text(nyrt_arg(0), "", "empty argument was not preserved");
   ok &= expect_text(nyrt_arg(1), "--looks-like-option",

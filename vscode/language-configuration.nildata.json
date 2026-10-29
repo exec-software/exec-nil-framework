@@ -1,0 +1,33 @@
+{
+  "comments": {
+    "lineComment": "#"
+  },
+  "brackets": [],
+  "autoClosingPairs": [
+    {
+      "open": "\"",
+      "close": "\"",
+      "notIn": [
+        "string",
+        "comment"
+      ]
+    }
+  ],
+  "surroundingPairs": [
+    [
+      "\"",
+      "\""
+    ]
+  ],
+  "wordPattern": "[A-Za-z_][A-Za-z0-9_]*|-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?",
+  "indentationRules": {
+    "increaseIndentPattern": "^[ \\t]*(?:(?:(?:[A-Za-z_][A-Za-z0-9_]*|\"(?:[^\"\\\\\\r\\n]|\\\\.)*\")[ \\t]+is[ \\t]+an[ \\t]+)|(?:an[ \\t]+)?)(?:object|array)[ \\t]*(?:#.*)?$",
+    "decreaseIndentPattern": "^[ \\t]*end[ \\t]+(?:object|array)[ \\t]*(?:#.*)?$"
+  },
+  "folding": {
+    "markers": {
+      "start": "^[ \\t]*(?:(?:(?:[A-Za-z_][A-Za-z0-9_]*|\"(?:[^\"\\\\\\r\\n]|\\\\.)*\")[ \\t]+is[ \\t]+an[ \\t]+)|(?:an[ \\t]+)?)(?:object|array)[ \\t]*(?:#.*)?$",
+      "end": "^[ \\t]*end[ \\t]+(?:object|array)[ \\t]*(?:#.*)?$"
+    }
+  }
+}

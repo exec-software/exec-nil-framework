@@ -124,15 +124,20 @@ semantics. This tracing system is separate from explicit [owned buffers](../adva
 | `-v` | Verbose diagnostics. |
 | `-vv`, `-vvv` | Debug diagnostics. Both currently select the same maximum level. |
 
-`nilcompiler` also has two standalone data conversions:
+`nilcompiler` provides shared, checked NILData conversions:
 
 ```text
-nilcompiler --to-nydata <input.json>
-nilcompiler --to-json <input.nydata>
+nilcompiler --to-nildata <input.json>
+nilcompiler --to-json <input.nildata>
+nilcompiler --import-nydata <legacy-library.nydata>
+nilcompiler --import-nydata-compiler <legacy-compiler.nydata>
 ```
 
-They write the converted data to standard output and are currently lightweight
-development utilities.
+They write a complete converted document to standard output, preserving scalar
+types and exact number tokens. Malformed input fails without partial output.
+Legacy imports are explicit; `--to-nydata` is retired. See the
+[NILData format and API](../standard-library/nildata.md) for grammar, bounds,
+array semantics and migration rules.
 
 `nilcompiler --inspect-context <artifact>` is a separate, read-only operation
 that prints context JSON from executable NIL or a native ELF file containing
