@@ -543,6 +543,12 @@ if(BUILD_TESTING)
                     --tool $<TARGET_FILE:matrix_lex_dump>
                     --root "${CMAKE_CURRENT_SOURCE_DIR}")
         set_tests_properties(matrix.lexer PROPERTIES LABELS "matrix;lexer" TIMEOUT 60)
+        add_test(NAME matrix.annotations
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/annotation_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(matrix.annotations PROPERTIES LABELS "matrix;reflection;routes" TIMEOUT 180)
         # Matrix execution conformance: each page lowers to NIL and runs on the
         # interpreter with exact expected output. Acceptance is covered by the
         # lexer test; this checks that the lowering means what the surface says.

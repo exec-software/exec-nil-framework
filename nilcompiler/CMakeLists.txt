@@ -22,6 +22,7 @@ set(NILCOMPILER_CORE_SOURCES
     src/analysis.cpp
     src/default_analyzer.cpp
     src/lexer.cpp
+    src/annotation_arguments.cpp
     src/parser.cpp
     src/pattern_syntax.cpp
     # Matrix front end: a second surface over the same AST, type checker and
@@ -177,6 +178,16 @@ if(BUILD_TESTING)
     nil_apply_version(ny_preprocessor_identity_tests)
     add_test(NAME ny.preprocessor-identity COMMAND ny_preprocessor_identity_tests)
     set_tests_properties(ny.preprocessor-identity PROPERTIES LABELS "tools;release;rc" TIMEOUT 30)
+    add_executable(ny_preprocessor_conditional_tests
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tests/preprocessor_conditional_tests.cpp")
+    target_link_libraries(ny_preprocessor_conditional_tests PRIVATE nilcompiler_core)
+    add_test(NAME ny.preprocessor-conditionals COMMAND ny_preprocessor_conditional_tests)
+    set_tests_properties(ny.preprocessor-conditionals PROPERTIES LABELS "tools;parser" TIMEOUT 30)
+    add_executable(nil_annotation_arguments_tests
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tests/annotation_arguments_tests.cpp")
+    target_link_libraries(nil_annotation_arguments_tests PRIVATE nilcompiler_core)
+    add_test(NAME nil.annotation-arguments COMMAND nil_annotation_arguments_tests)
+    set_tests_properties(nil.annotation-arguments PROPERTIES LABELS "tools;parser" TIMEOUT 30)
 endif()
 target_compile_definitions(
     nilcompiler

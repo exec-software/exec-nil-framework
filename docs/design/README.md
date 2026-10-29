@@ -41,6 +41,7 @@ not assigned architecture identifiers.
 | NIL-0015 | [Structural tuples](NIL-0015-structural-tuples.md) | Implemented nonempty typed values and local destructuring |
 | NIL-0016 | [Shared text patterns and collected queries](NIL-0016-patterns-and-queries.md) | Implemented initial byte-pattern and eager array-query profiles |
 | NIL-0019 | [Explicit binding-reference parameters](NIL-0019-binding-reference-parameters.md) | Accepted; initial scalar/text implementation |
+| NIL-0020 | [Declaration annotations as shared metadata](NIL-0020-declaration-annotations.md) | Accepted; initial scalar metadata profile |
 | NIL-0093 | [Executable context is artifact self-description](NIL-0093-executable-context.md) | Implemented within the documented inspection profile |
 
 ## Retained Ny feature references

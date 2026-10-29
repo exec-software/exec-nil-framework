@@ -1,4 +1,5 @@
 #include "nil_loader.hpp"
+#include "annotation_arguments.hpp"
 #include "nil_contract.hpp"
 #include "binding_reference.hpp"
 #include "concurrency_contract.hpp"
@@ -1594,7 +1595,7 @@ public:
     std::string marker;
     if (!(fields >> marker))
       return std::nullopt;
-    if (marker == "function_annotation") {
+    if (marker == "function_annotation" || marker == "declaration_annotation") {
       if (!at_module_scope)
         fail("Misplaced function annotation", input_line);
       if (pending_)
@@ -1609,7 +1610,8 @@ public:
       if (operands.size() != 1 || !trailing.empty())
         fail("Invalid quoted function annotation", input_line);
       annotation(operands.front(), input_line);
-      quoted_annotation_pending_ = true;
+      if (marker == "function_annotation") quoted_annotation_pending_ = true;
+      else quoted_declaration_annotation_pending_ = true;
       return operands.front();
     }
     if (marker != "declaration_line")
@@ -1639,12 +1641,21 @@ public:
       fail("Function annotation count exceeds safety limit", input_line);
   }
 
-  void record(const std::string &line, std::size_t input_line) const {
+  void record(const std::string &line, std::size_t input_line) {
     if (pending_ && line.rfind("function ", 0) != 0)
       fail("Orphan declaration line", input_line);
     if (quoted_annotation_pending_ && line.rfind("function ", 0) != 0 &&
         (line.front() != '@' || line.rfind("@test ", 0) == 0))
       fail("Orphan function annotation", input_line);
+    const bool type_header = line.rfind("struct ", 0) == 0 || line.rfind("enum ", 0) == 0 ||
+                             line.rfind("class ", 0) == 0;
+    if (quoted_declaration_annotation_pending_ && !type_header && line.rfind("function ", 0) != 0 &&
+        (line.front() != '@' || line.rfind("@test ", 0) == 0))
+      fail("Orphan declaration annotation", input_line);
+    if (type_header) {
+      quoted_declaration_annotation_pending_ = false;
+      annotation_count_ = 0;
+    }
   }
 
   int consume() {
@@ -1652,6 +1663,7 @@ public:
     pending_.reset();
     annotation_count_ = 0;
     quoted_annotation_pending_ = false;
+    quoted_declaration_annotation_pending_ = false;
     return result;
   }
 
@@ -1660,6 +1672,8 @@ public:
       fail("Orphan declaration line", input_line);
     if (quoted_annotation_pending_)
       fail("Orphan function annotation", input_line);
+    if (quoted_declaration_annotation_pending_)
+      fail("Orphan declaration annotation", input_line);
   }
 
 private:
@@ -1671,6 +1685,7 @@ private:
   std::optional<int> pending_;
   std::size_t annotation_count_ = 0;
   bool quoted_annotation_pending_ = false;
+  bool quoted_declaration_annotation_pending_ = false;
 };
 
 bool is_serialized_identifier(const std::string &value) {
@@ -2178,9 +2193,9 @@ std::unique_ptr<nil_module> parseTextNilModule(std::istream &is) {
       parsed.annotations = std::move(pending_annotations);
       pending_annotations.clear();
       for (const auto &annotation : parsed.annotations) {
-        if (annotation.rfind("@inline", 0) == 0)
+        if (annotation_name_matches(annotation, "inline"))
           parsed.is_inline = true;
-        if (annotation.rfind("@test", 0) == 0)
+        if (annotation_name_matches(annotation, "test"))
           parsed.is_test = true;
       }
       validate_serialized_function_signature(
@@ -2973,7 +2988,7 @@ parseBinaryProgram(std::istream &is,
         (void)section.string("test name");
       require_section_consumed(section, "module");
     } else if (sec.type == 7) {
-      read_class_metadata(section, fault_metadata);
+      read_class_metadata(section, fault_metadata, false, annotates_types);
       require_section_consumed(section, "class");
     } else if (sec.type == 6) { // Embedded source interface
       const std::uint32_t source_count = section.u32("source count");

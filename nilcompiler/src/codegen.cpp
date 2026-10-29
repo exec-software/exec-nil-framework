@@ -752,7 +752,12 @@ void nil_writer::emit_declaration_annotations(std::ostream &os,
     if (a.empty() || a.front() != '@' || a.find('\0') != std::string::npos ||
         a.size() > 16U * 1024U * 1024U)
       throw std::runtime_error("Textual NIL contains an invalid declaration annotation");
-    os << a << "\n";
+    if (a.find_first_of("\n\r\t") != std::string::npos || a.back() == ' ') {
+      const auto escaped = escape_string(a);
+      if (escaped.size() > 16U * 1024U * 1024U - 28U)
+        throw std::runtime_error("Textual NIL declaration annotation exceeds line safety limit");
+      os << "# declaration_annotation \"" << escaped << "\"\n";
+    } else os << a << "\n";
   }
 }
 
@@ -760,22 +765,19 @@ void nil_writer::emit_function_annotations(std::ostream &os,
                                            const nil_function &fn) {
   if (fn.annotations.size() > 65536U)
     throw std::runtime_error("Textual NIL function annotation count exceeds safety limit");
-  bool printed_inline = false;
-  if (fn.is_inline) {
+  const bool explicit_inline = std::any_of(fn.annotations.begin(), fn.annotations.end(),
+      [](const auto &annotation) { return annotation_name_matches(annotation, "inline"); });
+  if (fn.is_inline && !explicit_inline) {
     os << "@inline\n";
-    printed_inline = true;
   }
   for (const auto &a : fn.annotations) {
     if (a.empty() || a.front() != '@' || a.find('\0') != std::string::npos ||
         a.size() > 16U * 1024U * 1024U) {
       throw std::runtime_error("Textual NIL contains an invalid function annotation");
     }
-    // Avoid printing a duplicate `@inline` annotation if the inline flag
-    // already caused printing.
-    if (printed_inline) {
-      if (a.rfind("@inline", 0) == 0)
-        continue;
-    }
+    // Preserve the complete explicit metadata sequence, including inline
+    // properties and repeated annotations. Only a flag without an explicit
+    // inline annotation requires a synthesized marker above.
     // Source annotation strings are already decoded. Preserve embedded line
     // controls (and trailing whitespace) without making them physical NIL
     // records; ordinary annotations retain their legacy textual spelling.

@@ -125,6 +125,7 @@ enum class token_kind {
   number_literal,
   numeric_sign,   // '-' immediately before a numeric literal; never subtraction
   string_literal,
+  annotation,     // complete @name(...) metadata region; not executable code
   formatted_string_begin,
   formatted_text,
   interpolation_begin,
@@ -155,6 +156,7 @@ struct token {
   size_t start = 0;
   size_t length = 0;
   bool escaped_identifier = false;
+  bool original_source = true;
 
   bool is(kw k) const { return kind == token_kind::keyword && word == k; }
   bool is_name() const { return kind == token_kind::identifier; }
@@ -214,6 +216,7 @@ private:
   token scan_identifier();
   token scan_number(bool tuple_position = false);
   token scan_string();
+  token scan_annotation();
   void scan_formatted_string(std::vector<token> &tokens, const token &word,
                              std::size_t quote);
   // Raw block literal: consumes lines after 'begin text' until a line whose

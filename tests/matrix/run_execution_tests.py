@@ -462,7 +462,7 @@ def check_declaration_context(compiler, workdir):
 
     failures = []
     for text, prefix, name in expected:
-        marker = f"@ai_context({text})"
+        marker = f'@ai_context("{text}")'
         if not carries(prefix, name, marker):
             kind = prefix.strip()
             failures.append(

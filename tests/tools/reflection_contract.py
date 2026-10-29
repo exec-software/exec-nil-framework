@@ -87,6 +87,9 @@ end struct
                    for item in declarations)
         assert reflection["annotations"][0]["name"] == "ai_context"
         assert reflection["annotations"][0]["owner_id"] == 0
+        assert reflection["annotations"][0]["arguments_parsed"]
+        assert reflection["annotations"][0]["parsed_arguments"] == [
+            {"name": None, "kind": "text", "value": "Draw a frame."}]
         keys = ("kind", "name", "qualified_name", "type_name", "parent_id", "is_public", "semantic_checked")
         twin = analyze(ny)["reflection"]["declarations"]
         assert [[item[key] for key in keys] for item in declarations] == [[item[key] for key in keys] for item in twin]
@@ -124,6 +127,76 @@ end struct
                                    f" let rejected = declaration({index})\n"
                                    " println(rejected.name)\n return 0\nend fn\n", encoding="utf-8")
                 execute(invalid, native, should_panic=True)
+
+        properties = work / "properties.ny"
+        properties.write_text('''@custom("label", enabled=true, count=-3, ratio=1.5, provider=io.console.write)
+pub fn described() -> i32
+ return 1
+end fn
+@ai_context(intent="legacy", assumptions=["preserved"])
+pub fn legacy() -> i32
+ return 2
+end fn
+''', encoding="utf-8")
+        property_report = analyze(properties, destination=snapshot)["reflection"]
+        attribute = property_report["annotations"][0]
+        assert attribute["line"] == 1 and attribute["arguments_parsed"], attribute
+        assert attribute["parsed_arguments"] == [
+            {"name": None, "kind": "text", "value": "label"},
+            {"name": "enabled", "kind": "boolean", "value": "true"},
+            {"name": "count", "kind": "integer", "value": "-3"},
+            {"name": "ratio", "kind": "floating", "value": "1.5"},
+            {"name": "provider", "kind": "symbol", "value": "io.console.write"},
+        ], attribute
+        opaque = property_report["annotations"][1]
+        assert not opaque["arguments_parsed"] and opaque["parsed_arguments"] == [], opaque
+        assert 'assumptions=["preserved"]' in opaque["arguments"], opaque
+        property_consumer = work / "properties_consumer.ny"
+        property_consumer.write_text('''import analysis_snapshot
+fn main() -> i32
+ if not annotation_arguments_parsed(0) then
+  panic("literal annotation arguments unavailable")
+ end if
+ if annotation_arguments_parsed(1) then
+  panic("legacy metadata must remain opaque")
+ end if
+ println(annotation_argument_count())
+ println(annotation_argument(0).value)
+ println(annotation_argument(1).name)
+ println(annotation_argument(1).value)
+ println(annotation_argument(3).kind)
+ println(annotation_argument(4).value)
+ return 0
+end fn
+''', encoding="utf-8")
+        matrix_property_consumer = work / "properties_consumer.matrix"
+        matrix_property_consumer.write_text('''book property-consumer
+read everything from nil.std.reflection
+read everything from analysis_snapshot
+
+main returns override integer begin paragraph
+    when not (analysis_snapshot::annotation-arguments-parsed with id being 0) then
+        evaluate panic with "literal annotation arguments unavailable"
+    end when
+    when analysis_snapshot::annotation-arguments-parsed with id being 1 then
+        evaluate panic with "legacy metadata must remain opaque"
+    end when
+    say analysis_snapshot::annotation-argument-count with nothing
+    value positional is analysis_snapshot::annotation-argument with id being 0
+    value enabled-property is analysis_snapshot::annotation-argument with id being 1
+    value ratio-property is analysis_snapshot::annotation-argument with id being 3
+    value provider-property is analysis_snapshot::annotation-argument with id being 4
+    say positional.`value`
+    say enabled-property.name
+    say enabled-property.`value`
+    say ratio-property.kind
+    say provider-property.`value`
+    give 0
+end paragraph
+''', encoding="utf-8")
+        for native in routes:
+            for consumer in (property_consumer, matrix_property_consumer):
+                assert execute(consumer, native) == "5\nlabel\nenabled\ntrue\nfloating\nio.console.write\n"
 
         included = work / "included.ny"
         included.write_text('@ai_context("included declaration")\npub fn included() -> i32\n return 1\nend fn\n', encoding="utf-8")

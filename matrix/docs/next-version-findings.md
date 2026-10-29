@@ -2093,3 +2093,65 @@ resolution defect.
 lowering calls, rather than allowing the imported type-alias map to replace it.
 Cover folded case/separator collisions, local shadowing, source imports, and
 binary-library imports in both analysis and executable-call regressions.
+
+### F77 — Declaration metadata needs parity and editor discoverability
+
+**Observation:** Matrix already accepted `note` and `context`, but its flat
+arguments did not provide the named properties available in Ny annotations.
+The editor treated them as ordinary verbs, omitted annotation completion, and
+did not distinguish metadata names from code references.
+
+**Decision and implementation:** Both frontends accept stackable `@name` and
+`@name(value, key=value)` metadata. Matrix retains legacy `note`/`context` and
+adds `note name with value, key being value`. The initial structured values
+are text, booleans, signed integers, floating-point numbers, and symbols.
+Custom annotations are inert data. They do not execute decorators or add
+runtime behavior by name alone.
+
+The shared argument parser supplies typed scalar properties alongside retained
+raw arguments. Legacy Ny composite and nested metadata remains opaque for any
+annotation name, including custom names, and explicitly reports that its
+arguments were not parsed. Matrix annotations keep Matrix's
+raw strings and diagnose unsupported targets. Qualified names, ordered
+arguments, duplicate-key rejection, and numeric limits are part of the
+shared contract.
+
+**Backward compatibility correction:** The full test suite exposed an existing
+Ny fixture using `@custom(outer(inner("payload")))`. Limiting the opaque
+fallback to built-in annotation names would reject that accepted source. The
+fallback therefore preserves legacy composite/nested payloads for custom
+names too, as inert text with `arguments_parsed: false`. It does not execute
+the nested forms or extend Matrix beyond scalar arguments.
+
+**Binary VM compatibility fix:** The binary program loader did not pass the
+type-annotation header flag into class-schema decoding. Annotated class
+artifacts were therefore decoded using the layout without annotations, which
+misread subsequent class metadata. The VM loader now supplies the flag to the
+shared class reader, matching the other binary loading path. Annotation
+qualification includes binary VM class execution as well as text NIL so that
+metadata retention cannot silently change the decoded schema layout.
+
+The text writer also used to replace explicit `@inline` annotations with a
+bare marker, losing any properties and duplicate entries that binary output
+retained. It now preserves explicit annotations and synthesizes a marker only
+for a flag without source metadata. Prose metadata also shares signed minimum
+literal validation with expressions, so `negative`, `minus`, and `-` accept
+the same signed 64-bit range as the compact annotation form.
+
+Editor support highlights annotation names and properties, offers snippets
+and Matrix metadata completion, and excludes annotation payloads from ordinary
+symbol discovery and navigation. Multiline metadata must not invent
+declarations or move the following declaration's source range.
+
+Matrix now uses shared preprocessing with its own literal protection and exact
+macro-name boundaries. Inactive branches cannot apply directives or expand
+macros. Annotation payloads stay metadata rather than macro-expanded code.
+Source transformations still require conservative suppression of compiler edit
+locations and signature offsets because a complete original source map is
+not available.
+
+**Next-version work:** Structured arrays/maps, field and parameter metadata,
+analyzer-defined annotation schemas, and documentation in hover/signature help
+need separate contracts. Preprocessor directives remain distinct from
+declaration metadata. The detailed scope is in
+[NIL-0020](../../docs/design/NIL-0020-declaration-annotations.md).

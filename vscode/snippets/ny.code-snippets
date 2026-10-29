@@ -247,7 +247,7 @@
   },
   "Inline annotation": {
     "prefix": "@inline",
-    "description": "Request function inlining",
+    "description": "Mark a function with retained inline metadata",
     "body": [
       "@inline"
     ]

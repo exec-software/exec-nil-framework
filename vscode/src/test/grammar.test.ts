@@ -95,6 +95,15 @@ test("grammar scopes annotations, literals, operators, and both line comments", 
   assert.ok(scopesForFragment(grammar, "# hash comment", "hash comment").includes("comment.line.number-sign.ny"));
 });
 
+test("Ny annotation properties and qualified names stay inside metadata regions", async () => {
+  const grammar = await loadNyGrammar();
+  assert.ok(grammar);
+  for (const name of ["Company.review", "Company::review"])
+    assert.ok(scopesForFragment(grammar, `@${name}(enabled=true)`, '@' + name).includes('storage.type.annotation.ny'));
+  assert.ok(scopesForFragment(grammar, '@custom(enabled=true)', 'enabled').includes('variable.parameter.annotation.ny'));
+  assert.equal(scopesForFragment(grammar, 'enabled = true', 'enabled').includes('variable.parameter.annotation.ny'), false);
+});
+
 test("grammar keeps scientific literals whole and preserves hexadecimal integers", async () => {
   const grammar = await loadNyGrammar();
   assert.ok(grammar);

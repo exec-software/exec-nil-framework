@@ -61,6 +61,8 @@ namespace matrix {
 struct parser_options {
   std::string filename;
   std::optional<std::size_t> signature_cursor;
+  bool enable_preprocessor = true;
+  ny::preprocessor_options preproc_options;
 };
 
 class parser {
@@ -79,6 +81,8 @@ public:
   }
   bool has_errors() const { return !diagnostics_.empty(); }
   bool recovered_signature_call() const { return recovered_signature_call_; }
+  bool has_original_spans() const { return original_spans_available_; }
+  const std::string &diagnostic_source() const { return processed_source_; }
 
   // Editor suggestions must pass the same page-wide declaration folding as
   // a newly inserted identifier; expose resolution without parsing a new AST.
@@ -94,6 +98,8 @@ private:
   std::vector<ny::diagnostic> diagnostics_;
   std::vector<matrix::diagnostic> rich_;
   std::string filename_;
+  std::string processed_source_;
+  bool original_spans_available_ = true;
   std::optional<std::size_t> signature_cursor_, signature_blank_start_;
   bool recovered_signature_call_ = false;
 
@@ -162,6 +168,7 @@ private:
   void recover_to_declaration();
 
   // ---- declarations ----
+  std::vector<ny::ast_annotation> parse_annotations();
   std::shared_ptr<ny::ast_decl> parse_book_or_library();
   std::shared_ptr<ny::ast_decl> parse_read();
   std::shared_ptr<ny::ast_decl> parse_cite();

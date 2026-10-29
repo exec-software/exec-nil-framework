@@ -283,5 +283,60 @@
       "    give ${1:item}",
       "end query"
     ]
+  },
+  "Metadata annotation": {
+    "prefix": "@annotation",
+    "description": "Attach inert scalar metadata to the following declaration",
+    "body": [
+      "@${1:custom}(${2:key}=${3:true})"
+    ]
+  },
+  "Prose metadata annotation": {
+    "prefix": "note",
+    "description": "Attach inert scalar metadata using Matrix prose",
+    "body": [
+      "note ${1:custom} with ${2:key} being ${3:true}"
+    ]
+  },
+  "Documentation annotation": {
+    "prefix": "@doc",
+    "description": "Attach scalar documentation metadata",
+    "body": [
+      "@doc(",
+      "    summary=\"${1:summary}\",",
+      "    description=\"${2:description}\",",
+      "    returns=\"${3:return value}\"",
+      ")"
+    ]
+  },
+  "Prose documentation annotation": {
+    "prefix": "note-doc",
+    "description": "Attach scalar documentation metadata using Matrix prose",
+    "body": [
+      "note doc with summary being \"${1:summary}\", returns being \"${2:return value}\""
+    ]
+  },
+  "Inline annotation": {
+    "prefix": "note-inline",
+    "description": "Mark a function with retained inline metadata",
+    "body": [
+      "note inline"
+    ]
+  },
+  "Preprocessor include": {
+    "prefix": "@include",
+    "description": "Include a Matrix source fragment through the preprocessor",
+    "body": [
+      "@include \"${1:path.matrix}\""
+    ]
+  },
+  "Conditional source": {
+    "prefix": "@ifdef",
+    "description": "Conditionally include source when a macro is defined",
+    "body": [
+      "@ifdef ${1:FEATURE}",
+      "${0}",
+      "@endif"
+    ]
   }
 }

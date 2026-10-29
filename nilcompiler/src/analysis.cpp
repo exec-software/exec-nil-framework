@@ -263,10 +263,18 @@ void analysis_session::reflect(const ast_program &program, const std::string &pa
     declarations.push_back(std::move(value));
     if (node) for (const auto &a : node->annotations) {
       if (annotations.size() >= declaration_limit) { truncated = true; break; }
-      const auto bytes = sizeof(reflected_annotation) + a.name.size() +
+      auto typed = a.typed_arguments;
+      if (!typed) {
+        const auto parsed = parse_annotation_arguments(a.args.value_or(""));
+        if (parsed.error.empty()) typed = parsed.arguments;
+      }
+      auto bytes = sizeof(reflected_annotation) + a.name.size() +
                          (a.args ? a.args->size() : 0);
+      if (typed) for (const auto &argument : *typed)
+        bytes += sizeof(annotation_argument) + argument.kind.size() + argument.value.size() +
+                 (argument.name ? argument.name->size() : 0);
       if (!reserve_bytes(bytes)) break;
-      annotations.push_back({id, a.name, a.args.value_or(""), source_line(a.line)});
+      annotations.push_back({id, a.name, a.args.value_or(""), source_line(a.line), std::move(typed)});
     }
     return id;
   };
@@ -901,7 +909,16 @@ std::string analysis_session::json(bool success) const {
     if (i) out << ',';
     const auto &a = annotations[i];
     out << "{\"owner_id\":" << a.owner_id << ",\"name\":" << quoted(a.name)
-        << ",\"arguments\":" << quoted(a.arguments) << ",\"line\":" << a.line << '}';
+        << ",\"arguments\":" << quoted(a.arguments) << ",\"line\":" << a.line
+        << ",\"arguments_parsed\":" << (a.typed_arguments ? "true" : "false")
+        << ",\"parsed_arguments\":[";
+    if (a.typed_arguments) for (std::size_t j = 0; j < a.typed_arguments->size(); ++j) {
+      if (j) out << ',';
+      const auto &argument = a.typed_arguments->at(j);
+      out << "{\"name\":" << (argument.name ? quoted(*argument.name) : "null")
+          << ",\"kind\":" << quoted(argument.kind) << ",\"value\":" << quoted(argument.value) << '}';
+    }
+    out << "]}";
   }
   out << "]}";
   if (semantic_requested) {
@@ -953,6 +970,31 @@ std::string analysis_session::companion_source() const {
     out << " if id == " << i << " then\n  return "; annotation(annotations[i]); out << " end if\n";
   }
   out << " panic(\"Invalid reflection annotation ID\")\n return "; annotation({-1, "", "", 0});
+  out << "end fn\n";
+  out << "pub fn annotation_arguments_parsed(id: i32) -> bool\n";
+  for (std::size_t i = 0; i < annotations.size(); ++i)
+    out << " if id == " << i << " then\n  return "
+        << (annotations[i].typed_arguments ? "true" : "false") << "\n end if\n";
+  out << " panic(\"Invalid reflection annotation ID\")\n return false\nend fn\n";
+  std::size_t argument_count = 0;
+  for (const auto &a : annotations) if (a.typed_arguments) argument_count += a.typed_arguments->size();
+  out << "pub fn annotation_argument_count() -> i32\n return " << argument_count << "\nend fn\n"
+      << "pub fn annotation_argument(id: i32) -> annotation_argument_info\n";
+  const auto argument_record = [&](int annotation_id, const annotation_argument &argument) {
+    out << "annotation_argument_info { annotation_id: " << annotation_id
+        << ", name: " << ny_literal(argument.name.value_or(""))
+        << ", is_named: " << (argument.name ? "true" : "false")
+        << ", kind: " << ny_literal(argument.kind) << ", value: " << ny_literal(argument.value) << " }\n";
+  };
+  std::size_t argument_id = 0;
+  for (std::size_t i = 0; i < annotations.size(); ++i) if (annotations[i].typed_arguments)
+    for (const auto &argument : *annotations[i].typed_arguments) {
+      out << " if id == " << argument_id++ << " then\n  return ";
+      argument_record(static_cast<int>(i), argument);
+      out << " end if\n";
+    }
+  out << " panic(\"Invalid reflection annotation argument ID\")\n return ";
+  argument_record(-1, {std::nullopt, "", ""});
   out << "end fn\n";
   return out.str();
 }

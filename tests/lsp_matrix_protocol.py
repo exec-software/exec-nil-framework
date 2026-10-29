@@ -408,6 +408,56 @@ end paragraph
                 self.assertTrue(expected <= set(result))
                 self.assertFalse({"fn", "let", "i32", "i64", "struct", "impl"} & set(result))
 
+    def test_annotation_completion_is_metadata_not_value_resolution(self) -> None:
+        for fragment, expected in (
+            ("|", {"note", "context"}),
+            ("@|", {"doc", "ai_context", "inline"}),
+            ("note |", {"doc", "intrinsic"}),
+            ("note custom |", {"with"}),
+            ("@doc(|", {"summary", "description", "true", "false"}),
+            ("@doc(\n sum|", {"summary"}),
+            ("@doc(summary=|", {"true", "false"}),
+            ("note doc with sum|", {"summary being"}),
+            ("note doc with summary |", {"being"}),
+            ("note custom with enabled being |", {"true", "false"}),
+        ):
+            with self.subTest(fragment=fragment):
+                result, _ = completion("value private-value is 1\n" + fragment)
+                self.assertTrue(expected <= set(result), result)
+                if fragment != "|": self.assertNotIn("private-value", result)
+        result, _ = completion('@doc(summary="not code |")\nmain begin paragraph\nend paragraph\n')
+        self.assertEqual(result, {})
+
+    def test_multiline_annotations_do_not_create_symbols_or_change_following_spans(self) -> None:
+        source = '''@company.review(
+ value=Approved,
+ summary="a literal ) and begin record",
+ enabled=true
+)
+note doc with summary being "A real paragraph"
+context "Kept as metadata"
+main receives input as number returns number begin paragraph
+ give in|put
+end paragraph
+'''
+        replies, notes = protocol.session([
+            opened(source.replace("|", "")), request("definition", source),
+            {"jsonrpc": "2.0", "id": 3, "method": "textDocument/documentSymbol",
+             "params": {"textDocument": {"uri": URI}}}])
+        self.assertFalse([note for note in notes if note['params']['diagnostics']])
+        self.assertEqual(replies[2][0]["range"]["start"], {"line": 7, "character": 14})
+        self.assertEqual([symbol['name'] for symbol in replies[3]], ["main"])
+        source = 'value summary is 1\n@doc(sum|mary="metadata")\nmain begin paragraph\nend paragraph\n'
+        replies, _ = protocol.session([opened(source.replace('|', '')), request('definition', source),
+                                       request('hover', source, identifier=3)])
+        self.assertIsNone(replies[2])
+        self.assertIsNone(replies[3])
+
+    def test_incomplete_annotation_hides_payload_declarations(self) -> None:
+        source = '@custom(\n value fake as number is 1\n fake|'
+        result, _ = completion(source)
+        self.assertNotIn('fake', result)
+
     def test_formatted_text_holes_and_nested_literals(self) -> None:
         prefix = 'main begin paragraph\n value height as floating is -1.6e-3\n'
         for value in ('formatted "height: {hei|ght}"', 'formatted "{height|}"',

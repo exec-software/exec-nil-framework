@@ -97,6 +97,15 @@ declaration-line record/header. Misplaced, malformed and orphan records reject;
 older readers ignore this optional annotation comment rather than treating
 its contents as instructions.
 
+Record, class, and enum annotations containing the same line controls or
+trailing whitespace use
+`# declaration_annotation "<NIL-escaped exact annotation>"` before their schema
+declaration. This additive text record preserves metadata that cannot fit
+losslessly on an ordinary `@name(...)` line. `function_annotation` remains
+specific to functions; annotation strings that fit ordinary text records keep
+their existing spelling. Binary schema annotations retain their existing
+encoding.
+
 ## Binary executable v3 layout
 
 The source ownership profile uses `OWN_ENTER`/`OWN_LEAVE` lexical scopes,

@@ -11,6 +11,7 @@
 // - Symbol table is included for early semantic analysis.
 
 #include "lexer.hpp"
+#include "annotation_arguments.hpp"
 #include <cstddef>
 #include <iostream>
 #include <memory>
@@ -48,6 +49,10 @@ struct ast_annotation {
   std::string name;
   std::optional<std::string> args;
   int line = 0;
+  // Optional because older metadata forms may contain opaque composite values.
+  // Keep args unchanged for legacy consumers; these values preserve literal
+  // boundaries and decoded text independently of that legacy spelling.
+  std::optional<std::vector<annotation_argument>> typed_arguments;
 
   ast_annotation() = default;
   explicit ast_annotation(std::string n,

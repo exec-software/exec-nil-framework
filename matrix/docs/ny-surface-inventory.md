@@ -27,7 +27,7 @@ means the compiler fails closed.
 | `"text"`, `'c'` | same | executed |
 | suffixes `42i64`, `3.14f32` | no spelling | rejected in Ny |
 | `'\xFF'` hex char escape | no spelling | rejected in Ny |
-| `@annotation` | `note <name>` / `context "..."` | see §12 |
+| `@annotation` | `@annotation` / `note <name>` / `context "..."` | see §12 |
 
 The draft offered two comment forms: `!!!` plus text, and a block opened and
 closed by a line that is exactly `!!!`. They cannot coexist. A bare `!!!`
@@ -84,6 +84,9 @@ semantic weight.
 
 | Ny | Matrix | Route state |
 | --- | --- | --- |
+| `@name(value, key=value)` | same `@` spelling, or `note name with value, key being value` | scalar metadata; parenthesized forms may span lines |
+| `@doc(summary="...")` | same `@` spelling, or `note doc with summary being "..."` | retained metadata; no automatic decorator execution |
+| `@include`, macros, conditional directives | same directive spellings | shared preprocessor; Matrix literals/annotation regions protected; source-edit locations conservative after transformation |
 | `i32` / `int` | `integer` | executed |
 | `i64` | `long` | executed |
 | `u8` | `byte` | executed, wrapping (modulo 256) |
@@ -446,6 +449,12 @@ conservative: if either branch moves an owner, later use is rejected.
 | `@interop(...)` | `note interop ...` | **experimental**, requires a linked provider |
 | `test` blocks | `name begin test ... end test` | flag bit 1 |
 | `asm "x86_64", "..." (in) -> out end asm` | `assembly for x86_64 is "..." using in giving out` | native x86_64 only |
+
+Annotations support scalar text, boolean, integer, floating-point, and symbol
+values. Matrix preserves raw-string behavior inside `@` arguments. Named
+paragraphs, records, classes, choices, and supported methods can carry them;
+unsupported attachments are rejected. See the
+[shared reference](../../docs/language-reference/annotations.md).
 
 An annotation is not an implementation in Matrix either. `context` is promoted
 to a first-class statement rather than a generic annotation because

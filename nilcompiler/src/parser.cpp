@@ -25,11 +25,13 @@ Design notes:
 #include "diagnostics.hpp"
 
 #include <cassert>
+#include <cctype>
 #include <algorithm>
 #include <iostream>
 #include <iterator>
 #include <optional>
 #include <string>
+#include <stdexcept>
 #include <vector>
 #include <cstdlib>
 
@@ -845,49 +847,81 @@ visibility_kind parser::parse_visibility_modifier() {
   return visibility_kind::visibility_public;
 }
 
-std::vector<std::string> parser::parse_leading_annotations() {
-  // Collect any leading annotations present before this declaration.
-  // Examples: @inline, @test, @deprecated, custom annotations.
-  // We accept multiple annotations in a row. Annotations are currently
-  // collected for diagnostics and future stages (semantic analysis/codegen).
-  std::vector<std::string> collected_annotations;
+std::vector<ast_annotation> parser::parse_leading_annotations() {
+  std::vector<ast_annotation> annotations;
   while (match(token_kind::annotation)) {
-    // Store full lexeme that includes the annotation text (e.g., "@test")
-    std::string ann_str = previous().lexeme;
-
-    // @pragma directives consume a bare word argument (e.g. `@pragma once`)
-    if (ann_str == "@pragma" && check(token_kind::identifier)) {
-      ann_str += " " + advance().lexeme;
-      collected_annotations.push_back(ann_str);
+    const auto origin = previous();
+    ast_annotation annotation(origin.lexeme.substr(1), std::nullopt, origin.line);
+    // Both surfaces use the same qualified identity. The Ny lexer keeps ::
+    // inside the annotation token; dotted segments arrive as ordinary tokens.
+    while (match(token_kind::dot)) {
+      const auto part = parse_annotation_arguments("scope::" + peek().lexeme);
+      if (!part.error.empty() || part.arguments.size() != 1 || part.arguments.front().kind != "symbol") {
+        add_error(peek(), "Expected an annotation name after '.'");
+        break;
+      }
+      annotation.name += "::" + advance().lexeme;
+    }
+    const auto name = parse_annotation_arguments("scope::" + annotation.name);
+    if (!name.error.empty()) add_error(origin, "Invalid qualified annotation name");
+    if (annotation.name == "nil_binding_cell")
+      add_error(origin, "@nil_binding_cell is reserved for compiler-owned storage metadata");
+    annotation.typed_arguments = std::vector<annotation_argument>{};
+    // Preprocessor directives retained by explicitly configured tools keep
+    // their historical opaque representation.
+    if (annotation.name == "pragma" && check(token_kind::identifier)) {
+      annotation.name += " " + advance().lexeme;
+      annotation.typed_arguments.reset();
+      annotations.push_back(std::move(annotation));
       continue;
     }
-    // Also consume any optional parenthesized arguments: @interop("ny_mimic")
     if (match(token_kind::left_paren)) {
-      ann_str += "(";
+      std::string legacy, canonical;
+      bool previous_atom = false, legacy_container = false;
       int depth = 1;
       while (!is_at_end() && depth > 0) {
-        if (check(token_kind::left_paren)) {
-          depth++;
-        } else if (check(token_kind::right_paren)) {
-          depth--;
-          if (depth == 0) {
-            advance(); // consume the final ')'
-            ann_str += ")";
-            break;
+        if (check(token_kind::left_paren)) ++depth;
+        else if (check(token_kind::right_paren) && --depth == 0) {
+          advance();
+          break;
+        }
+        const auto current = advance();
+        const bool atom = !current.lexeme.empty() &&
+            (current.kind == token_kind::string_literal ||
+             std::isalnum(static_cast<unsigned char>(current.lexeme.front())) ||
+             current.lexeme.front() == '_');
+        if (atom && previous_atom) canonical += ' ';
+        if (current.kind == token_kind::string_literal) {
+          legacy += "\"" + current.lexeme + "\"";
+          try { canonical += quote_annotation_text(current.lexeme); }
+          catch (const std::invalid_argument &error) {
+            add_error(current, error.what());
           }
-        }
-        // Append the current token to the annotation string
-        if (peek().kind == token_kind::string_literal) {
-          ann_str += "\"" + peek().lexeme + "\"";
         } else {
-          ann_str += peek().lexeme;
+          legacy += current.lexeme;
+          canonical += current.lexeme;
+          legacy_container = legacy_container || current.kind == token_kind::left_paren ||
+                             current.kind == token_kind::left_bracket ||
+                             current.kind == token_kind::left_brace;
         }
-        advance();
+        previous_atom = atom;
+      }
+      if (depth != 0) add_error(origin, "Unterminated annotation argument list; expected ')'");
+      annotation.args = std::move(legacy);
+      const auto parsed = parse_annotation_arguments(canonical);
+      if (parsed.error.empty()) annotation.typed_arguments = parsed.arguments;
+      else {
+        annotation.typed_arguments.reset();
+        // Ny historically retained composite payloads for every annotation
+        // name. Keep those opaque without parsing or executing their contents;
+        // the shared scalar profile still diagnoses malformed scalar lists.
+        if (!legacy_container)
+          add_error(origin, "Invalid @" + annotation.name + " arguments: " + parsed.error);
       }
     }
-    collected_annotations.push_back(ann_str);
+    annotations.push_back(std::move(annotation));
   }
-  return collected_annotations;
+  return annotations;
 }
 
 std::shared_ptr<ast_decl> parser::parse_text_pattern_declaration(visibility_kind visibility) {
@@ -1350,7 +1384,7 @@ std::shared_ptr<ast_decl> parser::parse_declaration() {
 
 std::shared_ptr<ast_decl>
 parser::parse_function_declaration(visibility_kind vis, bool is_abstract,
-                                   const std::vector<std::string> &annotations) {
+                                   const std::vector<ast_annotation> &annotations) {
   // The caller MAY have consumed the 'function' / 'fn' keyword already or may
   // call this helper with the keyword still present. To be tolerant of both
   // calling conventions, accept an optional leading 'function' or 'fn' token
@@ -2147,45 +2181,12 @@ parser::parse_module_declaration(visibility_kind vis) {
 // and handling are performed by the single `parse_statement()` definition.
 
 std::shared_ptr<ast_stmt> parser::parse_statement() {
-  // Collect any leading statement-level annotations that apply to the
-  // upcoming statement. This mirrors the top-level declaration annotation
-  // capture. For now we store them locally and emit a diagnostic entry.
-  std::vector<std::string> stmt_annotations;
-  while (match(token_kind::annotation)) {
-    // Store full lexeme that includes the annotation text (e.g., "@test")
-    std::string ann_str = previous().lexeme;
-
-    // Also consume any optional parenthesized arguments: @interop("ny_mimic")
-    if (match(token_kind::left_paren)) {
-      ann_str += "(";
-      int depth = 1;
-      while (!is_at_end() && depth > 0) {
-        if (check(token_kind::left_paren)) {
-          depth++;
-        } else if (check(token_kind::right_paren)) {
-          depth--;
-          if (depth == 0) {
-            advance(); // consume the final ')'
-            ann_str += ")";
-            break;
-          }
-        }
-        // Append the current token to the annotation string
-        if (peek().kind == token_kind::string_literal) {
-          ann_str += "\"" + peek().lexeme + "\"";
-        } else {
-          ann_str += peek().lexeme;
-        }
-        advance();
-      }
-    }
-    stmt_annotations.push_back(ann_str);
-  }
+  const auto stmt_annotations = parse_leading_annotations();
   if (!stmt_annotations.empty() && ny::is_debug_enabled()) {
     // Log for debugging; later phases will pick up annotations from the AST
     // or symbol table when we add those fields.
     for (const auto &a : stmt_annotations) {
-      std::cerr << "[parse_statement] found annotation: " << a << "\n";
+      std::cerr << "[parse_statement] found annotation: " << a.name << "\n";
     }
   }
 
