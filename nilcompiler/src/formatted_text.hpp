@@ -34,6 +34,7 @@ struct formatted_text_piece {
   std::string text;
   std::size_t start = 0;
   std::size_t length = 0;
+  bool closed = true;
 };
 
 struct formatted_text_scan {
@@ -41,6 +42,7 @@ struct formatted_text_scan {
   std::size_t end = 0;
   std::size_t error_offset = 0;
   std::string error;
+  bool incomplete = false;
 };
 
 inline bool formatted_name_byte(unsigned char c) {
@@ -58,9 +60,10 @@ inline std::size_t formatted_expression_end(const std::string &source,
                                            formatted_text_scan &result) {
   std::size_t cursor = begin;
   unsigned braces = 1;
-  const auto fail = [&](std::size_t at, const std::string &message) {
+  const auto fail = [&](std::size_t at, const std::string &message, bool incomplete = false) {
     result.error_offset = at;
     result.error = message;
+    result.incomplete = incomplete;
     return source.size();
   };
   while (cursor < source.size()) {
@@ -73,7 +76,7 @@ inline std::size_t formatted_expression_end(const std::string &source,
       if (!matrix && source.compare(cursor, 3, "###") == 0) {
         const auto end = source.find("###", cursor + 3);
         if (end == std::string::npos)
-          return fail(cursor, "unterminated comment in interpolation");
+          return fail(cursor, "unterminated comment in interpolation", true);
         if (source.find_first_of("\r\n", cursor) < end)
           return fail(cursor, "interpolation expressions must stay on one line");
         cursor = end + 3;
@@ -85,7 +88,7 @@ inline std::size_t formatted_expression_end(const std::string &source,
     if (!matrix && source.compare(cursor, 2, "/*") == 0) {
       const auto end = source.find("*/", cursor + 2);
       if (end == std::string::npos)
-        return fail(cursor, "unterminated comment in interpolation");
+        return fail(cursor, "unterminated comment in interpolation", true);
       if (source.find_first_of("\r\n", cursor) < end)
         return fail(cursor, "interpolation expressions must stay on one line");
       cursor = end + 2;
@@ -111,6 +114,7 @@ inline std::size_t formatted_expression_end(const std::string &source,
       if (!nested.error.empty()) {
         result.error_offset = nested.error_offset;
         result.error = nested.error;
+        result.incomplete = nested.incomplete;
         return source.size();
       }
       cursor = nested.end;
@@ -132,14 +136,14 @@ inline std::size_t formatted_expression_end(const std::string &source,
           break;
         }
       }
-      if (!closed) return fail(opening, "unterminated literal in interpolation");
+      if (!closed) return fail(opening, "unterminated literal in interpolation", true);
       continue;
     }
     if (c == '{') ++braces;
     if (c == '}' && --braces == 0) return cursor;
     ++cursor;
   }
-  return fail(begin - 1, "unterminated interpolation; expected '}'");
+  return fail(begin - 1, "unterminated interpolation; expected '}'", true);
 }
 
 inline formatted_text_scan scan_formatted_text(const std::string &source,
@@ -148,9 +152,10 @@ inline formatted_text_scan scan_formatted_text(const std::string &source,
                                                 unsigned depth) {
   formatted_text_scan result;
   result.end = source.size();
-  const auto fail = [&](std::size_t at, const std::string &message) {
+  const auto fail = [&](std::size_t at, const std::string &message, bool incomplete = false) {
     result.error_offset = at;
     result.error = message;
+    result.incomplete = incomplete;
   };
   if (depth >= 64) {
     fail(quote, "interpolation nesting exceeds 64 levels");
@@ -184,7 +189,14 @@ inline formatted_text_scan scan_formatted_text(const std::string &source,
       flush();
       const auto begin = cursor + 1;
       const auto end = formatted_expression_end(source, begin, matrix, depth + 1, result);
-      if (!result.error.empty()) return result;
+      if (!result.error.empty()) {
+        // Preserve an unfinished expression for Matrix submission parsing.
+        // Its normal lexer/parser can still reject a malformed earlier token.
+        if (result.incomplete)
+          result.pieces.push_back({true, source.substr(begin), begin,
+                                   source.size() - begin, false});
+        return result;
+      }
       result.pieces.push_back({true, source.substr(begin, end - begin), begin, end - begin});
       cursor = end + 1;
       literal_start = cursor;
@@ -220,7 +232,8 @@ inline formatted_text_scan scan_formatted_text(const std::string &source,
       ++cursor;
     }
   }
-  fail(quote, "unterminated formatted text; expected a closing quote");
+  flush();
+  fail(quote, "unterminated formatted text; expected a closing quote", true);
   return result;
 }
 

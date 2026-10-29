@@ -11,6 +11,8 @@
 namespace matrix {
 namespace {
 
+struct submission_abort { submission_state state; };
+
 bool exact_phrase_word(const token &value, const char *word) {
   if ((value.kind != matrix::token_kind::identifier && value.kind != matrix::token_kind::keyword) ||
       value.escaped_identifier) return false;
@@ -147,16 +149,32 @@ std::string nil_path(const std::string &written) {
 } // namespace
 
 parser::parser(const std::string &source, const parser_options &opts)
-    : filename_(opts.filename), signature_cursor_(opts.signature_cursor) {
+    : filename_(opts.filename), external_names_(opts.external_names), signature_cursor_(opts.signature_cursor),
+      source_size_(source.size()), submission_requested_(opts.submission) {
+  if (opts.submission && source.size() > submission_source_limit) {
+    token eof;
+    eof.kind = matrix::token_kind::end_of_file;
+    tokens_.push_back(eof);
+    submission_limit_error(eof, "submission exceeds the 65536-byte source limit");
+    return;
+  }
   if (signature_cursor_ && *signature_cursor_ <= source.size()) {
     auto start = *signature_cursor_;
     while (start && (source[start - 1] == ' ' || source[start - 1] == '\t')) --start;
     signature_blank_start_ = start;
   }
-  lexer lex(source);
+  lexer lex(source, 0, opts.submission);
   tokens_ = lex.scan();
-  prescan_declarations();
+  if (opts.submission && tokens_.size() > submission_token_limit + 1) {
+    submission_limit_error(tokens_[submission_token_limit],
+                           "submission exceeds the 4096-token limit");
+    return;
+  }
+  prescan_declarations(opts.submission);
   for (const auto &e : lex.errors()) {
+    lexical_incomplete_ |= e.incomplete;
+    lexical_invalid_ |= !e.incomplete;
+    if (e.incomplete) incomplete_tokens_.push_back(e.start);
     matrix::diagnostic rich;
     rich.level = matrix::severity::error;
     rich.code = "MX0001";
@@ -184,7 +202,7 @@ parser::parser(const std::string &source, const parser_options &opts)
 // back to its written spelling in resolve_name, which is the right answer for
 // the standard library: 'read-regular-bytes' becomes 'read_regular_bytes',
 // matching Ny's snake_case declaration.
-void parser::prescan_declarations() {
+void parser::prescan_declarations(bool submission) {
   const auto record = [&](const token &t) {
     if (!t.is_name()) return;
     declared_.emplace(t.key, nil_symbol(t.lexeme));
@@ -207,11 +225,11 @@ void parser::prescan_declarations() {
     // one book whose folded keys match but whose spellings differ are one
     // name, which the checker reports only as "already declared in this
     // scope" without saying that case folding is the reason.
-    if (here.is_name() && here.column == 1 &&
+    if (!submission && here.is_name() && here.column == 1 &&
         (next.is(kw::receives) || next.is(kw::returns) || next.is(kw::begin) ||
          next.is(kw::means) || next.is(kw::inherits) || next.is(kw::provides)))
       record_type(here);
-    if ((here.is(kw::constant) || here.is(kw::value) ||
+    if (!submission && (here.is(kw::constant) || here.is(kw::value) ||
          here.is(kw::variable)) && here.column <= 8 && next.is_name())
       record_type(next);
 
@@ -235,6 +253,24 @@ void parser::prescan_declarations() {
          here.is(kw::constant) || here.is(kw::allocate) || here.is(kw::own)) &&
         next.is_name())
       record(next);
+
+    // A submission's tuple destructuring names are locals just like scalar
+    // bindings. Keep their declared spelling for folded references as well.
+    if (submission) {
+      std::size_t opening = tokens_.size();
+      if ((here.is(kw::value) || here.is(kw::variable) || here.is(kw::constant)) &&
+          next.kind == token_kind::left_paren)
+        opening = i + 1;
+      if (here.is(kw::for_) && next.reads("each") && i + 2 < tokens_.size() &&
+          tokens_[i + 2].kind == token_kind::left_paren)
+        opening = i + 2;
+      for (auto binding = opening + (opening < tokens_.size());
+           binding < tokens_.size() && tokens_[binding].is_name(); binding += 2) {
+        record(tokens_[binding]);
+        if (binding + 1 >= tokens_.size() || tokens_[binding + 1].kind != token_kind::comma)
+          break;
+      }
+    }
 
     // A parameter binding: '<name> as <type>' anywhere in a header.
     if (here.is_name() && next.is(kw::as))
@@ -342,6 +378,37 @@ void parser::error(const token &at, std::string message, std::string hint,
   d.message = std::move(message);
   if (!hint.empty()) d.hint = std::move(hint);
   diagnostics_.push_back(std::move(d));
+  if (parsing_submission_) {
+    const bool lexical_end = at.kind == matrix::token_kind::invalid &&
+        std::find(incomplete_tokens_.begin(), incomplete_tokens_.end(), at.start) !=
+            incomplete_tokens_.end();
+    throw submission_abort{at.kind == matrix::token_kind::end_of_file || lexical_end
+                               ? submission_state::incomplete
+                               : submission_state::invalid};
+  }
+}
+
+void parser::submission_limit_error(const token &at, const char *message) {
+  lexical_invalid_ = true;
+  // Resource limits cannot be repaired by appending more source, even at EOF.
+  const bool was_parsing = parsing_submission_;
+  parsing_submission_ = false;
+  error(at, message, {}, "MX1001");
+  parsing_submission_ = was_parsing;
+  if (was_parsing) throw submission_abort{submission_state::invalid};
+}
+
+parser::submission_depth_guard::submission_depth_guard(parser &value)
+    : owner(value), active(value.parsing_submission_) {
+  if (active) {
+    if (owner.submission_depth_ >= submission_depth_limit)
+      owner.submission_limit_error(owner.peek(),
+                                  "submission exceeds the 64-level parser nesting limit");
+    ++owner.submission_depth_;
+  }
+}
+parser::submission_depth_guard::~submission_depth_guard() {
+  if (active) --owner.submission_depth_;
 }
 
 // Keywords an agent is likely to bring from another language, with the Matrix
@@ -518,6 +585,7 @@ void parser::recover_to_declaration() {
 // type is an error: 'as byte' is rejected and 'as override byte' is the
 // spelling, so every exact width is marked and greppable.
 std::optional<std::string> parser::parse_type() {
+  submission_depth_guard depth(*this);
   const token &start = peek();
 
   if (match(kw::tuple)) {
@@ -1291,12 +1359,20 @@ std::shared_ptr<ny::ast_program> parser::parse_program() {
   // 'sleep for ...' are appended once, after the page's own declarations.
   for (auto &decl : synthesized_)
     program->declarations.push_back(decl);
+  validate_integer_literals();
+  return program;
+}
+
+void parser::validate_integer_literals() {
   // Check every source integer, including unused/default expressions. Only
   // direct unary minimum literals may use the positive boundary magnitude.
   for (size_t index = 0; index < tokens_.size(); ++index) {
     const auto &number = tokens_[index];
     if (number.kind != matrix::token_kind::number_literal ||
         ny::is_floating_literal_spelling(number.lexeme)) continue;
+    if (submission_requested_ &&
+        std::find(incomplete_tokens_.begin(), incomplete_tokens_.end(), number.start) !=
+            incomplete_tokens_.end()) continue;
     ny::integer_literal_info info;
     if (const auto *message = ny::parse_integer_literal(number.lexeme, info)) {
       const auto boundary = integer_boundaries_.find(index);
@@ -1305,7 +1381,109 @@ std::shared_ptr<ny::ast_program> parser::parse_program() {
         error(number, message);
     }
   }
-  return program;
+}
+
+bool parser::submission_declaration_start() const {
+  switch (peek().word) {
+  case kw::book: case kw::library: case kw::chapter: case kw::read: case kw::cite:
+  case kw::public_: case kw::abstract: case kw::virtual_: case kw::replaces:
+  case kw::context: case kw::note: case kw::field: case kw::test:
+    return true;
+  default: break;
+  }
+  if (!peek().is_name()) return false;
+  if (peek(1).is(kw::begin))
+    return !(exact_phrase_word(peek(), "collect") && exact_phrase_word(peek(2), "query"));
+  return peek(1).is(kw::receives) || peek(1).is(kw::returns) ||
+      peek(1).is(kw::means) || peek(1).is(kw::inherits) || peek(1).is(kw::provides) ||
+      (peek(1).is(kw::of) && peek(2).is(kw::type));
+}
+
+bool parser::submission_statement_start() {
+  if (check(kw::when)) {
+    // 'when condition give ...' is unambiguously a value. The form containing
+    // 'then' retains its existing statement interpretation at statement level;
+    // parentheses can request value position for either spelling.
+    const auto saved = pos_;
+    advance();
+    parse_expression();
+    const bool value_position = check(kw::give);
+    pos_ = saved;
+    return !value_position;
+  }
+  switch (peek().word) {
+  case kw::value: case kw::variable: case kw::constant: case kw::set:
+  case kw::say: case kw::give: case kw::evaluate: case kw::append:
+  case kw::when: case kw::repeat: case kw::stop: case kw::continue_:
+  case kw::consider: case kw::allocate: case kw::release: case kw::attempt:
+  case kw::raise: case kw::own: case kw::borrow: case kw::move:
+  case kw::sleep: case kw::assembly:
+    return true;
+  default: return false;
+  }
+}
+
+submission_parse_result parser::parse_submission() {
+  submission_parse_result result;
+  if (source_size_ > submission_source_limit && !lexical_invalid_)
+    submission_limit_error(peek(), "submission exceeds the 65536-byte source limit");
+  if (tokens_.size() > submission_token_limit + 1 && !lexical_invalid_)
+    submission_limit_error(tokens_[submission_token_limit], "submission exceeds the 4096-token limit");
+  if (lexical_invalid_) {
+    result.diagnostics = rich_;
+    return result;
+  }
+  // A submission has local bindings, even at column one. Page-wide collision
+  // heuristics for book declarations must not turn those bindings into types.
+  declared_.clear();
+  declared_types_.clear();
+  for (const auto &name : external_names_)
+    declared_.emplace(fold_key(name), nil_symbol(name));
+  prescan_declarations(true);
+  signature_cursor_.reset();
+  signature_blank_start_.reset();
+  submission_requested_ = true;
+  parsing_submission_ = true;
+  result.body = std::make_shared<ny::ast_block_stmt>(1);
+  result.body->source_file = filename_;
+  result.state = submission_state::complete;
+  try {
+    if (pos_ != 0)
+      error(peek(), "a submission parser cannot reuse an already consumed token stream", {}, "MX1002");
+    skip_terminators();
+    while (!at_end()) {
+      if (submission_declaration_start())
+        error(peek(), "books, imports and named declarations are unavailable in a submission",
+              "use local value bindings and expressions, or compile a full Matrix page", "MX1002");
+      if (submission_statement_start()) {
+        auto statement = parse_statement();
+        if (statement) result.body->statements.push_back(std::move(statement));
+      } else {
+        result.value = parse_expression();
+        skip_terminators();
+        if (!at_end())
+          error(peek(), "a bare expression must be the final item in a submission", {}, "MX1002");
+        break;
+      }
+      skip_terminators();
+    }
+    if (lexical_incomplete_) result.state = submission_state::incomplete;
+  } catch (const submission_abort &failure) {
+    result.state = failure.state;
+  }
+  parsing_submission_ = false;
+  // A malformed integer earlier in the input stays invalid even if a later
+  // operand or block is unfinished. Use the same boundary validation as pages.
+  const auto diagnostic_count = diagnostics_.size();
+  validate_integer_literals();
+  if (diagnostics_.size() != diagnostic_count || lexical_invalid_)
+    result.state = submission_state::invalid;
+  if (result.state != submission_state::complete) {
+    result.body.reset();
+    result.value.reset();
+  }
+  result.diagnostics = rich_;
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -1886,7 +2064,8 @@ std::shared_ptr<ny::ast_stmt> parser::parse_binding_statement() {
         return nullptr;
       }
       const token binding = advance();
-      auto child = std::make_shared<ny::ast_variable_decl>(nil_symbol(binding.lexeme),
+      auto child = std::make_shared<ny::ast_variable_decl>(
+          parsing_submission_ ? resolve_name(binding.lexeme) : nil_symbol(binding.lexeme),
           nullptr, std::nullopt, mutable_binding, false, binding.line);
       child->name_span = name_span(binding);
       child->is_const = constant_binding;
@@ -1914,7 +2093,8 @@ std::shared_ptr<ny::ast_stmt> parser::parse_binding_statement() {
     return nullptr;
   }
   const token &name_token = peek();
-  const std::string name = nil_symbol(advance().lexeme);
+  const std::string written_name = advance().lexeme;
+  const std::string name = parsing_submission_ ? resolve_name(written_name) : nil_symbol(written_name);
   reject_type_name_collision(name_token, name_token.lexeme);
   std::optional<std::string> type;
   if (match(kw::as)) type = parse_type();
@@ -1994,6 +2174,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_append() {
 
 // 'when c then ... [otherwise when c then ...] [otherwise ...] end when'
 std::shared_ptr<ny::ast_stmt> parser::parse_when_statement() {
+  submission_depth_guard depth(*this);
   const int line = peek().line;
   advance(); // 'when'
   auto condition = parse_expression();
@@ -2070,7 +2251,8 @@ std::shared_ptr<ny::ast_stmt> parser::parse_repeat() {
         if (check(matrix::token_kind::right_paren)) break;
         if (!peek().is_name()) { expected_name("in tuple loop bindings"); return nullptr; }
         const auto binding = advance();
-        bindings.emplace_back(nil_symbol(binding.lexeme), std::nullopt, false, binding.line, std::nullopt);
+        bindings.emplace_back(parsing_submission_ ? resolve_name(binding.lexeme) : nil_symbol(binding.lexeme),
+                              std::nullopt, false, binding.line, std::nullopt);
         bindings.back().name_span = name_span(binding);
       } while (match(matrix::token_kind::comma));
       expect(matrix::token_kind::right_paren, "')'", "after tuple loop bindings");
@@ -2088,7 +2270,8 @@ std::shared_ptr<ny::ast_stmt> parser::parse_repeat() {
     }
     const token &var_token = peek();
     const int var_line = peek().line;
-    const std::string var = nil_symbol(advance().lexeme);
+    const std::string written_var = advance().lexeme;
+    const std::string var = parsing_submission_ ? resolve_name(written_var) : nil_symbol(written_var);
 
     // Use the vector constructor even for one variable: codegen's range and
     // iterator paths both test `variables.size() == 1`, and the single-variable
@@ -2131,8 +2314,16 @@ std::shared_ptr<ny::ast_stmt> parser::parse_repeat() {
 }
 
 std::shared_ptr<ny::ast_stmt> parser::parse_statement() {
+  submission_depth_guard depth(*this);
   const token &start = peek();
   const int line = start.line;
+  if (parsing_submission_ && submission_declaration_start())
+    error(start, "named declarations and imports are unavailable in a submission", {}, "MX1002");
+  if (parsing_submission_ && check(kw::end) && peek(1).kind == token_kind::end_of_file)
+    error(peek(1), "expected a block kind after 'end'");
+  if (parsing_submission_ && (check(kw::stop) || check(kw::continue_)) &&
+      peek(1).kind == token_kind::end_of_file)
+    error(peek(1), "expected 'repeating' after the control-flow keyword");
 
   if (peek().is_name() && peek(1).is(kw::begin) && exact_phrase_word(peek(2), "pattern")) {
     const auto name = advance();
@@ -2202,7 +2393,10 @@ std::shared_ptr<ny::ast_stmt> parser::parse_statement() {
 // no symbol precedence to misremember; '(' ')' group.
 // ---------------------------------------------------------------------------
 
-ny::ast_expr_ptr parser::parse_expression() { return parse_or(); }
+ny::ast_expr_ptr parser::parse_expression() {
+  submission_depth_guard depth(*this);
+  return parse_or();
+}
 
 ny::ast_expr_ptr parser::parse_or() {
   auto left = parse_and();
@@ -2231,6 +2425,7 @@ ny::ast_expr_ptr parser::parse_and() {
 
 ny::ast_expr_ptr parser::parse_not() {
   if (check(kw::not_)) {
+    submission_depth_guard depth(*this);
     const int line = peek().line;
     advance();
     auto operand = parse_not();
@@ -2254,6 +2449,10 @@ ny::ast_expr_ptr parser::parse_comparison() {
         left, ny::token_kind::double_equal, right, line);
   }
 
+  if (parsing_submission_ && check(kw::does) &&
+      (peek(1).kind == token_kind::end_of_file ||
+       (peek(1).is(kw::not_) && peek(2).kind == token_kind::end_of_file)))
+    error(tokens_.back(), "expected 'does not equal' followed by a value");
   if (check(kw::does) && peek(1).is(kw::not_) && check_word("equal", 2)) {
     advance(); advance(); advance();
     auto right = parse_bitwise();
@@ -2277,6 +2476,10 @@ ny::ast_expr_ptr parser::parse_comparison() {
       auto right = parse_bitwise();
       return std::make_shared<ny::ast_binary_expr>(left, op, right, line);
     }
+    if (parsing_submission_ && (peek(1).kind == token_kind::end_of_file ||
+        ((check_word("less", 1) || check_word("greater", 1) || peek(1).is(kw::at)) &&
+         peek(2).kind == token_kind::end_of_file)))
+      error(tokens_.back(), "expected the rest of the comparison after 'is'");
     error(peek(), "incomplete comparison after 'is'",
           "the comparisons are 'is less than', 'is greater than', "
           "'is at most', 'is at least', 'equals' and 'does not equal'");
@@ -2294,6 +2497,8 @@ ny::ast_expr_ptr parser::parse_bitwise() {
     if (peek(1).is(kw::and_)) op = ny::token_kind::amp;
     else if (peek(1).is(kw::or_)) op = ny::token_kind::pipe;
     else if (peek(1).is(kw::xor_)) op = ny::token_kind::caret;
+    if (parsing_submission_ && peek(1).kind == token_kind::end_of_file)
+      error(peek(1), "expected 'and', 'or' or 'xor' after 'bitwise'");
     if (op == ny::token_kind::invalid) break; // 'bitwise not' is unary
     advance(); advance();
     auto right = parse_shift();
@@ -2313,6 +2518,10 @@ ny::ast_expr_ptr parser::parse_shift() {
     else if (check_word("right", 1) && check_word("by", 2))
       op = ny::token_kind::greater_greater;
     if (op == ny::token_kind::invalid) {
+      if (parsing_submission_ && (peek(1).kind == token_kind::end_of_file ||
+          ((check_word("left", 1) || check_word("right", 1)) &&
+           peek(2).kind == token_kind::end_of_file)))
+        error(tokens_.back(), "expected 'shifted left by' or 'shifted right by' followed by a value");
       error(peek(), "incomplete shift",
             "write 'shifted left by <count>' or 'shifted right by <count>'");
       break;
@@ -2373,11 +2582,14 @@ ny::ast_expr_ptr parser::parse_multiplicative() {
 }
 
 ny::ast_expr_ptr parser::parse_unary() {
+  if (parsing_submission_ && check(kw::bitwise) && peek(1).kind == token_kind::end_of_file)
+    error(peek(1), "expected 'not' after unary 'bitwise'");
   const int line = peek().line;
   // 'negative' is unary only; 'minus' remains the compatibility spelling.
   // The lexer emits numeric_sign only when '-' touches the following digits.
   if (match(kw::negative) || match(kw::minus) ||
       match(matrix::token_kind::numeric_sign)) {
+    submission_depth_guard depth(*this);
     auto operand = parse_unary();
     if (operand && operand->kind == ny::ast_node_kind::number_literal_node) {
       auto &number = static_cast<ny::ast_number_literal &>(*operand);
@@ -2390,6 +2602,7 @@ ny::ast_expr_ptr parser::parse_unary() {
                                                 line);
   }
   if (check(kw::bitwise) && peek(1).is(kw::not_)) {
+    submission_depth_guard depth(*this);
     advance(); advance();
     auto operand = parse_unary();
     return std::make_shared<ny::ast_unary_expr>(ny::token_kind::tilde, operand,
@@ -2574,6 +2787,7 @@ ny::ast_expr_ptr parser::parse_postfix() {
 
 // 'when c give a otherwise give b end when' as a value.
 ny::ast_expr_ptr parser::parse_when_expression() {
+  submission_depth_guard depth(*this);
   const int line = peek().line;
   advance(); // 'when'
   auto condition = parse_expression();
@@ -2598,6 +2812,8 @@ ny::ast_expr_ptr parser::parse_when_expression() {
     advance();
     advance();
   } else {
+    if (parsing_submission_ && check(kw::end) && peek(1).kind == token_kind::end_of_file)
+      error(peek(1), "expected 'when' after 'end'");
     error(peek(), "expected 'end when' to close a value-position 'when'");
   }
   return std::make_shared<ny::ast_if_expr>(condition, then_value, else_value,
@@ -2610,6 +2826,9 @@ ny::ast_expr_ptr parser::parse_primary() {
     return parse_query_expression();
   const token &start = peek();
   const int line = start.line;
+  if (parsing_submission_ && (check(kw::now) || check(kw::reference)) &&
+      peek(1).kind == token_kind::end_of_file)
+    error(peek(1), "expected the rest of the value expression");
 
   if (check(matrix::token_kind::number_literal)) {
     auto number = std::make_shared<ny::ast_number_literal>(advance().lexeme, line);
@@ -2695,6 +2914,7 @@ ny::ast_expr_ptr parser::parse_primary() {
   // 'the length of e' -> e.len(); 'the paragraph f' -> a paragraph value.
   if (match(kw::the)) {
     if (match_word("length")) {
+      submission_depth_guard depth(*this);
       if (!expect(kw::of, "after 'the length'")) return nullptr;
       auto subject = parse_postfix();
       auto member =
@@ -2722,6 +2942,7 @@ ny::ast_expr_ptr parser::parse_primary() {
   // and a transitive call graph that cannot touch globals, handles, text,
   // arrays, I/O, clocks or faults.
   if (match(kw::apply)) {
+    submission_depth_guard depth(*this);
     if (!peek().is_name()) {
       error(peek(), "expected a worker paragraph name after 'apply'",
             "the worker must be a statically resolved paragraph, not a value");
@@ -2777,6 +2998,7 @@ ny::ast_expr_ptr parser::parse_primary() {
 
   // 'reference to x' aliases an existing nominal aggregate handle.
   if (check(kw::reference) && peek(1).is(kw::to)) {
+    submission_depth_guard depth(*this);
     advance(); advance();
     auto operand = parse_postfix();
     return std::make_shared<ny::ast_ref_expr>(operand, line);
@@ -3080,6 +3302,7 @@ ny::ast_expr_ptr parser::parse_build() {
 
 // A literal, '_', a bare binding, or 'Type.Variant [holding binding]'.
 ny::ast_pattern parser::parse_pattern() {
+  submission_depth_guard depth(*this);
   ny::ast_pattern pattern;
   if (match(matrix::token_kind::left_paren)) {
     pattern.kind = ny::ast_pattern_kind::constructor_pattern;
@@ -3196,6 +3419,8 @@ std::shared_ptr<ny::ast_stmt> parser::parse_consider_statement() {
       continue;
     }
 
+    if (parsing_submission_ && check(kw::end) && peek(1).kind == token_kind::end_of_file)
+      error(peek(1), "expected 'consider' after 'end'");
     if (!expect(kw::when, "to begin a 'consider' arm")) {
       const int bad = peek().line;
       while (!at_end() && peek().line == bad) advance();
@@ -3248,6 +3473,8 @@ ny::ast_expr_ptr parser::parse_consider_expression() {
     if (match(kw::otherwise)) {
       pattern_expr = std::make_shared<ny::ast_identifier_expr>("_", line);
     } else {
+      if (parsing_submission_ && check(kw::end) && peek(1).kind == token_kind::end_of_file)
+        error(peek(1), "expected 'consider' after 'end'");
       if (!expect(kw::when, "to begin a 'consider' arm")) break;
       // ast_match_case holds the pattern as an expression, and codegen reads a
       // specific shape: member_access(identifier(choice), variant) for a unit

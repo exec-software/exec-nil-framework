@@ -61,6 +61,24 @@ namespace matrix {
 struct parser_options {
   std::string filename;
   std::optional<std::size_t> signature_cursor;
+  // Set before construction for untrusted interactive input: unlike a page,
+  // a submission is bounded before the constructor starts lexing it.
+  bool submission = false;
+  // Existing immutable session names, in their original NIL spelling.
+  std::vector<std::string> external_names;
+};
+
+inline constexpr std::size_t submission_source_limit = 64 * 1024;
+inline constexpr std::size_t submission_token_limit = 4096;
+inline constexpr std::size_t submission_depth_limit = 64;
+
+enum class submission_state { complete, incomplete, invalid };
+
+struct submission_parse_result {
+  submission_state state = submission_state::invalid;
+  std::shared_ptr<ny::ast_block_stmt> body;
+  ny::ast_expr_ptr value;
+  std::vector<matrix::diagnostic> diagnostics;
 };
 
 class parser {
@@ -69,6 +87,10 @@ public:
                   const parser_options &opts = parser_options());
 
   std::shared_ptr<ny::ast_program> parse_program();
+  // Parse ordinary Matrix statements and an optional final bare expression.
+  // No book/paragraph wrapper is inserted, so original source spans survive.
+  // On incomplete/invalid input no partial executable AST is returned.
+  submission_parse_result parse_submission();
 
   const std::vector<ny::diagnostic> &diagnostics() const { return diagnostics_; }
   // The same diagnostics with spans, codes and hints, for the renderer in
@@ -94,8 +116,23 @@ private:
   std::vector<ny::diagnostic> diagnostics_;
   std::vector<matrix::diagnostic> rich_;
   std::string filename_;
+  std::vector<std::string> external_names_;
   std::optional<std::size_t> signature_cursor_, signature_blank_start_;
   bool recovered_signature_call_ = false;
+  std::size_t source_size_ = 0, submission_depth_ = 0;
+  bool submission_requested_ = false, parsing_submission_ = false;
+  bool lexical_incomplete_ = false, lexical_invalid_ = false;
+  std::vector<std::size_t> incomplete_tokens_;
+  struct submission_depth_guard {
+    parser &owner;
+    bool active;
+    explicit submission_depth_guard(parser &owner);
+    ~submission_depth_guard();
+  };
+  void validate_integer_literals();
+  void submission_limit_error(const token &at, const char *message);
+  bool submission_statement_start();
+  bool submission_declaration_start() const;
 
   // Folded lookup key -> the NIL symbol fixed by the DECLARATION site.
   // References fold against this, which is what makes 'READ-SENSOR',
@@ -117,7 +154,7 @@ private:
   void reject_type_name_collision(const token &at, const std::string &written);
 
   // Collect declaration spellings from the token stream before parsing.
-  void prescan_declarations();
+  void prescan_declarations(bool submission = false);
   // Resolve a written reference to its declared NIL symbol, falling back to
   // the written spelling for names declared elsewhere (a read book, the
   // standard library) whose declaration this page never sees.

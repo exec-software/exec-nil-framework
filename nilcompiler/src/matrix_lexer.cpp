@@ -186,8 +186,10 @@ char lexer::advance() {
   return c;
 }
 
-void lexer::error(int line, int col, std::string message, std::string hint) {
-  errors_.push_back({line, col, std::move(message), std::move(hint)});
+void lexer::error(int line, int col, std::string message, std::string hint,
+                  bool incomplete, bool open_text_block) {
+  errors_.push_back({line, col, std::move(message), std::move(hint), incomplete,
+                     token_start_, open_text_block});
 }
 
 token lexer::make(token_kind kind, const std::string &lexeme, int line,
@@ -297,7 +299,7 @@ token lexer::scan_backtick_identifier() {
   }
   if (at_end() || peek() != '`') {
     error(line, col, "unterminated escaped identifier",
-          "an escaped identifier is written `like-this` on one line");
+          "an escaped identifier is written `like-this` on one line", at_end());
     token t = make(token_kind::invalid, spelling, line, col);
     t.key = fold_key(spelling);
     return t;
@@ -320,7 +322,7 @@ token lexer::scan_number(bool tuple_position) {
     spelling.push_back(advance());
     spelling.push_back(advance());
     if (!std::isxdigit(static_cast<unsigned char>(peek()))) {
-      error(line, col, "hexadecimal literal has no digits");
+      error(line, col, "hexadecimal literal has no digits", {}, at_end());
     }
     while (std::isxdigit(static_cast<unsigned char>(peek())))
       spelling.push_back(advance());
@@ -346,7 +348,9 @@ token lexer::scan_number(bool tuple_position) {
   if (ny::is_floating_literal_spelling(spelling)) {
     double value = 0.0;
     if (const auto *message = ny::parse_floating_literal(spelling, value))
-      error(line, col, message);
+      error(line, col, message, {}, at_end() && !spelling.empty() &&
+          (spelling.back() == 'e' || spelling.back() == 'E' ||
+           spelling.back() == '+' || spelling.back() == '-'));
   }
   token t = make(token_kind::number_literal, spelling, line, col);
   t.key = spelling;
@@ -369,7 +373,7 @@ token lexer::scan_string() {
     error(line, col, "unterminated text literal",
           "a quoted literal stays on one line and has no escape sequences; "
           "use 'plus quote plus' for a literal quote, or a 'begin text' "
-          "block for multi-line content");
+          "block for multi-line content", at_end());
     return make(token_kind::invalid, contents, line, col);
   }
   advance(); // closing quote
@@ -397,7 +401,9 @@ void lexer::scan_formatted_string(std::vector<token> &tokens,
   };
   if (!scanned.error.empty()) {
     error(positions.line(scanned.error_offset), positions.column(scanned.error_offset),
-          scanned.error);
+          scanned.error, {}, scanned.incomplete);
+  }
+  if (!scanned.error.empty() && (!scanned.incomplete || !retain_incomplete_)) {
     emit(token_kind::invalid, scanned.error, scanned.error_offset, 1);
   } else {
     emit(token_kind::formatted_string_begin, "formatted \"", word.start,
@@ -408,7 +414,7 @@ void lexer::scan_formatted_string(std::vector<token> &tokens,
         continue;
       }
       emit(token_kind::interpolation_begin, "{", piece.start - 1, 1);
-      lexer expression(piece.text, interpolation_depth_ + 1);
+      lexer expression(piece.text, interpolation_depth_ + 1, retain_incomplete_);
       for (auto value : expression.scan()) {
         if (value.kind == token_kind::end_of_file) continue;
         if (value.line == 1) value.column += positions.column(piece.start) - 1;
@@ -419,11 +425,14 @@ void lexer::scan_formatted_string(std::vector<token> &tokens,
       for (const auto &failure : expression.errors()) {
         const auto column = failure.column + (failure.line == 1 ? positions.column(piece.start) - 1 : 0);
         error(failure.line + positions.line(piece.start) - 1, column,
-              failure.message, failure.hint);
+              failure.message, failure.hint, failure.incomplete && !piece.closed);
+        errors_.back().start = piece.start + failure.start;
       }
-      emit(token_kind::interpolation_end, "}", piece.start + piece.length, 1);
+      if (piece.closed)
+        emit(token_kind::interpolation_end, "}", piece.start + piece.length, 1);
     }
-    emit(token_kind::formatted_string_end, "\"", scanned.end - 1, 1);
+    if (scanned.error.empty())
+      emit(token_kind::formatted_string_end, "\"", scanned.end - 1, 1);
   }
   pos_ = scanned.end;
   line_ = positions.line(pos_);
@@ -473,7 +482,7 @@ token lexer::scan_text_block(int line, int col) {
   }
   if (!terminated) {
     error(line, col, "unterminated 'begin text' block",
-          "close it with a line whose only content is 'end text'");
+          "close it with a line whose only content is 'end text'", true, true);
     return make(token_kind::invalid, "", line, col);
   }
 

@@ -167,6 +167,11 @@ struct lex_error {
   int column = 0;
   std::string message;
   std::string hint;
+  // True only when appending input can complete the lexical construct.
+  bool incomplete = false;
+  std::size_t start = 0;
+  // At EOF inside raw text, subsequent lines are payload, not shell commands.
+  bool open_text_block = false;
 };
 
 // Fold one identifier to its lookup key: ASCII-lowercase, with every '-' and
@@ -188,8 +193,10 @@ const char *keyword_name(kw k);
 
 class lexer {
 public:
-  explicit lexer(const std::string &source, unsigned interpolation_depth = 0)
-      : src_(source), interpolation_depth_(interpolation_depth) {}
+  explicit lexer(const std::string &source, unsigned interpolation_depth = 0,
+                 bool retain_incomplete = false)
+      : src_(source), interpolation_depth_(interpolation_depth),
+        retain_incomplete_(retain_incomplete) {}
 
   std::vector<token> scan();
   const std::vector<lex_error> &errors() const { return errors_; }
@@ -203,6 +210,7 @@ private:
   int line_ = 1;
   int col_ = 1;
   unsigned interpolation_depth_ = 0;
+  bool retain_incomplete_ = false;
 
   bool at_end() const { return pos_ >= src_.size(); }
   char peek(size_t ahead = 0) const {
@@ -222,7 +230,8 @@ private:
   // True when 'begin' is immediately followed by 'text' and end of line.
   bool text_block_follows() const;
   token scan_backtick_identifier();
-  void error(int line, int col, std::string message, std::string hint = {});
+  void error(int line, int col, std::string message, std::string hint = {},
+             bool incomplete = false, bool open_text_block = false);
 };
 
 } // namespace matrix
