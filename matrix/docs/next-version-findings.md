@@ -2412,3 +2412,71 @@ library boundaries. Polling typed events avoids assuming the unimplemented
 native function-value callback ABI. Real display tests must complement headless
 logic tests; accessibility, Unicode text shaping, clipboard, and platform
 backends require explicit implementation and evidence before support claims.
+
+**Implemented foundation:** `nil.std.ui` now has a Matrix public API and shared
+optional GTK 4 provider. Real windows, layouts, controls, copied typed events,
+strict resource lifetimes and explicit text/flag model synchronization replace
+simulated identities for this new API. `tests/tools/ui_display_contract.py`
+drives actual keyboard and close events on a private authenticated display;
+co-located model tests need no display. The old experiments remain separate.
+See [NIL-0025](../../docs/design/NIL-0025-matrix-desktop-ui.md) for boundaries
+and outstanding widget/platform work.
+
+### F84 — Folded declaration collisions must identify the conflicting names
+
+**Observed:** A record named `TextModel` and a factory named `text-model` resolve
+to the same Matrix identity. The compiler accepted both, then reported that the
+record had no `content` field because its symbol described the function.
+
+**Fixed:** Matrix diagnoses the colliding spellings at the declaration, including
+the earlier line. The shared checker rejects different declaration kinds with
+the same module identity. Tests cover declaration order, visibility, Ny, and
+valid extension/test names. The library factories are `create-text-model` and
+`create-flag-model`.
+
+**Remaining friction:** Imported type names and page-local values can still
+interact awkwardly with page-wide folding. UI code uses distinct names such as
+`surface`, `control` and `notification`, and qualifies record constructions.
+Type-position and value-position resolution deserve a separate namespace audit;
+authors should never receive an unresolved generated variable for this case.
+
+### F85 — Pattern arms need an explicit boundary for nested conditionals
+
+**Observed:** Both a `consider` arm and an ordinary conditional begin with
+`when`. Without a closing arm boundary, a conditional immediately inside an arm
+was parsed as another pattern and produced misleading errors at `equals`.
+
+**Fixed:** Statement arms accept `then begin block ... end block`; the wildcard
+can use `otherwise begin block ... end block`. Existing unbracketed arms remain
+valid. The explicit form supports nested conditionals, loops and matches with
+the same lexical scope and return behavior. `block` remains contextual.
+`tests/matrix/consider_block_contract.py` checks nested control flow, guards,
+scope, and missing boundaries on VM/native paths.
+
+### F86 — Nested generic applications and error propagation need clearer prose
+
+**Observed:** `Result of Option of Event, text` does not express a unique
+application boundary: the inner `of` consumes the comma. The UI API uses the
+named alias `PendingEvent` for `Option<Event>`, then `Result of PendingEvent,
+text`. That is readable, but authors need an explicit grouping form for other
+nested applications.
+
+Copying and checking a UI event also requires forwarding several Result errors.
+The current `consider` form is explicit and safe but creates deeply nested code.
+A future checked propagation form or compositional Result helpers could retain
+the operation's diagnostic context while reducing this repetition. Neither
+automatic unwrapping nor fallback values should hide failures.
+
+### F87 — Generic enum assignments must retain the checked destination type
+
+**Observed:** The UI event decoder assigned `Option.Some` to an existing
+`Option<Widget>` local. VM execution worked, but native compilation rejected the
+constructor because its concrete enum schema was missing. Written local type
+annotations retained short payload names, and assignment lowering did not pass
+the checked destination type to the constructor.
+
+**Fixed:** Annotated bindings retain canonical checked types, and assignment
+RHS lowering receives the destination context. Paired Ny/Matrix fixtures cover
+local and record-field assignments of `Option<Record>`, with side effects
+proving each payload is evaluated once. They run through textual/binary NIL,
+bundles, LLVM JIT and AOT. This does not extend native global storage to enums.

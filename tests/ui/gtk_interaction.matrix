@@ -1,0 +1,78 @@
+book nil2.ui.interaction
+
+read nil.std.ui
+read nil.std.testing
+read nil.std.threading
+read nil.std.core.option
+read nil.std.core.result
+
+note suite "nil.std.ui.gtk.interaction"
+keyboard_events begin test
+    value surface is require-ok of Window, text with (create-window with "NIL2 UI keyboard probe", 420, 240), "create keyboard probe"
+    value root is window-root with surface
+    value entry is require-ok of Widget, text with (create-entry with root, ""), "create entry"
+    value checkbox is require-ok of Widget, text with (create-checkbox with root, "Enable setting"), "create checkbox"
+    value button is require-ok of Widget, text with (create-button with root, "Finish probe"), "create button"
+    evaluate require-ok of boolean, text with (show-window with surface), "show keyboard probe"
+    evaluate require-ok of boolean, text with (focus-widget with entry), "focus probe entry"
+    variable saw-text as boolean is no
+    variable saw-toggle as boolean is no
+    variable saw-click as boolean is no
+    variable attempts as number is 0
+    repeat while attempts is less than 2000 and not saw-click
+        value pending is require-ok of PendingEvent, text with (poll-event with surface), "poll keyboard probe"
+        consider pending
+            when Option.None then evaluate sleep-ms with 10
+            when Option.Some holding notification then begin block
+                when (is-text-change with notification) and (event-for with notification, entry) and notification.content equals "Matrix" then
+                    set saw-text to yes
+                otherwise when (is-toggle with notification) and (event-for with notification, checkbox) and notification.checked then
+                    set saw-toggle to yes
+                otherwise when (is-click with notification) and (event-for with notification, button) then
+                    set saw-click to yes
+                end when
+            end block
+        end consider
+        set attempts to attempts plus 1
+    end repeat
+    evaluate require-ok of boolean, text with (close-window with surface), "close keyboard probe"
+    expect saw-text
+    expect saw-toggle
+    expect saw-click
+    say "NIL2 UI interaction passed"
+end test
+
+note suite "nil.std.ui.gtk.interaction"
+close_request begin test
+    value surface is require-ok of Window, text with (create-window with "NIL2 UI close probe", 360, 160), "create close probe"
+    value root is window-root with surface
+    value label is require-ok of Widget, text with (create-label with root, "Close this window through the window manager."), "create close label"
+    evaluate require-ok of boolean, text with (show-window with surface), "show close probe"
+    variable saw-close as boolean is no
+    variable no-widget-target as boolean is no
+    variable attempts as number is 0
+    repeat while attempts is less than 2000 and not saw-close
+        value pending is require-ok of PendingEvent, text with (poll-event with surface), "poll close probe"
+        consider pending
+            when Option.None then evaluate sleep-ms with 10
+            when Option.Some holding notification then begin block
+                when is-close-request with notification then
+                    set saw-close to yes
+                    consider notification.target
+                        when Option.None then set no-widget-target to yes
+                        when Option.Some holding unexpected then set no-widget-target to no
+                    end consider
+                end when
+            end block
+        end consider
+        set attempts to attempts plus 1
+    end repeat
+    evaluate require-ok of boolean, text with (close-window with surface), "close close probe"
+    expect saw-close
+    expect no-widget-target
+    consider widget-text with label
+        when Result.Error holding failure then expect (the length of failure) is greater than 0
+        when Result.Ok holding unexpected then expect no
+    end consider
+    say "NIL2 UI close passed"
+end test

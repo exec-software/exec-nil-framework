@@ -1,7 +1,7 @@
 # Standard-library status
 
 Ny and Matrix share `nilstd`, one standard library compiled to NIL. Its active
-Ny and Matrix sources form 17 logical SDK modules, including `prelude`.
+Ny and Matrix sources form 18 logical SDK modules, including `prelude`.
 Support remains evidence-scoped. Focused fixtures exercise `nilstd` and `nillib`
 through textual/binary NIL, bundles, LLVM JIT and AOT, and standalone
 assembler/linker pipelines. Local SDK qualification records the exact source
@@ -31,7 +31,7 @@ averaging, nonfinite compatibility behavior and numerical accuracy limits.
 
 ```text
 nilstd/
-  src/           Ny and Matrix sources organized as 17 logical modules
+  src/           Ny and Matrix sources organized as 18 logical modules
   native/        14 preserved C and C++ interoperability shims
   tests/         8 preserved design-era library tests
   experimental/  65 quarantined Ny sources excluded from the SDK
@@ -43,7 +43,7 @@ remain aliases of the same module identities.
 
 The active logical modules are `prelude` and `nil.std.core`, `collections`,
 `datetime`, `db`, `diagnostics`, `io`, `math`, `net`, `nildata`, `reflection`, `runtime`,
-`security`, `system`, `testing`, `text`, and `threading`. Quarantine is broader than parser
+`security`, `system`, `testing`, `text`, `threading`, and `ui`. Quarantine is broader than parser
 failure: an experimental source may compile yet still lack complete language
 semantics, an executable provider, or behavioral evidence.
 
@@ -57,8 +57,8 @@ nillib/  matching strictly compiled binary NIL modules
 For every source under `nilstd/path/module` (`.ny`, `.matrix`, or `.mat`), a complete SDK contains
 `nillib/path/module.nil`. `manifest.json` records both inventories and hashes.
 
-First-party engine and UI experiments are intentionally separate from the core
-library:
+The active [desktop UI library](ui.md) lives in `nilstd/src/ui` and is authored
+in Matrix. The earlier engine and UI experiments remain separate:
 
 ```text
 packages/ny.engine/
@@ -77,6 +77,15 @@ These helpers remain runtime checks when called by production code; placing
 them in test blocks makes them test-only. See the
 [co-located testing guide](../tools/testing.md) for language syntax, discovery,
 execution routes, and editor integration.
+
+## Desktop UI
+
+`nil.std.ui` supplies checked windows, rows, columns, grids, labels, buttons,
+text entries, and checkboxes. Copied typed events and explicit text/flag models
+keep application logic in Matrix; the shared runtime owns native resources.
+The initial provider uses GTK 4 on Linux and returns an explanatory error when
+the optional provider or a display is unavailable. See the [UI reference](ui.md)
+and [NIL² counter application](../../examples/projects/nil2-counter).
 
 ## NILData
 

@@ -1,0 +1,38 @@
+book validation.enum_assignment
+read nil.std.core.option
+
+PayloadRecord begin record
+    field amount as number
+end record
+Holder begin record
+    field item as nil.std.core.Option of PayloadRecord
+end record
+variable evaluations as number is 0
+
+make-payload returns PayloadRecord begin paragraph
+    set evaluations to evaluations plus 1
+    give build PayloadRecord with amount being 40 plus evaluations
+end paragraph
+
+main returns number begin paragraph
+    variable selected as Option of PayloadRecord is Option.None
+    set selected to Option.Some holding (make-payload with nothing)
+    variable saved as Option of PayloadRecord is Option.None
+    set saved to Option.Some holding (make-payload with nothing)
+    variable container is build Holder with item being Option.None
+    set container.item to Option.Some holding (make-payload with nothing)
+    consider selected
+        when Option.Some holding item then say item.amount
+        when Option.None then give 9
+    end consider
+    consider saved
+        when Option.Some holding item then say item.amount
+        when Option.None then give 9
+    end consider
+    consider container.item
+        when Option.Some holding item then say item.amount
+        when Option.None then give 9
+    end consider
+    say evaluations
+    give 0
+end paragraph

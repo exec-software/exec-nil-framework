@@ -6,6 +6,7 @@
 #include "owned_contract.hpp"
 #include "diagnostics.hpp"
 #include "dynamic_type.hpp"
+#include "ui_intrinsic.hpp"
 #include "executable_context.hpp"
 #include "native_runtime.hpp"
 #include "owned_runtime.hpp"
@@ -2757,7 +2758,72 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           ann.find("@intrinsic(io.console.error)") != std::string::npos ||
           ann.find("@intrinsic(\"console.error\")") != std::string::npos ||
           ann.find("@intrinsic(console.error)") != std::string::npos;
-      if (dispatch_name == "@intrinsic" && dispatch_provider.rfind("db2.", 0) == 0) {
+      if (dispatch_name == "@intrinsic" && dispatch_provider.rfind("ui.v1.", 0) == 0) {
+        const auto contract = ui::intrinsic(dispatch_provider);
+        if (!contract) {
+          std::cerr << "[NativeCodegen] unknown UI intrinsic '" << dispatch_provider << "'\n";
+          return false;
+        }
+        std::vector<std::string> parameter_types;
+        for (const auto &parameter : fn.params) parameter_types.push_back(nil_parameter_type(parameter));
+        bool valid = ui::signature_matches(*contract, parameter_types, fn.return_type) &&
+            impl_->current_function->arg_size() == contract->parameters.size();
+        for (std::size_t index = 0; valid && index < contract->parameters.size(); ++index) {
+          auto *actual = impl_->current_function->getArg(index)->getType();
+          valid = contract->parameters[index] == "i64" ? actual->isIntegerTy(64) : actual->isPointerTy();
+        }
+        const bool capability = contract->output == ui::Output::capability;
+        const bool text_result = contract->output == ui::Output::text;
+        valid = valid && (capability ? impl_->current_function->getReturnType()->isIntegerTy()
+                                    : impl_->current_function->getReturnType()->isIntegerTy(64));
+        if (!capability) {
+          std::size_t schemas = 0;
+          for (const auto &definition : mod.enums)
+            if (ui::result_schema_matches(*contract, definition)) ++schemas;
+          valid = valid && schemas == 1;
+        }
+        if (!valid) {
+          std::cerr << "[NativeCodegen] " << dispatch_provider << " requires the exact UI ABI "
+                    << ui::signature(*contract) << " and the standard Result schema\n";
+          return false;
+        }
+        auto *word_type = llvm::Type::getInt64Ty(ctx);
+        auto *pointer_type = llvm::PointerType::getUnqual(ctx);
+        llvm::Type *payload_type = text_result ? static_cast<llvm::Type *>(pointer_type) : word_type;
+        std::vector<llvm::Value *> arguments;
+        for (auto &argument : impl_->current_function->args()) arguments.push_back(&argument);
+        llvm::AllocaInst *value_out = nullptr, *error_out = nullptr;
+        if (!capability) {
+          // Entry allocas and loaded payloads are published by native root
+          // instrumentation before any enum allocation can collect them.
+          value_out = impl_->builder->CreateAlloca(payload_type);
+          error_out = impl_->builder->CreateAlloca(pointer_type);
+          arguments.push_back(value_out); arguments.push_back(error_out);
+        }
+        std::vector<llvm::Type *> types;
+        for (auto *argument : arguments) types.push_back(argument->getType());
+        auto *runtime_type = llvm::FunctionType::get(capability ? word_type : llvm::Type::getInt32Ty(ctx), types, false);
+        auto runtime = impl_->module->getOrInsertFunction("nyrt_ui_v1_" + contract->operation, runtime_type);
+        auto *status = impl_->builder->CreateCall(runtime_type, runtime.getCallee(), arguments);
+        if (capability) {
+          impl_->builder->CreateRet(impl_->builder->CreateIntCast(status, impl_->current_function->getReturnType(), false));
+        } else {
+          auto *success = llvm::BasicBlock::Create(ctx, "ui.success", impl_->current_function);
+          auto *failure = llvm::BasicBlock::Create(ctx, "ui.failure", impl_->current_function);
+          impl_->builder->CreateCondBr(impl_->builder->CreateICmpNE(status, llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0)), success, failure);
+          impl_->builder->SetInsertPoint(success);
+          auto *value = impl_->builder->CreateLoad(payload_type, value_out);
+          auto *ok = emit_single_payload_variant("Result::Ok", value, fn.return_type, text_result ? "text" : "i64");
+          if (!ok) return false;
+          impl_->builder->CreateRet(ok);
+          impl_->builder->SetInsertPoint(failure);
+          auto *error = impl_->builder->CreateLoad(pointer_type, error_out);
+          auto *failed = emit_single_payload_variant("Result::Error", error, fn.return_type, "text");
+          if (!failed) return false;
+          impl_->builder->CreateRet(failed);
+        }
+        annotation_handled = true;
+      } else if (dispatch_name == "@intrinsic" && dispatch_provider.rfind("db2.", 0) == 0) {
         std::vector<std::string> expected;
         bool capability = false, text_result = false;
         int operation = 0;
@@ -8828,6 +8894,21 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
         llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(address),
                                      llvm::JITSymbolFlags::Exported);
   };
+  expose_runtime_symbol("nyrt_ui_v1_available", &nyrt_ui_v1_available);
+  expose_runtime_symbol("nyrt_ui_v1_window", &nyrt_ui_v1_window);
+  expose_runtime_symbol("nyrt_ui_v1_widget", &nyrt_ui_v1_widget);
+  expose_runtime_symbol("nyrt_ui_v1_grid_attach", &nyrt_ui_v1_grid_attach);
+  expose_runtime_symbol("nyrt_ui_v1_set_text", &nyrt_ui_v1_set_text);
+  expose_runtime_symbol("nyrt_ui_v1_read_text", &nyrt_ui_v1_read_text);
+  expose_runtime_symbol("nyrt_ui_v1_set_number", &nyrt_ui_v1_set_number);
+  expose_runtime_symbol("nyrt_ui_v1_read_number", &nyrt_ui_v1_read_number);
+  expose_runtime_symbol("nyrt_ui_v1_activate", &nyrt_ui_v1_activate);
+  expose_runtime_symbol("nyrt_ui_v1_poll", &nyrt_ui_v1_poll);
+  expose_runtime_symbol("nyrt_ui_v1_event_number", &nyrt_ui_v1_event_number);
+  expose_runtime_symbol("nyrt_ui_v1_event_text", &nyrt_ui_v1_event_text);
+  expose_runtime_symbol("nyrt_ui_v1_release_event", &nyrt_ui_v1_release_event);
+  expose_runtime_symbol("nyrt_ui_v1_destroy_widget", &nyrt_ui_v1_destroy_widget);
+  expose_runtime_symbol("nyrt_ui_v1_close", &nyrt_ui_v1_close);
   expose_runtime_symbol("nyrt_db2_available", &nyrt_db2_available);
   expose_runtime_symbol("nyrt_db2_open", &nyrt_db2_open);
   expose_runtime_symbol("nyrt_db2_execute", &nyrt_db2_execute);

@@ -365,6 +365,18 @@
     "keywords": {
       "patterns": [
         {
+          "match": "((?<![A-Za-z0-9_\\x{80}-\\x{10FFFF}.:`-])(?i:begin|end))(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])[ \\t]+((?i:block))(?![A-Za-z0-9_\\x{80}-\\x{10FFFF}-`])",
+          "captures": {
+            "1": {
+              "name": "keyword.control.verb.matrix"
+            },
+            "2": {
+              "name": "keyword.control.block.matrix"
+            }
+          },
+          "comment": "Block is contextual after begin/end, and remains an ordinary identifier elsewhere."
+        },
+        {
           "name": "keyword.control.verb.matrix",
           "match": "(?i:^[ \\t]*\\bexpect\\b)(?![-`])"
         },

@@ -16,6 +16,7 @@
 #include <vector>
 #include "source_debug.hpp"
 #include "database_runtime.hpp"
+#include "ui_runtime.hpp"
 #include "memory_profile.hpp"
 
 namespace ny {
@@ -479,6 +480,7 @@ private:
 
   // Heap management for manual memory (unsafe mode) and GC (safe mode)
   database::Context databases_;
+  ui::Context ui_;
   struct HeapBlock {
     std::string type_name;
     // Logical element metadata for type_name == "array". Textual and binary

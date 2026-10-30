@@ -119,6 +119,11 @@ private:
   // surfaces much later as a method call with no receiver.
   std::unordered_map<std::string, std::string> declared_types_;
 
+  // Only actual module-level definitions participate. Implementations refer
+  // to an existing type and test names are metadata, not new symbols.
+  std::unordered_map<std::string, token> parsed_declarations_;
+  void register_declaration_name(const token &name);
+
   // Diagnose a value name that collides with a declared type name.
   void reject_type_name_collision(const token &at, const std::string &written);
 

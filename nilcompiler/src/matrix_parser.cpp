@@ -345,6 +345,14 @@ void parser::reject_type_name_collision(const token &at,
         "them (for example '" + written + "-value')");
 }
 
+void parser::register_declaration_name(const token &name) {
+  const auto [previous, inserted] = parsed_declarations_.emplace(name.key, name);
+  if (!inserted)
+    error(name, "declaration '" + name.lexeme + "' conflicts with '" + previous->second.lexeme +
+        "' declared on line " + std::to_string(previous->second.line),
+        "Matrix names fold case and separators, so these are one name; rename one declaration");
+}
+
 std::string parser::resolve_name(const std::string &written) const {
   // A QUALIFIED name is a path: its dots normalise to '::', because Ny's
   // module declaration does the same and NIL identity uses '::'. A book-local
@@ -1403,6 +1411,7 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
   }
 
   if (check(kw::begin) && peek(1).is(kw::record)) {
+    register_declaration_name(name_token);
     // A record carries its annotations into the artifact now, so a 'context'
     // written above one is kept rather than refused. The other declaration
     // kinds below still refuse, because textual NIL has nowhere to put theirs
@@ -1412,11 +1421,13 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
     return named(record, name_token);
   }
   if (check(kw::begin) && peek(1).is(kw::choice)) {
+    register_declaration_name(name_token);
     auto choice = parse_choice(is_public, line, name, std::move(generics));
     if (choice) choice->annotations = std::move(annotations);
     return named(choice, name_token);
   }
   if (check(kw::begin) && peek(1).is(kw::contract)) {
+    register_declaration_name(name_token);
     refuse_annotations("a contract");
     return named(parse_contract(is_public, line, name, std::move(generics)), name_token);
   }
@@ -1426,6 +1437,7 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
     return named(test, name_token);
   }
   if (check(kw::inherits) || (check(kw::begin) && peek(1).is(kw::class_))) {
+    register_declaration_name(name_token);
     auto klass = parse_class(is_public, is_abstract, line, name, std::move(generics));
     if (klass) klass->annotations = std::move(annotations);
     return named(klass, name_token);
@@ -1459,6 +1471,7 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
   }
 
   if (match(kw::means)) {
+    register_declaration_name(name_token);
     refuse_annotations("a type alias");
     auto target = parse_type();
     skip_terminators();
@@ -1483,6 +1496,7 @@ std::shared_ptr<ny::ast_decl> parser::parse_declaration() {
 
   // A declaration carrying 'note intrinsic' has no body: the named runtime
   // provider is the implementation.
+  register_declaration_name(name_token);
   bool intrinsic_backed = false;
   for (const auto &annotation : annotations)
     if (annotation.name == "intrinsic") intrinsic_backed = true;
@@ -3550,6 +3564,34 @@ std::shared_ptr<ny::ast_stmt> parser::parse_consider_statement() {
   advance(); // 'consider'
   auto target = parse_expression();
 
+  // An explicit arm boundary permits ordinary `when` statements inside a
+  // match arm without confusing them with the next pattern. `block` remains
+  // a contextual word, so this does not reserve existing identifiers.
+  const auto arm_body = [&](bool wildcard) {
+    skip_terminators();
+    const bool explicit_block = check(kw::begin) && exact_phrase_word(peek(1), "block");
+    if (explicit_block) { advance(); advance(); }
+    auto body = std::make_shared<ny::ast_block_stmt>(peek().line);
+    for (;;) {
+      skip_terminators();
+      if (explicit_block && check(kw::end) && exact_phrase_word(peek(1), "block")) {
+        advance(); advance(); skip_terminators();
+        break;
+      }
+      if (at_end() || (check(kw::end) && peek(1).is(kw::consider))) {
+        if (explicit_block)
+          error(peek(), "expected 'end block' before closing the 'consider' arm",
+                "close 'then begin block' with 'end block' before the next arm or 'end consider'");
+        break;
+      }
+      if (!explicit_block && !wildcard && (check(kw::when) || check(kw::otherwise))) break;
+      const size_t before = pos_;
+      if (auto stmt = parse_statement()) body->statements.push_back(stmt);
+      if (pos_ == before) advance();
+    }
+    return body;
+  };
+
   std::vector<ny::ast_match_arm> arms;
   for (;;) {
     skip_terminators();
@@ -3563,15 +3605,8 @@ std::shared_ptr<ny::ast_stmt> parser::parse_consider_statement() {
     }
 
     if (match(kw::otherwise)) {
-      // The wildcard arm. Its body runs to 'end consider'.
-      auto body = std::make_shared<ny::ast_block_stmt>(peek().line);
-      for (;;) {
-        skip_terminators();
-        if (at_end() || (check(kw::end) && peek(1).is(kw::consider))) break;
-        const size_t before = pos_;
-        if (auto stmt = parse_statement()) body->statements.push_back(stmt);
-        if (pos_ == before) advance();
-      }
+      // Unbracketed wildcard bodies retain their existing end-consider boundary.
+      auto body = arm_body(true);
       ny::ast_pattern wildcard;
       wildcard.kind = ny::ast_pattern_kind::wildcard_pattern;
       wildcard.name = "_";
@@ -3591,17 +3626,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_consider_statement() {
     if (match(kw::provided)) guard = parse_expression();
     if (!expect(kw::then, "after a 'consider' arm pattern")) continue;
 
-    // An arm body runs until the next arm, the wildcard, or the terminator.
-    auto body = std::make_shared<ny::ast_block_stmt>(peek().line);
-    for (;;) {
-      skip_terminators();
-      if (at_end()) break;
-      if (check(kw::when) || check(kw::otherwise)) break;
-      if (check(kw::end) && peek(1).is(kw::consider)) break;
-      const size_t before = pos_;
-      if (auto stmt = parse_statement()) body->statements.push_back(stmt);
-      if (pos_ == before) advance();
-    }
+    auto body = arm_body(false);
     arms.emplace_back(std::move(pattern), body, guard);
   }
   return std::make_shared<ny::ast_match_stmt>(target, std::move(arms), line);

@@ -1,0 +1,34 @@
+@pragma once
+book nil.std.ui
+
+read nil.std.core.option
+
+!!! Handles are checked by the provider on every operation. They are not GTK
+!!! addresses and are valid only in their originating runtime context.
+public Window begin record
+    field handle as number
+end record
+
+public Widget begin record
+    field handle as number
+end record
+
+public EventKind begin choice
+    when Clicked
+    when TextChanged
+    when Toggled
+    when CloseRequested
+end choice
+
+!!! A complete copied event. A close request has no widget target. Text and
+!!! checked state belong to the event snapshot, not to later widget state.
+public Event begin record
+    field kind as EventKind
+    field window as Window
+    field target as nil.std.core.Option of Widget
+    field content as text
+    field checked as boolean
+end record
+
+!!! Alias keeps a nested optional event readable in Result type applications.
+public PendingEvent means nil.std.core.Option of Event
