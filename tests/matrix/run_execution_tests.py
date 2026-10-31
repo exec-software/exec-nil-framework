@@ -146,6 +146,9 @@ DIAGNOSTIC_EXPECTATIONS = {
     "unknown-type.matrix": "Nothing in scope declares it",
     "context-on-a-contract.matrix": "'context' cannot attach to a contract",
     "context-on-a-statement.matrix": "'context' annotates a declaration, not a statement",
+    "holding-payload-arithmetic.matrix": "Parenthesise the whole payload",
+    "parenthesised-call.matrix": "Matrix has no parenthesised call",
+    "bare-variant-leaf.matrix": "needs the choice that owns this variant",
 }
 
 

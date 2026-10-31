@@ -1530,9 +1530,12 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     // the group heading would only repeat it.
     if (!any_matrix_input) std::cerr << heading << "\n";
     if (!any_matrix_input) {
-      for (const auto &diag : checker.get_diagnostics())
+      for (const auto &diag : checker.get_diagnostics()) {
         std::cerr << "  " << (diag.source_file.empty() ? "line " : diag.source_file + ":")
                   << diag.line << ": " << diag.message << "\n";
+        if (!diag.hint.empty())
+          std::cerr << "      help: " << diag.hint << "\n";
+      }
       return;
     }
     const bool colour = ny_stderr_is_terminal();
@@ -1542,8 +1545,9 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
       rich.message = diag.message;
       rich.primary.line = diag.line;
       rich.primary.column = 0; // no column available from the shared checker
-      // ny::type_checker::diagnostic has no hint field; see step 3 in the
-      // diagnostics design for giving it one.
+      // A checker hint reaches the reader through the same '= help:' line the
+      // Matrix front end already renders, in surface vocabulary.
+      rich.hint = diag.hint;
       const unit *owner = only_page;
       if (!diag.source_file.empty()) {
         owner = nullptr;
@@ -1603,7 +1607,9 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
       int line = d.line;
       for (const auto &u : units)
         if (u.path == path && !u.original_spans_available) line = 0;
-      analysis->add("NIL0002", "error", message, path, line);
+      analysis->add("NIL0002", "error", message, path, line, 0, 0,
+                    matrix_diagnostic ? matrix::to_surface_vocabulary(d.hint)
+                                      : d.hint);
     }
     if (checked) for (const auto &u : units)
       if (u.path == analysis->primary_path && u.original_spans_available)

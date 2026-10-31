@@ -1,0 +1,62 @@
+!!! Result and Option in the positions an application actually puts them.
+!!!
+!!! A record field could not hold a Result the paragraph beside it had just
+!!! returned: the field position reported "Unknown type 'Result<number, text>'
+!!! in struct field. Nothing in scope declares it", and advised supplying a
+!!! file that was already being compiled. A LOCALLY declared choice worked as
+!!! a field, so the gap was only that the field position did not resolve the
+!!! standard library's fully qualified names the way a match pattern does.
+!!! That pushed one project into sentinel returns -- a blank record, a -1 --
+!!! which collide with legitimate data.
+book execution.stdlib-choice-in-record
+
+read nil.std.core.result
+read nil.std.core.option
+
+Item begin record
+    field sku as text
+    field quantity as number
+end record
+
+!!! The field positions that used to be rejected.
+Slot begin record
+    field outcome as Result of Item, text
+    field found as Option of number
+end record
+
+lookup receives sku as text returns Result of Item, text begin paragraph
+    when sku equals "WIDGET" then
+        give Result.Ok holding (build Item with sku being "WIDGET", quantity being 12)
+    end when
+    give Result.Error holding ("unknown sku: " plus sku)
+end paragraph
+
+report receives outcome as Result of Item, text returns text begin paragraph
+    consider outcome
+        when Result.Ok holding found then give found.sku plus " x" plus (found.quantity becomes text)
+        when Result.Error holding why then give why
+    end consider
+end paragraph
+
+main returns number begin paragraph
+    !!! Returned, bound to a local, then stored in and read back from a field.
+    say report with outcome being (lookup with sku being "WIDGET")
+    say report with outcome being (lookup with sku being "GHOST")
+
+    value kept is build Slot with outcome being (lookup with sku being "WIDGET"),
+        found being (Option.Some holding 7)
+    say report with outcome being kept.outcome
+    consider kept.found
+        when Option.Some holding amount then say amount
+        when Option.None then say "absent"
+    end consider
+
+    value empty is build Slot with outcome being (lookup with sku being "GHOST"),
+        found being Option.None
+    say report with outcome being empty.outcome
+    consider empty.found
+        when Option.Some holding amount then say amount
+        when Option.None then say "absent"
+    end consider
+    give 0
+end paragraph

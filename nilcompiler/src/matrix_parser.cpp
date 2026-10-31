@@ -4,6 +4,7 @@
 #include "pattern_engine.hpp"
 #include "standard_namespace.hpp"
 
+#include <cctype>
 #include <algorithm>
 
 #include <utility>
@@ -2790,6 +2791,41 @@ ny::ast_expr_ptr parser::parse_postfix() {
       continue;
     }
 
+    // Matrix has no parenthesised call. Every other language in the family
+    // writes 'Result.Ok(value)' and 'helper(a, b)', so that form arrives
+    // constantly; left alone it surfaces far away as "expected a statement,
+    // found '('", which names neither the call nor the spelling that works.
+    // Report it here, where the receiver is still in hand, and say which of
+    // the two Matrix forms applies.
+    if (check(matrix::token_kind::left_paren) &&
+        (expr->kind == ny::ast_node_kind::member_access_expr_node ||
+         expr->kind == ny::ast_node_kind::identifier_expr_node)) {
+      const bool variant =
+          expr->kind == ny::ast_node_kind::member_access_expr_node &&
+          !static_cast<const ny::ast_member_access_expr &>(*expr).member_name.empty() &&
+          std::isupper(static_cast<unsigned char>(
+              static_cast<const ny::ast_member_access_expr &>(*expr).member_name[0]));
+      error(peek(), "Matrix has no parenthesised call",
+            variant
+                ? std::string("a choice variant carries its payload with "
+                              "'holding': write '<Choice>.<Variant> holding "
+                              "<value>', and drop the parentheses")
+                : std::string("a paragraph is called with 'with': write "
+                              "'<paragraph> with <argument>' or "
+                              "'<paragraph> with <name> being <value>, ...', "
+                              "and drop the parentheses"),
+            "MX0132");
+      // Consume the argument list so one mistake yields one diagnostic.
+      advance();
+      int depth = 1;
+      while (depth > 0 && !at_end()) {
+        if (check(matrix::token_kind::left_paren)) ++depth;
+        else if (check(matrix::token_kind::right_paren)) --depth;
+        advance();
+      }
+      continue;
+    }
+
     // '<recv> at <index>' is indexing. The index is a unary expression so
     // that 'values at index plus 1' reads as '(values at index) plus 1'.
     if (match(kw::at)) {
@@ -2805,10 +2841,46 @@ ny::ast_expr_ptr parser::parse_postfix() {
          (expr->kind == ny::ast_node_kind::identifier_expr_node &&
           static_cast<const ny::ast_identifier_expr &>(*expr).name.find("::") !=
               std::string::npos))) {
+      const token &holding_token = peek();
       advance();
       std::vector<ny::ast_expr_ptr> payload{parse_unary()};
+      // The payload is a UNARY expression, so 'holding' binds tighter than
+      // every arithmetic operator. That makes
+      //   give Result.Error holding "unknown: " plus sku
+      // parse as ((Result.Error holding "unknown: ") plus sku): a variant is
+      // built from the literal alone and then handed to 'plus'. Nothing
+      // rejected that, and the result matched no arm of a later 'consider',
+      // so the program compiled clean and silently did nothing. An arithmetic
+      // operator can never take a choice value, so this is always the
+      // mistake, never a shape worth preserving. Comparisons are left alone:
+      // 'Option.Some holding a equals other' is a legitimate reading.
+      if (check(kw::plus) || check(kw::minus) || check(kw::times) ||
+          check(kw::over) || check(kw::remainder)) {
+        error(peek(),
+              "'" + peek().lexeme + "' cannot take a choice value",
+              "'holding' takes a single term, so the payload stops before '" +
+                  peek().lexeme + "'. Parenthesise the whole payload: "
+                  "'" + holding_token.lexeme + " (<value> " + peek().lexeme +
+                  " ...)'",
+              "MX0131");
+      }
       expr = std::make_shared<ny::ast_call_expr>(
           expr, std::move(payload), std::vector<std::string>{}, line);
+      continue;
+    }
+
+    // 'holding' after an unqualified name: the payload spelling is right and
+    // only the owner is missing. The generic report is "expected a statement,
+    // found 'holding'", which points at the one word that was correct.
+    if (check(kw::holding) &&
+        expr->kind == ny::ast_node_kind::identifier_expr_node) {
+      error(peek(), "'holding' needs the choice that owns this variant",
+            "a variant is written through its owner: '<Choice>." +
+                static_cast<const ny::ast_identifier_expr &>(*expr).name +
+                " holding <value>'",
+            "MX0133");
+      advance();
+      parse_unary();
       continue;
     }
 

@@ -1,0 +1,17 @@
+!!! The call form every other language in the family uses.
+!!!
+!!! Matrix has no parenthesised call: a variant carries its payload with
+!!! 'holding' and a paragraph takes its arguments with 'with'. Left alone this
+!!! surfaced far from the mistake as "expected a statement, found '('", which
+!!! names neither the call nor a spelling that works.
+book diagnostic.parenthesised-call
+
+Outcome begin choice
+    when Ready holding number
+    when Failed holding text
+end choice
+
+main returns number begin paragraph
+    value done is Outcome.Ready(1)
+    give 0
+end paragraph

@@ -1,0 +1,18 @@
+!!! A variant named without its owner.
+!!!
+!!! Every neighbouring language spells construction 'Ready(1)'. Matrix always
+!!! writes a variant through its owner, so the bare leaf arrives as an
+!!! ordinary name and reports only "Undefined identifier", which sends the
+!!! reader looking for a missing import or an unregistered function instead of
+!!! at the spelling.
+book diagnostic.bare-variant-leaf
+
+Outcome begin choice
+    when Ready holding number
+    when Failed holding text
+end choice
+
+main returns number begin paragraph
+    value done is Ready holding 1
+    give 0
+end paragraph

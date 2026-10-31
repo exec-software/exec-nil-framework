@@ -1,0 +1,23 @@
+!!! An arithmetic operator applied to a freshly built choice value.
+!!!
+!!! 'holding' takes a single term, so it binds tighter than every arithmetic
+!!! operator: 'Outcome.Failed holding "unknown: " plus sku' built the variant
+!!! from the literal alone and handed THAT to 'plus'. Nothing rejected it. The
+!!! program compiled clean, ran, and matched no arm of its own 'consider', so
+!!! it silently did nothing -- the worst available outcome. A real project
+!!! spent a session concluding the VM could not construct variants at all.
+book diagnostic.holding-payload-arithmetic
+
+Outcome begin choice
+    when Ready holding number
+    when Failed holding text
+end choice
+
+describe receives sku as text returns Outcome begin paragraph
+    give Outcome.Failed holding "unknown: " plus sku
+end paragraph
+
+main returns number begin paragraph
+    evaluate describe with sku being "X"
+    give 0
+end paragraph

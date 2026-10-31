@@ -41,6 +41,11 @@ public:
     int line;
     std::string message;
     std::string source_file;
+    // What to do, concretely, in the surface the author is writing. Rendered
+    // as the '= help:' line and carried into the analyzer JSON, so an editor
+    // or an agent sees the correct spelling rather than only the rejection.
+    // A message says what is wrong; this says how to write it instead.
+    std::string hint;
   };
   const std::vector<diagnostic> &get_diagnostics() const {
     return diagnostics_;
@@ -301,6 +306,21 @@ private:
   // Helpers
   std::string diagnostic_source_file_;
   void add_error(int line, const std::string &msg);
+  void add_error(int line, const std::string &msg, const std::string &hint);
+
+  // Every declared variant leaf, against the enums that declare it. Populated
+  // as enum declarations are visited, so it covers the standard library and
+  // an application's own choices alike.
+  std::map<std::string, std::set<std::string>> variant_owners_;
+  // True when the diagnostic currently being produced belongs to a Matrix
+  // page, which spells construction differently from Ny.
+  bool diagnostic_surface_is_matrix() const;
+  // How to write a variant whose leaf the author used bare, in the surface
+  // they are writing. Empty when no declared enum owns that leaf.
+  std::string variant_leaf_hint(const std::string &leaf) const;
+  // How to bring a standard-library enum owner into scope, or empty when the
+  // owner is not one of them.
+  static std::string enum_owner_read_hint(const std::string &owner);
   type_info resolve_type(const std::string &name);
   std::optional<std::string> resolve_fault_struct(const std::string &name,
                                                  int line);

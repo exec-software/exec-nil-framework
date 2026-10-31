@@ -642,7 +642,72 @@ struct diagnostic_source_scope {
 }
 
 void type_checker::add_error(int line, const std::string &msg) {
-  diagnostics_.push_back({line, msg, diagnostic_source_file_});
+  diagnostics_.push_back({line, msg, diagnostic_source_file_, {}});
+}
+
+void type_checker::add_error(int line, const std::string &msg,
+                             const std::string &hint) {
+  diagnostics_.push_back({line, msg, diagnostic_source_file_, hint});
+}
+
+// Fold an identifier the way the Matrix surface folds names, so a leaf
+// written 'ok' still finds the variant declared 'Ok'.
+static std::string lowered_identifier(std::string name) {
+  std::transform(name.begin(), name.end(), name.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  return name;
+}
+
+bool type_checker::diagnostic_surface_is_matrix() const {
+  const auto dot = diagnostic_source_file_.rfind('.');
+  if (dot == std::string::npos) return false;
+  const auto extension = lowered_identifier(diagnostic_source_file_.substr(dot));
+  return extension == ".matrix" || extension == ".mat";
+}
+
+std::string type_checker::enum_owner_read_hint(const std::string &owner) {
+  // Only the standard library needs an import named in a hint; an
+  // application's own choices are declared on the page being compiled.
+  if (owner == "Result") return "read nil.std.core.result";
+  if (owner == "Option") return "read nil.std.core.option";
+  return {};
+}
+
+std::string type_checker::variant_leaf_hint(const std::string &leaf) const {
+  // The owner itself goes undefined when its 'read' is missing entirely: with
+  // no import, the standard library is never compiled, so there is no
+  // declaration to have recorded a leaf from. Answer from the static set.
+  if (const auto read = enum_owner_read_hint(leaf); !read.empty())
+    return "'" + leaf + "' is a standard-library choice; bring it into scope "
+           "with '" + read + "'";
+  auto found = variant_owners_.find(leaf);
+  if (found == variant_owners_.end())
+    found = variant_owners_.find(lowered_identifier(leaf));
+  if (found == variant_owners_.end() || found->second.empty()) return {};
+
+  // Name the owner, or every candidate owner when the leaf is ambiguous --
+  // an ambiguous leaf is exactly why construction is qualified at all.
+  const bool matrix = diagnostic_surface_is_matrix();
+  std::string owners;
+  std::string reads;
+  for (const auto &owner : found->second) {
+    if (!owners.empty()) owners += " or ";
+    owners += matrix ? owner + "." + leaf + " holding <value>"
+                     : owner + "::" + leaf + "(<value>)";
+    const auto read = enum_owner_read_hint(owner);
+    if (!read.empty() && reads.find(read) == std::string::npos) {
+      if (!reads.empty()) reads += ", ";
+      reads += "'" + read + "'";
+    }
+  }
+
+  std::string hint = "a choice variant is always written through its owner: '" +
+                     owners + "'";
+  if (matrix)
+    hint += ", or just '" + *found->second.begin() + "." + leaf +
+            "' when the variant carries no payload";
+  if (!reads.empty()) hint += ". The owner must be in scope: " + reads;
+  return hint;
 }
 
 // Debug helper
@@ -2446,7 +2511,18 @@ void type_checker::bind_pattern_to_type(ast_pattern &pattern,
       const symbol *owner_symbol = resolve_pattern_type_symbol(owner);
       if (!owner_symbol || (owner_symbol->defining_node &&
           owner_symbol->defining_node->kind != ast_node_kind::enum_decl_node)) {
-        add_error(line, "Unknown enum owner '" + owner + "' in match pattern");
+        // The owner of a standard-library variant is the usual casualty of a
+        // missing 'read'. Name the line to add rather than leaving the reader
+        // to guess whether the enum, the variant or the import is at fault.
+        const auto leaf = owner.rfind("::") == std::string::npos
+            ? owner : owner.substr(owner.rfind("::") + 2);
+        const auto read = enum_owner_read_hint(leaf);
+        add_error(line, "Unknown enum owner '" + owner + "' in match pattern",
+                  read.empty()
+                      ? "declare the choice, or give the compiler the file "
+                        "that declares it"
+                      : "'" + leaf + "' is a standard-library choice; bring it "
+                        "into scope with '" + read + "'");
       } else {
         // Variant symbols are predeclared, so this also checks enums whose
         // declaration follows the matching function in source order.
@@ -2675,7 +2751,19 @@ void type_checker::visit(ast_program &p) {
     case ast_node_kind::variable_decl_node: name = static_cast<const ast_variable_decl &>(*declaration).name; break;
     case ast_node_kind::struct_decl_node: name = static_cast<const ast_struct_decl &>(*declaration).name; break;
     case ast_node_kind::class_decl_node: name = static_cast<const ast_class_decl &>(*declaration).name; break;
-    case ast_node_kind::enum_decl_node: name = static_cast<const ast_enum_decl &>(*declaration).name; break;
+    case ast_node_kind::enum_decl_node: {
+      const auto &enumeration = static_cast<const ast_enum_decl &>(*declaration);
+      name = enumeration.name;
+      // Record leaves in the declaration pre-pass, not in visit(). A body is
+      // checked before the enums declared after it -- the standard library is
+      // compiled last -- so a map filled during visit() is still empty at the
+      // moment a bare 'Ok' is rejected, and the hint comes out blank.
+      for (const auto &variant : enumeration.variants) {
+        variant_owners_[variant.name].insert(enumeration.name);
+        variant_owners_[lowered_identifier(variant.name)].insert(enumeration.name);
+      }
+      break;
+    }
     case ast_node_kind::trait_decl_node: name = static_cast<const ast_trait_decl &>(*declaration).name; break;
     case ast_node_kind::type_alias_decl_node: name = static_cast<const ast_type_alias_decl &>(*declaration).name; break;
     default: continue;
@@ -7685,7 +7773,14 @@ void type_checker::visit(ast_identifier_expr &e) {
   }
 
   if (!s) {
-    add_error(e.line, "Undefined identifier '" + e.name + "'");
+    // A bare variant leaf is the single most common way to reach here: every
+    // other language in the family spells construction 'Ok(v)', and NIL does
+    // not. Saying only "undefined" sends the reader looking for a missing
+    // import or an unregistered function, and the real answer -- that the
+    // variant is always written through its owner -- is nowhere in the
+    // message. Name the owner and the spelling.
+    add_error(e.line, "Undefined identifier '" + e.name + "'",
+              variant_leaf_hint(e.name));
     last_expr_type_ = type_unknown;
   } else {
     // Check visibility
@@ -8241,6 +8336,23 @@ void type_checker::visit(ast_struct_decl &p) {
         }
       }
 
+      // Fallback 4: a plain lookup misses the standard library, whose enums
+      // are declared fully qualified ('nil::std::core::Result') while the
+      // field says 'Result'. Match patterns already resolve that through
+      // resolve_pattern_type_symbol, which consults the import table, the
+      // enclosing namespaces and the core built-ins. A field position is no
+      // different, and disagreeing with the pattern position meant a record
+      // could not hold the Result a paragraph had just returned.
+      for (const auto &candidate : {orig_parts.base_name, parts.base_name}) {
+        if (candidate.empty()) continue;
+        const symbol *resolved = resolve_pattern_type_symbol(candidate);
+        if (resolved && resolved->kind == symbol_kind::type_symbol) {
+          field_type_sym = resolved;
+          break;
+        }
+      }
+      if (field_type_sym) continue;
+
       /* std::cerr << "[debug] Struct '" << p.name << "' field '" << field.name
                 << "' type '" << field.type_name << "' at line " << field.line
          << std::endl; */
@@ -8248,11 +8360,18 @@ void type_checker::visit(ast_struct_decl &p) {
       // is the natural misreading, and it has cost real time: the usual cause
       // is simply that the file declaring the type was not given to the
       // compiler alongside this one.
+      const auto field_base = parse_generic_type_string(field.type_name).base_name;
+      const auto field_read = enum_owner_read_hint(field_base);
       add_error(field.line,
                 "Unknown type '" + field.type_name +
                     "' in struct field. Nothing in scope declares it; if it "
                     "is declared elsewhere, that file must also be given to "
-                    "the compiler.");
+                    "the compiler.",
+                field_read.empty()
+                    ? std::string("declare the type, or add its file to the "
+                                  "compiler's inputs")
+                    : "'" + field_base + "' is a standard-library type; bring "
+                      "it into scope with '" + field_read + "'");
     }
   }
   symbols_.leave_scope();
@@ -8292,6 +8411,10 @@ void type_checker::visit(ast_enum_decl &p) {
   // Register each variant as a callable symbol (EnumName::VariantName)
   // This allows lookups like Option::Some to resolve correctly.
   for (const auto &variant : p.variants) {
+    // Remember the leaf so a bare 'Ok' can be answered with the owner that
+    // actually declares it, for any enum, not a hardcoded pair.
+    variant_owners_[variant.name].insert(p.name);
+    variant_owners_[lowered_identifier(variant.name)].insert(p.name);
     std::string variant_fqn = name + "::" + variant.name;
     // Variants with associated types act like constructors (function symbols)
     // Unit variants (no associated type) act like constant values
