@@ -167,6 +167,11 @@ Still to do:
    not evidence for another.
 5. Write the compatibility rule into CONTRIBUTING: every change states its
    bucket from §1, and a semantic change without an edition is not merged.
+   (Partly done: `tests/repository_policy.py` now requires every design
+   record to carry a `**Status:**` line, so a record cannot go stale
+   invisibly. NIL-0006 is why — its status stayed accurate while memory of it
+   rounded up to "shipped", and the Unix half sat unimplemented for months
+   behind a line announcing it was listening.)
 
 **A note from implementing it.** Adding `edition` to `describe` broke
 `nilbuild.project-contract`, which asserts the exact key set of

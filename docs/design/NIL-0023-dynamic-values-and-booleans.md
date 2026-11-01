@@ -1,6 +1,6 @@
 # NIL-0023: Dynamic values and Boolean vocabulary
 
-Status: Implemented
+- **Status:** Implemented
 
 ## Purpose
 

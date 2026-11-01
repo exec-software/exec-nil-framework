@@ -1,6 +1,6 @@
 # NIL-0017: Versioned NILData and one shared value model
 
-Status: implemented initial bounded document profile.
+- **Status:** Implemented initial bounded document profile
 
 NILData is the framework's declarative data notation. Its named statements and
 explicit blocks follow Matrix's prose conventions, while its values remain

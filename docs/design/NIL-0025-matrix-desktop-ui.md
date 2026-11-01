@@ -1,6 +1,6 @@
 # NIL-0025: Matrix desktop UI
 
-Status: initial Linux desktop profile.
+- **Status:** Initial Linux desktop profile
 
 ## Purpose
 

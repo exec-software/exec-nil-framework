@@ -1,6 +1,6 @@
 # NIL-0024: Tests alongside source
 
-Status: implemented initial unit and integration test profile.
+- **Status:** Implemented initial unit and integration test profile
 
 ## Purpose
 

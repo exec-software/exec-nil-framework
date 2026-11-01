@@ -85,6 +85,24 @@ def check_design_records(root: Path) -> List[str]:
                 )
             elif identifier not in index_text or path.name not in index_text:
                 violations.append(f"{relative}: missing from design index")
+            # Every decision record states where it stands.
+            #
+            # This exists because NIL-0006 drifted: its status line stayed
+            # accurate ("partially implemented prototype") while memory of it
+            # rounded up to "shipped", and the Unix half of that feature sat
+            # unimplemented for months behind a line that announced it was
+            # listening. A record with no status cannot even drift visibly.
+            #
+            # Both "- **Status:**" and a bare "**Status:**" are accepted: the
+            # requirement is that a reader can find where it stands, not that
+            # it is punctuated one way.
+            if text is not None and not re.search(
+                r"^-? *\*\*Status:?\*\* *\S", text, re.MULTILINE
+            ):
+                violations.append(
+                    f"{relative}: missing a '**Status:**' line; every design "
+                    "record must say where it stands"
+                )
             if text is not None:
                 records.append((path, text))
 

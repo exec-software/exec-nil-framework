@@ -1,6 +1,6 @@
 # NIL-0016: Shared text patterns and collected queries
 
-Status: implemented initial byte-pattern and eager array-query profiles.
+- **Status:** Implemented initial byte-pattern and eager array-query profiles
 
 Ny and Matrix express the same operations through a shared AST, NIL, and
 runtime. Text patterns need readable structure without giving up familiar regex
