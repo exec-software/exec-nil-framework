@@ -959,12 +959,17 @@ void VM::executeInstruction(const Instruction &instr) {
   // to make. So the default path is untouched and NIL_STRICT_BOUNDS=1 turns
   // the silence into a diagnostic -- which is exactly the mode you want while
   // hunting a fault that presents as "it just stops working".
-  const auto strict_bounds = []() -> bool {
-    static const bool enabled = [] {
+  const auto strict_bounds = [this]() -> bool {
+    // The project's edition decides (NIL-0026). NIL_STRICT_BOUNDS is a
+    // diagnostic override for a single run, so it can turn the check on in an
+    // original-edition project while hunting a fault -- it reports more, it
+    // never computes differently.
+    if (strict_bounds_) return true;
+    static const bool overridden = [] {
       const char *value = std::getenv("NIL_STRICT_BOUNDS");
       return value && *value && std::string(value) != "0";
     }();
-    return enabled;
+    return overridden;
   };
   const auto bounds_fault = [&instr, &strict_bounds](const char *action, std::int64_t index,
                                                      std::size_t length) -> void {

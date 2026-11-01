@@ -1,7 +1,7 @@
 # NIL-0026: evolving the language without breaking what is written
 
-- **Status:** Proposed. The taxonomy below is already being followed by hand;
-  the manifest mechanism in §4 is not implemented.
+- **Status:** §4 implemented 2026-11-01 (`edition` in the manifest, validated,
+  described, and threaded to the interpreter). §6 items 4 and 5 remain.
 - **Priority:** Process and core-tooling direction
 - **Components:** `nilbuild`, `nilcompiler`, `nilinterpreter`, project manifest
 
@@ -140,14 +140,38 @@ answer to "arrays should be bounds-checked" is an edition in which they are,
 and at that point the env var becomes a way to get the new edition's checking
 in an old-edition project, which is exactly what a debugging switch should be.
 
-## 6. Remaining proposal
+## 6. Status
 
-1. Add `edition` to the project schema, accepted and echoed by `describe`,
-   defaulting to the original edition when absent.
-2. Thread it from `nilbuild` into the compiler and interpreter.
-3. Move `strictBounds` to an edition property, keeping the env var as an
-   override.
+Implemented 2026-11-01:
+
+1. ✅ `edition` in the project schema, accepted and echoed by `describe`,
+   defaulting to `original` when absent. An **unknown edition is refused**
+   rather than ignored — a project asking for semantics this toolchain does
+   not have must not be built as though it had them.
+2. ✅ Threaded from `nilbuild` into the interpreter as `--strict-bounds`,
+   rather than by setting an environment variable for the child: by §2's own
+   rule, semantics must not ride on the environment.
+3. ✅ `strictBounds` is an edition property (`VM::setStrictBounds`), derived
+   from the edition rather than written in the manifest, so one edition cannot
+   mean two things in two projects. `NIL_STRICT_BOUNDS` survives as a
+   single-run diagnostic override.
+
+Pinned by `tests/project_edition.cmake`, whose first case is the guarantee
+itself: a manifest with no `edition` keeps original semantics, unedited.
+
+Still to do:
+
 4. Record the edition in `.nil` artifacts and in compile-check evidence, so
    Pensieve's recorded repairs state the semantics they were verified under.
+   This matters more than it sounds: a repair verified under one edition is
+   not evidence for another.
 5. Write the compatibility rule into CONTRIBUTING: every change states its
    bucket from §1, and a semantic change without an edition is not merged.
+
+**A note from implementing it.** Adding `edition` to `describe` broke
+`nilbuild.project-contract`, which asserts the exact key set of
+`nil.project.description.v1`. That is the test doing its job — §3 lists
+serialized forms as part of the observable surface, and an additive key is
+still a change to a contract someone may be matching on. Adding the field was
+the right call, but it should be a decision, not a surprise, and the test is
+what made it one.

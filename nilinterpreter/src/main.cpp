@@ -653,6 +653,7 @@ static void print_usage(std::ostream &out) {
       << "\nOptions:\n"
       << "  --memory-mode=safe|unsafe  Select managed or manual memory mode\n"
       << "  --ai                       Enable the experimental AI control server\n"
+      << "  --strict-bounds            Fault on out-of-bounds array access (NIL-0026)\n"
       << "  --no-ai                    Disable the AI control server\n"
       << "  --version                  Show the nilinterpreter version\n"
       << "  -h, --help                 Show this help\n";
@@ -666,7 +667,8 @@ int main(int argc, char *argv[]) {
   // Parse CLI arguments
   std::string input_file;
   ny::MemoryMode memory_mode = ny::MemoryMode::UNSAFE_MANUAL;  // Default to unsafe (manual)
-  bool ai_mode = false;   // NIL-0006: --ai flag enables the embedded AI server
+  bool ai_mode = false;
+  bool strict_bounds = false;   // NIL-0006: --ai flag enables the embedded AI server
 
   std::vector<std::string> vm_args;
   bool collect_vm_args = false;
@@ -694,6 +696,8 @@ int main(int argc, char *argv[]) {
       ai_mode = true;
     } else if (arg == "--no-ai") {
       ai_mode = false;
+    } else if (arg == "--strict-bounds") {
+      strict_bounds = true;
     } else if (arg.find("--memory-mode=") == 0) {
       std::string mode = arg.substr(14);
       if (mode == "safe" || mode == "gc") {
@@ -825,6 +829,8 @@ int main(int argc, char *argv[]) {
     std::cerr << "[ny_ai] Listening on " << sock_path << std::endl;
 #endif
   }
+
+  if (strict_bounds) vm.setStrictBounds(true);
 
   int exit_code = 0;
   try {

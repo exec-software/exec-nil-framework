@@ -2394,6 +2394,13 @@ if(BUILD_TESTING)
         # asks for it -- which is exactly how it silently stopped working
         # before (ny_crash.ny existed for months and was never called). This
         # asserts the file appears, and that asking for it adds the notice.
+        add_test(NAME nil.project-edition
+                 COMMAND "${CMAKE_COMMAND}"
+                     -DNILBUILD=$<TARGET_FILE:nilbuild>
+                     -DCOMPILER=$<TARGET_FILE:nilcompiler>
+                     -DINTERPRETER=$<TARGET_FILE:nilinterpreter>
+                     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/project_edition.cmake")
+
         add_test(NAME nil.crash-artifact
                  COMMAND "${CMAKE_COMMAND}"
                      -DINTERPRETER=$<TARGET_FILE:nilinterpreter>

@@ -81,6 +81,10 @@ def main():
         assert description == {
             'schema': 'nil.project.description.v1', 'projectFile': str(project),
             'projectDirectory': str(root), 'name': 'mixed', 'entry': str(matrix),
+            # NIL-0026. Always present, and 'original' whenever the manifest
+            # omits it -- that default is the backward-compatibility promise,
+            # so it is asserted here rather than left implied.
+            'edition': 'original',
             'includePaths': [str(root), str(library)], 'sdkPath': None,
             'outputDirectory': str(root / 'build'), 'vmOutput': str(root / 'build/mixed.nil'),
             'nativeOutput': str(root / 'build/mixed'),

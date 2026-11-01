@@ -32,6 +32,20 @@ struct options {
   bool rebuild = false;
   std::vector<std::string> program_arguments;
 };
+// NIL-0026. An edition fixes what a project's source *means*, so that the
+// language can move without changing the meaning of anything already written.
+//
+// `ORIGINAL_EDITION` is what a manifest with no `edition` field gets, forever.
+// That is the whole backward-compatibility guarantee in one constant: every
+// project written before editions existed keeps its exact semantics, with no
+// edit, for as long as the compiler accepts this value -- which is always.
+// Editions are not deprecation; nothing is ever removed.
+constexpr const char *ORIGINAL_EDITION = "original";
+// Every edition the toolchain understands. An unknown edition is refused
+// rather than ignored: a project asking for semantics this compiler does not
+// have must not be built as though it had them.
+const std::vector<std::string> KNOWN_EDITIONS = {ORIGINAL_EDITION, "2026"};
+
 struct project {
   fs::path file, directory, entry, output_directory;
   std::string name;
@@ -40,6 +54,10 @@ struct project {
   std::optional<fs::path> sdk;
   std::vector<std::string> disabled_rules;
   bool warnings_as_errors = false;
+  std::string edition = ORIGINAL_EDITION;
+  // Semantics the edition turns on. Kept as a derived property rather than a
+  // manifest field so that one edition cannot mean two things in two projects.
+  bool strict_bounds() const { return edition != ORIGINAL_EDITION; }
   fs::path vm_output() const { return output_directory / (name + ".nil"); }
   fs::path native_output() const {
 #ifdef _WIN32
@@ -115,7 +133,7 @@ void protect_inputs(const project &value) {
 project load_project(const fs::path &file, const options &opts, const fs::path &caller) {
   const auto contents = read_file(file, manifest_limit);
   const auto data = nilbuild::parse_project_document(contents, file);
-  object_fields(data, {"schema", "name", "entry", "includePaths", "sdkPath", "outputDirectory", "analysis", "projectReferences"}, "project");
+  object_fields(data, {"schema", "name", "entry", "includePaths", "sdkPath", "outputDirectory", "analysis", "projectReferences", "edition"}, "project");
   if (string_value(data.at("schema"), "schema") != "nil.project.v1")
     throw std::runtime_error("project schema must be 'nil.project.v1'");
   project result;
@@ -146,6 +164,16 @@ project load_project(const fs::path &file, const options &opts, const fs::path &
       const auto resolved = absolute(path, result.directory);
       if (std::find(result.include_paths.begin(), result.include_paths.end(), resolved) == result.include_paths.end())
         result.include_paths.push_back(resolved);
+    }
+  }
+  if (data.object.count("edition")) {
+    result.edition = string_value(data.at("edition"), "edition");
+    if (std::find(KNOWN_EDITIONS.begin(), KNOWN_EDITIONS.end(), result.edition) == KNOWN_EDITIONS.end()) {
+      std::string known;
+      for (const auto &candidate : KNOWN_EDITIONS) known += (known.empty() ? "" : ", ") + candidate;
+      throw std::runtime_error("unknown edition '" + result.edition +
+                               "'; this toolchain understands: " + known +
+                               ". Omit the field for the original edition.");
     }
   }
   if (data.object.count("sdkPath")) result.sdk = absolute(string_value(data.at("sdkPath"), "sdkPath"), result.directory);
@@ -179,7 +207,8 @@ json describe(const project &value) {
   result.object["schema"] = json::str("nil.project.description.v1");
   for (const auto &field : std::vector<std::pair<std::string, std::string>>{
       {"projectFile", value.file.string()}, {"projectDirectory", value.directory.string()},
-      {"name", value.name}, {"entry", value.entry.string()}, {"outputDirectory", value.output_directory.string()},
+      {"name", value.name}, {"entry", value.entry.string()}, {"edition", value.edition},
+      {"outputDirectory", value.output_directory.string()},
       {"vmOutput", value.vm_output().string()}, {"nativeOutput", value.native_output().string()}})
     result.object[field.first] = json::str(field.second);
   result.object["includePaths"] = json::list();
@@ -845,6 +874,9 @@ int main(int argc, char **argv) {
     if (native) command.push_back(output.string());
     else {
       command = {interpreter->string(), output.string()};
+      // The project's edition decides its semantics, so it travels with the
+      // invocation rather than being left to the caller's environment.
+      if (value.strict_bounds()) command.insert(command.begin() + 1, "--strict-bounds");
       if (!opts.program_arguments.empty()) command.push_back("--");
     }
     command.insert(command.end(), opts.program_arguments.begin(), opts.program_arguments.end());

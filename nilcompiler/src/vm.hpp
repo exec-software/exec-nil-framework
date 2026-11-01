@@ -317,10 +317,22 @@ public:
 
   // Memory mode configuration
   void setMemoryMode(MemoryMode mode) { memory_mode_ = mode; }
+  // NIL-0026. Out-of-bounds array access is silent in the original edition and
+  // a fault in later ones. The edition is a property of the project, so it
+  // arrives as a setting rather than being read from the environment here:
+  // an environment variable may change what NIL tells you, never what it
+  // computes. NIL_STRICT_BOUNDS remains, as a diagnostic override for one run.
+  void setStrictBounds(bool strict) { strict_bounds_ = strict; }
+  bool strictBounds() const noexcept { return strict_bounds_; }
   MemoryMode getMemoryMode() const { return memory_mode_; }
 
   // Arguments
   void setArgs(const std::vector<std::string>& args) { args_ = args; }
+
+private:
+  bool strict_bounds_ = false;
+
+public:
   const std::vector<std::string>& getArgs() const { return args_; }
 
   // Debugger Support
