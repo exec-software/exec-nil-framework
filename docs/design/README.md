@@ -48,6 +48,7 @@ not assigned architecture identifiers.
 | NIL-0023 | [Dynamic values and Boolean vocabulary](NIL-0023-dynamic-values-and-booleans.md) | Implemented |
 | NIL-0024 | [Tests alongside source](NIL-0024-colocated-testing.md) | Implemented initial unit/integration profile |
 | NIL-0025 | [Matrix desktop UI](NIL-0025-matrix-desktop-ui.md) | Initial Linux GTK 4 desktop profile |
+| NIL-0026 | [Evolving the language without breaking what is written](NIL-0026-language-evolution.md) | Proposed; editions in the project manifest |
 | NIL-0093 | [Executable context is artifact self-description](NIL-0093-executable-context.md) | Implemented within the documented inspection profile |
 
 ## Retained Ny feature references

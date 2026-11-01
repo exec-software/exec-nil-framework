@@ -67,6 +67,55 @@ Notes on scope:
 - Pinned by `tests/language/array-bounds-strict.ny`, registered beside the
   consistency test so the two cannot drift apart unnoticed.
 
+## Crash artifacts
+
+Every uncaught runtime error now writes a `.nycrash` report, automatically,
+with no change to the program and nothing to import:
+
+```
+[meta]
+format = nycrash/1
+source = interpreter_self
+nil_version = 1.0.0-rc.1
+pid = 2975478
+
+[error]
+type = NIL interpreter runtime error
+message = array index 99 is out of bounds at line 5: cannot read from an
+          array of 3 elements, so the valid indices are 0 to 2
+exit_code = 1
+
+[location]
+program = /path/to/program.nil
+line = 5
+```
+
+The format is the existing `nycrash/1` that `nilaix/src/ny_crash.ny` writes, so
+the Enigma `parse_nycrash` reader needs no changes. `source = interpreter_self`
+is a new value distinguishing a report the interpreter wrote about itself from
+one a host scraped out of stderr.
+
+| variable | effect |
+| --- | --- |
+| *(unset)* | report written; **stderr unchanged** |
+| `NIL_CRASH_REPORT=1` | also prints `[nilcrash] wrote <path>` |
+| `NIL_CRASH_REPORT=0` | writes nothing |
+| `NIL_CRASH_DIR=<dir>` | writes there instead of the working directory, and prints the path |
+
+The split between writing the file and printing the notice is deliberate. The
+file breaks nothing. The extra stderr line broke six route tests the first time
+it was tried, because a crashing program's stderr is something tools parse — so
+the notice is tied to having asked. See NIL-0026 for the general rule.
+
+Reports are named `<program>-<pid>.nycrash` and are not cleaned up; they
+accumulate until deleted.
+
+**Why this did not exist before:** `ny_crash.ny` has been able to write these
+for a long time, but its `write_interpreter` entry point was designed to be
+called by a *host* process that captured a dying child's stderr, and no such
+host was ever written. The machinery existed and never fired. Writing the
+report from the interpreter removes the need for a host at all.
+
 ## Worth doing next
 
 Ordered by how much they would have helped on a real hunt:
@@ -77,9 +126,10 @@ Ordered by how much they would have helped on a real hunt:
    alone. Compile diagnostics already carry `file:line:col`.
 3. **A diagnostic code per runtime error**, matching the `MX####` / `NIL####`
    scheme, so a runtime failure is as searchable as a compile failure.
-4. **Automatic crash artifacts.** `nilaix/src/ny_crash.ny` can already write
-   `.nycrash` reports, but nothing calls it automatically — so the machinery
-   exists and never fires. Wiring it to the top-level handler would mean every
-   crash left a readable artifact without the program opting in.
-5. **Surface the same errors over NIL-0006**, so an attached agent is told
-   about a fault rather than only seeing the process exit.
+4. **Surface the same errors over NIL-0006**, so an attached agent is told
+   about a fault rather than only seeing the process exit. The crash artifact
+   now exists; an attached agent still has to notice the process died and go
+   looking for it.
+5. **Carry the source line structurally** through the bounds path. The message
+   contains `at line N`, but it reaches the reporter as prose, so the
+   artifact's `[location] line` field is only populated for language faults.

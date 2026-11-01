@@ -2390,6 +2390,17 @@ if(BUILD_TESTING)
         set_tests_properties(ny.routes.array-bounds-strict
             PROPERTIES ENVIRONMENT "NIL_STRICT_BOUNDS=1")
 
+        # The crash artifact fires automatically, so nothing in a normal run
+        # asks for it -- which is exactly how it silently stopped working
+        # before (ny_crash.ny existed for months and was never called). This
+        # asserts the file appears, and that asking for it adds the notice.
+        add_test(NAME nil.crash-artifact
+                 COMMAND "${CMAKE_COMMAND}"
+                     -DINTERPRETER=$<TARGET_FILE:nilinterpreter>
+                     -DCOMPILER=$<TARGET_FILE:nilcompiler>
+                     -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/language/array-bounds-strict.ny
+                     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/crash_artifact.cmake")
+
         add_ny_route_test(
             ny.routes.empty-array-contexts
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/empty-array-contexts.ny"

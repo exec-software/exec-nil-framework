@@ -25,7 +25,18 @@ class UncaughtFault : public std::runtime_error {
 public:
   UncaughtFault(const std::string &type, int line)
       : std::runtime_error("Ny uncaught fault: " + type + " at line " +
-                           std::to_string(line)) {}
+                           std::to_string(line)),
+        fault_type_(type), source_line_(line) {}
+
+  // The parts, kept alongside the formatted message. A crash report wants the
+  // type and the line as fields; re-parsing them back out of the sentence is
+  // the kind of thing that breaks the day someone rewords it.
+  const std::string &faultType() const noexcept { return fault_type_; }
+  int sourceLine() const noexcept { return source_line_; }
+
+private:
+  std::string fault_type_;
+  int source_line_;
 };
 
 // Memory management mode

@@ -545,6 +545,109 @@ load_embedded_bundle(const std::filesystem::path &executable_path,
   return embedded_bundle_status::loaded;
 }
 
+// ── Automatic crash artifacts ────────────────────────────────────────────────
+//
+// `nilaix/src/ny_crash.ny` has been able to write .nycrash reports for a long
+// time, and nothing ever called it: `write_interpreter` was designed to be
+// invoked by a *host* process that captured a dying child's stderr, and no
+// such host was ever written. So the machinery existed and never fired, and a
+// crashing NIL program left nothing behind.
+//
+// Writing the report here removes the need for a host at all, and lets the
+// report carry things a stderr-scraper could never recover -- the fault type
+// and source line as fields rather than prose.
+//
+// Three rules, because a crash reporter that misbehaves is worse than none:
+// it never changes the exit code, it never throws, and it never replaces the
+// stderr message a human is already reading.
+static void write_crash_report(const std::string &input_file,
+                               const std::string &error_type,
+                               const std::string &message, int source_line,
+                               int exit_code) {
+  try {
+    const char *enabled = std::getenv("NIL_CRASH_REPORT");
+    if (enabled && std::string(enabled) == "0") return;
+    const char *crash_dir = std::getenv("NIL_CRASH_DIR");
+    const bool asked_for = (enabled && std::string(enabled) != "0") ||
+                           (crash_dir && *crash_dir);
+
+    std::filesystem::path directory;
+    if (crash_dir && *crash_dir)
+      directory = crash_dir;
+    else
+      directory = std::filesystem::current_path();
+
+    std::string stem = std::filesystem::path(input_file).stem().string();
+    if (stem.empty()) stem = "program";
+    const auto pid = static_cast<long>(
+#ifdef _WIN32
+        GetCurrentProcessId()
+#else
+        ::getpid()
+#endif
+    );
+    const std::filesystem::path target =
+        directory / (stem + "-" + std::to_string(pid) + ".nycrash");
+
+    std::ofstream out(target, std::ios::binary | std::ios::trunc);
+    if (!out) return;
+
+    // Format `nycrash/1`, matching ny_crash.ny so existing readers (the
+    // Enigma `parse_nycrash` tool) keep working. `source` is a new value
+    // rather than a reused one: this report came from the interpreter itself,
+    // not from scraping its stderr, and a reader should be able to tell.
+    out << "# Ny Interpreter Crash Report - written by the interpreter\n";
+    out << "# format: NyData v1\n\n";
+    out << "[meta]\n";
+    out << "format = nycrash/1\n";
+    out << "source = interpreter_self\n";
+    out << "nil_version = " << NIL_VERSION << "\n";
+    out << "pid = " << pid << "\n";
+    out << "\n[error]\n";
+    out << "type = " << error_type << "\n";
+    out << "message = " << message << "\n";
+    out << "exit_code = " << exit_code << "\n";
+    out << "\n[location]\n";
+    out << "program = " << input_file << "\n";
+    if (source_line > 0) out << "line = " << source_line << "\n";
+    // The hint has to be earned. Advice to enable a mode that is already on,
+    // or a claim that no line was available when the message plainly carries
+    // one, is exactly the sort of unhelpful error text this work exists to
+    // remove -- so check both before offering either.
+    const char *strict = std::getenv("NIL_STRICT_BOUNDS");
+    const bool strict_on = strict && *strict && std::string(strict) != "0";
+    const bool message_has_line = message.find(" at line ") != std::string::npos;
+
+    out << "\n[hint]\n";
+    out << "text = ";
+    if (source_line > 0 || message_has_line)
+      out << "The fault is reported at the line named above. ";
+    else
+      out << "No source line was available for this error. ";
+    out << "Run under nildebugger for a full trace, or nilinterpreter --ai to "
+           "attach an agent before the program starts.";
+    if (!strict_on)
+      out << " If the program reads or writes an array, re-run with "
+             "NIL_STRICT_BOUNDS=1: an out-of-bounds access is silent by "
+             "default and its first visible symptom is usually somewhere else.";
+    out << "\n";
+    out.flush();
+    if (!out) return;
+
+    // Say where it went -- but only when the report was actually asked for.
+    //
+    // A report nobody can find is no better than none, so silence is a real
+    // cost. It is still the right default: this line is stderr output that no
+    // existing program emitted, and a crashing program's stderr is something
+    // tools parse. Six route tests caught exactly that. So the notice is tied
+    // to having opted in, and the default path stays byte-identical on stderr.
+    if (asked_for) std::cerr << "[nilcrash] wrote " << target.string() << std::endl;
+  } catch (...) {
+    // Deliberately swallowed. A failure to describe a crash must not become a
+    // second crash, and must not alter what the program reported.
+  }
+}
+
 static void print_usage(std::ostream &out) {
   out << "Usage: nilinterpreter [options] <input.nil> [--] [args...]\n"
       << "\nOptions:\n"
@@ -732,9 +835,11 @@ int main(int argc, char *argv[]) {
     // Fatal VM safety errors below remain a separate, non-recoverable category.
     std::cerr << e.what() << std::endl;
     exit_code = 1;
+    write_crash_report(input_file, e.faultType(), e.what(), e.sourceLine(), exit_code);
   } catch (const std::exception &e) {
     std::cerr << "NIL interpreter runtime error: " << e.what() << std::endl;
     exit_code = 1;
+    write_crash_report(input_file, "NIL interpreter runtime error", e.what(), 0, exit_code);
   }
 
   // Shutdown AI server
