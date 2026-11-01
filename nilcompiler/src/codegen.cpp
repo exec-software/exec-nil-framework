@@ -4401,10 +4401,61 @@ public:
               push_instr("SET_FIELD", {struct_decl->fields[i].name}, ce.line);
             }
           } else {
-            // Field count mismatch - still emit args for error reporting
-            for (const auto &arg : ce.args)
-              emit_expr(*arg);
-            push_instr("STRUCT_CTOR_MISMATCH", {callee_name}, ce.line);
+            // A constructor call with the wrong number of field values is a
+            // source error. This used to emit a STRUCT_CTOR_MISMATCH
+            // pseudo-instruction, which no loader knows: the compile reported
+            // success, the build reported success, and the failure surfaced
+            // only when the interpreter loaded the artifact, as "Unknown NIL
+            // opcode" against a generated NIL line. Nothing pointed back at
+            // this call, even though its source line was right there in the
+            // emitted operand comment. Reject it here instead, so the author
+            // gets the line and the way to write it.
+            // Suggestions are written in the author's spelling, not the
+            // mangled one: 'map.new with nothing' is what compiles, while
+            // 'nil::std::collections::map.new with nothing' does not parse.
+            const auto last_separator = callee_name.rfind("::");
+            const std::string written_name =
+                last_separator == std::string::npos
+                    ? callee_name
+                    : callee_name.substr(last_separator + 2);
+            std::string field_list;
+            for (size_t i = 0; i < struct_decl->fields.size(); ++i) {
+              if (i) field_list += ", ";
+              field_list += struct_decl->fields[i].name;
+            }
+            const std::string first_field =
+                struct_decl->fields.empty() ? std::string("<field>")
+                                            : struct_decl->fields.front().name;
+            const std::string build_form = "'build " + written_name +
+                                           " with " + first_field +
+                                           " being <value>'";
+            std::string hint;
+            if (ce.args.empty() && cg_.has_nullary_new(callee_name)) {
+              // Nothing was passed at all and the type does have a nullary
+              // constructor, so an empty value is what the author wanted.
+              // Repeating the type arguments on the receiver is what lands
+              // here most often: 'map of text, Item.new with nothing'
+              // resolves the member away and leaves a zero-argument
+              // construction of 'map'. Only suggest '.new' when it exists --
+              // on a type without one that call compiles into a CALL to a
+              // function that is never emitted.
+              hint = "to create an empty one, call its constructor and let "
+                     "the declared type supply the type arguments: '" +
+                     written_name +
+                     ".new with nothing'. To build one field by field, write " +
+                     build_form;
+            } else {
+              hint = "a record is built by naming every field: " + build_form;
+            }
+            if (!field_list.empty())
+              hint += ". Fields of '" + written_name + "': " + field_list;
+            cg_.reject_codegen_construct(
+                ce.line,
+                "'" + callee_name + "' is built from " +
+                    std::to_string(struct_decl->fields.size()) +
+                    " field value(s), but this construction supplies " +
+                    std::to_string(ce.args.size()),
+                hint, out_fn.source_file);
           }
           break; // Done with this call expression
         }
@@ -7382,13 +7433,14 @@ codegen::assemble_module(const ast_program &program,
 }
 
 void codegen::reject_codegen_construct(int line, std::string message,
-                                       std::string hint) {
+                                       std::string hint,
+                                       std::string source_file) {
   for (const auto &diagnostic : rejected_codegen_constructs_) {
     if (diagnostic.line == line && diagnostic.message == message)
       return;
   }
   rejected_codegen_constructs_.push_back(
-      {line, std::move(message), std::move(hint)});
+      {line, std::move(message), std::move(hint), std::move(source_file)});
 }
 
 void codegen::generate_specialization(const specialization_request &req,

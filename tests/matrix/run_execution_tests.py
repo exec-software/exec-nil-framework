@@ -149,6 +149,7 @@ DIAGNOSTIC_EXPECTATIONS = {
     "holding-payload-arithmetic.matrix": "Parenthesise the whole payload",
     "parenthesised-call.matrix": "Matrix has no parenthesised call",
     "bare-variant-leaf.matrix": "needs the choice that owns this variant",
+    "record-construction-arity.matrix": "built by naming every field",
 }
 
 

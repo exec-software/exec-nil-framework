@@ -1832,12 +1832,57 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
   }
 
   if (!codegen_diags.empty()) {
-    std::cerr << "Code generation warnings/errors:\n";
+    // A codegen diagnostic used to render as a bare "line N: message (hint)".
+    // In a project of several pages that line number names no file, and the
+    // suggestion is buried in parentheses. A Matrix page now goes through the
+    // same renderer the Matrix front end uses, so the page, the line, the
+    // source excerpt and the '= help:' line all arrive the way the rest of
+    // the Matrix diagnostics do. Ny keeps its established rendering: its
+    // surface is covered byte for byte by the rejection routes, and a
+    // codegen message is not the place to change a second language's
+    // diagnostic vocabulary.
+    const auto owning_unit = [&](const ny::codegen_diagnostic &diag) -> const unit * {
+      if (!diag.source_file.empty()) {
+        for (const auto &u : units)
+          if (u.path == diag.source_file) return &u;
+        return nullptr;
+      }
+      return only_page;
+    };
+    const auto renders_as_matrix = [&](const ny::codegen_diagnostic &diag) {
+      const unit *owner = owning_unit(diag);
+      return owner ? is_matrix_source(owner->path)
+                   : (!diag.source_file.empty()
+                          ? is_matrix_source(diag.source_file)
+                          : any_matrix_input);
+    };
+    const bool any_legacy =
+        std::any_of(codegen_diags.begin(), codegen_diags.end(),
+                    [&](const auto &diag) { return !renders_as_matrix(diag); });
+    if (any_legacy) {
+      std::cerr << "Code generation warnings/errors:\n";
+      for (const auto &diag : codegen_diags) {
+        if (renders_as_matrix(diag)) continue;
+        std::cerr << "  line " << diag.line << ": " << diag.message;
+        if (!diag.hint.empty())
+          std::cerr << " (" << diag.hint << ")";
+        std::cerr << "\n";
+      }
+    }
+    const bool colour = ny_stderr_is_terminal();
     for (const auto &diag : codegen_diags) {
-      std::cerr << "  line " << diag.line << ": " << diag.message;
-      if (!diag.hint.empty())
-        std::cerr << " (" << diag.hint << ")";
-      std::cerr << "\n";
+      if (!renders_as_matrix(diag)) continue;
+      const unit *owner = owning_unit(diag);
+      matrix::diagnostic rich;
+      rich.level = matrix::severity::error;
+      rich.message = diag.message;
+      rich.primary.line = diag.line;
+      rich.primary.column = 0; // codegen has no column
+      rich.hint = diag.hint;
+      if (owner && !owner->original_spans_available) rich.primary.line = 0;
+      std::cerr << matrix::render_diagnostic(
+          rich, owner ? owner->source : std::string(),
+          owner ? owner->path : diag.source_file, colour);
     }
   }
 

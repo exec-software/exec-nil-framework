@@ -1,0 +1,18 @@
+!!! Constructing a record with the wrong number of field values.
+!!!
+!!! This used to emit a STRUCT_CTOR_MISMATCH pseudo-instruction into the
+!!! artifact. No loader knows that opcode, so the compiler exited 0, the build
+!!! reported success, and the failure appeared only when the interpreter loaded
+!!! the program: "Unknown NIL opcode 'STRUCT_CTOR_MISMATCH'" against a line of
+!!! generated NIL, with nothing pointing back at the source. The emitted
+!!! operand even carried the right source line, and the loader never used it.
+book diagnostics.record-construction-arity
+
+Holder begin record
+    field slot as number
+end record
+
+main returns number begin paragraph
+    variable held as Holder is Holder with nothing
+    give 0
+end paragraph

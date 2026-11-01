@@ -1,0 +1,39 @@
+!!! Creating and using a standard map from Matrix.
+!!!
+!!! No Matrix page in the standard library or in these tests constructed a map,
+!!! so the only supported spelling was unverified and undiscoverable. An agent
+!!! reading the SDK found nothing to copy, guessed
+!!! 'map of text, Item.new with nothing' -- repeating the type arguments on the
+!!! receiver -- and that resolved the member away, leaving a zero-argument
+!!! construction of 'map' that compiled clean and failed at load time.
+!!!
+!!! The type arguments come from the binding's declared type; the receiver is
+!!! the bare type name.
+book execution.stdlib-map-construction
+
+read everything from nil.std.core
+read everything from nil.std.collections
+
+Item begin record
+    field sku as text
+    field quantity as number
+end record
+
+main returns number begin paragraph
+    variable stock as map of text, Item is map.new with nothing
+    evaluate stock.insert with "WIDGET", (build Item with sku being "WIDGET", quantity being 12)
+    evaluate stock.insert with "GEAR", (build Item with sku being "GEAR", quantity being 4)
+    say (stock.length with nothing)
+
+    consider (stock.get with "GEAR")
+        when Option.Some holding found then say found.sku plus " x" plus (found.quantity becomes text)
+        when Option.None then say "absent"
+    end consider
+
+    consider (stock.get with "GHOST")
+        when Option.Some holding found then say found.sku
+        when Option.None then say "absent"
+    end consider
+
+    give 0
+end paragraph

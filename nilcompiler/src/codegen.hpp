@@ -43,6 +43,10 @@ struct codegen_diagnostic {
   int line = 0;        // 1-based line number (if known)
   std::string message; // Human-readable message
   std::string hint;    // Optional hint/suggestion
+  // The page the line belongs to. A project compiles many pages at once, so a
+  // bare line number cannot be acted on; when codegen knows the file, the
+  // diagnostic is rendered the same way the front end renders its own.
+  std::string source_file;
 };
 
 // NIL format options (text or binary)
@@ -264,7 +268,8 @@ public:
   bool test_mode() const { return options_.mode == build_mode::test_mode; }
   // Shared lowering helpers report through the same diagnostic channel.
   void reject_codegen_construct(int line, std::string message,
-                                std::string hint);
+                                std::string hint,
+                                std::string source_file = {});
 
   // Generate a nil_module from a full AST. The generator will walk the AST,
   // build instructions, and populate sections (string pool, functions).
@@ -366,6 +371,17 @@ public:
       }
     }
     return fallback.empty() ? short_name : fallback;
+  }
+
+  // True when the named aggregate declares a no-argument 'new' that returns a
+  // value, as the standard collections do. Only then is '<Type>.new with
+  // nothing' worth suggesting: an aggregate without one compiles that call
+  // into a CALL to a function that was never emitted.
+  bool has_nullary_new(const std::string &struct_fqn) const {
+    const auto found = function_decls_.find(struct_fqn + "::new");
+    if (found == function_decls_.end() || found->second == nullptr)
+      return false;
+    return found->second->params.empty();
   }
 
   // Given an unqualified function name, find its fully qualified name.
