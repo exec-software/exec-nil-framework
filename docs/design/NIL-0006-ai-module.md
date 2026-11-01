@@ -1,6 +1,6 @@
 # NIL-0006: opt-in AI control for NIL programs
 
-- **Status:** Partially implemented prototype; substantial work remains proposed
+- **Status:** Phase 1 transport complete on both platforms (2026-11-01); introspection remains proposed
 - **Priority:** Research and core-tooling direction
 - **Components:** `nilinterpreter`, `nilagent`, `nildebugger`, `nilaix`
 
@@ -11,10 +11,25 @@ The goal is to let a human-operated tool or software agent launch a program,
 observe execution, inspect state, and issue narrowly scoped debug or application
 commands without screen-coordinate automation.
 
-The complete loop is not implemented. Today the repository contains an opt-in,
-Windows-only control server in `nilinterpreter`, a separate JSON-mode debugger, and
-application-control experiments. Runtime introspection, a working Unix
-transport, and a finished `nilagent` bridge remain future work.
+The complete loop is not implemented. The control server in `nilinterpreter` is
+opt-in and now runs on **both Windows and Unix**; a separate JSON-mode debugger
+and application-control experiments also exist. Runtime introspection and a
+finished `nilagent` bridge remain future work.
+
+**Updated 2026-11-01.** The Unix branch previously printed
+`[ny_ai] Unix AI server not yet implemented` — but it printed it *after*
+`main()` had already announced `Listening on <path>`, so an agent that trusted
+the first line waited forever on a socket that was never created. On Linux,
+where the agents actually run, the whole of NIL-0006 was unreachable. The Unix
+domain socket server is now implemented, mirroring the Windows named pipe:
+same newline-delimited JSON, same `connected` handshake, same single-client
+accept loop. The socket is created owner-only (`umask` set before `bind`, not
+`chmod` after) because this channel can pause the VM and inject application
+messages. A stale socket from a killed run is unlinked before `bind`, so it
+can litter but can never block a later run.
+
+Verified end to end on Linux: handshake, `vm.status`, `vm.pause` and
+`vm.resume` against a live program, with the socket at mode `srw-------`.
 
 ## How to enable the current prototype
 
@@ -61,7 +76,6 @@ After connection the server writes a `connected` event. It then recognizes:
 
 The current prototype has important limits:
 
-- The Unix branch does not create its advertised domain socket.
 - Stack, local, global, source-map, breakpoint, and expression introspection are
   unfinished.
 - `vm.send_msg` depends on a particular Windows WebView export and assumes the

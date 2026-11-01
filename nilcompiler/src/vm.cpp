@@ -944,6 +944,42 @@ void VM::executeInstruction(const Instruction &instr) {
     return std::holds_alternative<ArrayHandle>(value) ||
            std::holds_alternative<ArrayValue>(value);
   };
+  // Reading or writing past the end of an array used to be silent: a read
+  // yielded 0 and a write was dropped, so a program carried on with a value
+  // nobody wrote and the first visible symptom appeared somewhere unrelated.
+  // That is the worst failure a runtime can have -- worse than a crash, which
+  // at least points at itself. Say exactly what happened, where, and what
+  // would have been valid.
+  //
+  // Opt-in, because the silence is a SPECIFIED contract, not an oversight:
+  // tests/language/array-bounds-consistency.ny pins it deliberately (a write
+  // past the end is dropped, a read past the end is the element default, the
+  // length never changes). Changing that by default would alter the meaning of
+  // every NIL program ever written, which is not a decision this helper gets
+  // to make. So the default path is untouched and NIL_STRICT_BOUNDS=1 turns
+  // the silence into a diagnostic -- which is exactly the mode you want while
+  // hunting a fault that presents as "it just stops working".
+  const auto strict_bounds = []() -> bool {
+    static const bool enabled = [] {
+      const char *value = std::getenv("NIL_STRICT_BOUNDS");
+      return value && *value && std::string(value) != "0";
+    }();
+    return enabled;
+  };
+  const auto bounds_fault = [&instr, &strict_bounds](const char *action, std::int64_t index,
+                                                     std::size_t length) -> void {
+    if (!strict_bounds()) return;
+    std::ostringstream message;
+    message << "array index " << index << " is out of bounds";
+    if (instr.line > 0) message << " at line " << instr.line;
+    message << ": cannot " << action << " an array of " << length
+            << (length == 1 ? " element" : " elements");
+    if (length == 0)
+      message << ", because it is empty";
+    else
+      message << ", so the valid indices are 0 to " << (length - 1);
+    throw std::runtime_error(message.str());
+  };
   const auto array_default_value = [](const HeapBlock &block) -> Value {
     if (block.element_type == "anything")
       throw std::runtime_error("anything array read is out of bounds or uninitialized");
@@ -5869,7 +5905,8 @@ void VM::executeInstruction(const Instruction &instr) {
       if (idx >= 0 && idx < (int64_t)arr.elements.size()) {
         pushStack(array_elem_to_value(arr.elements[idx]));
       } else {
-        pushStack((int64_t)0); // out of bounds
+        bounds_fault("read from", idx, arr.elements.size());
+        pushStack((int64_t)0); // specified out-of-bounds default
       }
     } else if ((std::holds_alternative<ArrayHandle>(arr_val) ||
                 std::holds_alternative<int64_t>(arr_val)) &&
@@ -5887,8 +5924,10 @@ void VM::executeInstruction(const Instruction &instr) {
           value = exact->second.element_type == "anything"
               ? canonical_pointer_value(exact->second, exact->second.data[static_cast<std::size_t>(idx)], "GET_INDEX")
               : exact->second.data[static_cast<std::size_t>(idx)];
-        else
+        else {
+          bounds_fault("read from", idx, exact->second.data.size());
           value = array_default_value(exact->second);
+        }
       } else if (const auto current = findHeapPointer(ptr, true)) {
         const auto moved = moveHeapPointer(*current, idx, false);
         if (moved) {
@@ -5935,6 +5974,8 @@ void VM::executeInstruction(const Instruction &instr) {
             static_cast<std::size_t>(idx) < exact->second.data.size())
           exact->second.data[static_cast<std::size_t>(idx)] =
               canonical_pointer_value(exact->second, val, "SET_INDEX");
+        else
+          bounds_fault("write to", idx, exact->second.data.size()); // then dropped, as specified
       } else if (const auto current = findHeapPointer(ptr, true)) {
         const auto moved = moveHeapPointer(*current, idx, false);
         if (moved) {

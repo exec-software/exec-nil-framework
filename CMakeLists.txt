@@ -2374,6 +2374,22 @@ if(BUILD_TESTING)
             --expected-exit 0
             --routes all
         )
+        # The opt-in counterpart to array-bounds-consistency above. That test
+        # pins the silence; this one pins the diagnostic you get when you ask
+        # for it, so the two cannot drift apart unnoticed. VM route only: the
+        # strict check lives in the VM's GET_INDEX/SET_INDEX, not the LLVM
+        # backend, which has its own bounds path.
+        add_ny_route_test(
+            ny.routes.array-bounds-strict
+            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/array-bounds-strict.ny"
+            --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/array-bounds-strict.stdout"
+            --expected-stderr "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/array-bounds-strict.stderr"
+            --expected-exit 1
+            --routes text-interpreter,binary-interpreter
+        )
+        set_tests_properties(ny.routes.array-bounds-strict
+            PROPERTIES ENVIRONMENT "NIL_STRICT_BOUNDS=1")
+
         add_ny_route_test(
             ny.routes.empty-array-contexts
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/empty-array-contexts.ny"

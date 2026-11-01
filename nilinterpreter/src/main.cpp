@@ -28,6 +28,9 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/stat.h>
+#include <sys/select.h>
+#include <cerrno>
 #endif
 
 #include "nil_loader.hpp"
@@ -257,11 +260,124 @@ static void server_thread(const std::string& pipe_name) {
     std::cerr << "[ny_ai] Server stopped" << std::endl;
 }
 #else
-// NIL-0006 Phase 1: Unix socket server (future — mirrors Windows implementation)
-static void server_thread(const std::string& /*socket_path*/) {
+// NIL-0006 Phase 1: Unix domain socket server.
+//
+// Mirrors the Windows named-pipe server above: same newline-delimited JSON,
+// same `connected` handshake, same one-client-at-a-time accept loop, so a
+// client speaks one protocol on both platforms.
+//
+// Until now this was a stub that printed "not yet implemented" -- but it
+// printed it *after* main() had already announced "Listening on <path>", so an
+// agent that trusted the first line waited forever on a socket that was never
+// created. On Linux, which is where the agents actually run, the whole of
+// NIL-0006 was therefore unreachable.
+//
+// The socket is created with permissions for its owner only: this channel can
+// pause the VM and inject application messages, so it must not be reachable by
+// other users on the machine.
+static void server_thread(const std::string& socket_path) {
     g_running = true;
-    std::cerr << "[ny_ai] Unix AI server not yet implemented (NIL-0006 Phase 1)" << std::endl;
-    g_running = false;
+
+    const int listener = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (listener < 0) {
+        std::cerr << "[ny_ai] socket() failed: " << std::strerror(errno) << std::endl;
+        g_running = false;
+        return;
+    }
+
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    if (socket_path.size() >= sizeof(addr.sun_path)) {
+        std::cerr << "[ny_ai] socket path too long: " << socket_path << std::endl;
+        ::close(listener);
+        g_running = false;
+        return;
+    }
+    std::strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
+
+    // A path left by a crashed run would otherwise make every later run fail
+    // to bind. Removing it is safe because the path carries our own pid.
+    ::unlink(socket_path.c_str());
+
+    // Create owner-only, without a window where the socket exists world-
+    // accessible: set the mask before bind rather than chmod after.
+    const mode_t previous_mask = ::umask(0177);
+    const int bound = ::bind(listener, reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
+    ::umask(previous_mask);
+    if (bound < 0) {
+        std::cerr << "[ny_ai] bind(" << socket_path << ") failed: " << std::strerror(errno) << std::endl;
+        ::close(listener);
+        g_running = false;
+        return;
+    }
+    if (::listen(listener, 1) < 0) {
+        std::cerr << "[ny_ai] listen() failed: " << std::strerror(errno) << std::endl;
+        ::close(listener);
+        ::unlink(socket_path.c_str());
+        g_running = false;
+        return;
+    }
+
+    std::cerr << "[ny_ai] Server on " << socket_path << std::endl;
+
+    while (g_running) {
+        // A one-second accept timeout, so shutdown does not have to wait for a
+        // client that never arrives. The Windows side gets this from its pipe
+        // timeout; here it has to be asked for.
+        timeval timeout{1, 0};
+        fd_set readable;
+        FD_ZERO(&readable);
+        FD_SET(listener, &readable);
+        const int ready = ::select(listener + 1, &readable, nullptr, nullptr, &timeout);
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (ready == 0) continue;
+
+        const int client = ::accept(listener, nullptr, nullptr);
+        if (client < 0) {
+            if (errno == EINTR) continue;
+            continue;
+        }
+
+        std::ostringstream handshake;
+        handshake << "{\"event\":\"connected\",\"pid\":" << static_cast<long>(::getpid())
+                  << ",\"ai_version\":1,\"program\":\"ny\"}\n";
+        const std::string hs = handshake.str();
+        if (::write(client, hs.c_str(), hs.size()) < 0) {
+            ::close(client);
+            continue;
+        }
+
+        std::string line_buf;
+        char buf[4096];
+        while (g_running) {
+            const ssize_t nread = ::read(client, buf, sizeof(buf) - 1);
+            if (nread <= 0) {
+                if (nread < 0 && errno == EINTR) continue;
+                break;
+            }
+            line_buf.append(buf, static_cast<std::size_t>(nread));
+
+            // A client may send several commands in one write, or split one
+            // across writes; dispatch only whole lines.
+            std::size_t nl;
+            while ((nl = line_buf.find('\n')) != std::string::npos) {
+                std::string line = line_buf.substr(0, nl);
+                line_buf = line_buf.substr(nl + 1);
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (line.empty()) continue;
+                const std::string resp = handle_command(line) + "\n";
+                if (::write(client, resp.c_str(), resp.size()) < 0) break;
+            }
+        }
+        ::close(client);
+    }
+
+    ::close(listener);
+    ::unlink(socket_path.c_str());
+    std::cerr << "[ny_ai] Server stopped" << std::endl;
 }
 #endif
 
