@@ -4060,6 +4060,16 @@ public:
               ny::diag_debug("[codegen] Static call " + obj_type_name +
                              "::" + ma.member_name);
 
+              // The receiver is a known aggregate, but nothing here checked
+              // that it actually declares this member. An unresolved one was
+              // emitted as a CALL to a function that is never written: the
+              // compile exited 0 and the VM reported "CALL: unknown function"
+              // at run time. An instance receiver is already covered by the
+              // type checker; only this static position fell through.
+              if (reject_unresolved_aggregate_call(obj_type_name,
+                                                   ma.member_name, ce.line))
+                break;
+
               // Static Call!
               std::string mangled_name =
                   cg_.sanitize_identifier(obj_type_name) + "__" +
@@ -6122,6 +6132,46 @@ public:
     std::sort(instruction.debug_locals.begin(), instruction.debug_locals.end(),
         [](const auto &a, const auto &b) { return a.name < b.name; });
     validate_source_debug(instruction.source_file, instruction.debug_locals);
+  }
+  // A call on a TYPE receiver that resolves to no declaration used to be
+  // emitted anyway, as a CALL to a function that is never written. The
+  // compiler exited 0, the build reported success, and the VM reported
+  // "CALL: unknown function" at run time, after the program had shipped. An
+  // instance receiver is already checked by the type checker ("Type 'X' has
+  // no member 'y'"); only the static position fell through. Reject it here,
+  // and name what the aggregate does declare.
+  bool reject_unresolved_aggregate_call(const std::string &aggregate_fqn,
+                                        const std::string &member,
+                                        int line) {
+    if (cg_.lookup_function_decl(aggregate_fqn + "::" + member)) return false;
+    if (cg_.lookup_generic_impl(aggregate_fqn, member)) return false;
+    // The short spelling is what the author wrote and what any impl block
+    // registered under, so try it too before claiming the member is absent.
+    const auto separator = aggregate_fqn.rfind("::");
+    const std::string written_name = separator == std::string::npos
+                                         ? aggregate_fqn
+                                         : aggregate_fqn.substr(separator + 2);
+    if (cg_.lookup_function_decl(written_name + "::" + member)) return false;
+    if (cg_.lookup_generic_impl(written_name, member)) return false;
+    auto declared = cg_.aggregate_member_names(aggregate_fqn);
+    if (declared.empty()) declared = cg_.aggregate_member_names(written_name);
+    std::string hint;
+    if (declared.empty()) {
+      hint = "'" + written_name +
+             "' declares nothing that can be called on the type itself; a "
+             "record is built directly with 'build " +
+             written_name + " with <field> being <value>'";
+    } else {
+      hint = "'" + written_name + "' declares: ";
+      for (size_t i = 0; i < declared.size(); ++i) {
+        if (i) hint += ", ";
+        hint += declared[i];
+      }
+    }
+    cg_.reject_codegen_construct(
+        line, "'" + written_name + "' has no '" + member + "' to call", hint,
+        out_fn.source_file);
+    return true;
   }
   void push_instr(const std::string &op,
                   const std::vector<std::string> &args = {},

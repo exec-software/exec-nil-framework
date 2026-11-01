@@ -1,0 +1,19 @@
+!!! Calling something on a type that the type does not declare.
+!!!
+!!! The receiver was checked -- 'Holder' is a known record -- but the member
+!!! never was, so this compiled into a CALL to a function that is never
+!!! written. The compiler exited 0, the build reported success, and the VM
+!!! reported "CALL: unknown function 'probe__main__Holder__new'" at run time.
+!!! An instance receiver was already rejected with "Type 'X' has no member
+!!! 'y'"; only the static position, where the receiver names a type rather
+!!! than a value, fell through.
+book diagnostics.aggregate-member-absent
+
+Holder begin record
+    field slot as number
+end record
+
+main returns number begin paragraph
+    variable held as Holder is Holder.new with nothing
+    give 0
+end paragraph

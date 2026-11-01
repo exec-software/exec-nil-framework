@@ -150,6 +150,7 @@ DIAGNOSTIC_EXPECTATIONS = {
     "parenthesised-call.matrix": "Matrix has no parenthesised call",
     "bare-variant-leaf.matrix": "needs the choice that owns this variant",
     "record-construction-arity.matrix": "built by naming every field",
+    "aggregate-member-absent.matrix": "has no 'new' to call",
 }
 
 

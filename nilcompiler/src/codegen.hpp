@@ -17,6 +17,7 @@
 // NOTE: Do not include heavy implementation headers in this public file.
 //       Keep only minimal includes to build clients easily.
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -371,6 +372,22 @@ public:
       }
     }
     return fallback.empty() ? short_name : fallback;
+  }
+
+  // Every name declared directly on an aggregate. A diagnostic that rejects a
+  // call to a member that does not exist can then say what does.
+  std::vector<std::string>
+  aggregate_member_names(const std::string &struct_fqn) const {
+    std::vector<std::string> names;
+    const std::string prefix = struct_fqn + "::";
+    for (const auto &entry : function_decls_) {
+      if (entry.first.rfind(prefix, 0) != 0) continue;
+      const std::string leaf = entry.first.substr(prefix.size());
+      if (leaf.find("::") == std::string::npos) names.push_back(leaf);
+    }
+    std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end());
+    return names;
   }
 
   // True when the named aggregate declares a no-argument 'new' that returns a
