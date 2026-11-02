@@ -127,6 +127,18 @@ also require `sqlite3.h` at configure time and a compatible x64 `sqlite3.dll`
 available to the Windows loader; SQLite is not included in the SDK. The
 PostgreSQL provider remains POSIX-only.
 
+Known MSVC issue: the reference VM's optional `vctip.exe` telemetry uploader
+remained unsignaled after termination was requested, so native linking correctly
+failed its cleanup checks. The Visual Studio telemetry opt-out alone did not
+prevent its launch. With explicit user approval, the reference VM's exact
+toolchain uploader was reversibly disabled; the MSVC compiler and linker
+binaries were not modified. This provisioning state is part of the development
+validation, not proof that an unmodified MSVC installation passes. NIL does not
+apply this change automatically, and toolchain repair or upgrades may restore
+the uploader.
+See the [Windows recovery notebook](../../notebook/2026-11-02-windows-port.md)
+for the evidence, exact scope, and restoration record.
+
 For example, adapting the dependency paths to your installation:
 
 ```powershell

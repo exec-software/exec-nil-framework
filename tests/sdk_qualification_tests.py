@@ -200,27 +200,34 @@ class QualificationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "registered tests"):
                 qualification.summarize_ctest(report, ["a", "a"], 0)
 
+    def configured_build(self, root, version="3.28.3", cache_version="3.28.3"):
+        configured = root / "build/CMakeFiles" / version
+        configured.mkdir(parents=True, exist_ok=True)
+        llvm = root / "llvm"
+        llvm.mkdir(exist_ok=True)
+        (llvm / "LLVMConfig.cmake").write_text('set(LLVM_PACKAGE_VERSION "18.1.3")\n',
+                                               encoding="utf-8", newline='\n')
+        major, minor, patch_version = cache_version.split(".")
+        (root / "build/CMakeCache.txt").write_text(
+            "CMAKE_HOME_DIRECTORY:INTERNAL={}\nCMAKE_BUILD_TYPE:STRING=Release\n"
+            "CMAKE_CACHE_MAJOR_VERSION:INTERNAL={}\nCMAKE_CACHE_MINOR_VERSION:INTERNAL={}\n"
+            "CMAKE_CACHE_PATCH_VERSION:INTERNAL={}\nNIL_ENABLE_LLVM:BOOL=ON\n"
+            "BUILD_TESTING:BOOL=ON\nLLVM_DIR:PATH={}\n".format(
+                root, major, minor, patch_version, llvm), encoding="utf-8", newline='\n')
+        (configured / "CMakeCXXCompiler.cmake").write_text(
+            'set(CMAKE_CXX_COMPILER "/configured/c++")\nset(CMAKE_CXX_COMPILER_ID "GNU")\n'
+            'set(CMAKE_CXX_COMPILER_VERSION "13.3.0")\n', encoding="utf-8", newline='\n')
+        (configured / "CMakeSystem.cmake").write_text(
+            'set(CMAKE_SYSTEM_NAME "Linux")\nset(CMAKE_SYSTEM_PROCESSOR "x86_64")\n'
+            'set(CMAKE_CROSSCOMPILING "FALSE")\n', encoding="utf-8", newline='\n')
+        return configured
+
     def test_build_configuration_reads_configured_versions_not_current_executables(self):
         with tempfile.TemporaryDirectory(prefix="nil-sdk-config-evidence-") as temporary:
             root = Path(temporary)
-            configured = root / "build/CMakeFiles/3.28.3"
-            configured.mkdir(parents=True)
-            llvm = root / "llvm"
-            llvm.mkdir()
-            (llvm / "LLVMConfig.cmake").write_text('set(LLVM_PACKAGE_VERSION "18.1.3")\n',
-                                                   encoding="utf-8", newline='\n')
-            (root / "build/CMakeCache.txt").write_text(
-                "CMAKE_HOME_DIRECTORY:INTERNAL={}\nCMAKE_BUILD_TYPE:STRING=Release\n"
-                "CMAKE_CACHE_MAJOR_VERSION:INTERNAL=3\nCMAKE_CACHE_MINOR_VERSION:INTERNAL=28\n"
-                "CMAKE_CACHE_PATCH_VERSION:INTERNAL=3\nNIL_ENABLE_LLVM:BOOL=ON\n"
-                "BUILD_TESTING:BOOL=ON\nLLVM_DIR:PATH={}\n".format(root, llvm), encoding="utf-8", newline='\n')
-            (configured / "CMakeCXXCompiler.cmake").write_text(
-                'set(CMAKE_CXX_COMPILER "/configured/c++")\nset(CMAKE_CXX_COMPILER_ID "GNU")\n'
-                'set(CMAKE_CXX_COMPILER_VERSION "13.3.0")\n', encoding="utf-8", newline='\n')
-            (configured / "CMakeSystem.cmake").write_text(
-                'set(CMAKE_SYSTEM_NAME "Linux")\nset(CMAKE_SYSTEM_PROCESSOR "x86_64")\n'
-                'set(CMAKE_CROSSCOMPILING "FALSE")\n', encoding="utf-8", newline='\n')
-            configuration = qualification.build_configuration(root, root / "build")
+            self.configured_build(root)
+            with patch.object(qualification, "command", side_effect=AssertionError("must not probe PATH")):
+                configuration = qualification.build_configuration(root, root / "build")
             self.assertEqual(configuration["cmake_version"], "3.28.3")
             self.assertEqual(configuration["cxx_path"], "/configured/c++")
             self.assertEqual(configuration["llvm_version"], "18.1.3")
@@ -228,6 +235,56 @@ class QualificationTests(unittest.TestCase):
             self.assertFalse(configuration["cross_compiling"])
             with self.assertRaisesRegex(ValueError, "different source"):
                 qualification.build_configuration(root / "other", root / "build")
+
+    def test_build_configuration_accepts_configured_msvc_version_suffix(self):
+        with tempfile.TemporaryDirectory(prefix="nil-sdk-config-msvc-") as temporary:
+            root = Path(temporary)
+            self.configured_build(root, "3.31.6-msvc6", "3.31.6")
+            # Stale metadata for another numeric version cannot supply evidence.
+            self.configured_build(root, "3.31.60-msvc6", "3.31.6")
+            with patch.object(qualification, "command", side_effect=AssertionError("must not probe PATH")):
+                configuration = qualification.build_configuration(root, root / "build")
+            self.assertEqual(configuration["cmake_version"], "3.31.6-msvc6")
+            self.assertEqual(configuration["cxx_path"], "/configured/c++")
+            value = fixture()
+            value["qualification"]["evidence"]["build"].update(configuration)
+            self.assertEqual(qualification.qualification_errors(value, True, "a" * 40), [])
+
+    def test_build_configuration_rejects_wrong_base_and_invalid_suffix(self):
+        for version in ("3.28.30", "3.28.30-msvc6", "3.29.3-msvc6", "3x28x3",
+                        "3.28.3evil", "3.28.3-", "3.28.3--msvc6",
+                        "3.28.3-msvc_6", "3.28.3-msvc..6", "3.28.3-msvc6 extra"):
+            with self.subTest(version=version), \
+                    tempfile.TemporaryDirectory(prefix="nil-sdk-config-wrong-") as temporary:
+                root = Path(temporary)
+                self.configured_build(root, version)
+                with self.assertRaisesRegex(ValueError, "no configured CMake metadata"):
+                    qualification.build_configuration(root, root / "build")
+
+    def test_build_configuration_rejects_ambiguous_matching_versions(self):
+        for versions in (("3.28.3", "3.28.3-msvc6"),
+                         ("3.28.3-msvc5", "3.28.3-msvc6")):
+            with self.subTest(versions=versions), \
+                    tempfile.TemporaryDirectory(prefix="nil-sdk-config-ambiguous-") as temporary:
+                root = Path(temporary)
+                for version in versions:
+                    self.configured_build(root, version)
+                with self.assertRaisesRegex(ValueError, "ambiguous configured CMake"):
+                    qualification.build_configuration(root, root / "build")
+                # Do not resolve ambiguity by quietly ignoring incomplete metadata.
+                (root / "build/CMakeFiles" / versions[0] / "CMakeSystem.cmake").unlink()
+                with self.assertRaisesRegex(ValueError, "ambiguous configured CMake"):
+                    qualification.build_configuration(root, root / "build")
+
+    def test_build_configuration_requires_both_metadata_files(self):
+        for metadata in ("CMakeCXXCompiler.cmake", "CMakeSystem.cmake"):
+            with self.subTest(metadata=metadata), \
+                    tempfile.TemporaryDirectory(prefix="nil-sdk-config-missing-") as temporary:
+                root = Path(temporary)
+                configured = self.configured_build(root, "3.28.3-msvc6")
+                (configured / metadata).unlink()
+                with self.assertRaisesRegex(ValueError, "configured CMake metadata is missing"):
+                    qualification.build_configuration(root, root / "build")
 
     def test_build_record_rejects_configured_tests_mismatch(self):
         value = fixture()["qualification"]["evidence"]

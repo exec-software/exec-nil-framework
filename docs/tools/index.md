@@ -353,7 +353,8 @@ reporting success. Both confirmations share a 500 ms budget. Cleanup identities
 are recorded separately from errors, preserving quiet/JSON output. A different
 directory's same-named process, any unknown child, a failed driver, or failed
 inspection/cleanup still fails. Generic and fallback drivers remain strict;
-there is no process breakaway or machine-wide telemetry setting change. MSVC's
+there is no process breakaway, and the framework itself makes no automatic
+machine-wide telemetry setting or toolchain installation changes. MSVC's
 optional uploader lifecycle is also documented in
 [Microsoft's BuildXL toolchain model](https://github.com/microsoft/BuildXL/blob/main/Public/Sdk/Experimental/Msvc/VisualCpp/visualCpp.dsc).
 

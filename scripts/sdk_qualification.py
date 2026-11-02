@@ -87,7 +87,23 @@ def build_configuration(repo: Path, build: Path) -> dict[str, Any]:
                        for part in ("MAJOR", "MINOR", "PATCH"))
     if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None:
         raise ValueError("build cache does not identify its configured CMake version")
-    configuration = build / "CMakeFiles" / version
+    # CMakeCache records only the numeric components, while vendor builds
+    # write compiler/system metadata under their full version (for example,
+    # 3.31.6-msvc6). Resolve from this build's configured metadata, never from
+    # whichever cmake executable happens to be on PATH now. Multiple matching
+    # versions are ambiguous even if only one has complete metadata.
+    version_name = re.compile(re.escape(version) + r"(?:-[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)?")
+    configurations = [path for path in (build / "CMakeFiles").iterdir()
+                      if path.is_dir() and version_name.fullmatch(path.name)]
+    if not configurations:
+        raise ValueError("build has no configured CMake metadata directory for " + version)
+    if len(configurations) != 1:
+        raise ValueError("build has ambiguous configured CMake metadata directories for " + version)
+    configuration = configurations[0]
+    for metadata in ("CMakeCXXCompiler.cmake", "CMakeSystem.cmake"):
+        if not (configuration / metadata).is_file():
+            raise ValueError("configured CMake metadata is missing: " +
+                             str(configuration / metadata))
     compiler = (configuration / "CMakeCXXCompiler.cmake").read_text(encoding="utf-8")
     system = (configuration / "CMakeSystem.cmake").read_text(encoding="utf-8")
     llvm_config = Path(cache.get("LLVM_DIR", "")) / "LLVMConfig.cmake"
@@ -97,7 +113,7 @@ def build_configuration(repo: Path, build: Path) -> dict[str, Any]:
         "type": cache.get("CMAKE_BUILD_TYPE", ""),
         "llvm_requested": cache.get("NIL_ENABLE_LLVM", cache.get("NY_ENABLE_LLVM", "OFF")),
         "tests_requested": cache.get("BUILD_TESTING", "OFF"),
-        "cmake_version": version,
+        "cmake_version": configuration.name,
         "cxx_id": cmake_value(compiler, "CMAKE_CXX_COMPILER_ID"),
         "cxx_version": cmake_value(compiler, "CMAKE_CXX_COMPILER_VERSION"),
         "cxx_path": cmake_value(compiler, "CMAKE_CXX_COMPILER"),
