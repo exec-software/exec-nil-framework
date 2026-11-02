@@ -135,6 +135,19 @@ builds passed with exact JSON/output checks and no stderr. The final Linux run
 again passed 543 tests with two optional skips (545 registered, 97.95 seconds).
 The clean-revision Windows SDK pipeline remains the final acceptance gate.
 
+The first clean SDK gate at `f173a3149e4e658fdc37522a13ab92714284f8f1`
+registered 543 Windows tests: 536 passed, six skipped, and `nil.project-edition`
+failed because the compiler's loaded-module graph differed between analyses.
+The candidate and JUnit report were retained under
+`build/windows-candidates/development-39b7fb49b4d84e85a17670a9bc24a0d8`.
+Eighty direct analyses had identical 12-module lists, and 30 edition-test
+repetitions under four bounded CPU workers passed, so the cause is not yet
+established. `nilbuild` now reports up to eight added and removed module paths
+when rejecting a changed graph; it still rejects publication and retains the
+previous artifact. A synthetic graph-change regression verifies that contract
+and stable subsequent reuse on Linux and Windows. No module normalization,
+ignored dependency, relaxed cache check, or automatic retry was introduced.
+
 Reproducible checks:
 
 ```text

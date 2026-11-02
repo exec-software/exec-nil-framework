@@ -120,6 +120,34 @@ std::vector<std::string> string_list(const json &value, const std::string &label
   for (const auto &item : value.array) result.push_back(string_value(item, label));
   return result;
 }
+std::string compiler_module_difference(const json &before, const json &after) {
+  const auto modules = [](const json &report) {
+    std::set<std::string> result;
+    if (report.object.count("compilerFiles")) {
+      for (const auto &path : string_list(report.at("compilerFiles"), "compilerFiles"))
+        result.insert(path);
+    }
+    return result;
+  };
+  const auto old_modules = modules(before), new_modules = modules(after);
+  std::string result;
+  const auto describe = [&](const char *label, const auto &left, const auto &right) {
+    std::size_t count = 0;
+    for (const auto &path : left) if (!right.count(path)) {
+      if (count == 0) result += std::string("; ") + label + ": ";
+      if (count < 8) {
+        if (count != 0) result += ", ";
+        result += nilbuild::dump(json::str(path));
+      }
+      ++count;
+    }
+    if (count > 8) result += " (and " + std::to_string(count - 8) + " more)";
+  };
+  describe("added", new_modules, old_modules);
+  describe("removed", old_modules, new_modules);
+  if (result.empty()) result = "; module list presence, ordering or duplicate entries changed";
+  return result;
+}
 bool same_path(const fs::path &a, const fs::path &b) {
   if (a == b) return true;
   std::error_code error;
@@ -844,7 +872,8 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
             (current.object.count("compilerFiles") &&
              nilbuild::dump(current.at("compilerFiles")) !=
                  nilbuild::dump(reports[i].at("compilerFiles"))))
-          throw std::runtime_error("compiler module graph changed during the build; retry: " + value.file.string());
+          throw std::runtime_error("compiler module graph changed during the build; retry: " + value.file.string() +
+                                   compiler_module_difference(reports[i], current));
         for (const auto &task : tasks) if (task.project_index == index && task.native && task.cacheable) {
           input_map current_native;
           if (!native_inputs(current_native, current, value) || current_native != task.native_files ||

@@ -100,8 +100,11 @@ def event(kind):
  os.replace(pending, directory/'record.json')
 if '--analyze' in sys.argv:
  good='BAD' not in data
- print(json.dumps({'schema':'nil.analysis.v1','success':good,'diagnostics':[],
-  'dependenciesComplete':good,'dependencies':[{'path':str(p),'digest':hashlib.sha256(p.read_bytes()).hexdigest()} for p in files]}))
+ report={'schema':'nil.analysis.v1','success':good,'diagnostics':[],
+  'dependenciesComplete':good,'dependencies':[{'path':str(p),'digest':hashlib.sha256(p.read_bytes()).hexdigest()} for p in files]}
+ modules=entry.parent/'compiler-modules.json'
+ if modules.is_file(): report['compilerFiles']=json.loads(modules.read_text())
+ print(json.dumps(report))
  sys.exit(0 if good else 1)
 event('start')
 time.sleep(0.5)
@@ -109,6 +112,8 @@ if 'FAIL' in data: event('fail'); sys.exit(17)
 output=Path(sys.argv[sys.argv.index('--output')+1])
 output.write_text(data + ('native' if '--native' in sys.argv else 'vm'))
 if '--native' in sys.argv: output.chmod(0o755)
+next_modules=entry.parent/'compiler-modules-after.json'
+if next_modules.is_file(): os.replace(next_modules, entry.parent/'compiler-modules.json')
 event('finish')
 ''', newline='\n')
         script.chmod(0o755)
@@ -301,6 +306,36 @@ event('finish')
             assert process.returncode==0,(output,error)
         finally:
             if process.poll() is None:process.kill();process.wait()
+
+        # A changed loaded-module set must still reject publication, with a
+        # bounded diagnostic that identifies additions and removals exactly.
+        module_project=create(root/'module-graph','module-graph')
+        module_dir=module_project.parent
+        old_modules=[module_dir/f'old-module-{i:02}.dll' for i in range(10)]
+        new_modules=[module_dir/f'new-module-{i:02}.dll' for i in range(10)]
+        for module in old_modules+new_modules: module.write_bytes(b'module fixture')
+        (module_dir/'compiler-modules.json').write_text(json.dumps(list(map(str,old_modules))))
+        run('build','--project',module_project)
+        module_artifact=module_dir/'build/module-graph.nil'
+        module_state=module_dir/'build/.nilbuild/module-graph.nil.nildata'
+        original_module_artifact=module_artifact.read_bytes()
+        original_module_state=module_state.read_bytes()
+        # Make the staged bytes observably different: otherwise an erroneous
+        # replacement with the identical old output would evade this check.
+        (module_dir/'main.matrix').write_text('version two\n', newline='\n')
+        (module_dir/'compiler-modules-after.json').write_text(json.dumps(list(map(str,new_modules))))
+        changed=run('build','--project',module_project,'--rebuild',status=2)
+        assert 'compiler module graph changed' in changed.stderr, changed.stderr
+        assert '; added: ' in changed.stderr and '; removed: ' in changed.stderr, changed.stderr
+        for group in (old_modules,new_modules):
+            for module in group[:8]: assert json.dumps(str(module),ensure_ascii=False) in changed.stderr, changed.stderr
+            for module in group[8:]: assert json.dumps(str(module),ensure_ascii=False) not in changed.stderr, changed.stderr
+        assert changed.stderr.count('(and 2 more)')==2, changed.stderr
+        assert module_artifact.read_bytes()==original_module_artifact
+        assert module_state.read_bytes()==original_module_state
+        run('build','--project',module_project)
+        assert module_artifact.read_bytes()!=original_module_artifact
+        assert 'up to date:' in run('build','--project',module_project).stderr
 
         # Real compiler smoke: unchanged imports skip compilation for both routes.
         actual=root/'real';actual.mkdir()
