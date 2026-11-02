@@ -2,8 +2,10 @@
 
 ## Status
 
-Implemented; Windows 11 x64 and Linux validation in progress. This continues the
-interrupted MSVC port at `3dc9d17`; it is not a Windows release or RC declaration.
+Implemented and validated on Windows 11 x64 and Linux. The accepted Windows
+development SDK was built from `0d8c6c21b20a16f16433a6f84ffe4ec1bdfb7bf8`.
+This continues the interrupted MSVC port at `3dc9d17`; it is not a Windows
+release or RC declaration.
 The inherited working tree was preserved before synchronization to the VM.
 No active SDK, Lich publication, or Anomalous checkout is changed by this work.
 
@@ -133,7 +135,8 @@ unmodified installations or an automatic SDK installation step.
 After the reversible uploader disable, 30 consecutive native `niltest` smoke
 builds passed with exact JSON/output checks and no stderr. The final Linux run
 again passed 543 tests with two optional skips (545 registered, 97.95 seconds).
-The clean-revision Windows SDK pipeline remains the final acceptance gate.
+The clean-revision Windows SDK pipeline was retained as the final acceptance
+gate; the successful result is recorded below alongside the failed attempts.
 
 The first clean SDK gate at `f173a3149e4e658fdc37522a13ab92714284f8f1`
 registered 543 Windows tests: 536 passed, six skipped, and `nil.project-edition`
@@ -175,14 +178,66 @@ ctest --test-dir <build> --output-on-failure --parallel 4 --output-junit <report
 powershell -File scripts/build-sdk.ps1 -BuildDirectory <Windows Release build>
 ```
 
+## Final acceptance
+
+The clean Windows candidate
+`C:\src\exec-nil-framework\build\windows-candidates\development-ae8ea0b03e514d8daa807da75d7b1f91`
+completed the entire `scripts/build-sdk.ps1` workflow at source revision
+`0d8c6c21b20a16f16433a6f84ffe4ec1bdfb7bf8`:
+
+- Windows CTest: 543 registered, 537 passed, six documented skips, zero failures
+  (418.80 seconds). Both the edition and parallel-process tests passed.
+- Linux CTest: 545 registered, 543 passed, two optional skips, zero failures
+  (105.30 seconds), including the final diagnostic and rendezvous regressions.
+- SDK contract and tool smokes passed: 11 root executables, 18 strictly checked
+  logical standard-library modules, 66 HTML pages, and 259 sealed payload files
+  plus the manifest. The root layout remains tools, `nillib`, `nilstd`, and `docs`.
+- Installed consumer gate: all 1,184 executions passed (74 fixtures, both source
+  and binary libraries, eight routes including standalone object assembly/linking).
+  The gate rechecked every payload hash and the unchanged manifest on completion.
+
+Windows skips remain `nil.ui-display`, `nilbuild.project-contract`,
+`ny.native-managed-lifetime`, `ny.native-owned-lifetime`,
+`ny.sdk-publish-concurrency`, and `nil.database-postgresql`. Linux skips remain
+the optional display and PostgreSQL providers. A passing executed-test count
+does not convert these into platform coverage.
+
+The one earlier module-graph rejection has not been assigned a proven cause;
+its failure evidence and strict added/removed-path diagnostic remain available.
+The successful clean gate is development evidence, not a claim that the
+intermittent observation was explained or that Windows is release-qualified.
+
+The verified host handoff is
+`/home/nathan/vm/nil-win11/artifacts/0d8c6c21b20a/nil-framework-windows-development-0d8c6c21b20a.zip`
+(28,355,686 bytes, 260 archive entries), SHA-256
+`5d26476dbc4e71c2bab46c1940415a97a9f6d243ab58cdcf3f061e6e24a9cee5`.
+ZIP inventory, CRCs, every payload size/hash, the manifest, consumer identity,
+and copied evidence were independently checked on the host without executing
+Windows tools. `delivery.json`, the checksum sidecar, build snapshot, Windows
+and Linux JUnit reports, consumer report, full `pipeline.log`, PowerShell
+transcript, and `windows-dependencies.json` are beside the ZIP, not inside the
+SDK root. PE imports for all 11 tools and the shared runtime reference only
+Windows/system and Microsoft C/C++ runtime DLLs; this is import inventory, not
+validation on a bare Windows installation. The registry opt-out remained zero,
+the selected uploader remained reversibly disabled, and no owned build/test
+processes remained running at handoff. No SDK activation or publication occurred.
+
+This notebook's final evidence checkpoint is documentation-only and later than
+the archive's pinned source revision; it does not re-label the existing package.
+
 ## Follow-up and boundaries
 
-Complete the full Windows/Linux suites and the isolated SDK consumer gate, then
-record their exact counts and checkpoint revision here. Windows remains a
-development target: POSIX-only lifetime/project checks, optional display and
+Windows remains a development target: POSIX-only lifetime/project checks,
+optional display and
 PostgreSQL providers, and atomic publication constraints must not be concealed
 by a green executed-test count. The established RC/release promotion profile
 remains Linux-only.
+
+The matching x64 Microsoft Visual C++ runtime remains a host prerequisite, and
+native compilation additionally requires MSVC Build Tools and the Windows SDK.
+These dependencies are not redistributed or certified for a bare Windows host
+by this package. GitHub also reported an existing moderate Dependabot alert
+(number 7) during the pushes; that separate dependency issue was not audited here.
 
 Windows staging preserves exclusive creation but inherits the parent ACL; it
 does not promise POSIX-style owner-only isolation in shared output/TEMP trees.
