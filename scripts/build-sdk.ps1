@@ -14,7 +14,7 @@ pwsh -File scripts/build-sdk.ps1 -BuildDirectory C:\nil\build\cmake -AllowDirtyS
 param(
     [Parameter(Mandatory = $true)]
     [string] $BuildDirectory,
-    [string] $CandidateParent = (Join-Path $PSScriptRoot '..\build\windows-candidates'),
+    [string] $CandidateParent,
     [string] $Python = 'python',
     [ValidateRange(1, 64)]
     [int] $Parallel = 4,
@@ -36,6 +36,11 @@ if ($env:OS -ne 'Windows_NT') {
     throw 'This development SDK workflow requires Windows.'
 }
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).ProviderPath
+if ([string]::IsNullOrWhiteSpace($CandidateParent)) {
+    # Windows PowerShell 5.1 may bind parameter defaults before PSScriptRoot
+    # is populated. Resolve this script-relative default in the script body.
+    $CandidateParent = Join-Path $repoRoot 'build\windows-candidates'
+}
 $buildRoot = (Resolve-Path $BuildDirectory).ProviderPath
 $cachePath = Join-Path $buildRoot 'CMakeCache.txt'
 if (-not (Test-Path -LiteralPath $cachePath -PathType Leaf)) {
