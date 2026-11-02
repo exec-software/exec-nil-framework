@@ -448,3 +448,35 @@ the rejected compiler task's expected Problems entry. That evidence is retained;
 the editor gate is not yet accepted at this checkpoint. Six pre-existing
 Windows-only editor fixture omissions are now explicitly reported and remain
 separate from debugger protocol parity. Further editor results follow below.
+
+### Actual-console UTF-8 correction
+
+The editor failure was traced to a real core boundary: the task argv contained
+`café 中文`, but console output decoded the UTF-8 bytes as CP437 and the Problems
+matcher created a diagnostic for `caf├⌐ Σ╕¡µûç`. Pipe-based analysis retained the
+correct URI. Both shell and direct-process tasks reproduced it, so direct argv
+execution alone is not the encoding fix.
+
+The common stream initializer now selects UTF-8 for input/output directions
+actually backed by a Windows console, using the CRT descriptor's handle and
+`GetConsoleMode`. Binary pipe/file behavior is unchanged; NUL is not mistaken
+for a console. This changes the attached console's shared session code page,
+not Windows registry, machine locale, or defaults. Every framework tool and the
+native runtime already call this common initializer.
+
+The new Windows-only contract allocates its own private console after detaching
+only the test process. A CP437 negative control demonstrates the original bad
+decoding, then exact Unicode screen cells and keyboard-to-UTF-8 input must pass.
+Mixed console/pipe directions, all 256 redirected byte values, CR/LF/Ctrl-Z/NUL,
+EOF, and NUL-device controls also execute. An initial CJK assertion clipped a
+two-cell glyph by reading one cell; the corrected oracle requests both cells
+and still requires exactly the intended Unicode code point. Both the original
+failure and codepoint diagnostics are retained. The corrected Windows contract
+passes; Linux's full post-header gate again passes 546/548 with only the two
+documented optional-provider skips (99.78 seconds).
+
+Running the debugger harness alongside the other focused tests also exposed a
+cleanup race after Job accounting reached zero: a terminated descendant could
+still hold its working directory. That failure is retained and is being fixed
+by waiting for verified, retained process handles as well as an empty Job;
+neither ignored cleanup errors nor a fixed sleep is an acceptance criterion.

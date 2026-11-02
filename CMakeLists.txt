@@ -66,6 +66,11 @@ if(BUILD_TESTING)
     target_compile_features(nil_vscode_host_runner PRIVATE cxx_std_17)
     if(WIN32)
         target_link_libraries(nil_vscode_host_runner PRIVATE shell32 advapi32)
+        add_executable(nil_windows_console_utf8_tests tests/windows_console_utf8_tests.cpp)
+        target_compile_features(nil_windows_console_utf8_tests PRIVATE cxx_std_17)
+        add_test(NAME nil.windows-console-utf8 COMMAND $<TARGET_FILE:nil_windows_console_utf8_tests>)
+        set_tests_properties(nil.windows-console-utf8 PROPERTIES
+            LABELS "tools;windows;rc" TIMEOUT 30)
     endif()
 
     set(NY_SMOKE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/tests/hello.nil")
