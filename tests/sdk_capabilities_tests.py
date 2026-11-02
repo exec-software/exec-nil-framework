@@ -7,11 +7,12 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -174,6 +175,99 @@ class CapabilityTests(unittest.TestCase):
                 listing["tests"][0]["command"] += arguments
                 with self.assertRaises(ValueError):
                     capabilities.record_capabilities(ROOT, self.build, listing)
+
+    def test_windows_mixed_path_spelling_preserves_exact_compiler_arguments(self):
+        # Model Windows Path equality on every host without changing os.name
+        # or attempting Windows filesystem I/O on a POSIX test machine.
+        proof = next(proof for proof in self.catalog["proofs"] if proof["stdlib"])
+        repo, build = PureWindowsPath("C:/src/exec-nil-framework"), PureWindowsPath("C:/src/build")
+        inputs = capabilities.expected_inputs(ROOT, self.build, proof)
+        inputs.update(
+            compiler=str(build / "bin/nilcompiler.exe"),
+            interpreter=str(build / "bin/nilinterpreter.exe"),
+            source=str(repo / "tests/language" / Path(inputs["source"]).name),
+            expected_stdout=str(repo / "tests/language" / (proof["fixture"] + ".stdout")),
+            compiler_args=["--sdk-path", str(repo / "nilstd/src")],
+        )
+        argv = ["C:/Python/python.exe", (repo / "tests/routes/ny_route_matrix.py").as_posix()]
+        for index, (option, value) in enumerate((
+                ("--compiler", inputs["compiler"]), ("--interpreter", inputs["interpreter"]),
+                ("--source", inputs["source"]), ("--expected-stdout", inputs["expected_stdout"]),
+                ("--work-dir", str(build / "tests/routes")),
+                ("--report-json", str(build / "tests/route-reports" / (proof["test"] + ".json"))))):
+            argv += [option, PureWindowsPath(value).as_posix() if index % 2 == 0 else value]
+        argv += ["--expected-exit", "0", "--routes", "all", "--compiler-arg=--sdk-path",
+                 "--compiler-arg=" + (repo / "nilstd/src").as_posix()]
+        with patch.object(capabilities, "Path", PureWindowsPath), \
+                patch.object(capabilities, "expected_inputs", side_effect=lambda *_: deepcopy(inputs)):
+            item = capabilities.contract(repo, build, proof, argv, with_hashes=False)
+            self.assertEqual(item["command"], argv)
+            self.assertEqual(item["inputs"]["compiler_args"], ["--sdk-path", "C:/src/exec-nil-framework/nilstd/src"])
+            self.assertEqual(item["inputs"]["compiler"], r"C:\src\build\bin\nilcompiler.exe")
+            for option in ("--compiler", "--interpreter", "--source", "--expected-stdout",
+                           "--work-dir", "--report-json", "--expected-exit", "--routes"):
+                with self.subTest(option=option):
+                    changed = argv.copy()
+                    changed[changed.index(option) + 1] += "-wrong"
+                    with self.assertRaises(ValueError):
+                        capabilities.contract(repo, build, proof, changed, with_hashes=False)
+            for index, value in ((1, "C:/other/ny_route_matrix.py"),
+                                 (-2, "--compiler-arg=--sdk-PATH"),
+                                 (-1, "--compiler-arg=C:/other/nilstd/src")):
+                with self.subTest(index=index):
+                    changed = argv.copy()
+                    changed[index] = value
+                    with self.assertRaises(ValueError):
+                        capabilities.contract(repo, build, proof, changed, with_hashes=False)
+
+    def test_path_aliases_are_native_not_global_slash_replacement(self):
+        proof = self.catalog["proofs"][0]
+        argv = self.listing["tests"][0]["command"].copy()
+        argv[1] = argv[1].replace("/", "\\")
+        if os.name == "nt":
+            capabilities.contract(ROOT, self.build, proof, argv)
+        else:
+            # A backslash is an ordinary filename byte on POSIX, not '/'.
+            with self.assertRaises(ValueError):
+                capabilities.contract(ROOT, self.build, proof, argv)
+
+    def test_forward_path_registration_roundtrip_keeps_raw_sdk_hash_binding(self):
+        listing = deepcopy(self.listing)
+        path_options = {"--compiler", "--interpreter", "--source", "--expected-stdout",
+                        "--work-dir", "--report-json"}
+        for test in listing["tests"]:
+            argv = test["command"]
+            argv[1] = Path(argv[1]).as_posix()
+            for index in range(2, len(argv)):
+                if argv[index - 1] in path_options:
+                    argv[index] = Path(argv[index]).as_posix()
+                elif argv[index].startswith("--compiler-arg=") and argv[index] != "--compiler-arg=--sdk-path":
+                    argv[index] = "--compiler-arg=" + Path(argv[index].split("=", 1)[1]).as_posix()
+        captured = capabilities.record_capabilities(ROOT, self.build, listing)
+        self.snapshot["capabilities"] = captured
+        for item in captured["contracts"]:
+            report = self.route_report(item)
+            path = Path(item["report_path"])
+            path.write_text(json.dumps(report), encoding="utf-8", newline='\n')
+            stamp = int(datetime.fromisoformat(report["created_at"]).timestamp() * 1e9)
+            os.utime(path, ns=(stamp, stamp))
+        record = self.collect()
+        self.assertEqual(capabilities.capability_errors(record, self.evidence, True), [])
+        index = next(index for index, proof in enumerate(self.catalog["proofs"]) if proof["stdlib"])
+        item = record["evidence"]["proofs"][index]["contract"]
+        raw_sdk = item["inputs"]["compiler_args"][1]
+        self.assertEqual(raw_sdk, (ROOT / "nilstd/src").as_posix())
+        self.assertIn("--compiler-arg=" + raw_sdk, item["command"])
+
+        # Even a path-equivalent SDK argument is a different executed argv.
+        # Change the registered/raw input together but retain the old phase
+        # hashes: validation must reject this rather than normalize the hash.
+        alias = raw_sdk.replace("/nilstd/", "/nilstd/./")
+        self.assertNotEqual(alias, raw_sdk)
+        self.assertEqual(Path(alias), Path(raw_sdk))
+        item["inputs"]["compiler_args"][1] = alias
+        item["command"][item["command"].index("--compiler-arg=" + raw_sdk)] = "--compiler-arg=" + alias
+        self.assertTrue(capabilities.capability_errors(record, self.evidence, True))
 
     def test_catalog_and_fixture_changes_rejected(self):
         for field in ("source_sha256", "expected_stdout_sha256", "harness_sha256"):

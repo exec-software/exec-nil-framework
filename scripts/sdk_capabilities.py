@@ -101,7 +101,7 @@ def expected_inputs(repo: Path, build: Path, proof: dict[str, Any]) -> dict[str,
 def contract(repo: Path, build: Path, proof: dict[str, Any], argv: Any,
              *, with_hashes: bool = True) -> dict[str, Any]:
     """Require the exact small positive CTest contract, not arbitrary test-name reuse."""
-    require(strings(argv) and len(argv) >= 2 and argv[1] == str(repo / "tests/routes/ny_route_matrix.py"),
+    require(strings(argv) and len(argv) >= 2 and Path(argv[1]) == repo / "tests/routes/ny_route_matrix.py",
             "proof command must run the route matrix harness")
     inputs = expected_inputs(repo, build, proof)
     options, extras = {}, []
@@ -121,7 +121,18 @@ def contract(repo: Path, build: Path, proof: dict[str, Any], argv: Any,
                 "--source": inputs["source"], "--expected-stdout": inputs["expected_stdout"],
                 "--expected-exit": "0", "--routes": "all", "--work-dir": str(build / "tests/routes"),
                 "--report-json": str(report)}
-    require(options == expected and extras == inputs["compiler_args"], "registered proof command differs from catalog")
+    path_options = {"--compiler", "--interpreter", "--source", "--expected-stdout",
+                    "--work-dir", "--report-json"}
+    require(options.keys() == expected.keys() and all(
+        Path(options[name]) == Path(value) if name in path_options else options[name] == value
+        for name, value in expected.items()), "registered proof command differs from catalog")
+    # Only this catalog-defined compiler option has a path value. Keep flags
+    # byte-exact and preserve the validated raw SDK spelling: the harness
+    # resolves its own path options, but forwards compiler arguments unchanged.
+    require((len(extras) == 2 and extras[0] == "--sdk-path" and
+             Path(extras[1]) == Path(inputs["compiler_args"][1])) if proof["stdlib"]
+            else extras == [], "registered proof command differs from catalog")
+    inputs["compiler_args"] = extras
     result = {"test": proof["test"], "command": argv, "inputs": inputs, "report_path": str(report)}
     if with_hashes:
         result.update(source_sha256=file_hash(Path(inputs["source"])),
@@ -334,9 +345,10 @@ def capability_errors(record: Any, evidence: Any, strict: bool) -> list[str]:
                     isinstance(inputs.get("compiler"), str), "invalid proof input paths")
             repo = Path(inputs["source"]).parent.parent.parent
             build = Path(inputs["compiler"]).parent.parent
-            require(repo.is_absolute() and build.is_absolute() and canonical_hash(inputs) == canonical_hash(expected_inputs(repo, build, definition)) and
+            require(repo.is_absolute() and build.is_absolute() and
                     item["report_path"] == str(build / "tests/route-reports" / (definition["test"] + ".json")), "invalid proof input contract")
             expected = contract(repo, build, definition, item["command"], with_hashes=False)
+            require(canonical_hash(inputs) == canonical_hash(expected["inputs"]), "invalid proof input contract")
             require(all(item[key] == value for key, value in expected.items()), "invalid registered proof command")
             run_root = observed["run_directory"]
             require(isinstance(run_root, str) and Path(run_root).is_absolute() and
