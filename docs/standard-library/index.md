@@ -83,8 +83,9 @@ execution routes, and editor integration.
 `nil.std.ui` supplies checked windows, rows, columns, grids, labels, buttons,
 text entries, and checkboxes. Copied typed events and explicit text/flag models
 keep application logic in Matrix; the shared runtime owns native resources.
-The initial provider uses GTK 4 on Linux and returns an explanatory error when
-the optional provider or a display is unavailable. See the [UI reference](ui.md)
+The provider uses GTK 4 on Linux and the Windows development target, returning
+an explanatory error when the optional provider or a display is unavailable.
+See the [UI reference](ui.md)
 and [NIL² counter application](../../examples/projects/nil2-counter).
 
 ## NILData

@@ -3,17 +3,16 @@
  * SPDX-License-Identifier: MIT
  */
 #include "ui_runtime.hpp"
+#include "ui_registry_observer.hpp"
 
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
-#if defined(__linux__)
-#include <dlfcn.h>
-#endif
 
 namespace {
 int checks = 0;
@@ -21,6 +20,30 @@ void require(bool condition, const std::string &message) {
   ++checks;
   if (!condition) throw std::runtime_error(message);
 }
+#if defined(_WIN32)
+std::optional<std::wstring> environment_value(const wchar_t *name) {
+  SetLastError(ERROR_SUCCESS);
+  const DWORD required = GetEnvironmentVariableW(name, nullptr, 0);
+  if (!required) {
+    const auto error = GetLastError();
+    require(error == ERROR_SUCCESS || error == ERROR_ENVVAR_NOT_FOUND, "read loader environment");
+    return error == ERROR_ENVVAR_NOT_FOUND ? std::nullopt : std::optional<std::wstring>(L"");
+  }
+  std::wstring value(required, L'\0');
+  const DWORD length = GetEnvironmentVariableW(name, value.data(), required);
+  require(length < required, "loader environment changed while reading");
+  value.resize(length);
+  return value;
+}
+std::wstring dll_directory() {
+  std::wstring value(32768, L'\0');
+  SetLastError(ERROR_SUCCESS);
+  const DWORD length = GetDllDirectoryW(static_cast<DWORD>(value.size()), value.data());
+  require(length < value.size() && (length || GetLastError() == ERROR_SUCCESS), "read process DLL directory");
+  value.resize(length);
+  return value;
+}
+#endif
 std::int64_t ok(const ny::ui::Result &result) {
   require(static_cast<bool>(result), result.error);
   return result.number;
@@ -63,10 +86,51 @@ void no_display() {
   unsetenv("WAYLAND_DISPLAY");
   setenv("DISPLAY", ":65534", 1);
   setenv("GDK_BACKEND", "x11", 1);
+#elif defined(_WIN32)
+  // GTK must refuse an unsupported backend even on a desktop-capable runner.
+  // This changes only this test process, never product/provider environment.
+  require(_wputenv_s(L"GDK_BACKEND", L"nil-test-no-display") == 0,
+          "configure isolated unavailable display");
 #endif
   ny::ui::Context context;
   auto result = context.window("unavailable display", 300, 200);
   rejected(result, ny::ui::available() ? "display" : "provider");
+}
+
+void noninteractive_display() {
+#if defined(_WIN32)
+  require(ny::ui::available(), "real GTK 4 provider is required for the noninteractive display probe");
+  // Independently verify this negative control is actually running on a
+  // noninteractive station; it must not pass by disabling the GDK backend.
+  require(_wputenv_s(L"GDK_BACKEND", L"win32") == 0, "select the real Windows backend");
+  const HMODULE user = GetModuleHandleW(L"user32.dll");
+  require(user != nullptr, "GTK loaded User32");
+  using Station = HWINSTA (WINAPI *)();
+  using Information = BOOL (WINAPI *)(HANDLE, int, PVOID, DWORD, LPDWORD);
+  const auto station = reinterpret_cast<Station>(GetProcAddress(user, "GetProcessWindowStation"));
+  const auto information = reinterpret_cast<Information>(GetProcAddress(user, "GetUserObjectInformationW"));
+  require(station && information, "window station query APIs available");
+  USEROBJECTFLAGS flags{};
+  DWORD required = 0;
+  const auto current = station(); // Borrowed; never close or change it.
+  require(current && information(current, UOI_FLAGS, &flags, sizeof(flags), &required),
+          "independent window station query succeeded");
+  require(required <= sizeof(flags) && !(flags.dwFlags & WSF_VISIBLE),
+          "negative display probe must run on an actual noninteractive window station");
+  const auto msvc = GetModuleHandleW(L"gtk-4-1.dll");
+  const auto mingw = GetModuleHandleW(L"libgtk-4-1.dll");
+  require((msvc != nullptr) != (mingw != nullptr), "one loaded GTK runtime for initialization observation");
+  const auto initialized = reinterpret_cast<int (*)()>(GetProcAddress(msvc ? msvc : mingw, "gtk_is_initialized"));
+  require(initialized != nullptr && !initialized(), "GTK must start uninitialized");
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    ny::ui::Context context;
+    rejected(context.window("Unsupported service desktop", 300, 200), "interactive Windows window station is required");
+    require(!initialized(), "unsupported station must be rejected before GTK initialization");
+  }
+  require(ny::ui::available(), "display rejection must not misreport the installed provider as unavailable");
+#else
+  throw std::runtime_error("--noninteractive-display requires Windows");
+#endif
 }
 
 void subtree_lifetime_tests(ny::ui::Context &context) {
@@ -294,38 +358,60 @@ void display_tests() {
   context.clear();
   rejected(context.poll(replacement), "closed");
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
   // Observe GTK's actual top-level registry across normal and deferred teardown.
-  void *library = dlopen("libgtk-4.so.1", RTLD_NOW | RTLD_LOCAL);
-  auto windows = reinterpret_cast<void *(*)()>(dlsym(library, "gtk_window_get_toplevels"));
-  auto count = reinterpret_cast<unsigned (*)(void *)>(dlsym(library, "g_list_model_get_n_items"));
-  require(windows && count, "GTK top-level list symbols");
-  const auto baseline = count(windows());
+  GtkRegistryObserver registry;
+  const auto baseline = registry.count();
   for (int index = 0; index < 8; ++index) {
     auto owner = std::make_unique<ny::ui::Context>();
     const auto owned_window = ok(owner->window("Lifetime check", 150, 100));
     ok(owner->widget("button", owned_window, "Callback lifetime"));
-    require(count(windows()) == baseline + 1, "real GTK window registration");
+    require(registry.count() == baseline + 1, "real GTK window registration");
     if (index % 2) {
       std::thread destroy_elsewhere([moved = std::move(owner)]() mutable { moved.reset(); });
       destroy_elsewhere.join();
       // Any subsequent call on the process UI thread drains deferred teardown.
       rejected(context.read_text(-1), "foreign");
     } else owner.reset();
-    require(count(windows()) == baseline, "context teardown must release GTK top-level windows");
+    require(registry.count() == baseline, "context teardown must release GTK top-level windows");
   }
-  dlclose(library);
 #endif
 }
 } // namespace
 
 int main(int argc, char **argv) {
   try {
-    require(argc <= 2, "usage: ui_runtime_tests [--no-display|--display]");
+    require(argc <= 2, "usage: ui_runtime_tests [--no-display|--display|--provider-present|--provider-absent|--noninteractive-display]");
     const std::string mode = argc == 2 ? argv[1] : "--no-display";
-    require(mode == "--no-display" || mode == "--display", "unknown UI test mode");
+    require(mode == "--no-display" || mode == "--display" ||
+            mode == "--provider-present" || mode == "--provider-absent" ||
+            mode == "--noninteractive-display", "unknown UI test mode");
+#if defined(_WIN32)
+    const auto path_before = environment_value(L"PATH");
+    const auto runtime_before = environment_value(L"NIL_UI_GTK_DIRECTORY");
+    const auto dll_before = dll_directory();
+#endif
     basic_validation();
-    if (mode == "--display") display_tests(); else no_display();
+    if (mode == "--display") display_tests();
+    else if (mode == "--no-display") no_display();
+    else if (mode == "--noninteractive-display") noninteractive_display();
+    else {
+      const bool available = ny::ui::available();
+      if (!available && mode == "--provider-present") {
+        ny::ui::Context context;
+        throw std::runtime_error(context.window("Provider diagnostic", 100, 100).error);
+      }
+      require(available == (mode == "--provider-present"), "provider availability must match the selected runtime");
+      if (mode == "--provider-absent") {
+        ny::ui::Context context;
+        rejected(context.window("Missing provider", 100, 100), "provider is unavailable");
+      }
+    }
+#if defined(_WIN32)
+    require(environment_value(L"PATH") == path_before, "provider must preserve PATH");
+    require(environment_value(L"NIL_UI_GTK_DIRECTORY") == runtime_before, "provider must preserve runtime selection");
+    require(dll_directory() == dll_before, "provider must preserve the process DLL directory");
+#endif
     std::cout << "UI runtime: " << checks << " checks passed (" << mode << ")\n";
     return 0;
   } catch (const std::exception &error) {

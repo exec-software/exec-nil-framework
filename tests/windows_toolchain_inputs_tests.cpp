@@ -70,7 +70,7 @@ void closure(const fs::path &root) {
   write(runtime, "NIL runtime archive");
   for (const auto *name : {"msvcrt.lib", "vcruntime.lib", "legacy_stdio_definitions.lib",
                           "msvcprt.lib", "oldnames.lib"}) write(vc / name, name);
-  for (const auto *name : {"kernel32.lib", "ucrt.lib", "uuid.lib"}) write(sdk / name, name);
+  for (const auto *name : {"kernel32.lib", "ws2_32.lib", "ucrt.lib", "uuid.lib"}) write(sdk / name, name);
   write(ambient / "ambient.lib", "ambient library");
   std::map<fs::path, std::string> directives;
   directives[runtime] = " /DEFAULTLIB:msvcprt /DEFAULTLIB:oldnames\n";
@@ -90,9 +90,19 @@ void closure(const fs::path &root) {
   auto before = identities(*files);
   for (const auto &file : {runtime, driver, bin / "cvtres.exe", bin / "c2.dll",
                           bin / "1033" / "linkui.dll", vc / "msvcprt.lib", vc / "oldnames.lib",
-                          sdk / "uuid.lib", ambient / "ambient.lib"})
+                          sdk / "uuid.lib", sdk / "ws2_32.lib", ambient / "ambient.lib"})
     check(before.count(file.string()) == 1, "closure includes runtime, transitive libs and helper tools");
   check(probes[vc / "msvcprt.lib"] == 1, "default library cycles do not repeat subprocesses");
+
+  const auto winsock_time = fs::last_write_time(sdk / "ws2_32.lib");
+  write(sdk / "ws2_32.lib", "Winsock import library changed");
+  fs::last_write_time(sdk / "ws2_32.lib", winsock_time);
+  files = collect();
+  check(files && identities(*files) != before, "Winsock archive changes invalidate despite preserved timestamp");
+  before = identities(*files);
+  fs::remove(sdk / "ws2_32.lib");
+  check(!collect(), "missing Winsock import library disables reuse");
+  write(sdk / "ws2_32.lib", "Winsock import library changed");
 
   const auto previous_time = fs::last_write_time(sdk / "uuid.lib");
   write(sdk / "uuid.lib", "UUID library changed");

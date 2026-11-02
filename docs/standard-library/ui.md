@@ -2,7 +2,8 @@
 
 `read nil.std.ui` provides a Matrix desktop library with typed windows, widgets,
 events and explicit model bindings. Ny programs can import the same module.
-The VM and native compiler use the same checked GTK4 provider on Linux.
+The VM and native compiler use the same checked GTK4 provider on Linux and
+Windows. Windows remains a development target, not a qualified release platform.
 Examples display the framework generation as **NIL²**, with **NIL^2** as the
 plain-text spelling. This presentation does not change numeric release or
 artifact identities in `VERSION`.
@@ -36,6 +37,21 @@ X11 or Wayland. `available with nothing` checks whether the provider's required
 symbols can load; it does not connect to a display. Window creation returns
 `Result.Error` if the graphical session cannot be initialized. There is no
 headless widget simulation or automatic package installation.
+
+On Windows, deploy a compatible x64 GTK4 runtime with its dependencies and
+runtime data. Set `NIL_UI_GTK_DIRECTORY` to its absolute DLL directory, or place
+the DLLs beside the executable. An explicitly empty, relative or invalid setting
+fails closed rather than falling back. The loader accepts the `libgtk-4-1.dll`
+or `gtk-4-1.dll` naming family and corresponding GLib/GObject names; ambiguous
+duplicates are rejected. It uses wide paths and scoped DLL search flags, without
+changing process-wide DLL policy or searching the current directory or `PATH`.
+Already-loaded direct GTK/GLib/GObject modules must match the selected files.
+This does not establish isolation from every transitive DLL already loaded by
+an embedding host. GTK is an optional external dependency, not bundled in the SDK.
+
+Windows window creation requires an interactive, visible window station.
+Service-session requests return a display error before GTK initialization;
+successful provider availability alone does not prove a desktop is usable.
 
 ## Windows and widgets
 
@@ -154,8 +170,11 @@ closed handles. The separate `nil.std.ui.gtk.interaction` suite checks actual
 keyboard input and a window-manager close request.
 
 `nil.ui-display` runs the desktop suites through both routes when native
-compilation is enabled, using a private Xvfb display and X11 input driver. It
-does not send input to an existing desktop session. Desktop interaction cases
+compilation is enabled. On Linux it uses a private Xvfb display and X11 input
+driver, without sending input to an existing desktop session. On Windows its
+separate harness requires an existing interactive desktop, and posts input only
+to verified test windows belonging to its private process Job. It does not use
+global input injection, change focus or switch desktops. Desktop interaction cases
 run sequentially with `niltest --jobs 1`; see [compiler-backed testing](../tools/testing.md)
 for filtering, reports and timeouts.
 
@@ -164,3 +183,9 @@ after completion, faults, resets, reloads and destruction. Native context
 completion/restart releases windows, while copied text remains valid across
 managed collection. CI installs the optional GTK/Xvfb dependencies so desktop
 coverage is required there; local builds without them report a test skip.
+The Windows harness's `--require-display` mode turns a missing desktop into a
+qualification failure. Optional headless mode checks an explicitly configured
+or executable-adjacent GTK deployment before allowing a skip; a broken selected
+runtime or any failure after starting a display fixture is never a skip. A
+headless skip is not desktop qualification. Separate loader and noninteractive
+provider probes cover DLL selection and rejection before GTK initialization.

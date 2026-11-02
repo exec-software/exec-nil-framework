@@ -47,8 +47,8 @@ SQL casts where PostgreSQL cannot infer a parameter's type.
 
 `sqlite` accepts a filesystem path or `:memory:`. It opens read/write, creating a
 missing file. The SQLite URI option is not enabled. `postgresql` accepts libpq
-connection options with one numeric `hostaddr` or one absolute Unix socket
-`host`. DNS host lookup, multiple hosts, and `service` options are outside this
+connection options with one numeric `hostaddr` on Linux and Windows, or one
+absolute Unix socket `host` on POSIX. DNS host lookup, multiple hosts, and `service` options are outside this
 first connection contract. TLS options can accompany a numeric `hostaddr` and a
 `host` used for certificate verification. Client encoding is UTF-8.
 
@@ -60,9 +60,17 @@ server or promise authentication success. Missing providers do not prevent the
 tools or a native program from starting. No server is bundled with the SDK.
 
 SQLite requires the `sqlite3_changes64`/`sqlite3_total_changes64` API.
-PostgreSQL requires libpq single-row retrieval support. The
-PostgreSQL provider currently supports POSIX socket waiting; Windows reports it
-unavailable. Linux is the validated platform for this slice. AOT programs link
+PostgreSQL requires libpq single-row retrieval support. Bounded connection and
+query waits use POSIX polling on Linux and Winsock polling on Windows. Both
+hosts have passed the six-route PostgreSQL matrix (text/binary interpreter,
+both bundles, LLVM JIT and native AOT) against disposable PostgreSQL 16 servers.
+On Windows, provide `libpq.dll` and its dependencies through the application's
+deployment environment; the SDK does not install PostgreSQL or change `PATH`.
+Building the optional provider requires the libpq headers, selected with
+`NILCOMPILER_POSTGRESQL_INCLUDE_DIR` when they are outside standard locations.
+Windows native linking also includes the system `ws2_32.lib`; incremental
+builds fingerprint this library with the other selected linker inputs.
+AOT programs link
 the SDK's static `libnil` and the platform loader, with no build-machine SQLite
 or libpq library path embedded in the executable. The shared `libnil` exports
 the same additive `nyrt_db2_*` C ABI; existing ABI version and exports remain.
@@ -121,9 +129,17 @@ checks independent contexts, reset cleanup, file persistence, lock timeout, and
 handle/result budgets. `tests/tools/database_contract.py` rejects 55 forged
 native database signatures while preserving a previous output artifact.
 
-`tests/database_postgresql_isolated.py` creates a private temporary cluster with
-no TCP listener, runs provider and all six route tests, and stops it in `finally`.
+`tests/database_postgresql_isolated.py` creates a private temporary cluster,
+runs provider and all six route tests, and stops its owned processes in `finally`.
+POSIX uses a private Unix socket with no TCP listener. Windows uses only numeric
+loopback, SCRAM authentication and a fresh random credential in a private-ACL
+directory. PostgreSQL's own `pg_ctl` restricted-token launch runs inside the
+fixture's no-breakaway Job; server identity, captured startup output, rejection
+of a wrong password, graceful shutdown and empty-Job cleanup are checked.
 Pass server binaries with `--postgres-bin` (or `NIL_TEST_POSTGRES_BIN`) and optional
 `--postgres-share` (or `NIL_TEST_POSTGRES_SHARE`). Without explicit server binaries
-this optional test skips. It never uses an existing database. Local validation
-used PostgreSQL 18.6 and SQLite 3.46.1.
+this optional test skips. It never uses an existing database. LLVM-enabled CTest
+requires all six routes; missing native routes cannot silently pass. Earlier
+Linux validation used PostgreSQL 18.6 and SQLite 3.46.1; the Windows development
+parity fixture uses PostgreSQL 16.15. These are recorded test combinations, not
+a guarantee for every client/server distribution.

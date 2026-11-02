@@ -6,6 +6,7 @@
 #include "native_runtime.hpp"
 #include "nil_loader.hpp"
 #include "ui_runtime.hpp"
+#include "ui_registry_observer.hpp"
 #include "vm.hpp"
 
 #include <cstdint>
@@ -17,9 +18,6 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#if defined(__linux__)
-#include <dlfcn.h>
-#endif
 
 namespace {
 int checks = 0;
@@ -28,13 +26,11 @@ void require(bool condition, const std::string &message) {
   if (!condition) throw std::runtime_error(message);
 }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
 // Inspect the toolkit's real window registry, independently of the provider's
 // handle map. A stale-handle rejection alone would not prove GTK was released.
 struct Windows {
-  void *library = nullptr;
-  void *(*list)() = nullptr;
-  unsigned (*size)(void *) = nullptr;
+  std::unique_ptr<GtkRegistryObserver> registry;
   unsigned baseline = 0;
 
   Windows() {
@@ -43,15 +39,10 @@ struct Windows {
     const auto window = bootstrap.window("UI lifecycle initialization", 100, 100);
     require(static_cast<bool>(window), window.error);
     require(static_cast<bool>(bootstrap.close(window.number)), "close initialization window");
-    library = dlopen("libgtk-4.so.1", RTLD_NOW | RTLD_LOCAL);
-    require(library != nullptr, "load GTK registry observer");
-    list = reinterpret_cast<decltype(list)>(dlsym(library, "gtk_window_get_toplevels"));
-    size = reinterpret_cast<decltype(size)>(dlsym(library, "g_list_model_get_n_items"));
-    require(list && size, "GTK registry observer symbols");
+    registry = std::make_unique<GtkRegistryObserver>();
     baseline = count();
   }
-  ~Windows() { if (library) dlclose(library); }
-  unsigned count() const { return size(list()); }
+  unsigned count() const { return registry->count(); }
   void live(const std::string &operation) const {
     require(count() == baseline + 1, operation + " must keep exactly one GTK window live");
   }
@@ -228,14 +219,14 @@ int main(int argc, char **argv) {
   try {
     require(argc == 2 && std::string(argv[1]) == "--display",
             "usage: nil_ui_lifecycle_tests --display (requires an isolated display)");
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
     Windows windows;
     vm_lifecycles(windows);
     native_lifecycles(windows);
     std::cout << "UI lifecycle: " << checks << " checks passed\n";
     return 0;
 #else
-    std::cerr << "SKIP: GTK UI lifecycle tests require Linux\n";
+    std::cerr << "SKIP: GTK UI lifecycle tests require Linux or Windows\n";
     return 77;
 #endif
   } catch (const std::exception &error) {

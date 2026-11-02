@@ -13,6 +13,15 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+// Winsock2 must precede windows.h (and libpq headers) to avoid Winsock1
+// declarations. The numeric parser is explicitly ANSI even in UNICODE builds.
+#ifdef NIL_DB_POSTGRESQL
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -141,7 +150,7 @@ Result sqlite_error(sqlite3 *db, int status, const char *phase) {
  return result;
 }
 #endif
-#if defined(NIL_DB_POSTGRESQL) && !defined(_WIN32)
+#ifdef NIL_DB_POSTGRESQL
 struct PostgreSQL {
 #define DB_PG_FUNCTIONS(X) \
  X(PQconnectStartParams) X(PQconninfoParse) X(PQconninfoFree) X(PQfreemem) X(PQconnectPoll) X(PQsetnonblocking) X(PQfinish) X(PQsocket) \
@@ -167,10 +176,19 @@ bool wait_socket(PGconn *connection, short events, Clock::time_point deadline) {
  auto &p = postgres();
  for (;;) {
    auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
-   if (remaining <= 0 || p.PQsocket(connection) < 0) return false;
-   pollfd fd{p.PQsocket(connection), events, 0};
+   // libpq may replace its socket across connection-state transitions. Fetch
+   // it afresh for every wait and never close it ourselves: PQfinish owns it.
+   int socket = p.PQsocket(connection);
+   if (remaining <= 0 || socket < 0) return false;
+#ifdef _WIN32
+   WSAPOLLFD fd{static_cast<SOCKET>(socket), events, 0};
+   int status = WSAPoll(&fd, 1, static_cast<int>(remaining));
+   if (status == SOCKET_ERROR && WSAGetLastError() == WSAEINTR) continue;
+#else
+   pollfd fd{socket, events, 0};
    int status = poll(&fd, 1, static_cast<int>(remaining));
    if (status < 0 && errno == EINTR) continue;
+#endif
    return status > 0 && !(fd.revents & (POLLERR | POLLNVAL)) && (fd.revents & (events | POLLHUP));
  }
 }
@@ -194,7 +212,7 @@ struct Connection {
 #ifdef NIL_DB_SQLITE
    if (kind == Kind::sqlite) sqlite().sqlite3_close_v2(static_cast<sqlite3 *>(value));
 #endif
-#if defined(NIL_DB_POSTGRESQL) && !defined(_WIN32)
+#ifdef NIL_DB_POSTGRESQL
    if (kind == Kind::postgres) postgres().PQfinish(static_cast<PGconn *>(value));
 #endif
  }
@@ -217,7 +235,7 @@ bool available(const std::string &driver) {
 #ifdef NIL_DB_SQLITE
  if (driver == "sqlite") return sqlite().loaded;
 #endif
-#if defined(NIL_DB_POSTGRESQL) && !defined(_WIN32)
+#ifdef NIL_DB_POSTGRESQL
  if (driver == "postgresql") return postgres().loaded;
 #endif
  return false;
@@ -244,7 +262,7 @@ Result Context::open(const std::string &driver, const std::string &address, std:
    return number(handle);
  }
 #endif
-#if defined(NIL_DB_POSTGRESQL) && !defined(_WIN32)
+#ifdef NIL_DB_POSTGRESQL
  if (driver == "postgresql") {
    auto &p = postgres();
    auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);
@@ -267,9 +285,17 @@ Result Context::open(const std::string &driver, const std::string &address, std:
      keys.push_back(option->keyword); values.push_back(option->val);
    }
    unsigned char numeric[16];
+   // inet_pton is the narrow/ASCII entry point on both hosts. In particular,
+   // Windows InetPton's UNICODE alias must not reinterpret conninfo bytes.
    bool numeric_host = !hostaddr.empty() && (inet_pton(AF_INET, hostaddr.c_str(), numeric) == 1 || inet_pton(AF_INET6, hostaddr.c_str(), numeric) == 1);
+#ifdef _WIN32
+   // This provider's Windows contract is numeric TCP; do not assume that an
+   // independently installed libpq supports POSIX Unix-domain socket paths.
+   if (!numeric_host) return fail("database: PostgreSQL requires numeric hostaddr on Windows");
+#else
    bool unix_host = !host.empty() && host[0] == '/' && host.find(',') == std::string::npos && hostaddr.empty();
    if (!numeric_host && !unix_host) return fail("database: PostgreSQL requires numeric hostaddr or an absolute Unix socket host");
+#endif
    if (host.find(',') != std::string::npos) return fail("database: PostgreSQL requires one host");
    std::string timeout_seconds = std::to_string((timeout_ms + 999) / 1000);
    keys.push_back("connect_timeout"); values.push_back(timeout_seconds.c_str());
@@ -361,7 +387,7 @@ Result Context::execute(std::int64_t connection, const std::string &sql,
    result.affected = s.sqlite3_stmt_readonly(raw) || s.sqlite3_total_changes64(db) == initial_changes ? 0 : s.sqlite3_changes64(db);
  }
 #endif
-#if defined(NIL_DB_POSTGRESQL) && !defined(_WIN32)
+#ifdef NIL_DB_POSTGRESQL
  if (found->second->kind == Connection::Kind::postgres) {
    auto &p = postgres(); auto *db = static_cast<PGconn *>(found->second->value);
    auto broken = [&](const char *message) { impl_->close(connection); return fail(message); };

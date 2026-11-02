@@ -1474,6 +1474,8 @@ bool Linker::link(const fs::path &requested_output) {
   // symbols exist in no library the driver links by default. Without this the
   // link fails with "unresolved external symbol printf".
   arguments.push_back("legacy_stdio_definitions.lib");
+  // The runtime's PostgreSQL provider uses bounded Winsock readiness waits.
+  arguments.push_back("ws2_32.lib");
   // A linked program gets exactly one C runtime, and nil.lib decides which:
   // it is built /MD, so every reference it makes is an import (__imp_*) that
   // only the dynamic CRT satisfies. `cl /c` defaults to the *static* CRT,
@@ -1515,6 +1517,7 @@ bool Linker::link(const fs::path &requested_output) {
 #ifdef _WIN32
   // A clang-style driver must forward these as separate linker arguments;
   // in particular a manifest path containing spaces or commas is one token.
+  arguments.push_back("ws2_32.lib");
   arguments.push_back("-Xlinker");
   arguments.push_back("/MANIFEST:EMBED");
   arguments.push_back("-Xlinker");

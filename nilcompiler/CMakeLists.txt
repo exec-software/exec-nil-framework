@@ -70,6 +70,11 @@ add_library(nilruntime_shared SHARED $<TARGET_OBJECTS:nilruntime_objects>)
 foreach(nil_runtime_target IN ITEMS nilruntime nilruntime_shared)
     target_compile_features(${nil_runtime_target} PUBLIC cxx_std_17)
     target_link_libraries(${nil_runtime_target} PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+    if(WIN32)
+        # PostgreSQL's bounded socket wait and numeric-address validation use
+        # Winsock; propagate it to static build-tree consumers as well as DLLs.
+        target_link_libraries(${nil_runtime_target} PUBLIC ws2_32)
+    endif()
     set_target_properties(${nil_runtime_target} PROPERTIES
         CXX_EXTENSIONS OFF
         OUTPUT_NAME nil
@@ -160,7 +165,7 @@ if(NILCOMPILER_SQLITE_INCLUDE_DIR)
     target_compile_definitions(nilruntime_objects PRIVATE NIL_DB_SQLITE=1)
 endif()
 
-# PostgreSQL headers enable the dynamically loaded POSIX db2 provider.
+# PostgreSQL headers enable the dynamically loaded db2 provider on each host.
 # The old experimental VM-only db.* dispatcher is no longer compiled.
 find_path(NILCOMPILER_POSTGRESQL_INCLUDE_DIR libpq-fe.h
     PATHS
@@ -171,7 +176,7 @@ find_path(NILCOMPILER_POSTGRESQL_INCLUDE_DIR libpq-fe.h
         /usr/local/include/postgresql
         /usr/include
 )
-if(NILCOMPILER_POSTGRESQL_INCLUDE_DIR AND NOT WIN32)
+if(NILCOMPILER_POSTGRESQL_INCLUDE_DIR)
     target_include_directories(nilruntime_objects PRIVATE "${NILCOMPILER_POSTGRESQL_INCLUDE_DIR}")
     target_compile_definitions(nilruntime_objects PRIVATE NIL_DB_POSTGRESQL=1)
 endif()

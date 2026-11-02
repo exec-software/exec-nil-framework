@@ -10,6 +10,12 @@
 #include <cstring>
 #include <stdexcept>
 #ifdef _WIN32
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
 #  include <windows.h>
 #  include <winuser.h>
 #else
@@ -363,33 +369,22 @@ public:
         ipc_client = std::make_unique<ny::ipc::IpcClient>();
     }
 
+    AgentServer(const AgentServer&) = delete;
+    AgentServer& operator=(const AgentServer&) = delete;
+    AgentServer(AgentServer&&) = delete;
+    AgentServer& operator=(AgentServer&&) = delete;
+
     std::vector<int> find_running_vms() {
-        std::vector<int> pids;
-#ifndef _WIN32
-        const std::string base = "/tmp";
-        DIR* dir = opendir(base.c_str());
-        if (!dir) return pids;
-        struct dirent* entry;
-        while ((entry = readdir(dir)) != nullptr) {
-            std::string name = entry->d_name;
-            if (name.find("ny_ai_") == 0 && name.find(".sock") != std::string::npos) {
-                size_t start = 6;
-                size_t end = name.find(".sock");
-                if (end > start) {
-                    try { pids.push_back(std::stoi(name.substr(start, end - start))); } catch (...) {}
-                }
-            }
-        }
-        closedir(dir);
-#endif
-        return pids;
+        return ny::ipc::find_server_pids();
     }
 
     bool connect_to_vm(int pid) {
+        if (pid <= 0) return false;
         if (ipc_client->is_connected()) {
             if (connected_pid == pid) return true;
             ipc_client->disconnect();
         }
+        connected_pid = 0;
 
         std::string socket_path = ny::ipc::get_socket_path_for_pid(pid);
         if (ipc_client->connect(socket_path)) {
@@ -553,7 +548,7 @@ public:
                        << ",\"reload_time_ms\":" << reload_time_ms
                        << ",\"pid\":" << pid;
             if (!error_msg.empty()) {
-                result_json << ",\"error\":\"" << error_msg << "\"";
+                result_json << ",\"error\":" << nil::detail::quote(error_msg);
             }
             result_json << "}";
             resp.result = result_json.str();
@@ -579,7 +574,8 @@ public:
             } else {
                 std::string response = ipc_client->send_status();
                 if (response.empty()) {
-                    result_json << "{\"success\":false,\"error\":\"No response from NIL interpreter\"}";
+                    result_json << "{\"success\":false,\"error\":"
+                                << nil::detail::quote(ipc_client->last_error()) << "}";
                 } else {
                     result_json << "{\"success\":true,\"connected\":true,\"pid\":" << pid
                                << ",\"status\":" << response << "}";
@@ -618,7 +614,7 @@ public:
             result_json << "{\"success\":" << (success ? "true" : "false")
                        << ",\"size_bytes\":" << size_bytes;
             if (!error_msg.empty()) {
-                result_json << ",\"error\":\"" << error_msg << "\"";
+                result_json << ",\"error\":" << nil::detail::quote(error_msg);
             }
             result_json << "}";
             resp.result = result_json.str();

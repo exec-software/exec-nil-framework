@@ -102,8 +102,10 @@ The framework includes:
   [testing guide](docs/tools/testing.md).
 - **Desktop applications.** The Matrix-authored
   [`nil.std.ui`](docs/standard-library/ui.md) provides windows, layout containers,
-  standard controls, typed events, and explicit model synchronization. Its first
-  backend uses the optional GTK 4 runtime on Linux, on both execution routes.
+  standard controls, typed events, and explicit model synchronization. Its GTK 4
+  provider supports VM and native execution on Linux and Windows development
+  builds. GTK is an external runtime dependency; Windows requires an interactive,
+  visible desktop. This does not extend Windows release qualification.
 - **Aperture runtime diagnostics.** Memory profiles record runtime allocations,
   frees, retained storage, peaks and source locations for VM and native programs.
   Saved JSON reports support inspection and automated analysis. See

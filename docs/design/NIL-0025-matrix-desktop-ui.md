@@ -71,3 +71,22 @@ Examples and public UI may display the generation as **NIL²**, followed by
 NIL³, NIL⁴ and later generations. Plain-text surfaces can use `NIL^2`.
 This presentation is separate from the Execute-format numeric release and
 artifact identity in `VERSION`; this change does not cut or renumber a release.
+
+## Windows development addendum — 2026-11-02
+
+The original Linux profile above now has a Windows development implementation
+using the same checked provider API. GTK4 remains an external dependency:
+`NIL_UI_GTK_DIRECTORY` selects an absolute runtime DLL directory, with
+executable-adjacent deployment as the alternative. The provider does not search
+the current directory or `PATH`, change DLL search policy, or install GTK.
+Window creation requires an interactive, visible window station; noninteractive
+service/SSH requests fail before GTK initialization.
+
+The approved Windows desktop run passed the provider/lifecycle checks and all
+10 desktop/interaction VM/native cases. Its harness targeted only verified HWNDs
+whose retained process identities belonged to private Jobs, without global
+input injection, focus changes or desktop switching. This is development
+evidence, not Windows release, bare-host or broader accessibility qualification.
+See the [current UI deployment and test contract](../standard-library/ui.md)
+and [Windows validation notebook](../../notebook/2026-11-02-windows-port.md)
+for the supported environment, evidence and remaining boundaries.

@@ -193,6 +193,24 @@ if(BUILD_TESTING)
     add_test(NAME nil.database-runtime COMMAND $<TARGET_FILE:ny_database_runtime_tests>)
     set_tests_properties(nil.database-runtime PROPERTIES LABELS "database;runtime" SKIP_RETURN_CODE 77 TIMEOUT 60)
 
+    add_executable(nil_database_postgresql_tests tests/database_postgresql_tests.cpp)
+    target_link_libraries(nil_database_postgresql_tests PRIVATE nilruntime)
+    target_include_directories(nil_database_postgresql_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    target_compile_features(nil_database_postgresql_tests PRIVATE cxx_std_17)
+    add_test(NAME nil.database-postgresql-client COMMAND $<TARGET_FILE:nil_database_postgresql_tests>)
+    set_tests_properties(nil.database-postgresql-client PROPERTIES LABELS "database;runtime" SKIP_RETURN_CODE 77 TIMEOUT 30)
+
+    add_executable(nilagent_ipc_tests tests/nilagent_ipc_tests.cpp)
+    target_link_libraries(nilagent_ipc_tests PRIVATE Threads::Threads)
+    target_compile_features(nilagent_ipc_tests PRIVATE cxx_std_17)
+    add_test(NAME nilagent.ipc COMMAND $<TARGET_FILE:nilagent_ipc_tests>)
+    set_tests_properties(nilagent.ipc PROPERTIES LABELS "tools;ipc" TIMEOUT 30)
+
+    add_executable(nil_etp_codec_tests tests/etp_codec_tests.cpp)
+    target_compile_features(nil_etp_codec_tests PRIVATE cxx_std_17)
+    add_test(NAME nil.etp-codec COMMAND $<TARGET_FILE:nil_etp_codec_tests>)
+    set_tests_properties(nil.etp-codec PROPERTIES LABELS "tools;ipc;etp" TIMEOUT 30)
+
     add_executable(nil_ui_runtime_tests tests/ui_runtime_tests.cpp)
     target_link_libraries(nil_ui_runtime_tests PRIVATE nilruntime Threads::Threads)
     target_include_directories(nil_ui_runtime_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
@@ -526,8 +544,25 @@ if(BUILD_TESTING)
         set_tests_properties(nildebugger.consumer-harness PROPERTIES
             LABELS "debugger;tools" TIMEOUT 90)
         find_program(NIL_UI_XVFB NAMES Xvfb DOC "Optional Xvfb for isolated desktop UI tests")
+        add_test(NAME nil.etp-golden-frames
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/etp_golden_frames.py"
+                --codec $<TARGET_FILE:nil_etp_codec_tests>)
+        set_tests_properties(nil.etp-golden-frames PROPERTIES LABELS "tools;ipc;etp" TIMEOUT 30)
+        add_test(NAME nil.ui-windows-display-harness
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_windows_ui_display_contract.py")
+        set_tests_properties(nil.ui-windows-display-harness PROPERTIES LABELS "ui;tools;windows" TIMEOUT 45)
+        set(NIL_UI_DISPLAY_CONTRACT "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/ui_display_contract.py")
+        set(NIL_UI_DISPLAY_TIMEOUT 240)
+        if(WIN32)
+            set(NIL_UI_DISPLAY_CONTRACT "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/windows_ui_display_contract.py")
+            set(NIL_UI_DISPLAY_TIMEOUT 660)
+            add_test(NAME nil.ui-windows-loader
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/windows_ui_loader_contract.py"
+                    --probe $<TARGET_FILE:nil_ui_runtime_tests>)
+            set_tests_properties(nil.ui-windows-loader PROPERTIES LABELS "ui;runtime;windows" TIMEOUT 180)
+        endif()
         add_test(NAME nil.ui-display
-            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/ui_display_contract.py"
+            COMMAND "${Python3_EXECUTABLE}" "${NIL_UI_DISPLAY_CONTRACT}"
                 --xvfb "${NIL_UI_XVFB}"
                 --tester $<TARGET_FILE:niltest> --compiler $<TARGET_FILE:nilcompiler>
                 --interpreter $<TARGET_FILE:nilinterpreter>
@@ -537,7 +572,7 @@ if(BUILD_TESTING)
                 --provider-test $<TARGET_FILE:nil_ui_runtime_tests>
                 --lifecycle-test $<TARGET_FILE:nil_ui_lifecycle_tests>
                 --llvm "${NIL_ENABLE_LLVM}")
-        set_tests_properties(nil.ui-display PROPERTIES LABELS "ui;routes" SKIP_RETURN_CODE 77 TIMEOUT 240)
+        set_tests_properties(nil.ui-display PROPERTIES LABELS "ui;routes" SKIP_RETURN_CODE 77 TIMEOUT "${NIL_UI_DISPLAY_TIMEOUT}")
         add_test(NAME nil.ui-intrinsic-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/ui_intrinsic_contract.py"
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
@@ -1371,13 +1406,21 @@ if(BUILD_TESTING)
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
                 --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src" --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(nil.reflection-consumer PROPERTIES LABELS "analysis;reflection;routes" TIMEOUT 120)
+        add_test(NAME nil.database-postgresql-fixture
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_database_postgresql_isolated.py")
+        set_tests_properties(nil.database-postgresql-fixture PROPERTIES LABELS "database;tools" TIMEOUT 30)
+        set(NIL_POSTGRESQL_ROUTE_REQUIREMENTS)
+        if(NIL_ENABLE_LLVM)
+            list(APPEND NIL_POSTGRESQL_ROUTE_REQUIREMENTS --require-all-routes)
+        endif()
         add_test(NAME nil.database-postgresql
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/database_postgresql_isolated.py"
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
                 --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
                 --provider-test $<TARGET_FILE:ny_database_runtime_tests>
-                --report-dir "${CMAKE_CURRENT_BINARY_DIR}/tests/database-postgresql")
-        set_tests_properties(nil.database-postgresql PROPERTIES LABELS "database;routes" SKIP_RETURN_CODE 77 TIMEOUT 240)
+                --report-dir "${CMAKE_CURRENT_BINARY_DIR}/tests/database-postgresql"
+                ${NIL_POSTGRESQL_ROUTE_REQUIREMENTS})
+        set_tests_properties(nil.database-postgresql PROPERTIES LABELS "database;routes" SKIP_RETURN_CODE 77 TIMEOUT 360)
         if(TARGET nilassembler AND NIL_ENABLE_LLVM)
             add_test(NAME nil.database-contract
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/database_contract.py"

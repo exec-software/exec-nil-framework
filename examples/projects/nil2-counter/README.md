@@ -18,9 +18,17 @@ For tools built from a source checkout, supply that checkout as the SDK:
 /path/to/exec-nil-framework/build/cmake/bin/nilbuild run --sdk /path/to/exec-nil-framework --target native
 ```
 
-The host needs Linux, GTK4 and a working graphical session. Native compilation
-also needs an LLVM-enabled compiler and the host linker. Missing provider or
-display support produces an explanatory error.
+The host needs an external GTK4 runtime and a working graphical session: X11
+or Wayland on Linux, or an interactive, visible desktop on the Windows
+development target. On Windows, deploy a compatible x64 GTK4 stack with its
+dependencies and runtime data, and set `NIL_UI_GTK_DIRECTORY` to its absolute
+DLL directory (or deploy the DLLs beside the executable). Noninteractive
+service/SSH desktops are unsupported and return a display error.
+
+Native compilation also needs an LLVM-enabled compiler and the host linker;
+Windows uses the [Windows development toolchain](../../../docs/getting-started/index.md#windows-development-sdk).
+Missing provider or display support produces an explanatory error. Windows
+development support is not Windows release or bare-host qualification.
 
 The window starts hidden while its controls are constructed. The event loop
 copies queued events, updates explicit `TextModel` and `FlagModel` state, and

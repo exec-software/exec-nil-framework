@@ -55,7 +55,8 @@ below.
 
 `nil.std.testing` supplies checks and checked value extraction with co-located
 niltest cases. `nil.std.ui` supplies typed windows, layouts, controls, events and
-model synchronization through the optional Linux GTK 4 provider. See the
+model synchronization through the optional GTK 4 provider on Linux and the
+Windows development target. See the
 [testing guide](../docs/tools/testing.md) and [UI reference](../docs/standard-library/ui.md)
 for execution evidence and current scope.
 
@@ -123,7 +124,11 @@ certification. macOS has not received equivalent route evidence. Windows secure
 file operations still have weaker parent-directory/namespace guarantees than
 the POSIX descriptor-relative implementation. Windows AOT linking uses the
 bounded argument-vector process runner, not a shell command. The optional GTK
-and PostgreSQL providers remain unavailable on Windows.
+and PostgreSQL providers also support Windows development builds, with external
+toolkit/client runtimes rather than SDK-bundled dependencies. GTK window creation
+requires an interactive, visible Windows window station; service/SSH desktops
+return a display error. See the [UI](../docs/standard-library/ui.md) and
+[database](../docs/standard-library/database.md) deployment contracts.
 
 Byte canonicalization is deliberate: an explicit `as u8` conversion and a
 write into `array<u8>` or `ptr<u8>` storage retain the low eight bits, equivalent
@@ -230,8 +235,9 @@ closed.
 The deliberately narrow active boundaries matter: database support includes the
 SQL builder and checked text-oriented SQLite/PostgreSQL providers, subject to
 the [database deployment contract](../docs/standard-library/database.md).
-PostgreSQL execution currently requires POSIX; the old experimental PostgreSQL
-declarations are not the active provider API. Networking is HTTP protocol
+PostgreSQL supports numeric `hostaddr` connections on Linux and Windows, and
+Unix sockets on POSIX; the old experimental PostgreSQL declarations are not the
+active provider API. Networking is HTTP protocol
 values, security is Base64/hex encoding, and threading is timed suspension.
 Transports, broad threading/concurrency, compression, cryptographic hashes,
 encryption, and secure random APIs remain quarantined. Native JIT/AOT parity and platform portability require

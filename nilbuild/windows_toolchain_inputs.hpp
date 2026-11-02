@@ -189,7 +189,7 @@ public:
       }
     }
     if (error || !library(runtime, 0)) return {};
-    for (const auto *name : {"kernel32.lib", "msvcrt.lib", "ucrt.lib",
+    for (const auto *name : {"kernel32.lib", "ws2_32.lib", "msvcrt.lib", "ucrt.lib",
                              "vcruntime.lib", "legacy_stdio_definitions.lib"}) {
       const auto selected = resolve(name);
       if (!selected || !library(*selected, 0)) return {};

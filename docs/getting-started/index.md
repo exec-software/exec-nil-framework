@@ -125,7 +125,11 @@ built for the MSVC ABI, not just the compiler command-line tools. The current
 Windows development configuration uses MSVC 14.44 and LLVM 18.1.8. SQLite tests
 also require `sqlite3.h` at configure time and a compatible x64 `sqlite3.dll`
 available to the Windows loader; SQLite is not included in the SDK. The
-PostgreSQL provider remains POSIX-only.
+PostgreSQL provider also supports Windows numeric loopback/network addresses
+with bounded connection deadlines. Its optional build requires `libpq-fe.h`
+and a matching libpq runtime deployment; neither PostgreSQL nor GTK is bundled
+in the SDK. See the [database](../standard-library/database.md) and
+[desktop UI](../standard-library/ui.md) provider contracts.
 
 Known MSVC issue: the reference VM's optional `vctip.exe` telemetry uploader
 remained unsignaled after termination was requested, so native linking correctly

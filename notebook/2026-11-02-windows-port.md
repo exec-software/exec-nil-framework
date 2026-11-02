@@ -806,3 +806,212 @@ embedded-NUL, backslash, drive-root and UNC behavior need focused tests before
 being called demonstrated bugs. No implementation was started during this
 read-only follow-up audit. Optional providers and platform release
 qualification remain separate work.
+
+### Execute Transfer Protocol reuse decision
+
+**Status:** direction accepted by the user; source reconnaissance complete;
+NIL wire migration not implemented or qualified. The Windows parity repairs
+remain independent work and are not evidence of ETP interoperability.
+
+**Question:** can the Execute format developed for Liz replace the divergent
+experimental interpreter-control messages instead of growing another wire
+format?
+
+**Evidence:** the checked-out `exec-liz` revision
+`af66c19eaafd6d3d5f3729b415812066cdb64668` contains ETP in
+`legacy/src/server/etp.h`, `etp_server.cpp`, `etp_client.py`, and
+`legacy/dashboard/lib/etp.js`. Those four files had no local changes during
+inspection. Its frame is a four-byte little-endian **payload-only** length,
+one-byte message type, then CBOR payload; total frame size is `5 + length`.
+The C++, Python and JavaScript implementations agree on this boundary. The
+header SHA-256 is
+`c69e01f49b7834f4007054e330f1d0e95d56880f05da269bf9d51d597e127300`.
+The existing message family covers sessions, inference streaming, reservoir
+state transfer, metrics, errors and learning. Those application meanings are
+not automatically equivalent to NIL VM state, execution control or reload.
+The legacy server identifies this implementation as `ETP/0.1-draft`, not a
+finalized general-purpose RPC specification.
+The header references `Research/Chaos/Execute Transfer Protocol.md`; that
+standalone specification has not yet been located in the inspected checkout
+and project notebooks. Use the implementations as observed evidence, not a
+claim that the entire original specification has been recovered.
+
+The inspected current `exec-beholdd` server, revision
+`caeb6e8fa301ec37937816a6d42c51c0b5a586cc`, exposes HTTP/JSON and SSE through
+`crates/beholdd-server/src/lib.rs` and `protocol.rs`. No ETP implementation was
+found in the inspected current Beholdd or earlier `exec-bog` source. This is
+not a claim about every historical branch or deployment. No inference server,
+model, GPU workload or Liz experiment was started or changed.
+
+**Decision:** adopt ETP framing/CBOR as the intended common envelope for the
+NIL control channel. Define an explicitly versioned NIL control profile and
+capability negotiation rather than reusing Liz inference opcodes with
+different meanings. Preserve request/response correlation, structured errors,
+and room for typed events and binary payloads. Reuse the existing local Unix
+socket / Windows named-pipe transports; adopting ETP does not require a TCP
+listener or an inference-engine dependency. Keep debugger DAP and editor LSP
+contracts unchanged.
+
+Keep the repaired existing JSON client interoperable with the current
+interpreter while the new profile is implemented and tested. Do not silently
+change its unsolicited JSON handshake to binary framing. Choose explicit
+protocol selection or separately versioned endpoints before migration; do
+not claim compatibility merely because both formats can represent the same
+fields. Reload and snapshots remain unsupported until their actual VM
+semantics are implemented, regardless of the new envelope's capabilities.
+
+**Follow-up and acceptance:** pin the recovered framing/message definitions,
+document the NIL profile and extension allocation, and test independent
+C++/Python/JavaScript golden frames before wiring the live endpoints. Require
+bounded payload/depth/container counts, strict CBOR and UTF-8 validation,
+partial/coalesced frames, truncated/disconnected peers, unknown versions and
+capabilities, bounded backpressure, and clean owned-handle teardown. Verify
+the same handshake/status/error transcript on Linux and Windows and keep
+existing-client compatibility explicit. Only then change the default control
+wire format. These are migration gates, not features claimed complete.
+
+### Optional-provider parity and ETP codec implementation
+
+This development increment starts from `59f9c2c93073d96aed8d58bc75807da4de02ef2a`.
+It supersedes the earlier GTK/PostgreSQL implementation gaps, not the earlier
+SDK's provenance or the Linux-only release policy. The previously accepted
+`71a9338ec3a7` SDK/VSIX remains unchanged; these new build-tree results are not
+installed-SDK, editor or debugger requalification for the new bytes.
+
+**PostgreSQL:** Windows now compiles the shared provider with libpq headers,
+uses bounded Winsock readiness waits and numeric address validation, and links
+`ws2_32.lib` through runtime, AOT and standalone linker routes. The build cache
+fingerprints that import library, including content changes with preserved
+timestamps. The stalled-loopback client fixture checks eight bounded timeout
+and peer-EOF cleanup cycles. No existing database or service is used.
+
+The isolated fixture uses a private Unix socket on POSIX and numeric loopback
+with SCRAM and a fresh secret on Windows. Direct administrative `postgres`
+startup was correctly rejected. The repaired Windows fixture uses PostgreSQL's
+own `pg_ctl` restricted-token startup inside a no-breakaway owned Job, verifies
+the exact private data directory and retained postmaster identity, and requires
+successful launcher completion and captured server readiness. It rejects a
+wrong password, accepts the private credential, requires all six LLVM-enabled
+routes, then verifies graceful shutdown and empty-Job cleanup. Fixture-local
+`lc_messages='C'` stabilizes the readiness marker without changing host locale.
+The final 16 fixture unit tests include a launcher-exit readiness race.
+
+Windows PostgreSQL 16.15 passed all six routes with zero skips in the first
+strict real-server run (15.53 seconds); the final fixture revision is included
+in the broader Windows regression run below. Linux's final focused run also
+passed all six routes. Failed private fixture directories remain diagnostic
+artifacts with the initialization password removed; successful clusters are
+removed after owned shutdown.
+
+**GTK:** Windows now shares the real GTK4 provider, widget/event behavior and
+lifecycle checks with Linux. Selection uses an absolute wide-character
+`NIL_UI_GTK_DIRECTORY`, or executable-adjacent DLLs, and scoped loader flags;
+explicit invalid selection fails closed. Direct GTK/GObject/GLib modules must
+match their selected files. This is not a complete isolation claim for already
+loaded transitive dependencies in arbitrary embedding applications.
+
+Ten real Windows loader controls pass, including Unicode paths, invalid and
+ambiguous deployments, and exclusion of ambient current-directory/PATH lookup.
+The Windows display harness has 42 portable unit checks. Explicit or adjacent
+GTK deployments are checked before an optional headless skip, and all errors
+after a display fixture starts remain hard failures. `--require-display` forbids
+skipping in qualification runs.
+
+The SSH service session exposed an upstream GTK crash at `gtk_window_new`,
+reproduced outside NIL using a minimal ctypes caller after successful
+`gtk_init_check`. The provider now rejects a nonvisible window station before
+GTK initialization. Its real Windows negative probe passed **39 checks**,
+including repeated failures with GTK still uninitialized. No private desktop
+or display simulation was substituted for interactive validation.
+
+With explicit user approval, a unique, limited-privilege InteractiveToken task
+ran in the existing `nil` console session 3 / `Default` desktop. It used no
+password, global input, foreground manipulation, desktop switch, policy change,
+or persistent server. The outer process Job and every fixture Job were bounded;
+keyboard/close messages targeted only verified Job-owned HWNDs with retained
+process identity. Results:
+
+- C++ provider: **4,470 checks passed**; lifecycle: **235 checks passed**.
+- Unchanged language desktop cases: **6 VM/native passes**.
+- Unchanged keyboard/close-request cases: **4 VM/native passes**.
+- All five display stages and the loader prerequisite exited zero with
+  `cleanupVerified=true`; outer Job cleanup also passed.
+- Task `NIL-Parity-Desktop-7bb0dce948ba4f3aac63aef3ac7e5351` was removed after
+  completion, with `LastTaskResult=0`. Removal alone is not cleanup proof;
+  the independent owned-process evidence is required.
+
+Guest evidence is under
+`C:\provision\parity-ui-v4-7bb0dce948ba4f3aac63aef3ac7e5351`.
+The copied `parity-ui-v4-evidence.tar.gz` SHA-256 is
+`6810e021dbc9a2a5262e7a3bbccc006f5d9fe56fc560d34fae9b7706d9d0d88a`.
+
+**Dependency provenance:** optional runtimes were provisioned only under
+`C:\provision\tools`; no installers, global PATH changes, system services or
+new accounts were used. They are not automatically included in NIL SDKs.
+
+- GTK 4.24.1-1: full MSYS2 UCRT64 dependency closure (82 packages), each archive
+  checked against the exact size/SHA-256 in a frozen official HTTPS repository
+  database. Database SHA-256:
+  `15f2152900bf4be320509902e24bb1767e7cf6916b3c871c8391bec766b72cd6`.
+  Transferred prefix archive SHA-256:
+  `586a6d50823061e720d931c251013916950152fadfafe14e70250d7599e39b23`.
+  Destination: `C:\provision\tools\gtk-ucrt64-4.24.1-parity\ucrt64`.
+  Extraction validated paths and materialized only in-prefix file symlinks;
+  licenses/data were retained. Only GLib schema compilation was run, not package
+  installation hooks. This is hash verification, not a PGP-signature claim.
+- PostgreSQL: official EDB
+  `postgresql-16.15-5-windows-x64-binaries.zip`, 373,254,386 bytes, SHA-256
+  `43bb45f173a6f08cf1d29a97a6d8deb119e8e8093a24c00d2d1001a0ccaa8281`.
+  Destination: `C:\provision\tools\postgresql-16.15-5-parity\pgsql`.
+  Archive paths/CRC/case collisions were checked before extraction. These PE
+  files have no Authenticode certificate; no independently published checksum
+  or signing assurance is claimed. The existing VC14 runtime remains a VM
+  dependency.
+
+**ETP stage 1:** `common/etp_codec.hpp` implements the observed five-byte ETP
+envelope plus a bounded CBOR subset, with no I/O or application opcodes.
+Ceilings are 64 KiB payload, depth 32, 1,024 container entries and 4,096 nodes.
+It preserves full CBOR integer ranges, finite floats including negative zero,
+binary data and strict UTF-8 text including NUL. It rejects duplicate map keys,
+unsupported tags/simple/indefinite values, invalid UTF-8, nonfinite floats,
+trailing data and truncated frames. Partial/coalesced streaming and callback
+failure/reentry boundaries are tested. Deterministic output is deliberately not
+claimed to use RFC shortest-float serialization.
+
+C++ and independent Python tests pass on Linux and Windows: 13 exact golden
+frames, 17 literal anchors, 20 accepted alternate encodings and 26 rejection
+vectors. Linux ASan/UBSan and independent cbor2 checks also passed during review.
+This is codec interoperability evidence, not completion of Liz's application
+protocol or a live NIL ETP endpoint. The repaired experimental JSON status
+client still speaks the interpreter's existing handshake/request/result schema;
+portable Unix-socket/named-pipe fixtures cover bounds, partial I/O and teardown.
+Reload and snapshots remain unsupported and send no misleading control request.
+
+The proposed next profile is explicitly versioned `nil.control/1`, with separate
+endpoint/protocol selection, negotiated capabilities and limits, unsigned
+correlation IDs, and mutually exclusive results/structured errors. Start with
+qualified status operations only. Document NIL-specific message-type allocation
+without repurposing Liz's inference opcodes. An advertised PID is not OS peer
+authentication; verify peer identity before exposing state-changing operations.
+The previous migration acceptance gates still apply.
+
+**Regression checkpoint:** Linux registered 557 tests: **556 passed**, zero
+failed and only the optional Xvfb display test skipped (398.82 seconds). After
+the last Windows guard and fixture changes, the full Linux build and all ten
+affected focused CTests passed again (9.99 seconds, no skips). The final Windows
+overlay is `parity-overlay-v4.tar.gz`, applied only after every prior task-owned
+guest file matched its recorded overlay. Its full regression run is in progress
+at this implementation checkpoint; no full-suite result is claimed yet.
+
+**Remaining parity/release work:** re-seal and rerun installed SDK, Unicode
+consumer, debugger and editor gates against the new revision; qualify a bare
+Windows host and the reviewed toolchain/dependency closure. The approved MSVC
+telemetry workaround remains part of this VM's provisioning, not proof of an
+unmodified MSVC installation. Inspect ordinary file/path/environment Unicode
+and separator behavior beyond the strict byte-file APIs. Windows atomic byte
+publication still has weaker parent-directory pinning/default-DACL guarantees
+than POSIX; experimental nilagent window search ignores its title filter.
+Optional HAG Windows loading remains unqualified. Native debugger attachment,
+general FFI, broad networking/streams and screenshot placeholders are shared
+limitations, not Windows-specific regressions. No Lich publication, SDK
+activation, Anomalous changes, model/GPU workload or long-lived server occurred.
