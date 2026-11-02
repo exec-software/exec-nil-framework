@@ -720,3 +720,89 @@ including the approved-policy SDK preflight and the twelve-test host oracle;
 the retained strict Windows JSON report records all 16 routes and confirmed
 private-directory cleanup. SDK construction/installed acceptance is the next
 separate gate; previously accepted artifacts remain untouched.
+
+### Sealed UTF-8/editor-parity SDK delivery
+
+Implementation checkpoint `71a9338ec3a7edb5c4627bf9a489b057fc3d2fc5` is pushed.
+The clean Windows checkout completed the normal development SDK pipeline:
+553 registered CTests, 551 passed, only `nil.ui-display` and
+`nil.database-postgresql` skipped, zero failures (530.16 seconds), followed by
+all **1,184 installed-consumer executions** against source and binary STL.
+The full JUnit report, rather than the earlier split development run, is bound
+into this SDK's manifest. Process-scoped `RemoteSigned` was used only under the
+user's explicit approval; a fresh shell still reports effective `Restricted`
+and all saved policy scopes remain `Undefined`.
+
+The fresh candidate is
+`C:\src\exec-nil-framework\build\windows-candidates\development-c01605b9dc1d439e819542c17314eaad\sdk`.
+It contains eleven root executables, eighteen binary standard-library modules,
+the `nilstd` sources, native static/shared runtimes in `nillib`, and 66 HTML
+documentation pages. Neither test-only editor helper is installed. There are
+259 sealed payload files plus `manifest.json`; the manifest SHA-256 is
+`d4e0ef1837bec3fc9081c30ff5d25855832bf86fcdc513a12ca5dcf3dd487881`.
+
+Separate installed-SDK acceptance passed:
+
+- Unicode byte-file contract: all 16 routes, supplied source/binary libraries,
+  34 successful commands, exact independently checked filename/content
+  namespaces, unchanged before/after origin snapshots, and private-directory
+  cleanup. The final evidence prefix is `unicode16-71a9338ec3a7-v2`.
+- Debugger consumer: all 146 assertions, with thirteen source/helper files,
+  the external origin anchor, and the entire SDK unchanged.
+- Real Windows editor: all 88 checks, zero exclusions, run
+  `dc6a528e-3916-4db2-b857-db1a1f498752`. Observation evidence binds seven
+  configured tools, 31 actual tasks across eight task kinds, and both stopped
+  debugger sessions to this exact SDK. The owned host runner exited zero.
+
+These checks used private workspaces alongside the read-only consumer matrix.
+The first temporary editor/Unicode CMD wrappers hit log-file sharing errors
+while reopening their vcvars log. The editor gate did not launch, and the
+Unicode run lacked its before-origin snapshot; neither was accepted as
+qualification. Their evidence remains preserved. Replacement wrappers use
+separate stage logs and required-artifact checks. No SDK/source change or
+relaxed assertion was needed. A separate PowerShell evidence-copy attempt
+needed explicit UTF-8 JSON decoding to preserve the Unicode workspace path;
+the successful copied settings match the editor gate's original hash.
+
+The archive and evidence are retained at
+`/home/nathan/vm/nil-win11/artifacts/71a9338ec3a7/`:
+
+- `nil-framework-windows-development-71a9338ec3a7.zip`, 28,381,254 bytes;
+- archive SHA-256
+  `872cf43be600e25b09a35c9cc161e341dd8b9887a48afdf253e886705dcd1447`;
+- `editor/nil-framework-editor-71a9338ec3a7.vsix`, 211,370 bytes, SHA-256
+  `b146c9c3b708d4e3fa1a093f8500e87b19037e303cfd482987b4c51122379f57`.
+
+The Linux host independently verified every archive payload, exact SDK layout,
+clean revision, build/runtime bindings, full registered CTest inventory and
+consumer evidence. Supplemental verification reconciles the externally copied
+manifest with the Unicode/debugger/editor reports, actual command paths and
+arguments, exact Unicode namespaces, copied libraries, and source hashes. The
+supplemental binders passed 31 and 12 focused tests respectively, with separate
+peer review. The VSIX has seventeen files, no test helpers or native tools,
+correct commit-pinned relative README links, and a production bundle identical
+to the actual editor-tested bundle:
+`061c763ce82c767ccb0f8eb27e47aecc1ddfceef145b1cc4453d923c2965f556`.
+The complete verifier outputs and reproduction helpers are in `verification/`.
+
+At the delivery boundary, source was clean, scoped framework/editor processes
+were idle, Visual Studio telemetry OptIn remained zero, and the optional
+uploader remained disabled and absent from the process list. Older accepted
+SDK/VSIX archive hashes remain unchanged. No active SDK selection, user editor
+profile, Anomalous files, Lich activation or publication was changed. This is
+a Windows **development** SDK, not Windows release/bare-host qualification.
+The notebook-only follow-up commit does not relabel its source revision.
+
+### Next STL slice after this delivery
+
+Compatibility whole-file operations, File streams and path helpers have
+confirmed interpreter coverage but no native provider; directory operations
+also lack an active, complete public API. Prioritize a small cross-route
+contract for these surfaces, with pure-Ny lexical path helpers where practical.
+Separately, static inspection identified untested filename/path risks:
+ordinary file APIs still use narrow Windows paths, and host filesystem parsing
+may contradict the documented cross-platform separator behavior. Unicode,
+embedded-NUL, backslash, drive-root and UNC behavior need focused tests before
+being called demonstrated bugs. No implementation was started during this
+read-only follow-up audit. Optional providers and platform release
+qualification remain separate work.
