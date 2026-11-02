@@ -18,6 +18,35 @@ export interface ToolInvocation {
   readonly args: readonly string[];
 }
 
+export interface SdkBuildInvocation extends ToolInvocation {
+  readonly script: string;
+  readonly buildDirectory?: string;
+}
+
+export function sdkBuildInvocation(
+  workspace: string,
+  buildDirectory: string,
+  platform: NodeJS.Platform = process.platform,
+  powershell: string = "powershell.exe"
+): SdkBuildInvocation {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const script = pathApi.join(workspace, "scripts", platform === "win32" ? "build-sdk.ps1" : "build-sdk.sh");
+  if (platform !== "win32") {
+    // The existing POSIX workflow configures its own build and installs an SDK;
+    // ny.buildDirectory must not silently change its environment-based contract.
+    return { command: script, args: [], script };
+  }
+  const configuredBuild = pathApi.resolve(workspace, buildDirectory);
+  return {
+    command: powershell,
+    // -File accepts literal script arguments. Never build a -Command string or
+    // forward general task args (which could enable dirty-source overrides).
+    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", script, "-BuildDirectory", configuredBuild],
+    script,
+    buildDirectory: configuredBuild
+  };
+}
+
 export function compileInvocation(options: CompileInvocationOptions): ToolInvocation {
   const args = [...(options.extraArgs ?? [])];
   if (options.mode === "native") {

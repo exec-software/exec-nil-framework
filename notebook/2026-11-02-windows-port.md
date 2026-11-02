@@ -616,3 +616,107 @@ unwired `nilstd/native/io/file.windows.c` declarations are not evidence about
 the active runtime. Six editor fixture ports, native PowerShell SDK-command
 integration, optional providers and platform release qualification remain
 separate work.
+
+### Strict UTF-8 byte-file boundary and editor fixture parity
+
+The follow-up chose an explicit contract for `read_regular_bytes` and
+`write_bytes_atomic`: non-empty, NUL-free, strict UTF-8 filenames, with no
+Unicode normalization. File payloads remain arbitrary bytes. Additive shared
+helpers now validate scalar encodings on both hosts and use explicit
+`CP_UTF8`/`MB_ERR_INVALID_CHARS` conversion before wide Windows filesystem
+operations. Only the interpreter and native language providers switch to
+these helpers; internal C++ host-path overloads preserve their prior behavior.
+No secure staging, namespace containment, ACL, or durability guarantee was
+broadened. Library and platform documentation now distinguish these scopes.
+
+Baseline evidence was captured before changing the Windows runtime. The
+previous accepted `fdaf975` SDK passed all 16 **valid** Unicode language routes.
+The independent native probe then demonstrated two separate gaps: an
+unmanifested embedding host (`GetACP=1252`) could not read the host-created
+exact Unicode filename; a manifested host (`GetACP=65001`) accepted a malformed
+UTF-8 filename. The old Linux runtime also accepted malformed raw-byte paths.
+After the fix, both Windows embedding modes pass the same ABI probe, including
+eight valid relative/absolute cases and sixteen malformed-path cases. No
+machine locale or process manifest policy was changed to make this pass.
+
+The new language/host oracle covers Latin, CJK, astral and decomposed spellings,
+all 256 payload bytes, exact independent namespace inventory, no-clobber
+sentinels, replacement and staging leftovers. Six malformed sequences are
+constructed from byte-indexed slices of valid Ny literals. All read/create/
+replace paths must return the exact redacted invalid-path error. Its 16
+executions cover source and binary STL through text/binary interpreter,
+bundles, assembler/linker, JIT and AOT. Build-tree CTest creates a private
+18-module binary STL, copies rather than consumes the caller's native runtime,
+and verifies the original hash. Failed runs retain their unique directory and
+print its location; twelve independent oracle/retention/summary unit tests
+cover the harness itself.
+
+Initial Linux full regression: 551 tests, 549 passed and the existing UI-display
+and PostgreSQL environment skips, 106.59 seconds. Initial Windows focused
+runtime/route checks passed; SDK preflight initially failed because this VM's
+effective PowerShell policy disallowed script files. The user explicitly
+approved **process-scoped RemoteSigned only** for these build/test processes.
+All four preflight tests (eleven negative prerequisite invocations) then
+passed. Saved machine/user policy remains unchanged; neither the extension
+nor repository script changes or bypasses execution policy.
+
+Windows SDK tasks now use literal `ProcessExecution` PowerShell `-File`
+arguments and the configured build directory. They require a clean checkout,
+configured Release build, and inherited x64 Visual Studio developer tools;
+missing prerequisites fail before candidate creation. POSIX keeps its existing
+build-script contract. Editor host checks inspect the task descriptor without
+executing a workspace SDK build. Full Windows regression and editor acceptance
+evidence are recorded below after completion; this entry alone is not a new
+SDK delivery or release qualification.
+
+The pre-checkpoint Windows regression completed 552 tests (550 passed, the
+same two environment skips) in 574.57 seconds. It deliberately excluded only
+`nil.windows-sdk-preflight` while process-policy approval was pending; that
+test's four cases subsequently passed separately under the approved scope.
+There are 553 registered Windows tests and 551 Linux tests. The final clean
+SDK pipeline must include the full Windows inventory, not reuse this split
+development run as a packaged qualification report.
+
+The six editor fixture ports preserve the original assertions. Four fake
+compiler programs use a test-only native pipe adapter on Windows; semantic
+aliases use real directory junctions with canonical-path/file-identity proof,
+rather than duplicate files or silently skipped symlink checks. The adapter
+uses a creation-time private Job and an exact standard-handle allow-list.
+Cleanup retains verified member process handles and checks total lifetime
+coverage as well as Job emptiness; unaccounted historical children fail closed.
+Its initial `CREATE_NO_WINDOW` variant intermittently observed a second
+unretained lifetime even for `process.exit(19)`. Bounded Job-local diagnostics
+confirmed one Node process before resume and two total lifetimes after exit;
+the additional process image was not observed, so it is not identified here.
+The pipe-only `DETACHED_PROCESS` variant instead showed exactly one lifetime
+and correct exit 19 in all three controls. The complete launcher contract then
+passed, including binary pipes/Unicode argv, timeout, abort, output budget,
+historical-child refusal, and twenty immediate descendant-CWD release controls
+with a live-resource positive control before each termination.
+
+The Linux real-editor run passed all 88 checks with zero exclusions (run
+`a442c882-a1da-4d74-892e-bbde05737b16`). This is build-tree regression evidence,
+not a fresh installed-SDK result: its source-backed support SDK is an older
+dirty development fixture. Windows unit tests passed 151 of 152, with the
+existing POSIX FIFO-only check explicitly skipped. Baseline and development
+regression evidence is retained at
+`/home/nathan/vm/nil-win11/artifacts/windows-stl-editor-20261102.85Ew98/`.
+
+Final build-tree editor checks pass **88/88 with zero exclusions on both
+hosts**: Windows run `830b8f6e-2727-464c-9a9b-744d6fd3cd09`, Linux run
+`7bca4f4c-695d-45c7-8f10-5f96dd26f54d`. The first Windows run stopped at the
+completion fixture, which echoed a lowercase-drive request path while the
+editor's native canonical identity used uppercase `C:`. A direct byte-exact
+fixture diagnostic confirmed `fs.realpathSync` preserved `c:` whereas
+`fs.realpathSync.native` returned `C:`. Completion/signature fixture responses
+now model the real compiler's canonical source identities while preserving
+captured text. Product schema/identity checks and timeouts were not relaxed.
+The isolated editor launcher also now writes telemetry/update settings to its
+own `profile/User/settings.json` before launch: those application-scoped
+settings were ineffective in workspace settings alone. No user editor profile
+was modified. Final units: Linux 154 passed; Windows 153 passed with only the
+POSIX FIFO test skipped. The final five Windows focused CTests all pass,
+including the approved-policy SDK preflight and the twelve-test host oracle;
+the retained strict Windows JSON report records all 16 routes and confirmed
+private-directory cleanup. SDK construction/installed acceptance is the next
+separate gate; previously accepted artifacts remain untouched.

@@ -5,12 +5,13 @@ const os = require("node:os");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { spawn } = require("node:child_process");
-const { resolveEditor, hostTimeout, validateReport } = require("./host-support.cjs");
+const { resolveEditor, hostTimeout, writeIsolatedProfileSettings, validateReport } = require("./host-support.cjs");
 
 const extensionRoot = path.resolve(__dirname, "..");
 const repository = path.resolve(extensionRoot, "..");
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nil vscode host café 中文-"));
 const workspace = path.join(temporary, "workspace");
+const profile = path.join(temporary, "profile");
 const reportDirectory = path.join(repository, "build", "vscode-host-smoke");
 fs.mkdirSync(path.join(workspace, ".vscode"), { recursive: true });
 fs.mkdirSync(reportDirectory, { recursive: true });
@@ -29,12 +30,7 @@ const settings = {
   "ny.sdkPath": process.env.NIL_VSCODE_SDK_PATH || repository,
   "ny.languageServer.enabled": true,
   "ny.languageServer.diagnostics.enabled": true,
-  "security.workspace.trust.enabled": false,
-  "files.autoSave": "off",
-  "extensions.autoUpdate": false,
-  "extensions.autoCheckUpdates": false,
-  "update.mode": "none",
-  "telemetry.telemetryLevel": "off"
+  "files.autoSave": "off"
 };
 for (const [setting, tool] of Object.entries({
   server: "nillsp", compiler: "nilcompiler", interpreter: "nilinterpreter", debugger: "nildebugger", projectTool: "nilbuild", testTool: "niltest", aperture: "aperture"
@@ -44,6 +40,7 @@ for (const [setting, tool] of Object.entries({
   settings[`ny.${setting}.path`] = executable;
 }
 fs.writeFileSync(path.join(workspace, ".vscode", "settings.json"), JSON.stringify(settings, null, 2));
+writeIsolatedProfileSettings(profile);
 const fixture = (book) => `book ${book}
 
 Point begin record
@@ -81,7 +78,7 @@ delete env.VSCODE_IPC_HOOK_CLI;
 const args = [
   "--new-window", "--wait", "--skip-welcome", "--skip-release-notes",
   "--disable-workspace-trust", "--disable-extensions", "--disable-gpu",
-  `--user-data-dir=${path.join(temporary, "profile")}`,
+  `--user-data-dir=${profile}`,
   `--extensions-dir=${path.join(temporary, "extensions")}`,
   `--extensionDevelopmentPath=${extensionRoot}`,
   `--extensionTestsPath=${path.join(__dirname, "suite.cjs")}`,

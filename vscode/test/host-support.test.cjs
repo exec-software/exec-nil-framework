@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { resolveEditor, hostTimeout, validateReport, sameFile } = require("./host-support.cjs");
+const { resolveEditor, hostTimeout, writeIsolatedProfileSettings, validateReport, sameFile } = require("./host-support.cjs");
 
 function windows(files, env = {}) {
   const existing = new Set(files.map(file => path.win32.normalize(file).toLowerCase()));
@@ -35,6 +35,24 @@ test("host deadline is finite, explicit, and rejects ambiguous values", () => {
   assert.equal(hostTimeout("1800000"), 1800000);
   for (const value of ["", "0", "999", "1800001", "NaN", "1000x", "1e6", "-1000", "Infinity", " 1000"])
     assert.throws(() => hostTimeout(value), /must be an integer/);
+});
+
+test("isolated profile disables application updates and telemetry in User settings before editor launch", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nil profile settings café 中文-"));
+  try {
+    const profile = path.join(directory, "profile");
+    const filename = writeIsolatedProfileSettings(profile);
+    assert.equal(filename, path.join(profile, "User", "settings.json"));
+    const settings = JSON.parse(fs.readFileSync(filename, "utf8"));
+    assert.deepEqual(settings, { "security.workspace.trust.enabled": false,
+      "extensions.autoUpdate": false, "extensions.autoCheckUpdates": false,
+      "update.mode": "none", "telemetry.telemetryLevel": "off" });
+    assert.deepEqual(fs.readdirSync(directory), ["profile"]);
+    const original = fs.readFileSync(filename);
+    assert.throws(() => writeIsolatedProfileSettings(profile), { code: "EEXIST" });
+    assert.deepEqual(fs.readFileSync(filename), original, "Never overwrite a pre-existing editor profile.");
+    assert.throws(() => writeIsolatedProfileSettings("relative-profile"), /absolute path/);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
 test("host report binds the run and workspace, and never accepts a timed-out PASS", () => {

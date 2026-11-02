@@ -1,4 +1,5 @@
 #include "secure_file_io.hpp"
+#include "../../common/strict_json.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -57,6 +58,36 @@ bool valid_file_path(const char *path) {
 }
 
 namespace {
+
+std::optional<std::filesystem::path>
+path_from_utf8_string(const std::string &path) {
+  if (!valid_file_path(path))
+    return std::nullopt;
+  try {
+    // Reuse the strict scalar validator before any filesystem access; its
+    // JSON-specific diagnostic is deliberately not exposed by the file API.
+    nil::detail::valid_utf8(path);
+#ifdef _WIN32
+    if (path.size() > static_cast<std::size_t>(
+                          (std::numeric_limits<int>::max)()))
+      return std::nullopt;
+    const int narrow_size = static_cast<int>(path.size());
+    const int wide_size = MultiByteToWideChar(
+        CP_UTF8, MB_ERR_INVALID_CHARS, path.data(), narrow_size, nullptr, 0);
+    if (wide_size <= 0)
+      return std::nullopt;
+    std::wstring wide(static_cast<std::size_t>(wide_size), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.data(),
+                            narrow_size, wide.data(), wide_size) != wide_size)
+      return std::nullopt;
+    return std::filesystem::path(std::move(wide));
+#else
+    return std::filesystem::path(path);
+#endif
+  } catch (...) {
+    return std::nullopt;
+  }
+}
 
 std::optional<std::filesystem::path>
 path_from_api_string(const std::string &path) {
@@ -534,6 +565,23 @@ AtomicFileWrite write_file_atomic(const std::filesystem::path &path,
 }
 
 #endif
+
+BoundedFileRead read_regular_file_bounded_utf8(const std::string &path,
+                                              std::uint64_t maximum_bytes) {
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path)
+    return {false, {}, "file.read_regular_bytes: invalid path"};
+  return read_regular_file_bounded(*native_path, maximum_bytes);
+}
+
+AtomicFileWrite write_file_atomic_utf8(const std::string &path,
+                                      const std::vector<char> &bytes,
+                                      bool replace) {
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path)
+    return {false, "file.write_bytes_atomic: invalid destination path"};
+  return write_file_atomic(*native_path, bytes, replace);
+}
 
 BoundedFileRead read_regular_file_bounded(const std::string &path,
                                           std::uint64_t maximum_bytes) {

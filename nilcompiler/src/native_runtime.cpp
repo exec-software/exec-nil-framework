@@ -1591,7 +1591,7 @@ std::int32_t nyrt_read_regular_bytes(const char *path,
       set_error(error_out, "file.read_regular_bytes: invalid arguments");
       return 0;
     }
-    auto result = ny::detail::read_regular_file_bounded(
+    auto result = ny::detail::read_regular_file_bounded_utf8(
         path_value, static_cast<std::uint64_t>(maximum_bytes));
     if (!result.ok) {
       set_error(error_out, result.error);
@@ -1635,7 +1635,7 @@ std::int32_t nyrt_write_bytes_atomic(const char *path, const void *value,
     if (array->length != 0)
       bytes.assign(data, data + static_cast<std::size_t>(array->length));
     auto result =
-        ny::detail::write_file_atomic(path_value, bytes, replace != 0);
+        ny::detail::write_file_atomic_utf8(path_value, bytes, replace != 0);
     if (!result.ok) {
       set_error(error_out, result.error);
       return 0;

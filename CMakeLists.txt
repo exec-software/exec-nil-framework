@@ -66,11 +66,31 @@ if(BUILD_TESTING)
     target_compile_features(nil_vscode_host_runner PRIVATE cxx_std_17)
     if(WIN32)
         target_link_libraries(nil_vscode_host_runner PRIVATE shell32 advapi32)
+        # Native adapter for executable fake-compiler fixtures, not shipped.
+        add_executable(nil_vscode_compiler_fixture vscode/test/compiler-fixture-runner.cpp)
+        target_compile_features(nil_vscode_compiler_fixture PRIVATE cxx_std_17)
         add_executable(nil_windows_console_utf8_tests tests/windows_console_utf8_tests.cpp)
         target_compile_features(nil_windows_console_utf8_tests PRIVATE cxx_std_17)
         add_test(NAME nil.windows-console-utf8 COMMAND $<TARGET_FILE:nil_windows_console_utf8_tests>)
         set_tests_properties(nil.windows-console-utf8 PROPERTIES
             LABELS "tools;windows;rc" TIMEOUT 30)
+    endif()
+
+    add_executable(nil_utf8_file_paths_tests tests/utf8_file_paths_tests.cpp)
+    target_link_libraries(nil_utf8_file_paths_tests PRIVATE nilruntime)
+    target_include_directories(nil_utf8_file_paths_tests PRIVATE nilcompiler/src)
+    add_test(NAME nil.utf8-file-paths COMMAND $<TARGET_FILE:nil_utf8_file_paths_tests>)
+    set_tests_properties(nil.utf8-file-paths PROPERTIES LABELS "storage;runtime;rc" TIMEOUT 30)
+    if(MSVC)
+        target_compile_definitions(nil_utf8_file_paths_tests PRIVATE NIL_EXPECT_UTF8_ACP=1)
+        add_executable(nil_utf8_file_paths_unmanifested_tests tests/utf8_file_paths_tests.cpp)
+        target_link_libraries(nil_utf8_file_paths_unmanifested_tests PRIVATE nilruntime)
+        target_include_directories(nil_utf8_file_paths_unmanifested_tests PRIVATE nilcompiler/src)
+        # Deliberately replace the directory's UTF-8 manifest link options.
+        # The runtime ABI must not depend on its embedding application's ACP.
+        set_property(TARGET nil_utf8_file_paths_unmanifested_tests PROPERTY LINK_OPTIONS /MANIFEST:NO)
+        add_test(NAME nil.utf8-file-paths-unmanifested COMMAND $<TARGET_FILE:nil_utf8_file_paths_unmanifested_tests>)
+        set_tests_properties(nil.utf8-file-paths-unmanifested PROPERTIES LABELS "storage;runtime;windows;rc" TIMEOUT 30)
     endif()
 
     set(NY_SMOKE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/tests/hello.nil")
@@ -485,6 +505,21 @@ if(BUILD_TESTING)
     # test suite when testing was explicitly enabled.
     find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
+        if(WIN32)
+            add_test(NAME nil.windows-sdk-preflight
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/windows_sdk_preflight.py")
+            set_tests_properties(nil.windows-sdk-preflight PROPERTIES LABELS "tools;sdk;windows;rc" TIMEOUT 60)
+        endif()
+        add_test(NAME nil.byte-file-path-oracle
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_byte_file_unicode_paths_contract.py")
+        set_tests_properties(nil.byte-file-path-oracle PROPERTIES LABELS "storage;tools;rc" TIMEOUT 30)
+        add_test(NAME nil.byte-file-unicode-routes
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/byte_file_unicode_paths_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --assembler $<TARGET_FILE:nilassembler> --linker $<TARGET_FILE:nillinker>
+                --runtime $<TARGET_FILE:nilruntime> --nilstd "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.byte-file-unicode-routes PROPERTIES LABELS "storage;stl;routes;rc" TIMEOUT 480)
         add_test(NAME nildebugger.consumer-harness
             COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/validation/ny-3d/scripts/test_debugger_consumer.py")

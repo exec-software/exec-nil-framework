@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const vscode = require("vscode");
+const { createCompilerFixture, createFileAlias, sameExistingFile } = require("./compiler-fixture-support.cjs");
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function eventually(operation, description) {
   const until = Date.now() + 15_000;
@@ -118,16 +119,18 @@ exports.run = async ({ check, workspace }) => {
     await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
   });
 
-  if (process.platform !== "win32") await check("dependency edits and closes cancel compiler snapshots and imported fixes remain unavailable", async () => {
+  await check("dependency edits and closes cancel compiler snapshots and imported fixes remain unavailable", async () => {
     const configuration = vscode.workspace.getConfiguration("ny");
     const originalCompiler = configuration.get("compiler.path");
     const fake = path.join(workspace, "workspace-probe.cjs");
     const log = path.join(workspace, "workspace-probe.jsonl");
-    const entryPath = path.join(workspace, "workspace-probe.matrix");
-    const dependencyPath = path.join(workspace, "workspace-probe-dep.ny");
+    const sourceDirectory = path.join(workspace, "workspace probe sources");
+    await fs.mkdir(sourceDirectory);
+    const entryPath = path.join(sourceDirectory, "workspace-probe.matrix");
+    const dependencyPath = path.join(sourceDirectory, "workspace-probe-dep.ny");
     await fs.writeFile(entryPath, "book probe\n");
     await fs.writeFile(dependencyPath, "DEP_DISK\r\n");
-    await fs.writeFile(fake, `#!/usr/bin/env node
+    const executable = await createCompilerFixture(fake, `
 const fs = require('node:fs');
 const primary = process.argv[process.argv.indexOf('--workspace-stdin') + 1];
 let input = '';
@@ -135,9 +138,9 @@ process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => input += chunk);
 process.stdin.on('end', () => {
   const request = JSON.parse(input);
-  const dependencies = request.sources.filter(item => { try { return fs.realpathSync(item.path) === ${JSON.stringify(dependencyPath)}; } catch { return false; } });
+  const dependencies = request.sources.filter(item => sameExistingFile(item.path, ${JSON.stringify(dependencyPath)}));
   const dependency = dependencies[0];
-  const ours = primary === ${JSON.stringify(entryPath)};
+  const ours = sameExistingFile(primary, ${JSON.stringify(entryPath)});
   fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({pid:process.pid,primary,text:dependency?.text,count:dependencies.length}) + '\\n');
   const stale = dependency?.text.includes('WAIT');
   const diagnostics = ours && dependency ? [{code:stale?'STALE':'IMPORT_CURRENT',severity:'warning',message:'Imported finding',
@@ -146,14 +149,14 @@ process.stdin.on('end', () => {
     language:primary.endsWith('.ny')?'ny':'matrix',success:true,reflection:{},diagnostics,
     sources:ours && dependency ? [{path:${JSON.stringify(dependencyPath)},text:dependency.text}] : []})), ours && stale ? 5000 : 0);
 });
-`, { mode: 0o755 });
+`);
     try {
-      await configuration.update("compiler.path", fake, vscode.ConfigurationTarget.Workspace);
+      await configuration.update("compiler.path", executable, vscode.ConfigurationTarget.Workspace);
       const dependency = await vscode.workspace.openTextDocument(dependencyPath);
       const entry = await vscode.workspace.openTextDocument(entryPath);
       const waitForRequest = marker => eventually(async () => {
         let lines; try { lines = await fs.readFile(log, "utf8"); } catch { return false; }
-        return lines.trim().split("\n").map(line => JSON.parse(line)).find(item => item.primary === entryPath && item.text?.includes(marker));
+        return lines.trim().split("\n").map(line => JSON.parse(line)).find(item => sameExistingFile(item.primary, entryPath) && item.text?.includes(marker));
       }, "delayed dependency snapshot begins");
       const exited = pid => eventually(() => {
         try { process.kill(pid, 0); return false; } catch (error) { return error.code === "ESRCH"; }
@@ -172,14 +175,15 @@ process.stdin.on('end', () => {
       const actions = await vscode.commands.executeCommand("vscode.executeCodeActionProvider", dependency.uri, imported.range, vscode.CodeActionKind.QuickFix.value);
       assert.deepEqual(actions.filter(action => action.command?.command === "ny.applyAnalysisFix"), []);
       assert.equal(await fs.readFile(dependencyPath, "utf8"), "DEP_DISK\r\n");
-      const aliasPath = path.join(workspace, "workspace-probe-alias.ny");
-      await fs.symlink(dependencyPath, aliasPath);
+      const aliasFixture = await createFileAlias(dependencyPath, path.join(workspace, "workspace probe alias"));
+      const aliasPath = aliasFixture.path;
       const alias = await vscode.workspace.openTextDocument(aliasPath);
+      assert.notEqual(alias.uri.toString(), dependency.uri.toString());
       await replace(alias, dependency.getText());
       await analyze(entry);
       assert.ok(findings(alias).some(item => item.code === "IMPORT_CURRENT"), "Canonical imported paths must map back to an open alias URI.");
       const logEntries = (await fs.readFile(log, "utf8")).trim().split("\n").map(line => JSON.parse(line));
-      assert.equal(logEntries.filter(item => item.primary === entryPath).at(-1).count, 1, "Identical canonical aliases must be coalesced before sending.");
+      assert.equal(logEntries.filter(item => sameExistingFile(item.primary, entryPath)).at(-1).count, 1, "Identical canonical aliases must be coalesced before sending.");
       await replace(alias, "different unsaved alias\n");
       assert.equal(await vscode.commands.executeCommand("ny.analyzeCurrentFile"), false, "Conflicting open aliases must be reported rather than choosing one buffer.");
       await replace(alias, dependency.getText());
@@ -200,6 +204,7 @@ process.stdin.on('end', () => {
       await analyze(entry);
       assert.equal(findings(entry).some(item => item.code === "STALE"), false);
       assert.equal(findings(dependency).some(item => item.code === "STALE"), false);
+      return { cancelled: 2, importedFixUnavailable: true, aliasKind: aliasFixture.kind, canonicalAliasCoalesced: true };
     } finally {
       await configuration.update("compiler.path", originalCompiler, vscode.ConfigurationTarget.Workspace);
     }

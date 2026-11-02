@@ -75,6 +75,22 @@ user or paste one into `cmd.exe`, substitute the separator yourself; the value
 `separator()` returns is for splitting and rebuilding paths, not for
 presentation.
 
+## Whole-file byte API filenames
+
+`nil.std.io.read_regular_bytes` and `write_bytes_atomic` accept non-empty,
+NUL-free, strict UTF-8 filenames on both Linux and Windows. The same filename
+bytes identify the same Unicode spelling: no normalization is performed, so
+composed and decomposed spellings remain distinct where the filesystem allows
+them. Malformed encodings fail with a path-redacted error before any file is
+opened or staged. File **contents** remain arbitrary bytes, including NUL.
+
+The Windows provider explicitly converts UTF-8 to wide paths, even when the
+native runtime is embedded in an executable without a UTF-8 process manifest.
+This is a contract for these two language APIs, not a claim about every STL
+file operation. Internal C++ host-path helpers retain their existing native
+path / legacy narrow-string behavior. Parent-directory containment, ACLs and
+durability limitations remain documented in the [standard library](standard-library/index.md).
+
 ## Known differences
 
 These are host behaviors the framework cannot reconcile. Everything else should

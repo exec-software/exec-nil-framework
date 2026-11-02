@@ -48,21 +48,7 @@ exports.run = async function run() {
     checks.push({ name, status: "PASS", milliseconds: Date.now() - start, ...(detail || {}) });
     console.log(`PASS ${name}`);
   };
-  const windowsExclusions = {
-    "analyzer-checks": ["cancelled compiler cannot publish stale diagnostics or unsafe locations"],
-    "workspace-checks": ["dependency edits and closes cancel compiler snapshots and imported fixes remain unavailable"],
-    "completion-checks": ["compiler completion recovers unavailable queries and cancels changed snapshots"],
-    "member-signature-checks": ["signature queries retry operational failures and cancel changed source snapshots"],
-    "semantic-checks": ["semantic definitions reject dirty include aliases and observe arbitrary include disk changes",
-      "rename rejects identical live symlink aliases instead of changing only one buffer"]
-  };
   const runModule = async name => {
-    // These are existing exclusions, not evidence of equivalent Windows
-    // coverage. Make them visible instead of silently counting only passes.
-    if (process.platform === "win32") for (const excluded of windowsExclusions[name] || []) {
-      report.skippedChecks.push({ name: excluded, reason: "Existing host fixture has not been ported to Windows." });
-      console.log(`SKIP ${excluded}: existing fixture is not yet ported to Windows.`);
-    }
     await require(`./${name}.cjs`).run({ check, workspace });
   };
   const events = [];
@@ -181,6 +167,45 @@ exports.run = async function run() {
       return;
     }
     await runDataChecks();
+    await check("workspace SDK task descriptor is platform-correct without executing a build", async () => {
+      const root = vscode.workspace.workspaceFolders[0].uri.fsPath;
+      const configuration = vscode.workspace.getConfiguration("ny");
+      const previous = configuration.inspect("buildDirectory").workspaceValue;
+      const buildDirectory = "build SDK café 中文 & [literal]";
+      const script = path.join(root, "scripts", process.platform === "win32" ? "build-sdk.ps1" : "build-sdk.sh");
+      await fs.mkdir(path.dirname(script), { recursive: true });
+      await fs.writeFile(script, process.platform === "win32" ? "throw 'Descriptor-only fixture must not execute'\n" :
+        "#!/bin/sh\nexit 99\n", { flag: "wx", mode: 0o755 });
+      const countBefore = events.filter(event => event.task === "build-sdk").length;
+      try {
+        await configuration.update("buildDirectory", buildDirectory, vscode.ConfigurationTarget.Workspace);
+        const tasks = (await vscode.tasks.fetchTasks({ type: "ny" })).filter(task => task.definition.task === "build-sdk");
+        assert.equal(tasks.length, 1);
+        const task = tasks[0], execution = task.execution;
+        assert.equal(await sameFile(execution.options.cwd, root), true);
+        if (process.platform === "win32") {
+          assert.ok(execution instanceof vscode.ProcessExecution, "Windows SDK builds must not run Bash or a command shell.");
+          assert.equal(path.basename(execution.process).toLowerCase(), "powershell.exe");
+          const expectedBuild = path.resolve(root, buildDirectory);
+          assert.deepEqual(execution.args, ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", script,
+            "-BuildDirectory", expectedBuild]);
+          assert.equal(task.definition.buildDirectory, expectedBuild);
+        } else {
+          assert.ok(execution instanceof vscode.ShellExecution, "Keep the existing POSIX build-script contract.");
+          // VS Code round-trips a zero-argument ShellExecution through its
+          // commandLine representation when tasks are fetched from a provider.
+          assert.equal(execution.command || execution.commandLine, script);
+          assert.deepEqual(execution.args, []);
+        }
+        assert.equal(events.filter(event => event.task === "build-sdk").length, countBefore);
+        await assert.rejects(fs.stat(path.resolve(root, buildDirectory)), { code: "ENOENT" });
+        return { descriptorOnly: true, buildExecuted: false,
+          command: execution.process || execution.command || execution.commandLine, args: execution.args };
+      } finally {
+        await configuration.update("buildDirectory", previous, vscode.ConfigurationTarget.Workspace);
+        await fs.rm(script);
+      }
+    });
     const documents = [];
     for (const filename of ["editor.matrix", "brief.mat"]) {
       await check(`${filename}: language detection`, async () => {

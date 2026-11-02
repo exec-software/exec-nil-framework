@@ -155,10 +155,17 @@ Profiles measure runtime logical allocations rather than process RSS, and live
 objects at exit are not classified as leaks. See the
 [Aperture guide](../aperture/README.md) for accounting scope and CLI options.
 
-The SDK and CTest commands target a NIL Framework repository checkout. The SDK command
-runs `scripts/build-sdk.sh` (through Bash on Windows); native Windows integration
-with `scripts/build-sdk.ps1` is still outstanding, so run that PowerShell pipeline
-separately. The CTest command uses `ny.buildDirectory`, which defaults to `build/cmake`.
+The SDK and CTest commands target a NIL Framework repository checkout. On POSIX,
+the SDK command runs `scripts/build-sdk.sh`. On Windows it launches
+`scripts/build-sdk.ps1` directly with PowerShell `-File`, without Bash or a
+constructed command string. Windows creates a fresh development candidate;
+it never activates or publishes an SDK. Set `ny.buildDirectory` (default
+`build/cmake`) to an already configured single-configuration Release build with
+LLVM, tests and experimental tools enabled and `CMAKE_INSTALL_BINDIR=.`.
+The checkout must be clean. Launch VS Code from an x64 Visual Studio developer
+environment containing CMake, CTest, Git and Python. PowerShell's inherited
+execution policy must permit the local script; the extension does not change
+or bypass that policy. The CTest command uses the same `ny.buildDirectory`.
 
 ## Projects
 
@@ -281,7 +288,7 @@ editor builds.
 | `ny.compiler.extraArgs` | `[]` | Extra arguments for every compiler task. |
 | `ny.native.extraArgs` | `[]` | Extra arguments for native compiler tasks. |
 | `ny.outputDirectory` | empty | Artifact directory; empty means beside the source file. |
-| `ny.buildDirectory` | `build/cmake` | Build tree passed to CTest. |
+| `ny.buildDirectory` | `build/cmake` | Build tree passed to CTest and the Windows development SDK build. |
 | `ny.trace.server` | `off` | Trace LSP messages in the server output channel. |
 
 Path settings support `${workspaceFolder}`, `${workspaceFolderBasename}`,
@@ -563,15 +570,27 @@ node --test test/host-support.test.cjs
 node test/host-runner-contract.cjs /absolute/path/to/nil_vscode_host_runner
 ```
 
-The current full Windows host suite explicitly records six existing fixture
-exclusions in `skippedChecks`: four controlled-compiler cancellation/retry
-probes still use POSIX executable scripts, and two semantic alias probes are
-POSIX-only. A passing Windows report does not certify those excluded checks.
-The workspace SDK-build command also still selects `scripts/build-sdk.sh`
-(through Bash on Windows); it has not been integrated with the native Windows
-`scripts/build-sdk.ps1` pipeline. Run that PowerShell pipeline separately for
-Windows SDK assembly. This host gate does not qualify the workspace SDK-build
-command, and these are remaining Windows editor parity gaps.
+The full suite now contains 88 checks, including the four controlled-compiler
+cancellation/retry probes and two semantic alias probes on both hosts. Windows
+also needs the noninstalled CMake target `nil_vscode_compiler_fixture` beside
+the host runner (or selected with `NIL_VSCODE_FIXTURE_RUNNER`) and an absolute
+Node executable in `NIL_VSCODE_FIXTURE_NODE`. This pipe-only native adapter
+preserves literal arguments and redirected bytes; a creation-time private Job,
+retained process handles, lifetime accounting and finite deadlines bound its
+children. Unverifiable cleanup fails the fixture. It is test infrastructure,
+not an SDK tool or extension payload. Its standalone Windows contract is:
+
+```sh
+node test/compiler-fixture-contract.cjs C:/absolute/path/nil_vscode_compiler_fixture.exe
+```
+
+Alias checks use real file symlinks on POSIX and directory junctions on Windows,
+with independent canonical-path/file-identity checks and distinct live editor
+URIs. Their reports record the alias kind; no symlink privilege or machine
+setting is changed. `skippedChecks` must be empty for full parity acceptance.
+The SDK task check is descriptor-only: it verifies the platform-specific
+command and literal arguments but does **not** build or certify an SDK.
+SDK assembly and installed-consumer acceptance remain separate gates.
 
 The build bundles the extension into `dist/extension.js` with esbuild. The VSIX
 expects a separately installed NIL Framework SDK; native binaries are not embedded.

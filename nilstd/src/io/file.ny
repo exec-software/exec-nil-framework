@@ -31,6 +31,8 @@ pub fn read_bytes(path: text) -> Result<array<u8>, text>
 # checks and read through that descriptor. Windows rejects reparse points but
 # cannot provide the same parent-directory descriptor guarantee. Parent-
 # directory symlinks are outside this API's containment contract everywhere.
+# Filenames must be non-empty, NUL-free, strict UTF-8. No Unicode normalization
+# is performed; malformed encodings fail before filesystem access on all hosts.
 @intrinsic("file.read_regular_bytes")
 pub fn read_regular_bytes(path: text, maximum_bytes: i64) -> Result<array<u8>, text>
 
@@ -52,9 +54,11 @@ pub fn write_bytes(path: text, content: array<u8>) -> Result<bool, text>
 # include path contents. POSIX uses descriptor-relative staging/publication and
 # publishes a fresh private 0600 inode, including on replacement; prior mode,
 # owner, ACLs, and extended attributes are not preserved. Windows uses
-# CREATE_NEW plus MoveFileEx, the account's default DACL, and narrow host path
-# APIs whose UTF-8 portability is unverified. Its namespace guarantees are also
-# weaker. Staging cleanup is best effort: a rare host cleanup failure can leave
+# CREATE_NEW plus MoveFileExW and the account's default DACL. Filenames are
+# non-empty, NUL-free, strict UTF-8 without normalization, converted explicitly
+# to wide Windows paths independently of the host process code page. Invalid
+# encodings fail before staging. Windows namespace guarantees remain weaker.
+# Staging cleanup is best effort: a rare host cleanup failure can leave
 # a `.ny-write-*` orphan. Successful publication is visibility-atomic, not a
 # promise of parent-directory durability across sudden power loss.
 @intrinsic("file.write_bytes_atomic")

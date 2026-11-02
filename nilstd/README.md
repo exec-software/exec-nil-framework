@@ -100,11 +100,12 @@ the destination directory and publishes atomically. Its `replace=false` mode
 is a race-free no-clobber operation, including for dangling symlinks. The
 POSIX publication creates a fresh private `0600` inode even when replacing a
 file; existing ownership and other metadata are not preserved. Windows uses
-the account's default DACL and wide filesystem APIs. Its language-facing
-string conversion still depends on the process ANSI code page; the current
-MSVC tools and generated native programs request UTF-8 through their manifests.
-Unmanifested runtime consumers and strict malformed-path rejection need
-separate evidence. Cleanup of a named staging artifact is best effort, so
+the account's default DACL and wide filesystem APIs. These two language-facing
+APIs require non-empty, NUL-free, strict UTF-8 filenames on both hosts, without
+Unicode normalization. Windows conversion is independent of the embedding
+application's process code page; malformed encodings fail before filesystem
+access or staging. This contract does not extend to every other file API or
+to internal C++ host-path helpers. Cleanup of a named staging artifact is best effort, so
 a rare host cleanup failure may leave an orphan. The textual/binary security
 fixture covers exact octets, limits, special files, symlinks, path redaction,
 preservation on failure, private POSIX modes, concurrent no-clobber publication,

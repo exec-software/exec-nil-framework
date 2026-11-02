@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const vscode = require("vscode");
+const { createCompilerFixture } = require("./compiler-fixture-support.cjs");
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function eventually(operation, description, timeout = 15_000) {
@@ -101,12 +102,12 @@ exports.run = async ({ check: runCheck, workspace }) => {
 
   // A controlled executable makes cancellation and malformed-location checks
   // deterministic without timing assumptions about the real compiler.
-  if (process.platform !== "win32") await check("cancelled compiler cannot publish stale diagnostics or unsafe locations", async () => {
+  await check("cancelled compiler cannot publish stale diagnostics or unsafe locations", async () => {
     const configuration = vscode.workspace.getConfiguration("ny");
     const original = configuration.get("compiler.path");
     const fake = path.join(workspace, "analysis-probe.cjs");
     const log = path.join(workspace, "analysis-probe.jsonl");
-    await fs.writeFile(fake, `#!/usr/bin/env node
+    const executable = await createCompilerFixture(fake, `
 const fs = require('node:fs');
 const source = process.argv[process.argv.indexOf('--workspace-stdin') + 1];
 let input = '';
@@ -124,10 +125,10 @@ process.stdin.on('end', () => {
     finding('UNREPRESENTABLE_FIX', {fix:{start:2,length:1,replacement:'',description:'Unsafe line-ending edit'}})
   ]})), text.includes('WAIT_OLD') ? 5000 : 0);
 });
-`, { mode: 0o755 });
+`);
     let document;
     try {
-      await configuration.update("compiler.path", fake, vscode.ConfigurationTarget.Workspace);
+      await configuration.update("compiler.path", executable, vscode.ConfigurationTarget.Workspace);
       document = await vscode.workspace.openTextDocument({ language: "matrix", content: "A\r\nWAIT_OLD\r\n" });
       await vscode.window.showTextDocument(document);
       const oldResult = vscode.commands.executeCommand("ny.analyzeCurrentFile");

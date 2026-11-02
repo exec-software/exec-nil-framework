@@ -36,6 +36,23 @@ function hostTimeout(value) {
   return timeout;
 }
 
+function writeIsolatedProfileSettings(profile) {
+  if (!path.isAbsolute(profile)) throw new Error("The isolated editor profile must be an absolute path.");
+  const user = path.join(profile, "User");
+  fs.mkdirSync(user, { recursive: true });
+  const filename = path.join(user, "settings.json");
+  // Application-scoped settings are ignored in workspace settings. Write the
+  // disposable --user-data-dir before the editor starts, never a user profile.
+  fs.writeFileSync(filename, JSON.stringify({
+    "security.workspace.trust.enabled": false,
+    "extensions.autoUpdate": false,
+    "extensions.autoCheckUpdates": false,
+    "update.mode": "none",
+    "telemetry.telemetryLevel": "off"
+  }, null, 2), { flag: "wx" });
+  return filename;
+}
+
 function validateReport(result, { runId, workspace, code, signal, timedOut }) {
   if (timedOut || code !== 0 || signal)
     throw new Error(`Host did not complete successfully (exit ${code}, signal ${signal || "none"}, timeout ${Boolean(timedOut)}).`);
@@ -58,4 +75,4 @@ async function sameFile(left, right) {
   return aPath === bPath;
 }
 
-module.exports = { resolveEditor, hostTimeout, validateReport, sameFile };
+module.exports = { resolveEditor, hostTimeout, writeIsolatedProfileSettings, validateReport, sameFile };

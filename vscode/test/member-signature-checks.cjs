@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const vscode = require("vscode");
+const { createCompilerFixture } = require("./compiler-fixture-support.cjs");
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const label = item => typeof item.label === "string" ? item.label : item.label.label;
@@ -222,7 +223,7 @@ exports.run = async ({ check, workspace }) => {
     assert.ok(!result || result.signatures.length === 0);
   });
 
-  if (process.platform !== "win32") await check("signature queries retry operational failures and cancel changed source snapshots", async () => {
+  await check("signature queries retry operational failures and cancel changed source snapshots", async () => {
     const configuration = vscode.workspace.getConfiguration("ny");
     const originalCompiler = configuration.get("compiler.path");
     const fake = path.join(workspace, "signature-probe.cjs");
@@ -233,7 +234,7 @@ exports.run = async ({ check, workspace }) => {
     const source = marker => `# ${marker}\nfn main() -> i32\n return probe(7)\nend fn\n`;
     const dependency = await create(workspace, "signature cancellation/dependency.ny", "# CURRENT\n");
     const entry = await create(workspace, "signature cancellation/main.ny", source("CURRENT"));
-    await fs.writeFile(fake, `#!/usr/bin/env node
+    const executable = await createCompilerFixture(fake, `
 const fs = require('node:fs');
 const primary = process.argv[process.argv.indexOf('--workspace-stdin') + 1];
 const query = process.argv.indexOf('--signature-at');
@@ -242,9 +243,9 @@ process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => input += chunk);
 process.stdin.on('end', () => {
   const request = JSON.parse(input);
-  const current = request.sources.find(item => item.path === primary);
-  const dependency = request.sources.find(item => item.path === ${JSON.stringify(dependencyPath)});
-  const ours = primary === ${JSON.stringify(entryPath)} && query >= 0;
+  const current = request.sources.find(item => item.path === primary || sameExistingFile(item.path, primary));
+  const dependency = request.sources.find(item => sameExistingFile(item.path, ${JSON.stringify(dependencyPath)}));
+  const ours = sameExistingFile(primary, ${JSON.stringify(entryPath)}) && query >= 0;
   const stale = ours && [current?.text, dependency?.text].some(text => text?.includes('WAIT_'));
   if (ours) fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ pid:process.pid,text:current.text,dependency:dependency?.text }) + '\\n');
   if (ours && fs.existsSync(${JSON.stringify(unavailable)})) {
@@ -253,14 +254,15 @@ process.stdin.on('end', () => {
     return;
   }
   const name = stale ? 'only_stale' : 'current';
-  const signature = ours ? {schema:'nil.signature.v1',partial:true,path:primary,cursor:Number(process.argv[query + 1]),
+  const responseSources = ours ? [current,...(dependency?[dependency]:[])].map(canonicalSnapshot) : [];
+  const signature = ours ? {schema:'nil.signature.v1',partial:true,path:responseSources[0].path,cursor:Number(process.argv[query + 1]),
     start:Buffer.byteLength(current.text.slice(0,current.text.indexOf('probe(7)') + 6)),length:1,
-    sources:[current,...(dependency?[dependency]:[])],label:'probe(' + name + ': i32) -> i32',
+    sources:responseSources,label:'probe(' + name + ': i32) -> i32',
     parameters:[{name,type:'i32',label:name + ': i32',variadic:false}],active_parameter:0,return_type:'i32'} : undefined;
   setTimeout(() => process.stdout.write(JSON.stringify({schema:'nil.analysis.v1',source:primary,
     language:primary.endsWith('.ny')?'ny':'matrix',success:true,reflection:{},diagnostics:[],sources:[],signature})),stale?5000:0);
 });
-`, { mode: 0o755 });
+`);
     const waitForRequest = marker => eventually(async () => {
       let text; try { text = await fs.readFile(log, "utf8"); } catch { return false; }
       return text.trim().split("\n").map(line => JSON.parse(line)).find(item =>
@@ -270,7 +272,7 @@ process.stdin.on('end', () => {
       try { process.kill(pid, 0); return false; } catch (error) { return error.code === "ESRCH"; }
     }, "cancelled signature compiler exits");
     try {
-      await configuration.update("compiler.path", fake, vscode.ConfigurationTarget.Workspace);
+      await configuration.update("compiler.path", executable, vscode.ConfigurationTarget.Workspace);
       await checkedSignature(entry, "probe(7)", "probe(", ["current"], 0);
       const versions = [entry.version, dependency.version];
       await fs.writeFile(unavailable, "fail the next signature query");

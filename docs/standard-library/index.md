@@ -130,8 +130,12 @@ Callers requiring namespace containment must control the parent directory,
 because a path entry can change after preflight. These errors are path-redacted.
 On POSIX every publication is a fresh private `0600` inode, including
 replacement; prior ownership, mode, ACLs, and extended attributes are not
-preserved. Windows uses the account's default DACL, and UTF-8 portability through
-its narrow path APIs remains unverified. Named staging cleanup is best effort,
+preserved. Windows uses the account's default DACL and wide filesystem APIs.
+Both whole-file APIs require non-empty, NUL-free, strict UTF-8 filenames on
+every host, without Unicode normalization. Malformed encodings fail before
+filesystem access; Windows conversion does not depend on the host executable's
+process code page. Other file APIs are not covered by this filename contract.
+Named staging cleanup is best effort,
 so a rare host cleanup failure can leave a `.ny-write-*` orphan. Publication is
 visibility-atomic but does not promise parent-directory durability after a
 sudden power loss.

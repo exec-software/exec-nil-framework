@@ -4,8 +4,43 @@ import test from "node:test";
 import {
   compileInvocation,
   defaultArtifactPath,
-  interpreterInvocation
+  interpreterInvocation,
+  sdkBuildInvocation
 } from "../taskModel";
+
+test("Windows SDK build selects PowerShell with literal Unicode paths and a configured build", () => {
+  const root = "C:\\work café 中文 & %PATH%\\NIL [main]";
+  const build = "C:\\build café 中文 & %PATH%\\configured [Release]";
+  const powershell = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+  const script = root + "\\scripts\\build-sdk.ps1";
+  assert.deepEqual(sdkBuildInvocation(root, build, "win32", powershell), {
+    command: powershell,
+    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", script, "-BuildDirectory", build],
+    script,
+    buildDirectory: build
+  });
+});
+
+test("Windows SDK builds resolve workspace-relative and UNC build directories without a shell", () => {
+  const relative = sdkBuildInvocation("C:\\repo", "build\\cmake", "win32");
+  assert.equal(relative.buildDirectory, "C:\\repo\\build\\cmake");
+  assert.equal(relative.command, "powershell.exe");
+  const unc = "\\\\builder\\shared SDK café\\configured";
+  assert.equal(sdkBuildInvocation("C:\\repo", unc, "win32").buildDirectory, unc);
+  for (const forbidden of ["-Command", "-EncodedCommand", "-ExecutionPolicy", "-AllowDirtySource"]) {
+    assert.equal(relative.args.includes(forbidden), false);
+  }
+  assert.equal(relative.args.some(arg => arg.includes("build-sdk.sh")), false);
+});
+
+test("POSIX SDK builds retain the existing environment-driven install workflow", () => {
+  for (const platform of ["linux", "darwin"] as const) {
+    const script = "/work/café 中文 & $literal/scripts/build-sdk.sh";
+    assert.deepEqual(sdkBuildInvocation("/work/café 中文 & $literal", "custom/cmake", platform), {
+      command: script, args: [], script
+    });
+  }
+});
 
 test("NIL compilation is deterministic and preserves configured arguments", () => {
   const invocation = compileInvocation({

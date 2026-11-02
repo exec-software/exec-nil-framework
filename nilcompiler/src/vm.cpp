@@ -3870,7 +3870,7 @@ void VM::executeInstruction(const Instruction &instr) {
 
       detail::BoundedFileRead loaded;
       try {
-        loaded = detail::read_regular_file_bounded(
+        loaded = detail::read_regular_file_bounded_utf8(
             path, static_cast<std::uint64_t>(requested_limit));
       } catch (const std::bad_alloc &) {
         push_error("file.read_regular_bytes: allocation failed");
@@ -4082,7 +4082,7 @@ void VM::executeInstruction(const Instruction &instr) {
 
       detail::AtomicFileWrite written;
       try {
-        written = detail::write_file_atomic(path, bytes, replace_value != 0);
+        written = detail::write_file_atomic_utf8(path, bytes, replace_value != 0);
       } catch (...) {
         push_error("file.write_bytes_atomic: host operation failed");
         return;

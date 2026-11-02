@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const vscode = require("vscode");
+const { createFileAlias } = require("./compiler-fixture-support.cjs");
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function eventually(operation, description) {
@@ -229,14 +230,14 @@ exports.run = async ({ check, workspace }) => {
     await assert.rejects(fs.stat(targetPath), { code: "ENOENT" });
   });
 
-  if (process.platform !== "win32") await check("semantic definitions reject dirty include aliases and observe arbitrary include disk changes", async () => {
+  await check("semantic definitions reject dirty include aliases and observe arbitrary include disk changes", async () => {
     const directory = path.join(workspace, "semantic include alias");
     await fs.mkdir(directory, { recursive: true });
     const headerPath = path.join(directory, "helper.inc");
-    const aliasPath = path.join(directory, "helper-alias.inc");
     const headerText = 'pub fn included_value() -> i32\n return 7\nend fn\n';
     await fs.writeFile(headerPath, headerText);
-    await fs.symlink(headerPath, aliasPath);
+    const aliasFixture = await createFileAlias(headerPath, path.join(workspace, "semantic include alias link"));
+    const aliasPath = aliasFixture.path;
     await fs.writeFile(path.join(directory, "wrapper.ny"), 'module wrapper\n@include "helper.inc"\n');
     const entry = await create(workspace, "semantic include alias/main.ny",
       'import wrapper.*\nfn main() -> i32\n let local_count = included_value()\n return local_count\nend fn\n');
@@ -246,6 +247,7 @@ exports.run = async ({ check, workspace }) => {
     // provider and make the alias guard appear to pass without exercising it.
     await vscode.window.showTextDocument(entry, { preview: false });
     const alias = await vscode.workspace.openTextDocument(aliasPath);
+    assert.notEqual(alias.uri.toString(), vscode.Uri.file(headerPath).toString());
     await vscode.window.showTextDocument(alias, { preview: false });
     await replace(alias, headerText.replace("return 7", 'return "dirty header"'));
     assert.equal(alias.isDirty, true);
@@ -267,7 +269,7 @@ exports.run = async ({ check, workspace }) => {
       "arbitrary include disk watcher rechecks dependent source");
     await fs.writeFile(headerPath, headerText);
     await expectDefinition(entry, "return local_count", "local_count", entry, "let local_count =");
-    return { includeExtension: ".inc", alias: true, unchangedTarget: true };
+    return { includeExtension: ".inc", alias: true, aliasKind: aliasFixture.kind, unchangedTarget: true };
   });
 
   await check("unsupported expanded-source, member and type bindings never use legacy guessed definitions", async () => {
@@ -454,12 +456,12 @@ exports.run = async ({ check, workspace }) => {
     return { saved: false, undo: true, lineEndings: document.eol === vscode.EndOfLine.CRLF ? "CRLF" : "LF" };
   });
 
-  if (process.platform !== "win32") await check("rename rejects identical live symlink aliases instead of changing only one buffer", async () => {
+  await check("rename rejects identical live symlink aliases instead of changing only one buffer", async () => {
     const text = 'fn main() -> i32\n let local_value = 7\n return local_value\nend fn\n';
     const document = await create(workspace, "semantic editing aliases/main.ny", text);
     await vscode.window.showTextDocument(document, { preview: false });
-    const aliasPath = path.join(path.dirname(document.uri.fsPath), "alias.ny");
-    await fs.symlink(document.uri.fsPath, aliasPath);
+    const aliasFixture = await createFileAlias(document.uri.fsPath, path.join(workspace, "semantic editing aliases link"));
+    const aliasPath = aliasFixture.path;
     const alias = await vscode.workspace.openTextDocument(aliasPath);
     await vscode.window.showTextDocument(alias, { preview: false });
     assert.notEqual(alias.uri.toString(), document.uri.toString());
@@ -475,7 +477,7 @@ exports.run = async ({ check, workspace }) => {
     assert.equal(await fs.readFile(aliasPath, "utf8"), text);
     await vscode.window.showTextDocument(alias);
     await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
-    return { identicalAliases: true, untouchedBuffers: 2 };
+    return { identicalAliases: true, aliasKind: aliasFixture.kind, untouchedBuffers: 2 };
   });
 
   await check("Matrix callable locals shadowing paragraphs preserve checked rename and undo", async () => {

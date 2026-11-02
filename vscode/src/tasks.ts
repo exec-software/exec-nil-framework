@@ -6,7 +6,8 @@ import {
   compileInvocation,
   CompileMode,
   defaultArtifactPath,
-  interpreterInvocation
+  interpreterInvocation,
+  sdkBuildInvocation
 } from "./taskModel";
 import { projectForResource } from "./projectContext";
 import { projectInvocation, ProjectTarget } from "./projectModel";
@@ -255,23 +256,32 @@ export class NyTaskProvider implements vscode.TaskProvider {
     if (!root) {
       return undefined;
     }
-    const script = path.join(root, "scripts", "build-sdk.sh");
-    if (!fs.existsSync(script)) {
+    const rawBuildDirectory =
+      definition.buildDirectory ?? nyConfiguration().get<string>("buildDirectory", "build/cmake");
+    const invocation = sdkBuildInvocation(
+      root,
+      expandConfiguredPath(rawBuildDirectory, root),
+      process.platform,
+      resolveCommandOnPath("powershell.exe") ?? "powershell.exe"
+    );
+    if (!fs.existsSync(invocation.script)) {
       return undefined;
     }
-    const execution =
-      process.platform === "win32"
-        ? new vscode.ShellExecution("bash", [script], { cwd: root })
-        : new vscode.ShellExecution(script, [], { cwd: root });
+    const windows = process.platform === "win32";
+    const execution = windows
+      ? new vscode.ProcessExecution(invocation.command, [...invocation.args], { cwd: root })
+      : new vscode.ShellExecution(invocation.command, [...invocation.args], { cwd: root });
     const task = new vscode.Task(
-      definition,
+      windows ? { ...definition, buildDirectory: invocation.buildDirectory } : definition,
       taskScope(),
-      "Build and install NIL Framework SDK",
+      windows ? "Build NIL Framework Windows development SDK candidate" : "Build and install NIL Framework SDK",
       "NIL Framework",
       execution
     );
     task.group = vscode.TaskGroup.Build;
-    task.detail = "Run scripts/build-sdk.sh for the current NIL Framework repository.";
+    task.detail = windows
+      ? "Run scripts/build-sdk.ps1 from a clean checkout and configured Release build. Requires an inherited Visual Studio x64 developer environment. Creates a fresh development candidate; no activation or publication."
+      : "Run scripts/build-sdk.sh for the current NIL Framework repository.";
     return presentation(task);
   }
 
