@@ -328,3 +328,26 @@ Relevant platform contracts:
 [default token owner](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_owner),
 [reopening a retained object](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-reopenfile),
 and [restricted-token access checks](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-createrestrictedtoken).
+
+### Exact-source validation and evidence-parser correction
+
+Parity source checkpoint `ae42a34f6b3bc240781517de8ccf49deda9cdb9e` was
+committed/pushed and synchronized to the clean VM without resetting either
+worktree. Its final Linux gate passed 545/547 tests in 104.03 seconds; Windows
+passed 544/546 in 420.62 seconds. Each had only display/PostgreSQL skips. An
+independent JUnit comparison found exactly two Linux-only contracts (ELF
+toolchain inputs and POSIX process semantics) and one Windows-only contract
+(the Job memory limiter), with no failure/error elements or duplicate names.
+All new Windows contracts executed rather than skipping. The Windows JUnit
+inventory matched every registered-test entry in the captured build evidence.
+
+That evidence review also caught a metadata bug: `cmake_value()` stopped a
+quoted compiler path at the closing parenthesis in `Program Files (x86)`.
+This did not change the selected compiler or execution results, but it made
+the recorded compiler identity incomplete. Quoted values now terminate at
+their closing quote, while unquoted scalars retain their original trimming.
+Regressions cover the real MSVC path, quoted parentheses/semicolons/whitespace,
+unquoted scalars, vendor-version strings, malformed assignments, and complete
+Windows build-configuration extraction. All 45 qualification unit tests pass.
+The final delivery is regenerated from the corrected clean source rather than
+rewriting the already-sealed candidate's evidence.

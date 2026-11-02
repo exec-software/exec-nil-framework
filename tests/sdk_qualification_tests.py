@@ -200,6 +200,29 @@ class QualificationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "registered tests"):
                 qualification.summarize_ctest(report, ["a", "a"], 0)
 
+    def test_cmake_value_preserves_quoted_path_characters(self):
+        for value in ("C:/Program Files (x86)/Microsoft Visual Studio/cl.exe",
+                      "C:/tool)chain;preview/cl.exe", " leading and trailing ", ""):
+            with self.subTest(value=value):
+                document = 'set(CMAKE_CXX_COMPILER "{}")\n'.format(value)
+                self.assertEqual(qualification.cmake_value(document, "CMAKE_CXX_COMPILER"), value)
+
+    def test_cmake_value_reads_unquoted_scalars_and_versions(self):
+        for value in ("FALSE", "1", "18.1.8", "3.31.6-msvc6", "/usr/bin/c++"):
+            with self.subTest(value=value):
+                self.assertEqual(qualification.cmake_value(
+                    'set(VALUE\t {} \t)\n'.format(value), "VALUE"), value)
+                self.assertEqual(qualification.cmake_value(
+                    'set(VALUE "{}")\n'.format(value), "VALUE"), value)
+
+    def test_cmake_value_does_not_accept_partial_or_other_assignments(self):
+        for document in ('set(VALUE "C:/Program Files (x86)/cl.exe)\n',
+                         'set(VALUE "C:/broken\npath/cl.exe")\n',
+                         'set(VALUE_EXTRA "not the requested value")\n',
+                         'set(VALUE "unterminated"\n'):
+            with self.subTest(document=document):
+                self.assertEqual(qualification.cmake_value(document, "VALUE"), "")
+
     def configured_build(self, root, version="3.28.3", cache_version="3.28.3"):
         configured = root / "build/CMakeFiles" / version
         configured.mkdir(parents=True, exist_ok=True)
@@ -249,6 +272,30 @@ class QualificationTests(unittest.TestCase):
             value = fixture()
             value["qualification"]["evidence"]["build"].update(configuration)
             self.assertEqual(qualification.qualification_errors(value, True, "a" * 40), [])
+
+    def test_build_configuration_preserves_full_windows_compiler_path(self):
+        with tempfile.TemporaryDirectory(prefix="nil-sdk-config-windows-path-") as temporary:
+            root = Path(temporary)
+            configured = self.configured_build(root, "3.31.6-msvc6", "3.31.6")
+            compiler = ("C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/"
+                        "VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe")
+            (configured / "CMakeCXXCompiler.cmake").write_text(
+                'set(CMAKE_CXX_COMPILER "{}")\nset(CMAKE_CXX_COMPILER_ID "MSVC")\n'
+                'set(CMAKE_CXX_COMPILER_VERSION "19.44.35229.0")\n'.format(compiler),
+                encoding="utf-8", newline='\n')
+            (configured / "CMakeSystem.cmake").write_text(
+                'set(CMAKE_SYSTEM_NAME "Windows")\nset(CMAKE_SYSTEM_PROCESSOR "AMD64")\n'
+                'set(CMAKE_CROSSCOMPILING FALSE)\n', encoding="utf-8", newline='\n')
+            with patch.object(qualification, "command", side_effect=AssertionError("must not probe PATH")):
+                configuration = qualification.build_configuration(root, root / "build")
+            self.assertEqual(configuration["cxx_path"], compiler)
+            self.assertEqual(configuration["cxx_id"], "MSVC")
+            self.assertEqual(configuration["cxx_version"], "19.44.35229.0")
+            self.assertEqual(configuration["cmake_version"], "3.31.6-msvc6")
+            self.assertEqual(configuration["llvm_version"], "18.1.3")
+            self.assertEqual(configuration["system"], "Windows")
+            self.assertEqual(configuration["machine"], "AMD64")
+            self.assertFalse(configuration["cross_compiling"])
 
     def test_build_configuration_rejects_wrong_base_and_invalid_suffix(self):
         for version in ("3.28.30", "3.28.30-msvc6", "3.29.3-msvc6", "3x28x3",

@@ -70,9 +70,14 @@ def source_identity(repo: Path) -> dict[str, Any]:
 
 
 def cmake_value(document: str, name: str) -> str:
-    match = re.search(r"^set\(" + re.escape(name) + r'\s+"?([^"\)\r\n]*)"?\)',
+    # Configured metadata uses quoted strings or unquoted scalar values.
+    # Parentheses inside quotes are path characters, not the end of set().
+    match = re.search(r"^set\(" + re.escape(name) +
+                      r'[ \t]+(?:"([^"\r\n]*)"|([^"()\r\n]*))[ \t]*\)',
                       document, re.MULTILINE)
-    return match.group(1).strip() if match else ""
+    if match is None:
+        return ""
+    return match.group(1) if match.group(1) is not None else match.group(2).strip()
 
 
 def build_configuration(repo: Path, build: Path) -> dict[str, Any]:
