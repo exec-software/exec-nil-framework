@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const vscode = require("vscode");
+const { sameFile } = require("./host-support.cjs");
 
 exports.run = async ({ check, workspace }) => {
   for (const language of ["ny", "matrix"]) {
@@ -23,7 +24,8 @@ exports.run = async ({ check, workspace }) => {
         assert.deepEqual(report.errors, []);
         assert.ok(report.totals.allocated_bytes > 0);
         assert.ok(report.totals.allocated_objects > 0);
-        assert.ok(report.sites.some(site => site.file === source && site.line > 0 && site.function.includes("main")));
+        const mainSites = report.sites.filter(site => site.line > 0 && site.function.includes("main"));
+        assert.ok((await Promise.all(mainSites.map(site => sameFile(site.file, source)))).some(Boolean));
         assert.equal(report.totals.allocated_bytes - report.totals.freed_bytes, report.totals.live_bytes);
         return { language, route, allocatedObjects: report.totals.allocated_objects };
       });

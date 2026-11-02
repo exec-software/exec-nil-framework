@@ -480,3 +480,48 @@ cleanup race after Job accounting reached zero: a terminated descendant could
 still hold its working directory. That failure is retained and is being fixed
 by waiting for verified, retained process handles as well as an empty Job;
 neither ignored cleanup errors nor a fixed sleep is an acceptance criterion.
+
+### Verified Job cleanup and portable editor fixtures
+
+The debugger harness now retains query/synchronize-only handles for members of
+its exact Job, verifies membership on those handles and records creation times.
+Termination still targets only the retained Job, never reopened numeric PIDs.
+Cleanup requires both zero active Job members and signaled retained handles
+under one five-second deadline. Cumulative Job population changes during the
+snapshot/termination boundary reject acceptance; snapshot failures still stop
+the owned Job and report the verification failure. The full finish/drain/close
+sequence is serialized against output-budget callbacks.
+
+All 22 lifecycle regressions pass on Windows. Twenty further repetitions of
+the orphan teardown test exercise 240 immediate working-directory and
+exclusive-file deletions without sleeps or ignored cleanup errors. Linux runs
+17 cases and explicitly skips five Windows-only controls. The installed-SDK
+Linux and Windows debugger matrices again pass all 146 checks after this change.
+
+Editor source compilation and interpreter tasks now use literal process argv,
+without a command shell. The portable real-host launcher binds evidence to a
+unique run and workspace, preserves failed profiles/reports, and requires the
+test-only bounded native runner on Windows. It does not accept stale reports
+or a passing report from a timed-out/nonzero host. The Unicode workspace exposed
+several test assumptions after the console fix: drive-letter spelling is now
+checked by file identity, and an untitled document's native EOL is asserted
+before requiring exact rename/undo preservation. These are fixture corrections,
+not relaxed output assertions.
+
+Remaining editor gaps are explicit: four controlled-compiler cancellation/retry
+fixtures and two semantic alias fixtures are not ported to Windows. The
+workspace SDK-build command still selects the Bash workflow; native Windows
+SDK assembly uses `scripts/build-sdk.ps1` separately. A local Linux editor-host
+attempt produced no identity-bound report and is not counted as a pass; this
+session has no configured display. Unit/CTest evidence is separate from a real
+editor-host result. Final Windows editor and freshly sealed SDK results follow.
+
+The Windows mixed build-tree editor preflight passed all 81 enabled real-host
+checks, with the six exclusions recorded separately (run
+`fb9621ba-1956-4e11-a0db-a828ede799c9`). Tools came from the rebuilt tree and
+library/source support from the older accepted SDK, so this is not acceptance
+of a newly installed SDK. Final extension units passed 147/147 on Linux and
+146 with one POSIX FIFO skip on Windows; both production bundles built. All
+owned editor processes exited. The next gate builds a clean, revision-pinned
+Windows development SDK and repeats consumer/editor checks against that exact
+sealed payload, without replacing or publishing any active SDK.

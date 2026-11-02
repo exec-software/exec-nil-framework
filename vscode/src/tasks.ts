@@ -166,7 +166,7 @@ export class NyTaskProvider implements vscode.TaskProvider {
         scope,
         `Run ${path.basename(output)} with nilinterpreter`,
         "NIL Framework",
-        new vscode.ShellExecution(invocation.command, [...invocation.args], { cwd })
+        new vscode.ProcessExecution(invocation.command, [...invocation.args], { cwd })
       );
       task.detail = "Run an existing NIL artifact with nilinterpreter. Compile tasks create the artifact.";
       return presentation(task);
@@ -203,7 +203,10 @@ export class NyTaskProvider implements vscode.TaskProvider {
       scope,
       `${title}: ${path.basename(source)}`,
       "NIL Framework",
-      new vscode.ShellExecution(invocation.command, [...invocation.args], { cwd }),
+      // These commands already have a literal argv array; no shell expansion
+      // or quoting is needed. Console UTF-8 decoding is handled by the tools,
+      // separately from this choice of task execution mode.
+      new vscode.ProcessExecution(invocation.command, [...invocation.args], { cwd }),
       compilerProblemMatchers
     );
     task.group = vscode.TaskGroup.Build;

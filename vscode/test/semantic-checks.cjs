@@ -438,16 +438,20 @@ exports.run = async ({ check, workspace }) => {
     document = await vscode.languages.setTextDocumentLanguage(document, "matrix");
     const text = 'book semantic.untitled\nmain returns number begin paragraph\n value local-value is 7\n give LOCALVALUE\nend paragraph\n';
     await replace(document, text);
+    // An empty named-untitled model starts with the editor's native EOL. The
+    // initial WorkspaceEdit adopts it; rename must preserve that exact text.
+    const initial = document.getText();
+    assert.equal(initial, document.eol === vscode.EndOfLine.CRLF ? text.replaceAll("\n", "\r\n") : text);
     await analyze(document);
     const occurrences = [[document, "value local-value", "local-value"], [document, "give LOCALVALUE", "LOCALVALUE"]];
     await expectReferences(document, "give LOCALVALUE", "LOCALVALUE", occurrences);
     const edit = await expectRename(document, "give LOCALVALUE", "LOCALVALUE", "updated-value", occurrences);
     assert.equal(edit.entries()[0][0].scheme, "untitled");
-    await applyAndUndo(document, edit, text.replace("local-value", "updated-value").replace("LOCALVALUE", "updated-value"));
+    await applyAndUndo(document, edit, initial.replace("local-value", "updated-value").replace("LOCALVALUE", "updated-value"));
     await assert.rejects(fs.stat(targetPath), { code: "ENOENT" });
     await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
     await eventually(() => document.isClosed, "untitled rename fixture closes");
-    return { saved: false, undo: true };
+    return { saved: false, undo: true, lineEndings: document.eol === vscode.EndOfLine.CRLF ? "CRLF" : "LF" };
   });
 
   if (process.platform !== "win32") await check("rename rejects identical live symlink aliases instead of changing only one buffer", async () => {

@@ -156,14 +156,110 @@ class ConsumerTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == 'nt', 'Windows Job descendant contract')
     def test_exited_parent_with_detached_stdio_child_fails_closed(self):
-        owned = self.process('import subprocess,sys; '
-                             'subprocess.Popen([sys.executable,"-I","-S","-c",'
-                             '"import time; time.sleep(60)"], stdin=subprocess.DEVNULL,'
-                             'stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)')
-        start = time.monotonic()
-        with self.assertRaisesRegex(RuntimeError, 'live descendants'):
-            owned.communicate(10)
-        self.assertLess(time.monotonic() - start, 8)
+        # A zero Job active count can precede process-handle signaling/resource
+        # rundown. Hold both a CWD and an exclusively opened file, then demand
+        # immediate deletion after cleanup; no retry/sleep/ignore_errors hides it.
+        child_source = ('import ctypes as c,pathlib,time\n'
+                        'k=c.WinDLL("kernel32",use_last_error=True)\n'
+                        'k.CreateFileW.argtypes=[c.c_wchar_p,c.c_uint32,c.c_uint32,c.c_void_p,'
+                        'c.c_uint32,c.c_uint32,c.c_void_p]\n'
+                        'k.CreateFileW.restype=c.c_void_p\n'
+                        'lock=k.CreateFileW("exclusive.bin",0xC0000000,0,None,4,0,None)\n'
+                        'assert lock not in (None,c.c_void_p(-1).value)\n'
+                        'pathlib.Path("ready").touch()\n'
+                        'time.sleep(60)\n')
+        parent_source = ('import pathlib,subprocess,sys,time\n'
+                         f'subprocess.Popen([sys.executable,"-I","-S","-c",{child_source!r}],'
+                         'stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n'
+                         'deadline=time.monotonic()+5\n'
+                         'while not pathlib.Path("ready").exists():\n'
+                         ' if time.monotonic()>=deadline: raise RuntimeError("child did not acquire resources")\n'
+                         ' time.sleep(.005)\n')
+        for attempt in range(12):
+            with self.subTest(attempt=attempt), tempfile.TemporaryDirectory(dir=self.directory) as directory:
+                owned = OwnedProcess([sys.executable, '-I', '-S', '-c', parent_source], cwd=directory,
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                start = time.monotonic()
+                with self.assertRaisesRegex(RuntimeError, 'live descendants'):
+                    owned.communicate(10)
+                self.assertLess(time.monotonic() - start, 8)
+                (Path(directory) / 'exclusive.bin').unlink()
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows retained process-handle contract')
+    def test_empty_accounting_does_not_replace_process_signal(self):
+        owned = self.process('import time; print("ready",flush=True); time.sleep(60)')
+        reader = PipeReader(owned.process.stdout)
+        job = owned.job
+        try:
+            self.assertEqual(reader.read(10).strip(), b'ready')
+            # Deterministically simulate the observed ActiveProcesses==0 race
+            # while a retained owned handle is still unsignaled.
+            job.cleanup_deadline = time.monotonic() + .05
+            with patch.object(job.k, 'TerminateJobObject', return_value=1), \
+                    patch.object(job, 'active', return_value=0):
+                job.terminate()
+                self.assertTrue(job.members)
+                with self.assertRaisesRegex(RuntimeError, 'termination did not complete'):
+                    job.drain()
+        finally:
+            job.cleanup_deadline = None  # Remove only this test's injected short deadline.
+            owned.kill()
+            owned.finish()
+            reader.close()
+            owned.process.stderr.close()
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows verified Job member identity')
+    def test_unrelated_pid_snapshot_is_rejected_without_signaling_it(self):
+        unrelated = subprocess.Popen([sys.executable, '-I', '-S', '-c', 'import time; time.sleep(60)'],
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        owned = self.process('import time; print("ready",flush=True); time.sleep(60)')
+        reader = PipeReader(owned.process.stdout)
+        try:
+            self.assertEqual(reader.read(10).strip(), b'ready')
+            # Retain the real gate/target first so even this deliberately bad
+            # snapshot test can wait for their actual resource rundown.
+            owned.job.retain_members()
+            with patch.object(owned.job, '_member_ids', return_value=[unrelated.pid]):
+                with self.assertRaisesRegex(RuntimeError, 'snapshot could not be verified'):
+                    owned.kill()
+            self.assertIsNone(unrelated.poll(), 'unverified unrelated process was terminated')
+            self.assertIsNotNone(owned.process.returncode)
+        finally:
+            # Verification failure stays recorded; closing the owned Job is a
+            # final safety net, not an excuse to claim confirmed cleanup.
+            owned.job.close()
+            owned.job = None
+            reader.close()
+            owned.process.stderr.close()
+            unrelated.kill()  # Original retained Popen handle, never reopened PID.
+            unrelated.wait(timeout=5)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows raced Job population guard')
+    def test_new_process_during_snapshot_cannot_claim_verified_cleanup(self):
+        owned = self.process('import time; print("ready",flush=True); time.sleep(60)')
+        reader = PipeReader(owned.process.stdout)
+        calls = 0
+        accounting = owned.job.accounting
+
+        def changed_population():
+            nonlocal calls
+            calls += 1
+            result = accounting()
+            if calls >= 2:
+                result.total += 1  # Simulate a process born after the captured list.
+            return result
+
+        try:
+            self.assertEqual(reader.read(10).strip(), b'ready')
+            with patch.object(owned.job, 'accounting', side_effect=changed_population):
+                with self.assertRaisesRegex(RuntimeError, 'population changed'):
+                    owned.kill()
+            self.assertIsNotNone(owned.process.returncode)
+        finally:
+            owned.job.close()
+            owned.job = None
+            reader.close()
+            owned.process.stderr.close()
 
     @unittest.skipUnless(os.name == 'nt', 'Windows pre-launch assignment contract')
     def test_job_assignment_failure_does_not_launch_target(self):

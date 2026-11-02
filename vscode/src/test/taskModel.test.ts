@@ -41,6 +41,18 @@ test("native compilation selects LLVM without NIL bundling flags", () => {
   assert.equal(invocation.args.includes("--no-bundle"), false);
 });
 
+test("Windows source and interpreter arguments retain Unicode, spaces, and shell metacharacters literally", () => {
+  const source = "C:\\work café 中文 & %PATH%\\page.mat";
+  const output = "C:\\work café 中文 & %PATH%\\page.nil";
+  const compiler = "C:\\SDK tools\\nilcompiler.exe";
+  assert.deepEqual(compileInvocation({ compiler, source, output, mode: "nil" }), {
+    command: compiler, args: ["--no-bundle", "--output", output, source]
+  });
+  assert.deepEqual(interpreterInvocation("C:\\SDK tools\\nilinterpreter.exe", output, [], ["", "café 中文", "& | %PATH%"]), {
+    command: "C:\\SDK tools\\nilinterpreter.exe", args: [output, "--", "", "café 中文", "& | %PATH%"]
+  });
+});
+
 test("interpreter invocation separates host options from Ny program arguments", () => {
   assert.deepEqual(
     interpreterInvocation(

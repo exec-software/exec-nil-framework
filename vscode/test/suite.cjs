@@ -5,6 +5,7 @@ const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const vscode = require("vscode");
 const executeFile = promisify(execFile);
+const { sameFile } = require("./host-support.cjs");
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function bounded(promise, description, timeout = 25_000) {
@@ -38,16 +39,50 @@ exports.run = async function run() {
   const reportFile = process.env.NIL_VSCODE_TEST_REPORT || process.env.NY_VSCODE_TEST_REPORT;
   assert.ok(workspace && reportFile, "Use test/run-host.cjs to create an isolated workspace.");
   const checks = [];
-  const report = { status: "RUNNING", vscode: vscode.version, workspace, checks };
+  const runId = process.env.NIL_VSCODE_TEST_RUN_ID;
+  assert.ok(runId, "Isolated host run identity is required.");
+  const report = { status: "RUNNING", runId, vscode: vscode.version, platform: process.platform, workspace, checks, skippedChecks: [] };
   const check = async (name, operation) => {
     const start = Date.now();
     const detail = await bounded(operation(), name, 45_000);
     checks.push({ name, status: "PASS", milliseconds: Date.now() - start, ...(detail || {}) });
     console.log(`PASS ${name}`);
   };
+  const windowsExclusions = {
+    "analyzer-checks": ["cancelled compiler cannot publish stale diagnostics or unsafe locations"],
+    "workspace-checks": ["dependency edits and closes cancel compiler snapshots and imported fixes remain unavailable"],
+    "completion-checks": ["compiler completion recovers unavailable queries and cancels changed snapshots"],
+    "member-signature-checks": ["signature queries retry operational failures and cancel changed source snapshots"],
+    "semantic-checks": ["semantic definitions reject dirty include aliases and observe arbitrary include disk changes",
+      "rename rejects identical live symlink aliases instead of changing only one buffer"]
+  };
+  const runModule = async name => {
+    // These are existing exclusions, not evidence of equivalent Windows
+    // coverage. Make them visible instead of silently counting only passes.
+    if (process.platform === "win32") for (const excluded of windowsExclusions[name] || []) {
+      report.skippedChecks.push({ name: excluded, reason: "Existing host fixture has not been ported to Windows." });
+      console.log(`SKIP ${excluded}: existing fixture is not yet ported to Windows.`);
+    }
+    await require(`./${name}.cjs`).run({ check, workspace });
+  };
   const events = [];
+  report.tasks = events;
+  report.terminalOutput = [];
+  const terminalSubscription = vscode.window.onDidStartTerminalShellExecution?.(event => {
+    const capture = { command: event.execution.commandLine.value, output: "", truncated: false };
+    report.terminalOutput.push(capture);
+    void (async () => {
+      for await (const data of event.execution.read()) {
+        const remaining = 32 * 1024 - capture.output.length;
+        capture.output += data.slice(0, remaining);
+        if (data.length > remaining) capture.truncated = true;
+      }
+    })().catch(error => { capture.error = String(error); });
+  });
   const taskSubscription = vscode.tasks.onDidEndTaskProcess((event) => {
-    events.push({ task: event.execution.task.definition.task, source: event.execution.task.definition.source, exitCode: event.exitCode });
+    const execution = event.execution.task.execution;
+    events.push({ task: event.execution.task.definition.task, source: event.execution.task.definition.source, exitCode: event.exitCode,
+      command: execution?.command || execution?.process, args: execution?.args });
   });
   try {
     assert.equal(vscode.workspace.isTrusted, true);
@@ -116,32 +151,32 @@ exports.run = async function run() {
       return;
     }
     if (process.env.NIL_VSCODE_LANGUAGE_VALUES_ONLY) {
-      await require("./language-values-checks.cjs").run({ check, workspace });
+      await runModule("language-values-checks");
       report.status = "PASS";
       return;
     }
     if (process.env.NIL_VSCODE_MEMBER_SIGNATURE_ONLY) {
-      await require("./member-signature-checks.cjs").run({ check, workspace });
+      await runModule("member-signature-checks");
       report.status = "PASS";
       return;
     }
     if (process.env.NIL_VSCODE_COMPLETION_ONLY) {
-      await require("./completion-checks.cjs").run({ check, workspace });
+      await runModule("completion-checks");
       report.status = "PASS";
       return;
     }
     if (process.env.NIL_VSCODE_SEMANTIC_ONLY) {
-      await require("./semantic-checks.cjs").run({ check, workspace });
+      await runModule("semantic-checks");
       report.status = "PASS";
       return;
     }
     if (process.env.NIL_VSCODE_WORKSPACE_ONLY) {
-      await require("./workspace-checks.cjs").run({ check, workspace });
+      await runModule("workspace-checks");
       report.status = "PASS";
       return;
     }
     if (process.env.NIL_VSCODE_ANALYSIS_ONLY || process.env.NIL_VSCODE_ANALYSIS_PROBE_ONLY) {
-      await require("./analyzer-checks.cjs").run({ check, workspace });
+      await runModule("analyzer-checks");
       report.status = "PASS";
       return;
     }
@@ -188,7 +223,7 @@ exports.run = async function run() {
       const definitions = await vscode.commands.executeCommand("vscode.executeDefinitionProvider", document.uri, position);
       assert.ok(definitions?.length);
       const definition = definitions[0];
-      assert.equal((definition.targetUri || definition.uri).fsPath, document.uri.fsPath);
+      assert.ok(await sameFile((definition.targetUri || definition.uri).fsPath, document.uri.fsPath));
       assert.equal((definition.targetSelectionRange || definition.range).start.line, 8);
       const symbols = await vscode.commands.executeCommand("vscode.executeDocumentSymbolProvider", document.uri);
       const names = [];
@@ -225,6 +260,16 @@ exports.run = async function run() {
     for (const source of documents) {
       await vscode.window.showTextDocument(source);
       const basename = source.uri.fsPath.replace(/\.[^.]+$/, "");
+      await check(`${path.basename(source.fileName)}: source tasks preserve literal arguments without a shell`, async () => {
+        const tasks = (await vscode.tasks.fetchTasks({ type: "ny" }))
+          .filter(task => ["compile", "native", "run"].includes(task.definition.task));
+        assert.deepEqual(tasks.map(task => task.definition.task).sort(), ["compile", "native", "run"]);
+        for (const task of tasks) {
+          assert.ok(task.execution instanceof vscode.ProcessExecution, `${task.definition.task} must launch without a shell.`);
+          assert.ok(task.execution.args.some(argument => argument === source.fileName || argument === `${basename}.nil`),
+            "Unicode and spaces must remain one literal source/artifact argument.");
+        }
+      });
       await check(`${path.basename(source.fileName)}: compile and interpreter tasks`, async () => {
         await fs.rm(`${basename}.nil`, { force: true });
         const start = events.length;
@@ -279,7 +324,7 @@ exports.run = async function run() {
           assert.equal(stopped.reason, "entry");
           const stack = await activeSession.customRequest("stackTrace", { threadId: stopped.threadId, startFrame: 0, levels: 10 });
           assert.ok(stack.stackFrames.length);
-          assert.equal(stack.stackFrames[0].source.path, source.fileName);
+          assert.ok(await sameFile(stack.stackFrames[0].source.path, source.fileName));
           assert.ok(stack.stackFrames[0].line > 0);
           const directory = activeSession.configuration.__nyDebugDirectory;
           assert.ok(directory, "Source debug launch must own a temporary NIL directory.");
@@ -297,22 +342,19 @@ exports.run = async function run() {
         }
       });
     }
-    await require("./analyzer-checks.cjs").run({ check, workspace });
-    await require("./project-checks.cjs").run({ check, workspace });
-    await require("./workspace-checks.cjs").run({ check, workspace });
-    await require("./semantic-checks.cjs").run({ check, workspace });
-    await require("./completion-checks.cjs").run({ check, workspace });
-    await require("./member-signature-checks.cjs").run({ check, workspace });
-    await require("./language-values-checks.cjs").run({ check, workspace });
-    await require("./memory-profile-checks.cjs").run({ check, workspace });
-    await require("./niltest-checks.cjs").run({ check, workspace });
+    for (const module of ["analyzer-checks", "project-checks", "workspace-checks", "semantic-checks", "completion-checks",
+      "member-signature-checks", "language-values-checks", "memory-profile-checks", "niltest-checks"])
+      await runModule(module);
     report.status = "PASS";
   } catch (error) {
     report.status = "FAIL";
     report.error = error.stack || String(error);
+    report.diagnostics = vscode.languages.getDiagnostics().map(([uri, items]) => ({ uri: uri.toString(),
+      items: items.map(item => ({ source: item.source, message: item.message, line: item.range.start.line })) }));
     throw error;
   } finally {
     taskSubscription.dispose();
+    terminalSubscription?.dispose();
     await fs.writeFile(reportFile, JSON.stringify(report, null, 2) + "\n");
   }
 };

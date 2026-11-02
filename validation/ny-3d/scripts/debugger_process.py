@@ -165,6 +165,10 @@ class WindowsJob:
                         ('active', w.DWORD), ('terminated', w.DWORD)]
 
         self.Accounting = Accounting
+        self.members = {}
+        self.cleanup_deadline = None
+        self.cleanup_error = None
+        self.cleanup_population = None
         signatures = {
             'CreateJobObjectW': ([c.c_void_p, w.LPCWSTR], w.HANDLE),
             'SetInformationJobObject': ([w.HANDLE, c.c_int, c.c_void_p, w.DWORD], w.BOOL),
@@ -174,6 +178,11 @@ class WindowsJob:
             'CreateEventW': ([c.c_void_p, w.BOOL, w.BOOL, w.LPCWSTR], w.HANDLE),
             'SetEvent': ([w.HANDLE], w.BOOL),
             'CloseHandle': ([w.HANDLE], w.BOOL),
+            'OpenProcess': ([w.DWORD, w.BOOL, w.DWORD], w.HANDLE),
+            'IsProcessInJob': ([w.HANDLE, w.HANDLE, c.POINTER(w.BOOL)], w.BOOL),
+            'GetProcessTimes': ([w.HANDLE, c.POINTER(w.FILETIME), c.POINTER(w.FILETIME),
+                                 c.POINTER(w.FILETIME), c.POINTER(w.FILETIME)], w.BOOL),
+            'WaitForSingleObject': ([w.HANDLE, w.DWORD], w.DWORD),
         }
         for name, (arguments, result) in signatures.items():
             function = getattr(k, name)
@@ -217,25 +226,105 @@ class WindowsJob:
         finally:
             k.CloseHandle(gate)
 
-    def active(self):
+    def accounting(self):
         info = self.Accounting()
         if not self.k.QueryInformationJobObject(self.handle, 1, self.c.byref(info),
                                                 self.c.sizeof(info), None):
             raise self.c.WinError(self.c.get_last_error())
-        return info.active
+        return info
+
+    def active(self):
+        return self.accounting().active
+
+    def _member_ids(self):
+        # One bounded snapshot, never a system-wide PID scan. A growing or
+        # oversized list is an unverifiable cleanup, not permission to guess.
+        capacity = 4096
+        class ProcessIds(self.c.Structure):
+            _fields_ = [('assigned', self.w.DWORD), ('count', self.w.DWORD),
+                        ('ids', self.c.c_size_t * capacity)]
+        info = ProcessIds()
+        if not self.k.QueryInformationJobObject(self.handle, 3, self.c.byref(info),
+                                                self.c.sizeof(info), None):
+            raise self.c.WinError(self.c.get_last_error())
+        if info.count > capacity or info.count != info.assigned:
+            raise RuntimeError('owned Windows Job process snapshot was incomplete')
+        return list(info.ids[:info.count])
+
+    def retain_members(self):
+        # Query/synchronize access only. Every newly opened handle is verified
+        # against this exact Job before retention; numeric PID reuse cannot
+        # authorize signaling an unrelated process. Termination uses only Job.
+        for pid in self._member_ids():
+            if self.cleanup_deadline is not None and time.monotonic() >= self.cleanup_deadline:
+                raise RuntimeError('owned process snapshot exceeded the cleanup deadline')
+            member = self.k.OpenProcess(0x101000, False, pid)  # SYNCHRONIZE | QUERY_LIMITED_INFORMATION
+            if not member:
+                raise self.c.WinError(self.c.get_last_error())
+            try:
+                belongs = self.w.BOOL()
+                if not self.k.IsProcessInJob(member, self.handle, self.c.byref(belongs)) or not belongs.value:
+                    raise RuntimeError('process snapshot no longer identifies an owned Windows Job member')
+                created, exited, kernel, user = (self.w.FILETIME() for _ in range(4))
+                if not self.k.GetProcessTimes(member, self.c.byref(created), self.c.byref(exited),
+                                             self.c.byref(kernel), self.c.byref(user)):
+                    raise self.c.WinError(self.c.get_last_error())
+                identity = (pid, created.dwHighDateTime << 32 | created.dwLowDateTime)
+                if identity not in self.members:
+                    if len(self.members) >= 4096:
+                        raise RuntimeError('owned Windows Job retained-process budget exceeded')
+                    self.members[identity] = member
+                    member = None
+            finally:
+                if member:
+                    self.k.CloseHandle(member)
 
     def terminate(self):
+        if self.cleanup_deadline is None:
+            self.cleanup_deadline = time.monotonic() + CLEANUP_SECONDS
+        try:
+            before = self.accounting().total
+            if self.cleanup_population is None:
+                self.cleanup_population = before
+            self.retain_members()
+            after = self.accounting().total
+            if before != self.cleanup_population or after != self.cleanup_population:
+                raise RuntimeError('owned Windows Job population changed during process snapshot')
+        except Exception as exc:
+            self.cleanup_error = self.cleanup_error or f'owned process snapshot could not be verified: {exc}'
+        # Even an unverifiable snapshot must stop the owned Job; report the
+        # verification failure after best-effort, bounded resource cleanup.
         if not self.k.TerminateJobObject(self.handle, 1):
-            raise self.c.WinError(self.c.get_last_error())
+            self.cleanup_error = self.cleanup_error or str(self.c.WinError(self.c.get_last_error()))
+        try:
+            if self.cleanup_population is not None and self.accounting().total != self.cleanup_population:
+                self.cleanup_error = self.cleanup_error or 'owned Windows Job population changed during termination'
+        except Exception as exc:
+            self.cleanup_error = self.cleanup_error or f'owned termination accounting could not be verified: {exc}'
 
     def drain(self):
-        deadline = time.monotonic() + CLEANUP_SECONDS
-        while self.active():
+        deadline = self.cleanup_deadline or time.monotonic() + CLEANUP_SECONDS
+        while True:
+            if self.cleanup_population is not None and self.accounting().total != self.cleanup_population:
+                self.cleanup_error = self.cleanup_error or 'owned Windows Job population changed during cleanup'
+            signaled = True
+            for member in self.members.values():
+                state = self.k.WaitForSingleObject(member, 0)
+                if state not in (0, 258):  # WAIT_OBJECT_0, WAIT_TIMEOUT
+                    raise self.c.WinError(self.c.get_last_error())
+                signaled = signaled and state == 0
+            if not self.active() and signaled:
+                if self.cleanup_error:
+                    raise RuntimeError(self.cleanup_error)
+                return
             if time.monotonic() >= deadline:
-                raise RuntimeError('owned Windows Job did not become empty')
+                raise RuntimeError('owned Windows Job/process termination did not complete within 5 seconds')
             time.sleep(.01)
 
     def close(self):
+        for member in self.members.values():
+            self.k.CloseHandle(member)
+        self.members.clear()
         if self.handle:
             self.k.CloseHandle(self.handle)
             self.handle = None
@@ -285,7 +374,9 @@ class OwnedProcess:
             self.terminate()
             # Budget-reader callbacks share this lock: none may signal a
             # POSIX group in the interval between waitpid and returncode update.
-            self.process.wait(timeout=CLEANUP_SECONDS)
+            remaining = (max(.01, self.job.cleanup_deadline - time.monotonic())
+                         if self.job and self.job.cleanup_deadline is not None else CLEANUP_SECONDS)
+            self.process.wait(timeout=remaining)
             if self.job:
                 self.job.drain()
 
@@ -302,12 +393,14 @@ class OwnedProcess:
 
     def finish(self):
         """Normal completion must leave no Windows descendant running."""
-        try:
-            if self.job and self.job.active():
-                self.kill()
-                raise RuntimeError('process exited with live descendants in its Windows Job')
-        finally:
-            with self.lock:
+        with self.lock:
+            try:
+                if self.job and self.job.active():
+                    self.kill()
+                    raise RuntimeError('process exited with live descendants in its Windows Job')
+                if self.job and self.job.cleanup_deadline is not None:
+                    self.job.drain()
+            finally:
                 if self.job:
                     self.job.close()
                     self.job = None

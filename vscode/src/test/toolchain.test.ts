@@ -192,7 +192,9 @@ test("configured paths expand workspace, environment, and home variables", () =>
     expandConfiguredPath("${workspaceFolder}/build/${env:PROFILE}", "/work/ny", { PROFILE: "debug" }, "/home/a"),
     "/work/ny/build/debug"
   );
-  assert.equal(expandConfiguredPath("~/sdk", undefined, {}, "/home/a"), "/home/a/sdk");
+  const home = path.resolve("home", "a");
+  assert.equal(expandConfiguredPath("~/sdk", undefined, {}, home), path.join(home, "sdk"));
+  assert.equal(expandConfiguredPath("~\\sdk", undefined, {}, home), path.join(home, "sdk"));
 });
 
 test("the source debugger is resolved at the canonical SDK root", () => {

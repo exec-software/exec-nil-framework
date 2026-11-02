@@ -67,9 +67,14 @@ test("project invocation passes filenames and program arguments literally", () =
 });
 
 test("nilbuild resolves from canonical copied SDK layout", () => {
-  const executable = path.join(root, "sdk", "nilbuild");
-  assert.equal(resolveNyTool({ tool: "nilbuild", sdkPath: path.join(root, "sdk"), platform: "linux",
-    environment: {}, isExecutable: candidate => candidate === executable }).executable, executable);
+  // Each simulated host must use its own path grammar, not the test runner's.
+  for (const platform of ["linux", "win32"] as const) {
+    const api = platform === "win32" ? path.win32 : path.posix;
+    const sdk = api.join(platform === "win32" ? "C:\\project-tests" : "/project-tests", "sdk");
+    const executable = api.join(sdk, "nilbuild" + (platform === "win32" ? ".exe" : ""));
+    assert.equal(resolveNyTool({ tool: "nilbuild", sdkPath: sdk, platform,
+      environment: {}, isExecutable: candidate => candidate === executable }).executable, executable);
+  }
 });
 
 

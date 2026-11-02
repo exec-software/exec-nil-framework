@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const vscode = require("vscode");
+const { sameFile } = require("./host-support.cjs");
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function eventually(operation, description) {
   const until = Date.now() + 15_000;
@@ -45,7 +46,11 @@ exports.run = async ({ check, workspace }) => {
         .map(relative => vscode.Uri.file(path.join(directory, relative)))].flatMap(findings);
       assert.deepEqual(projectFindings, [], "Editor checks must select the same root/include modules as nilbuild, not invalid source-directory shadows.");
       const tasks = await vscode.tasks.fetchTasks({ type: "ny" });
-      const projectTasks = tasks.filter(task => task.definition.project === manifestFile);
+      const projectTasks = [];
+      for (const task of tasks) {
+        if (typeof task.definition.project === "string" && await sameFile(task.definition.project, manifestFile))
+          projectTasks.push(task);
+      }
       assert.equal(projectTasks.length, 6);
       assert.ok(projectTasks.every(task => task.execution instanceof vscode.ProcessExecution));
     });

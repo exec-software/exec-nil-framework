@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const vscode = require("vscode");
+const { sameFile } = require("./host-support.cjs");
 
 exports.run = async ({ check, workspace }) => {
   await check("niltest: compiler-discovered Matrix cases reach Test Explorer", async () => {
@@ -28,7 +29,7 @@ end test
     assert.equal(cases.length, 2);
     assert.equal(new Set(cases.map(item => item.id)).size, 2);
     for (const item of cases) {
-      assert.equal(item.file, file);
+      assert.ok(await sameFile(item.file, file));
       assert.equal(item.suite, "editor checks");
       assert.ok(item.line > 0);
     }

@@ -156,8 +156,9 @@ objects at exit are not classified as leaks. See the
 [Aperture guide](../aperture/README.md) for accounting scope and CLI options.
 
 The SDK and CTest commands target a NIL Framework repository checkout. The SDK command
-runs `scripts/build-sdk.sh`; the CTest command uses `ny.buildDirectory`, which
-defaults to `build/cmake`.
+runs `scripts/build-sdk.sh` (through Bash on Windows); native Windows integration
+with `scripts/build-sdk.ps1` is still outstanding, so run that PowerShell pipeline
+separately. The CTest command uses `ny.buildDirectory`, which defaults to `build/cmake`.
 
 ## Projects
 
@@ -526,16 +527,51 @@ The unit suite runs under Node without launching Electron. It type-checks the
 extension, exercises tool discovery and task construction, validates package
 assets and snippets, and compiles/tokenizes the TextMate grammar with Oniguruma.
 
-`npm run test:host` launches the locally installed `code` in an isolated profile
-and temporary workspace. Build the tools in `build/cmake` first; this suite
+`npm run test:host` launches the locally installed VS Code in an isolated profile
+and temporary workspace containing spaces and Unicode. Build the tools in `build/cmake` first; this suite
 requires LLVM for native compilation, the analysis CLI, and a desktop display on Linux. It checks
 Matrix completion/navigation in saved and untitled documents, compile/run and
 native commands, source debugger entry/cleanup for `.matrix` and `.mat`, and
 compiler analysis of unsaved Ny and Matrix buffers with version-guarded fixes.
 Set `VSCODE_EXECUTABLE` or `NIL_VSCODE_TOOL_DIRECTORY` to override the editor or
 tool directory (`NY_VSCODE_TOOL_DIRECTORY` is accepted for compatibility).
-Its report is written to `build/vscode-host-smoke/latest.json`;
-the runner prints the temporary profile/log location for troubleshooting.
+On Windows, point `VSCODE_EXECUTABLE` at the installed `Code.exe`; the standard
+`bin/code.cmd` and Insiders equivalents are also resolved to their adjacent
+desktop executable without a shell. Use a desktop-capable Windows session and
+an environment configured for native compilation (MSVC Build Tools and Windows
+SDK). This host suite is separate from CTest; unit tests or DAP protocol tests
+alone do not certify the real editor integration.
+
+Build the test-only CMake target `nil_vscode_host_runner` and set
+`NIL_VSCODE_HOST_RUNNER` to its absolute path when using an installed SDK. The
+runner is deliberately not installed in the SDK. It is required on Windows
+and used on Linux when available beside the selected tools (or explicitly
+selected). It reuses the framework's strict process runner: the Windows editor
+enters an owned Job before starting, and timeout/descendant cleanup must be
+confirmed before success. No process-name matching or broad process-tree kills
+are used. Linux without the helper retains the older process-group fallback;
+use the helper for qualification runs.
+
+The host deadline defaults to ten minutes; `NIL_VSCODE_HOST_TIMEOUT_MS` accepts
+1000–1800000 milliseconds. Each run writes its own identity-bound JSON report
+under `build/vscode-host-smoke/`; `latest.json` is a convenience copy of the
+latest passing result, never input to a later run. Temporary profiles and logs
+are retained for troubleshooting. Launcher regressions can run without VS Code:
+
+```sh
+node --test test/host-support.test.cjs
+node test/host-runner-contract.cjs /absolute/path/to/nil_vscode_host_runner
+```
+
+The current full Windows host suite explicitly records six existing fixture
+exclusions in `skippedChecks`: four controlled-compiler cancellation/retry
+probes still use POSIX executable scripts, and two semantic alias probes are
+POSIX-only. A passing Windows report does not certify those excluded checks.
+The workspace SDK-build command also still selects `scripts/build-sdk.sh`
+(through Bash on Windows); it has not been integrated with the native Windows
+`scripts/build-sdk.ps1` pipeline. Run that PowerShell pipeline separately for
+Windows SDK assembly. This host gate does not qualify the workspace SDK-build
+command, and these are remaining Windows editor parity gaps.
 
 The build bundles the extension into `dist/extension.js` with esbuild. The VSIX
 expects a separately installed NIL Framework SDK; native binaries are not embedded.
