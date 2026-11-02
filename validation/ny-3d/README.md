@@ -91,10 +91,34 @@ python3 scripts/validate.py --only scene-player --routes nil-text,aot \
 python3 scripts/check_isolation.py
 ```
 
-`scripts/validate_debugger.py` and `scripts/audit_diagnostics.py` additionally
-require the optional `probes/` corpus (debugger and diagnostic fixtures), which
-is not published with this repository. Without it, `validate.py --quick`
-exercises the three renderers and is the whole published matrix.
+The debugger's small `probes/debugger/` corpus is published with this repository.
+`scripts/audit_diagnostics.py` still requires the optional unpublished diagnostic
+corpus. `validate.py --quick` exercises the three renderers; it is separate from
+the debugger consumer gate below.
+
+### Installed-SDK debugger gate
+
+`scripts/validate_debugger.py` supports Linux and the Windows development SDK;
+the other renderer/diagnostic harnesses retain their own platform requirements.
+Run against an explicit, unchanged SDK directory:
+
+```sh
+python scripts/validate_debugger.py --sdk /path/to/sdk --report reports/debugger.json
+```
+
+On Windows, run from a Visual Studio x64 developer environment so native linking
+can find the selected toolchain. Use the platform's SDK, not a Linux SDK copied
+onto Windows. `--sdk-origin /path/to/origin.json` optionally supplies an external
+manifest anchor with a `source_manifest_sha256` field; an explicitly requested
+missing anchor is an error. Without an anchor, the report labels verification
+as self-anchored, not independent provenance.
+
+The gate checks textual/binary source debugging, real renderer sessions,
+interpreter/native output agreement, and documented rejection of native or
+unmapped artifacts. It retains transcripts and checks source and SDK integrity
+before/after execution. Its deadlines and output bounds fail the run rather
+than turning an incomplete session into a pass. Process/pipe regressions run
+without an SDK as the registered `nildebugger.consumer-harness` CTest.
 
 `reports/validation.json` and its `.txt` companion contain the full matrix.
 Each case retains its source hash, commands, exit status, stdout/stderr and

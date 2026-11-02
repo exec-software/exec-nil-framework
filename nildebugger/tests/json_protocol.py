@@ -335,23 +335,28 @@ def run_artifact_loading_boundaries(
     ]
 
     symlink = root / "program-link.nil"
+    fixture_snapshot = fixture.read_bytes()
     try:
         symlink.symlink_to(fixture)
-    except (NotImplementedError, OSError):
-        if os.name != "nt":
-            raise
-    else:
-        # Windows reports reparse points after opening with no-follow
-        # semantics, while POSIX rejects the no-follow open itself.
-        rejected.append(
-            (symlink, ("no-follow regular file", "not a regular file"))
-        )
+    except (NotImplementedError, OSError) as error:
+        raise AssertionError(
+            "required symlink fixture could not be created; "
+            "Windows needs Developer Mode or symlink privilege"
+        ) from error
+    require(symlink.is_symlink(), "artifact input fixture is not a symlink")
+    symlink_target = symlink.readlink()
+    # Windows reports reparse points after opening with no-follow semantics,
+    # while POSIX rejects the no-follow open itself. Both must run this check.
+    rejected.append(
+        (symlink, ("no-follow regular file", "not a regular file"))
+    )
 
     oversized = root / "oversized.nil"
     with oversized.open("wb") as stream:
         stream.truncate(MAXIMUM_PROGRAM_BYTES + 1)
     rejected.append((oversized, ("exceeds maximum_bytes",)))
 
+    # FIFOs have no equivalent filesystem fixture on Windows.
     if hasattr(os, "mkfifo"):
         fifo = root / "program.fifo"
         os.mkfifo(fifo)
@@ -371,6 +376,11 @@ def run_artifact_loading_boundaries(
         require(any(fragment in completed.stderr
                     for fragment in expected_fragments),
                 f"nildebugger did not explain rejection of {path.name}")
+        if path == symlink:
+            require(symlink.is_symlink() and
+                    symlink.readlink() == symlink_target and
+                    fixture.read_bytes() == fixture_snapshot,
+                    "artifact rejection modified the symlink or its target")
 
 
 def run_text_condition_failures(

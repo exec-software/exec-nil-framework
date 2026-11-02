@@ -58,6 +58,16 @@ install(
 install(FILES LICENSE DESTINATION ".")
 
 if(BUILD_TESTING)
+    # Test-only launcher for isolated editor integration runs. Reuse the
+    # toolchain's bounded process/Job cleanup; never ship it in the SDK.
+    add_executable(nil_vscode_host_runner
+        vscode/test/host-runner.cpp
+        nillinker/process_runner.cpp)
+    target_compile_features(nil_vscode_host_runner PRIVATE cxx_std_17)
+    if(WIN32)
+        target_link_libraries(nil_vscode_host_runner PRIVATE shell32 advapi32)
+    endif()
+
     set(NY_SMOKE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/tests/hello.nil")
     set(NY_BINARY_SMOKE_OUTPUT
         "${CMAKE_CURRENT_BINARY_DIR}/tests/hello-binary.nil")
@@ -470,6 +480,11 @@ if(BUILD_TESTING)
     # test suite when testing was explicitly enabled.
     find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
+        add_test(NAME nildebugger.consumer-harness
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/validation/ny-3d/scripts/test_debugger_consumer.py")
+        set_tests_properties(nildebugger.consumer-harness PROPERTIES
+            LABELS "debugger;tools" TIMEOUT 90)
         find_program(NIL_UI_XVFB NAMES Xvfb DOC "Optional Xvfb for isolated desktop UI tests")
         add_test(NAME nil.ui-display
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/ui_display_contract.py"

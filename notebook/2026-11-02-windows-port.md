@@ -398,3 +398,53 @@ was changed. The known provider/hot-reload/platform-qualification gaps above
 remain; this is a validated Windows development SDK, not a Windows release
 declaration. This subsequent notebook checkpoint does not relabel the archive's
 pinned source revision.
+
+## Installed-SDK debugger and editor follow-up
+
+The next parity slice exercises consumers rather than treating compiled tools
+as complete workflows. The debugger consumer harness previously depended on
+unpublished fixtures and POSIX pipe/process APIs. Its small session, pause and
+standard-library fixtures are now published. Both textual and binary sessions
+exercise conditional source breakpoints, frames/locals, shadowing, stepping,
+restart, output, pause/termination, real mesh/scene applications, and stepping
+into the installed `nilstd` math source. Native output is compared with the
+interpreter; native attach and unmapped source debugging remain explicit
+rejections, not claimed features.
+
+The portable harness preserves the selected Windows developer environment,
+uses actual `.exe` outputs and file identity, and reads pipes with deadlines.
+Windows assigns a trusted launch gate to a private Job before releasing it;
+the retained Job owns cleanup. POSIX retains the unreaped group leader until
+signal-and-reap cleanup, serialized against background output-limit callbacks.
+Output/transcript budgets, blocked writes, setup failures and report/source
+path protections are tested. SDK payloads, origin anchors and consumer sources
+are checked before and after sessions. A test-only editor launcher reuses the
+existing toolchain process runner and is excluded from SDK installation.
+
+The accepted Windows SDK remains pinned to `3ba1915c3b92`, with its manifest
+SHA-256 independently anchored from the verified archive:
+`e53b66b4c9c05bb15c780c53f71e2757c1f27464fc716f40d16ba71b46162571`.
+All 146 installed-SDK debugger assertions pass on Windows and Linux. Windows
+passes all 19 harness regressions; Linux runs 17 and explicitly skips the two
+Windows Job-only controls. The Linux consumer uses a separate temporary,
+self-anchored development SDK whose manifest records dirty source and makes no
+release-qualification claim. The first full Linux gate with the new registered
+harness has 548 tests: 546 passed, display/PostgreSQL skipped, no failures.
+
+The debugger artifact-loading contract now requires its real Windows symlink
+fixture and checks preservation of both link and target, rather than silently
+omitting the assertion. The STL README was reconciled with checked database
+providers, wide Windows file APIs and shell-free Windows linking. Language
+path conversion still depends on the process code page; current MSVC binaries
+request UTF-8. Explicit malformed-UTF-8 and unmanifested-consumer behavior need
+separate follow-up, not a claim that the current SDK's Unicode paths are broken.
+
+For editor validation, official portable Node 24.22.2 and VS Code 1.144.0
+archives were checksum-verified and extracted only under `C:\provision\tools`.
+No machine PATH, file association, login policy, or existing editor profile was
+changed. The isolated profile disables telemetry/updates and GPU use. Its first
+real Windows session passed nine language-service checks but failed to receive
+the rejected compiler task's expected Problems entry. That evidence is retained;
+the editor gate is not yet accepted at this checkpoint. Six pre-existing
+Windows-only editor fixture omissions are now explicitly reported and remain
+separate from debugger protocol parity. Further editor results follow below.

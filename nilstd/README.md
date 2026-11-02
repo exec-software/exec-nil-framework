@@ -100,8 +100,11 @@ the destination directory and publishes atomically. Its `replace=false` mode
 is a race-free no-clobber operation, including for dangling symlinks. The
 POSIX publication creates a fresh private `0600` inode even when replacing a
 file; existing ownership and other metadata are not preserved. Windows uses
-the account's default DACL, and UTF-8 path portability through its narrow host
-APIs is not established. Cleanup of a named staging artifact is best effort, so
+the account's default DACL and wide filesystem APIs. Its language-facing
+string conversion still depends on the process ANSI code page; the current
+MSVC tools and generated native programs request UTF-8 through their manifests.
+Unmanifested runtime consumers and strict malformed-path rejection need
+separate evidence. Cleanup of a named staging artifact is best effort, so
 a rare host cleanup failure may leave an orphan. The textual/binary security
 fixture covers exact octets, limits, special files, symlinks, path redaction,
 preservation on failure, private POSIX modes, concurrent no-clobber publication,
@@ -110,14 +113,16 @@ exact bytes, caller-bound rejection, no-clobber preservation, replacement, and
 invalid-path rejection through both LLVM JIT and AOT. The direct
 `native.runtime-abi` test covers the same versioned runtime boundary.
 
-Native support is currently production-targeted and verified on Linux. The
-Windows runtime branches and native toolchain path are experimental, and macOS
-has not received equivalent route evidence. Windows secure file operations use
-narrow host APIs and have weaker parent-directory/namespace guarantees than the
-POSIX descriptor-relative implementation. Windows AOT linking also constructs
-an external-linker command for `std::system`; do not use untrusted path or
-link-library inputs on that route. These restrictions are platform boundaries,
-not merely missing test labels.
+Linux remains the release-qualification target. The Windows development SDK
+has installed-consumer evidence across interpreter, bundle, JIT, AOT, and
+standalone assembler/linker routes; see the
+[Windows port notebook](../notebook/2026-11-02-windows-port.md) for its exact
+source and tested surfaces. This is not whole-library or bare-host Windows
+certification. macOS has not received equivalent route evidence. Windows secure
+file operations still have weaker parent-directory/namespace guarantees than
+the POSIX descriptor-relative implementation. Windows AOT linking uses the
+bounded argument-vector process runner, not a shell command. The optional GTK
+and PostgreSQL providers remain unavailable on Windows.
 
 Byte canonicalization is deliberate: an explicit `as u8` conversion and a
 write into `array<u8>` or `ptr<u8>` storage retain the low eight bits, equivalent
@@ -221,11 +226,14 @@ functions likewise have passing and exact-panic fixtures. Postfix `?` and the
 separate language-level `assert.*` intrinsic syntax remain unavailable and fail
 closed.
 
-The deliberately narrow active boundaries matter: database support is the SQL
-builder, networking is HTTP protocol values, security is Base64/hex encoding,
-and threading is timed suspension. PostgreSQL execution, transports, broad
-threading/concurrency, compression, cryptographic hashes, encryption, and secure random APIs
-remain quarantined. Native JIT/AOT parity and platform portability require
+The deliberately narrow active boundaries matter: database support includes the
+SQL builder and checked text-oriented SQLite/PostgreSQL providers, subject to
+the [database deployment contract](../docs/standard-library/database.md).
+PostgreSQL execution currently requires POSIX; the old experimental PostgreSQL
+declarations are not the active provider API. Networking is HTTP protocol
+values, security is Base64/hex encoding, and threading is timed suspension.
+Transports, broad threading/concurrency, compression, cryptographic hashes,
+encryption, and secure random APIs remain quarantined. Native JIT/AOT parity and platform portability require
 separate evidence beyond the narrow slices above. `http.send` and all transport
 providers remain quarantined because no runtime dispatcher is shipped.
 
