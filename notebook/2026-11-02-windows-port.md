@@ -525,3 +525,94 @@ of a newly installed SDK. Final extension units passed 147/147 on Linux and
 owned editor processes exited. The next gate builds a clean, revision-pinned
 Windows development SDK and repeats consumer/editor checks against that exact
 sealed payload, without replacing or publishing any active SDK.
+
+### Clean debugger/editor SDK delivery
+
+The stock Windows development pipeline completed from clean source
+`fdaf9759974e72fe762760e0efa5dda98b419075`. Candidate
+`development-7a468a0483a041ccbde355b5bf74f88f` passed 546 of 548 CTest cases
+in 636.55 seconds; only `nil.ui-display` and `nil.database-postgresql` were
+skipped. The console UTF-8 contract and all 22 debugger lifecycle regressions
+passed under the parallel suite. The final Linux suite also passed 546/548,
+with those same two optional-provider skips, in 100.56 seconds.
+
+All 1,184 installed-consumer executions passed: 74 fixtures, both source and
+binary library forms, and eight routes including standalone assembler/linker
+execution. The SDK has 11 executables at its root, 18 strictly compiled logical
+library modules, 66 compiled documentation pages, and 259 sealed payload files.
+Neither test-only C++ helper is installed. Its manifest SHA-256 is
+`4031831d1998cf759cacfdbd687a09b7f18ca1a3915dd7d272d1c70c114026eb`.
+
+Against this exact SDK, the debugger consumer passed all 146 assertions with
+its source fixtures, external origin anchor and all payload hashes unchanged.
+The real Windows editor passed all 81 enabled checks, recording the same six
+fixture exclusions (run `e35a7202-557a-4d58-bd8c-175b7dfb6622`). Separate
+observation evidence binds seven configured tools, 31 actual tasks across eight
+task kinds, and both resolved debugger executables to this candidate. The
+observation wrapper invokes the committed suite unchanged; evidence records
+both the original and actual launcher arguments. The strict owned-process
+helper exited zero. Source, bundle, SDK manifest and payloads matched before
+and after. These final checks ran in separate workspaces concurrently with
+the read-only installed-consumer matrix.
+
+The delivered archive is under
+`/home/nathan/vm/nil-win11/artifacts/fdaf9759974e/`:
+
+- `nil-framework-windows-development-fdaf9759974e.zip`, 28,374,945 bytes;
+- SHA-256 `9e9c26eb90d9bfc837a7b3d4d95fdbac627311316054e3cc8fdda0ef141f7363`.
+
+The host verifier checks every ZIP payload against the seal, the exact root
+layout, clean source identity, build-evidence bindings, the registered CTest
+inventory and named skips, and all 1,184 consumer results. Delivery metadata,
+dependency inventory, pipeline log, Windows/Linux JUnit reports, and separate
+`editor/` and `debugger/` evidence are alongside it. The debugger origin file
+was created before archival and deliberately remains unchanged; the final ZIP
+manifest reconciles to its independently copied manifest anchor. This is a
+development artifact, not a bare-host or Windows release qualification.
+
+The matching editor package is
+`/home/nathan/vm/nil-win11/artifacts/debugger-editor-20261102/nil-framework-editor-fdaf9759974e-pinned.vsix`
+(210,464 bytes), SHA-256
+`5ac19219399437289ab13a46b541196198331da4f6512f020ef4d74f4723d4da`.
+Its 17-file inventory excludes tests and tool binaries. Its production bundle
+matches the actual Windows editor bundle byte-for-byte. The first VSIX's
+default repository-root link rewriting lost the extension's `vscode/` base;
+it is retained as superseded. The delivered replacement uses explicit
+`--baseContentUrl` and `--baseImagesUrl` values ending in this commit's
+`/vscode`, so README documentation/license links resolve to the correct pinned
+files. Neither VSIX was published or installed into a user editor profile.
+
+The guest overlay was backed up before a verified-index fast-forward, with no
+reset or discarded changes. At the delivery boundary, guest source was clean,
+scoped framework/editor processes were idle, optional Visual Studio telemetry
+OptIn remained zero, and no optional uploader was running. Existing accepted
+SDKs, active SDK selection, Lich and Anomalous were not changed. A later
+notebook-only checkpoint does not relabel the artifact's source revision.
+
+### Next Windows STL contract slice
+
+Read-only follow-up found a coverage boundary, not a demonstrated shipped-SDK
+filename corruption: `secure_file_io.cpp` converts language string paths using
+`MultiByteToWideChar(CP_ACP, 0)` before calling wide filesystem APIs. Empty/NUL
+paths are rejected, but strict malformed-UTF-8 rejection is not implemented.
+MSVC tools/generated executables carry UTF-8 manifests; external unmanifested
+runtime hosts remain a distinct, untested boundary. The console code-page fix
+does not change this path conversion. Existing Unicode tests cover arguments,
+output and compiler/link-input paths; secure byte-file fixtures still use
+ASCII filenames. The library API comment also still describes narrow host
+calls imprecisely, despite the wide calls after conversion.
+
+The next useful tests should have an independent wide-path host create exact
+Latin/CJK/astral/decomposed filenames and payloads, then check language reads,
+atomic replacement and no-clobber across supported routes and library forms.
+The host must verify exact filename/codepoint inventory, payload bytes,
+sentinel preservation and absence of staging or wrongly decoded siblings.
+Choose the UTF-8 path contract explicitly before enforcing malformed-byte
+rejections. Include separate manifested/unmanifested host probes recording
+`GetACP`, without changing VM locale. A write/read round trip performed only
+inside Ny cannot detect both operations making the same wrong conversion.
+Interpreter path/list/stream operations need a separate follow-up; legacy
+unwired `nilstd/native/io/file.windows.c` declarations are not evidence about
+the active runtime. Six editor fixture ports, native PowerShell SDK-command
+integration, optional providers and platform release qualification remain
+separate work.
