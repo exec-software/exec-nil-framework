@@ -1522,8 +1522,14 @@ bool Linker::link(const fs::path &requested_output) {
 #endif
 #endif
 
-  const auto process =
-      ny::linker_detail::run_process(arguments, driver_timeout_);
+  const auto process = ny::linker_detail::run_process(
+      arguments, driver_timeout_,
+#if defined(_WIN32) && defined(NILLINKER_MSVC_DRIVER)
+      ny::linker_detail::windows_auxiliary_cleanup::msvc_telemetry
+#else
+      ny::linker_detail::windows_auxiliary_cleanup::none
+#endif
+  );
   if (!process.launched) {
     error_ = "cannot launch native linker driver '" + driver_ + "': " +
              process.error;

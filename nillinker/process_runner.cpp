@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <limits>
 #include <string>
 #include <system_error>
@@ -225,7 +226,7 @@ std::string windows_job_member_diagnostic(HANDLE job) {
     }
     const DWORD state = WaitForSingleObject(member.get(), 0);
     summary += state == WAIT_OBJECT_0 ? " (exited" :
-               state == WAIT_TIMEOUT ? " (running" : " (state unavailable";
+               state == WAIT_TIMEOUT ? " (unsignaled" : " (state unavailable";
     std::wstring path(32768, L'\0');
     DWORD length = static_cast<DWORD>(path.size());
     if (QueryFullProcessImageNameW(member.get(), 0, path.data(), &length)) {
@@ -356,6 +357,167 @@ bool terminate_windows_job(HANDLE job, HANDLE process, std::string &error) {
                     windows_error_message(termination_error) + "; " +
                     cleanup_error;
   return false;
+}
+
+bool windows_process_image(HANDLE process, std::filesystem::path &image,
+                           std::string &error) {
+  std::wstring path(32768, L'\0');
+  DWORD length = static_cast<DWORD>(path.size());
+  if (!QueryFullProcessImageNameW(process, 0, path.data(), &length)) {
+    error = "cannot inspect MSVC auxiliary image: " +
+            windows_error_message(GetLastError());
+    return false;
+  }
+  path.resize(length);
+  std::error_code path_error;
+  image = std::filesystem::canonical(std::filesystem::path(path), path_error);
+  if (path_error) {
+    error = "cannot resolve MSVC auxiliary image: " + path_error.message();
+    return false;
+  }
+  return true;
+}
+
+bool same_windows_path(const std::filesystem::path &left,
+                       const std::filesystem::path &right) {
+  const auto &a = left.native();
+  const auto &b = right.native();
+  return CompareStringOrdinal(a.data(), static_cast<int>(a.size()), b.data(),
+                              static_cast<int>(b.size()), TRUE) == CSTR_EQUAL;
+}
+
+bool cleanup_windows_msvc_auxiliaries(
+    HANDLE job, HANDLE process, const std::wstring &application,
+    const std::filesystem::path &actual_driver,
+    std::vector<auxiliary_cleanup_record> &records, std::string &error) {
+  // MSVC's optional telemetry uploader can deliberately outlive link.exe.
+  // This policy never permits breakaway or arbitrary surviving descendants.
+  // Classify the complete snapshot before terminating any member, then use
+  // only retained, membership-verified handles and prove the job is empty.
+  // Microsoft also models this uploader separately from build-output workers:
+  // https://github.com/microsoft/BuildXL/blob/main/Public/Sdk/Experimental/Msvc/VisualCpp/visualCpp.dsc
+  const std::filesystem::path requested(application);
+  if (!requested.is_absolute()) {
+    error = "MSVC auxiliary cleanup requires an absolute selected driver";
+    return false;
+  }
+  std::error_code path_error;
+  const auto expected_driver = std::filesystem::canonical(requested, path_error);
+  if (path_error) {
+    error = "cannot resolve selected MSVC driver: " + path_error.message();
+    return false;
+  }
+  if (!same_windows_path(actual_driver, expected_driver) ||
+      (!same_windows_path(actual_driver.filename(), L"link.exe") &&
+       !same_windows_path(actual_driver.filename(), L"cl.exe"))) {
+    error = "MSVC auxiliary cleanup does not match the selected driver image";
+    return false;
+  }
+  const auto expected_auxiliary = std::filesystem::canonical(
+      expected_driver.parent_path() / L"vctip.exe", path_error);
+  if (path_error) {
+    error = "cannot resolve selected MSVC telemetry helper: " + path_error.message();
+    return false;
+  }
+
+  constexpr std::size_t maximum_members = 4096;
+  const std::size_t bytes = sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) +
+                            (maximum_members - 1) * sizeof(ULONG_PTR);
+  std::vector<ULONG_PTR> storage((bytes + sizeof(ULONG_PTR) - 1) / sizeof(ULONG_PTR));
+  auto *members = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST *>(storage.data());
+  if (!QueryInformationJobObject(job, JobObjectBasicProcessIdList, members,
+                                 static_cast<DWORD>(bytes), nullptr)) {
+    error = "cannot enumerate MSVC auxiliaries: " + windows_error_message(GetLastError());
+    return false;
+  }
+  if (members->NumberOfProcessIdsInList == 0 ||
+      members->NumberOfProcessIdsInList > maximum_members ||
+      members->NumberOfAssignedProcesses != members->NumberOfProcessIdsInList) {
+    error = "MSVC auxiliary membership snapshot is empty or incomplete";
+    return false;
+  }
+  std::vector<unique_handle> auxiliaries;
+  std::vector<auxiliary_cleanup_record> pending_records;
+  for (DWORD index = 0; index < members->NumberOfProcessIdsInList; ++index) {
+    const auto pid = static_cast<DWORD>(members->ProcessIdList[index]);
+    unique_handle member(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION |
+                                        PROCESS_TERMINATE | SYNCHRONIZE,
+                                    FALSE, pid));
+    if (member.get() == nullptr) {
+      error = "cannot retain MSVC auxiliary identity: " + windows_error_message(GetLastError());
+      return false;
+    }
+    BOOL belongs = FALSE;
+    if (!IsProcessInJob(member.get(), job, &belongs) || !belongs) {
+      error = "MSVC auxiliary no longer belongs to the exact driver job";
+      return false;
+    }
+    std::filesystem::path actual_auxiliary;
+    if (!windows_process_image(member.get(), actual_auxiliary, error))
+      return false;
+    if (!same_windows_path(actual_auxiliary, expected_auxiliary)) {
+      error = "unexpected descendant is not the selected MSVC telemetry helper";
+      return false;
+    }
+    pending_records.push_back({pid, actual_auxiliary.u8string()});
+    auxiliaries.push_back(std::move(member));
+  }
+  for (auto &member : auxiliaries) {
+    BOOL belongs = FALSE;
+    if (!IsProcessInJob(member.get(), job, &belongs) || !belongs) {
+      error = "MSVC auxiliary membership changed before cleanup";
+      return false;
+    }
+    const DWORD state = WaitForSingleObject(member.get(), 0);
+    if (state == WAIT_OBJECT_0)
+      continue;
+    if (state != WAIT_TIMEOUT || !TerminateProcess(member.get(), 0)) {
+      error = "cannot terminate owned MSVC telemetry helper: " +
+              windows_error_message(GetLastError());
+      return false;
+    }
+  }
+  // Do not terminate the entire job on the special-success path. A new or
+  // previously unobserved child must not be silently swept into this policy.
+  const auto confirmation_started = steady_clock::now();
+  const auto confirmation_deadline = deadline_after(termination_confirmation);
+  bool helpers_exited = true;
+  for (auto &member : auxiliaries) {
+    DWORD state = WaitForSingleObject(member.get(), 0);
+    if (state == WAIT_TIMEOUT)
+      state = bounded_windows_wait(member.get(), confirmation_deadline);
+    if (state != WAIT_OBJECT_0) {
+      error = state == WAIT_FAILED
+                  ? "cannot confirm MSVC telemetry helper exit: " +
+                        windows_error_message(GetLastError())
+                  : "MSVC telemetry helper remained unsignaled after termination";
+      helpers_exited = false;
+      break;
+    }
+    // Release only a proven-exited helper. Process-object references must not
+    // be mistaken for a still-running child in the final Job-accounting proof.
+    member.reset();
+  }
+  if (!helpers_exited ||
+      !wait_for_windows_job_cleanup(job, process, confirmation_deadline, error)) {
+    error += "; confirmation elapsed=" + std::to_string(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            steady_clock::now() - confirmation_started).count()) + "ms";
+    for (std::size_t index = 0; index < auxiliaries.size(); ++index) {
+      if (auxiliaries[index].get() == nullptr)
+        continue;
+      DWORD exit_code = 0;
+      const DWORD wait_result = WaitForSingleObject(auxiliaries[index].get(), 0);
+      const BOOL exit_known = GetExitCodeProcess(auxiliaries[index].get(), &exit_code);
+      error += "; retained helper pid=" + std::to_string(pending_records[index].process_id) +
+               " wait=" + std::to_string(wait_result) + " exit=" +
+               (exit_known ? std::to_string(exit_code) : "unavailable");
+    }
+    error += "; " + windows_job_member_diagnostic(job);
+    return false;
+  }
+  records = std::move(pending_records);
+  return true;
 }
 
 #else
@@ -682,7 +844,8 @@ process_result finish_posix_process(pid_t child, int sentinel,
 } // namespace
 
 process_result run_process(const std::vector<std::string> &arguments,
-                           std::chrono::milliseconds timeout) {
+                           std::chrono::milliseconds timeout,
+                           windows_auxiliary_cleanup auxiliary_policy) {
   if (arguments.empty())
     return {false, false, 1, "empty linker-driver command"};
   if (arguments.front().empty())
@@ -745,6 +908,18 @@ process_result run_process(const std::vector<std::string> &arguments,
       error += "; cleanup could not be confirmed: " + cleanup_error;
     return {false, false, 1, std::move(error)};
   }
+  std::filesystem::path selected_msvc_image;
+  if (auxiliary_policy == windows_auxiliary_cleanup::msvc_telemetry) {
+    // QueryFullProcessImageNameW can fail once the process has exited. Capture
+    // this identity from the retained, still-suspended driver handle instead.
+    std::string image_error;
+    if (!windows_process_image(process.get(), selected_msvc_image, image_error)) {
+      std::string cleanup_error;
+      if (!terminate_windows_job(job.get(), process.get(), cleanup_error))
+        image_error += "; cleanup could not be confirmed: " + cleanup_error;
+      return {false, false, 1, std::move(image_error)};
+    }
+  }
   if (ResumeThread(thread.get()) == static_cast<DWORD>(-1)) {
     const DWORD resume_error = GetLastError();
     std::string cleanup_error;
@@ -788,6 +963,15 @@ process_result run_process(const std::vector<std::string> &arguments,
       const auto member_diagnostic = residual_processes
                                          ? windows_job_member_diagnostic(job.get())
                                          : std::string{};
+      std::string auxiliary_error;
+      if (residual_processes && exit_code == 0 &&
+          auxiliary_policy == windows_auxiliary_cleanup::msvc_telemetry) {
+        std::vector<auxiliary_cleanup_record> records;
+        if (cleanup_windows_msvc_auxiliaries(job.get(), process.get(), application,
+                                             selected_msvc_image, records,
+                                             auxiliary_error))
+          return {true, false, 0, {}, std::move(records)};
+      }
       std::string cleanup_error;
       const bool cleaned =
           terminate_windows_job(job.get(), process.get(), cleanup_error);
@@ -795,6 +979,8 @@ process_result run_process(const std::vector<std::string> &arguments,
                               ? "linker driver exited while descendant processes "
                                 "remained (" + member_diagnostic + ")"
                               : std::move(job_error);
+      if (!auxiliary_error.empty())
+        error += "; MSVC auxiliary cleanup rejected: " + auxiliary_error;
       if (!cleaned)
         error += "; cleanup could not be confirmed: " + cleanup_error;
       const int result_code =
@@ -825,6 +1011,7 @@ process_result run_process(const std::vector<std::string> &arguments,
     return {true, true, timeout_exit_code, std::move(error)};
   }
 #else
+  (void)auxiliary_policy;
   // WNOWAIT pins an exited child's PID only while the caller retains normal
   // child ownership. Auto-reaping dispositions make group cleanup unsafe.
   struct sigaction child_action{};

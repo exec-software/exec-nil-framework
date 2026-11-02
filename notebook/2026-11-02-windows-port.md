@@ -29,6 +29,13 @@ development evidence for release qualification?
   ordered library search paths, and recursive `/DEFAULTLIB` closure. Re-resolve
   after compilation. Unrecognized or incomplete toolchain inputs disable cache
   reuse rather than producing a false cache hit.
+- Keep native linker descendants strict by default. The selected absolute MSVC
+  driver may leave its adjacent `vctip.exe` telemetry uploader alive after a
+  successful link. An explicit policy verifies the actual driver image and all
+  remaining Job members, terminates only exact-path, Job-owned helpers through
+  retained handles, and requires confirmed termination and an empty Job. Unknown
+  children, failed drivers, and unconfirmed cleanup remain failures. Framework
+  tools do not modify machine telemetry preferences or toolchain installations.
 - Use Unicode Win32 environment APIs. An empty value remains present; only an
   explicit unset deletes it. Test non-ASCII names/values and enumeration.
 - Preserve the AI-facing executable context on Windows as PE/COFF `.nyctx`
@@ -78,6 +85,55 @@ documentation pages, strictly compiled 18 standard-library modules, and sealed
 the linker's residual-descendant guard. Bounded job-member diagnostics were
 added before cleanup without relaxing the guard. Clean-revision SDK validation
 and its full CTest/consumer gate are the next acceptance boundary.
+
+The recovered port was checkpointed and pushed as `058c32b`. Subsequent isolated
+validation identified the residual process as MSVC's `vctip.exe`. The scoped
+helper policy has Windows regression coverage for default-strict behavior,
+exact-path cleanup evidence, wrong-directory namesakes, mixed unknown children,
+nonzero leaders, timeouts, Unicode/spaced paths, and an identical helper image
+outside the Job remaining untouched. The Linux suite also passes with this
+policy (545 registered, 543 passed, two optional skips). Real installed-SDK
+cleanup confirmation and final clean-revision packaging remain under validation;
+synthetic process tests alone are not acceptance evidence for the SDK.
+
+The real VM uploader remained unsignaled after `TerminateProcess`, even through
+a further two-second diagnostic observation. Direct compiler execution outside
+`niltest` reproduced this. A later empty Job count after `TerminateJobObject`
+did **not** establish that the retained helper handle was signaled. The final
+policy therefore requires both individual helper completion and an empty Job,
+under the original bounded confirmation deadline. Temporary observation code
+was removed; no timeout increase or accounting-only success was accepted.
+
+With explicit user approval, optional Visual Studio Build Tools telemetry was
+disabled in the Windows VM using Microsoft's documented VS2022 setting:
+`HKLM\SOFTWARE\WOW6432Node\Microsoft\VSCommon\17.0\SQM\OptIn`, DWORD `1` to `0`.
+The prior key was exported to
+`C:\provision\msvc-telemetry-before-18003bab74714865a035b231dc022055.reg`.
+There was no overriding Visual Studio SQM group policy. This is a VM provisioning
+change, not an automatic behavior of the framework or SDK. Required Microsoft
+diagnostics and unrelated Windows/host settings were not changed. See
+[Microsoft's Build Tools opt-out documentation](https://learn.microsoft.com/en-us/visualstudio/ide/visual-studio-experience-improvement-program?view=vs-2022).
+
+The registry opt-out alone did not prevent a fresh uploader launch. Under the
+user's explicit instruction to disable compiler telemetry either way, the exact
+selected toolchain's optional uploader was reversibly renamed from
+`VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\vctip.exe` to
+`vctip.exe.disabled-nil-20261102` in the same directory. Its valid Microsoft
+signature and SHA-256
+`D591358C6AEE4B673562CA3B3A15C250E612708394FE3B44A7A7EDA2470570A5`
+were verified; the linker hash remained unchanged. Restoration details are in
+`C:\provision\vctip-disabled-nil-20261102.json`. No compiler/runtime files were
+deleted, no unknown process was allowed to escape, and no cleanup check was
+weakened. This follows the same optional-uploader omission documented in
+[Chromium's Windows toolchain packaging](https://chromium.googlesource.com/chromium/tools/depot_tools/+/refs/heads/main/win_toolchain/package_from_installed.py).
+Toolchain repair or upgrades may restore the uploader; this VM-specific
+provisioning state is part of the validation environment, not a claim about
+unmodified installations or an automatic SDK installation step.
+
+After the reversible uploader disable, 30 consecutive native `niltest` smoke
+builds passed with exact JSON/output checks and no stderr. The final Linux run
+again passed 543 tests with two optional skips (545 registered, 97.95 seconds).
+The clean-revision Windows SDK pipeline remains the final acceptance gate.
 
 Reproducible checks:
 

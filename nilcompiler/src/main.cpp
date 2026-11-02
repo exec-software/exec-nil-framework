@@ -2267,13 +2267,17 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
         }
         const std::string manifest_argument =
             "/MANIFESTINPUT:" + manifest_path.u8string();
-        auto run_windows_linker = [&](const std::vector<std::string> &arguments) {
+        auto run_windows_linker = [&](const std::vector<std::string> &arguments,
+                                      bool selected_msvc = false) {
           // Reuse nillinker's bounded CreateProcessW runner. Do not send
           // user-controlled output/library paths through cmd.exe: quoting a
           // shell token does not prevent percent-variable expansion there.
           cmd = arguments.front(); // diagnostic only, never shell input
           const auto process = ny::linker_detail::run_process(
-              arguments, std::chrono::minutes(5));
+              arguments, std::chrono::minutes(5),
+              selected_msvc
+                  ? ny::linker_detail::windows_auxiliary_cleanup::msvc_telemetry
+                  : ny::linker_detail::windows_auxiliary_cleanup::none);
           link_ret = process.exit_code;
           if (!process.launched || process.timed_out || !process.error.empty()) {
             std::cerr << "[Native] Linker process: " << process.error << "\n";
@@ -2300,7 +2304,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
             arguments.push_back("/LIBPATH:" + path);
 
           ny::diag_success("[LLVM] Using Visual Studio linker...");
-          if (run_windows_linker(arguments)) {
+          if (run_windows_linker(arguments, true)) {
             linked = true;
             ny::diag_success("[LLVM] Visual Studio linker completed.");
           } else {

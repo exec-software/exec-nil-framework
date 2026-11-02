@@ -334,8 +334,8 @@ The command accepts at most 4,096 objects, 512 MiB per object, and 4 GiB across
 all objects. The driver defaults to a 300,000 ms deadline; the timeout option
 accepts 100 through 3,600,000 ms. At the deadline, the linker terminates the
 driver process group on POSIX or its Job Object on Windows and confirms cleanup
-within a bounded interval. A driver that exits while a contained descendant is
-still active is also rejected and cleaned up. Failure to confirm cleanup is an
+within a bounded interval. A driver that exits while an unexpected contained
+descendant is still active is also rejected and cleaned up. Failure to confirm cleanup is an
 error and never permits publication. The configured driver is a trusted
 toolchain component; POSIX descendants that deliberately create a new session
 or close the inherited lifetime descriptor are outside that tracking contract.
@@ -343,6 +343,19 @@ This is process lifecycle management, not a sandbox. The POSIX leader remains
 unreaped until group signaling finishes, preventing numeric PID reuse from
 redirecting cleanup to an unrelated process. The caller's prior output remains
 untouched unless a complete executable passes validation.
+
+The positively selected Windows MSVC toolchain has one explicit auxiliary
+policy: after a successful `cl.exe`/`link.exe` exit, the runner may terminate its
+exact adjacent `vctip.exe` telemetry helper. It verifies the complete remaining
+Job membership and canonical image paths, uses retained process handles, and
+requires every helper handle to signal exit and the Job to become empty before
+reporting success. Both confirmations share a 500 ms budget. Cleanup identities
+are recorded separately from errors, preserving quiet/JSON output. A different
+directory's same-named process, any unknown child, a failed driver, or failed
+inspection/cleanup still fails. Generic and fallback drivers remain strict;
+there is no process breakaway or machine-wide telemetry setting change. MSVC's
+optional uploader lifecycle is also documented in
+[Microsoft's BuildXL toolchain model](https://github.com/microsoft/BuildXL/blob/main/Public/Sdk/Experimental/Msvc/VisualCpp/visualCpp.dsc).
 
 Windows command-line arguments are recovered from the native UTF-16 command
 line, and linker file operations and driver launch stay in the wide-path domain;
