@@ -58,7 +58,7 @@ fn provider(handle: i64) -> Result<text,text>
         }
         for name, (declaration, diagnostic) in invalid.items():
             source = work / (name + '.ny')
-            source.write_text(declaration + entry)
+            source.write_text(declaration + entry, newline='\n')
             output = work / (name + '.nil')
             output.write_bytes(b'previous artifact')
             result = run([*base, '--no-bundle', '-o', output, source], 1)
@@ -73,7 +73,7 @@ provider receives handle as i32 returns Result of text, text
 main returns number begin paragraph
  give 0
 end paragraph
-''')
+''', newline='\n')
         result = run([*base, '--no-bundle', '-o', work / 'matrix.nil', matrix], 1)
         assert 'exact UI ABI' in result.stderr, result.stderr
 
@@ -86,7 +86,7 @@ end paragraph
                     function = function_visibility + "text-model returns number begin paragraph\n give 0\nend paragraph\n"
                     source = work / 'folded-collision.matrix'
                     source.write_text('book collisions\n' + (function + record if reverse else record + function) +
-                                      'main returns number begin paragraph\n give 0\nend paragraph\n')
+                                      'main returns number begin paragraph\n give 0\nend paragraph\n', newline='\n')
                     result = run([*base, '--no-bundle', '-o', work / 'collision.nil', source], 1)
                     assert 'Matrix names fold case and separators' in result.stderr, result.stderr
                     assert 'text-model' in result.stderr and 'TextModel' in result.stderr, result.stderr
@@ -97,7 +97,7 @@ end paragraph
             record = 'struct Shared\n content: text\nend struct\n'
             function = 'fn Shared() -> i32\n return 0\nend fn\n'
             source = work / 'cross-kind.ny'
-            source.write_text((function + record if reverse else record + function) + entry)
+            source.write_text((function + record if reverse else record + function) + entry, newline='\n')
             result = run([*base, '--no-bundle', '-o', work / 'cross-kind.nil', source], 1)
             assert 'conflicts with another declaration kind' in result.stderr, result.stderr
 
@@ -116,7 +116,7 @@ end test
 main returns number begin paragraph
  give 0
 end paragraph
-''')
+''', newline='\n')
         run([*base, '--no-bundle', '-o', work / 'valid-declarations.nil', source])
 
         # Disabling source checking must not permit an incompatible declaration
@@ -126,7 +126,7 @@ end paragraph
             ('unchecked-return', '@intrinsic("ui.v1.available")\nfn provider() -> i64\n', 'provider()'),
         ):
             source = work / (name + '.ny')
-            source.write_text(declaration + 'fn main() -> i32\n println(' + expression + ')\n return 0\nend fn\n')
+            source.write_text(declaration + 'fn main() -> i32\n println(' + expression + ')\n return 0\nend fn\n', newline='\n')
             output = work / (name + '.nil')
             compiled = subprocess.run(list(map(str, [*base, '--no-typecheck', '--no-bundle', '-o', output, source])),
                                       cwd=work, env=env, capture_output=True, text=True, timeout=120)
@@ -166,7 +166,7 @@ fn main() -> i32
  end match
  return 0
 end fn
-''')
+''', newline='\n')
         for route in ['text', 'binary', 'bundle'] + (['native', 'jit'] if args.llvm == 'ON' else []):
             output = work / ('checked-' + route)
             flags = ['--native', '--jit'] if route == 'jit' else ['--native'] if route == 'native' else [] if route == 'bundle' else ['--no-bundle']

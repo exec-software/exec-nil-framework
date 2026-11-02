@@ -8,6 +8,7 @@
 #include <vector>
 #include <filesystem>
 #include "nil_version.hpp"
+#include "../../common/standard_streams.hpp"
 
 namespace fs = std::filesystem;
 
@@ -62,6 +63,7 @@ void print_usage() {
 }
 
 int main(int argc, char* argv[]) {
+    ny::use_untranslated_standard_streams();
     if (argc == 2 && std::string(argv[1]) == "--version") {
         std::cout << "nilschema " << NIL_VERSION << '\n';
         return 0;

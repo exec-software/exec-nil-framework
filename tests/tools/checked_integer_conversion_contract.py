@@ -44,7 +44,7 @@ def main():
                             f'fn malformed({parameters}) -> {result}\nend fn\n'
                             'fn main() -> i32\n'
                             f'let parsed = malformed({arguments})\n'
-                            'return 0\nend fn\n')
+                            'return 0\nend fn\n', newline='\n')
             sources.append((path, f'convert.try_to_{width} requires the exact '
                                   f'(text) -> Result<{width},text> ABI'))
         # Native text has no byte-length argument at this ABI. Reachable NUL
@@ -59,7 +59,7 @@ def main():
         ):
             path = root / f'embedded-nul.{language}'
             # Matrix quoted text is raw, so this is an actual NUL source byte.
-            path.write_text(source)
+            path.write_text(source, newline='\n')
             sources.append((path, 'contains an embedded NUL byte'))
         # Explicit formatted text retains the same native text boundary after
         # literal decoding and before concatenation; no truncated output runs.
@@ -69,7 +69,7 @@ def main():
                        'say formatted "visible\0hidden {1}"\ngive 0\nend paragraph\n'),
         ):
             path = root / f'formatted-embedded-nul.{language}'
-            path.write_text(source)
+            path.write_text(source, newline='\n')
             sources.append((path, 'contains an embedded NUL byte'))
         for path, message in sources:
             for flags in (('--native',), ('--native', '--jit')):

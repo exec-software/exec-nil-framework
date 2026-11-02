@@ -5,6 +5,12 @@ import json
 import pathlib
 import subprocess
 import tempfile
+import sys
+from pathlib import Path
+
+# Piping a source through a text-mode stdin would rewrite its newlines.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from exact_stdin import run_with_exact_stdin
 
 
 def main():
@@ -35,8 +41,8 @@ def main():
                     command.append('--source-stdin')
             if semantic:
                 command.append('--semantic-index')
-            result = subprocess.run(command + list(extra), input=payload,
-                text=True, capture_output=True, timeout=20, cwd=root)
+            result = run_with_exact_stdin(command + list(extra), payload,
+                                          timeout=20, cwd=root)
             assert result.returncode == status and not result.stderr, (result.returncode, result.stdout, result.stderr)
             value = json.loads(result.stdout)
             assert value['success'] == (status == 0)
@@ -294,7 +300,7 @@ def main():
             name = mode + '_route.ny'
             source = 'import routehelper.*\nfn main() -> i32\nreturn route_value()\nend fn\n'
             if mode == 'stdin':
-                (root / name).write_text('this disk source is invalid')
+                (root / name).write_text('this disk source is invalid', newline='\n')
             result = analyze({name: source, 'routehelper.ny': route_dependency}, name, mode=mode)
             assert binding(result, name, 'return route_value', 'route_value')['path'] == str(root / 'routehelper.ny')
             if mode == 'stdin':
@@ -354,7 +360,7 @@ def main():
         for module, contents in [('binary_dependency', binary_source),
                                  ('empty_dependency', 'module empty_dependency\n')]:
             source_path = root / ('build_' + module + '.ny')
-            source_path.write_text(contents)
+            source_path.write_text(contents, newline='\n')
             compiled = subprocess.run([compiler, '--no-stdlib', '--no-bundle', '--emit-binary-nil',
                 '--emit-library', '-q', '-o', str(library_directory / (module + '.nil')), str(source_path)],
                 text=True, capture_output=True, timeout=20, cwd=root)

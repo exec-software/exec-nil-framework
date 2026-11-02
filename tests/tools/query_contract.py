@@ -77,7 +77,7 @@ def main():
             body = query(language, clauses='where row > 1\n' if language == 'ny' else
                          'where row is greater than 1\n')
             source = root / ('binding.' + language)
-            source.write_text(program(language, prefix + body))
+            source.write_text(program(language, prefix + body), newline='\n')
             analysis = json.loads(run([compiler, '--no-stdlib', '--analyze', '--semantic-index', source]).stdout)
             assert analysis['success'], analysis
             semantic = analysis['semantic']
@@ -114,7 +114,7 @@ def main():
                 snapshot = before + following
                 cursor = len(before.encode())
                 source = root / ('completion-' + position + '.' + language)
-                source.write_text(snapshot)
+                source.write_text(snapshot, newline='\n')
                 result = json.loads(run([compiler, '--no-stdlib', '--analyze', '--completion-at',
                                          cursor, source], 1).stdout)
                 completion = result['completion']
@@ -134,7 +134,7 @@ def main():
             # the outer i64 declaration; row clauses refer to the inner i32.
             shadow_source = complete_source.replace('sample_outer', 'sample_row')
             source = root / ('semantic-shadow.' + language)
-            source.write_text(shadow_source)
+            source.write_text(shadow_source, newline='\n')
             analysis = json.loads(run([compiler, '--no-stdlib', '--analyze', '--semantic-index', source]).stdout)
             assert analysis['success'], analysis
             semantic = analysis['semantic']
@@ -152,7 +152,7 @@ def main():
 
             for clause in ('skip', 'take'):
                 source = root / ('negative-' + clause + '.' + language)
-                source.write_text(program(language, prefix + query(language, clauses=clause + ' -1\n')))
+                source.write_text(program(language, prefix + query(language, clauses=clause + ' -1\n')), newline='\n')
                 diagnostic = 'Query ' + clause + ' count must be nonnegative'
                 for encoding, flags in [('text', []), ('binary', ['--emit-binary-nil'])]:
                     artifact = root / ('negative-' + clause + '-' + language + '-' + encoding + '.nil')
@@ -183,7 +183,7 @@ def main():
             ]
             for name, expression, diagnostic in invalid:
                 source = root / (name + '.' + language)
-                source.write_text(program(language, prefix + expression))
+                source.write_text(program(language, prefix + expression), newline='\n')
                 for unchecked in (False, True):
                     for flags in (['--no-bundle'], ['--no-bundle', '--emit-binary-nil'],
                                   *([['--native']] if args.llvm == 'ON' else [])):
@@ -208,7 +208,7 @@ def main():
                     ('record-tuple', '[(' + record_value + ',1)]', 'row'),
                     ('record-projection', '[1]', record_value)):
                 source = root / (name + '.' + language)
-                source.write_text(program(language, prefix + query(language, source_expression, projection=projection), record))
+                source.write_text(program(language, prefix + query(language, source_expression, projection=projection), record), newline='\n')
                 result = run([compiler, '--quiet', '--no-stdlib', '--no-bundle', '-o', root / (name + '.nil'), source], 1)
                 assert 'query' in result.stderr.lower(), result.stderr
 
@@ -219,7 +219,7 @@ def main():
                      prefix + query(language, clauses='where (row becomes text)\n'),
                      'immutable' if language == 'ny' else 'must be boolean')):
                 source = root / (name + '.' + language)
-                source.write_text(program(language, body))
+                source.write_text(program(language, body), newline='\n')
                 run([compiler, '--quiet', '--no-stdlib', '--no-bundle', '-o', root / (name + '.nil'), source], 1,
                     diagnostic=diagnostic)
 
@@ -238,7 +238,7 @@ def main():
                     query('ny', 'empty' if empty else '[1,2]', clauses,
                           moving if place == 'select' else 'row'))
             source = root / ('ownership-' + place.replace(' ', '-') + str(empty) + str(zero) + '.ny')
-            source.write_text(program('ny', body))
+            source.write_text(program('ny', body), newline='\n')
             analysis = json.loads(run([compiler, '--no-stdlib', '--analyze', source], 1).stdout)
             assert any('cannot move an outer owner across a query boundary' in d['message']
                        for d in analysis['diagnostics']), analysis
@@ -276,7 +276,7 @@ def main():
             for name, expression in malformed.items():
                 source = root / ('grammar-' + name + '.' + language)
                 prefix = 'let selected = ' if language == 'ny' else 'value selected is '
-                source.write_text(program(language, prefix + expression))
+                source.write_text(program(language, prefix + expression), newline='\n')
                 artifact = root / 'grammar-protected-output'
                 artifact.write_bytes(b'previous query artifact')
                 run([compiler, '--quiet', '--no-stdlib', '--no-bundle', '-o', artifact, source], 1)
@@ -291,15 +291,15 @@ def main():
             expression = query(language, clauses='order by row descending\n', projection='row')
             provider.write_text(('module provider\npub fn selected() -> array<i32>\nreturn ' + expression + '\nend fn\n')
                                 if language == 'ny' else
-                                ('book provider\npublic selected returns array of override integer begin paragraph\ngive ' + expression + '\nend paragraph\n'))
+                                ('book provider\npublic selected returns array of override integer begin paragraph\ngive ' + expression + '\nend paragraph\n'), newline='\n')
             consumer_language = 'matrix' if language == 'ny' else 'ny'
             consumer = root / ('consumer-' + language + '.' + consumer_language)
             consumer.write_text(program(consumer_language,
                 'let values = selected()\nprintln(values[0])\nprintln(values[2])' if consumer_language == 'ny' else
                 'value values is selected with nothing\nsay values at 0\nsay values at 2',
-                imports='import provider.*\n' if consumer_language == 'ny' else 'read everything from provider\n'))
+                imports='import provider.*\n' if consumer_language == 'ny' else 'read everything from provider\n'), newline='\n')
             expected = root / 'consumer.stdout'
-            expected.write_text('3\n1\n')
+            expected.write_text('3\n1\n', newline='\n')
             routes(consumer, expected, 'source-provider-' + language, ('--no-stdlib', '-I', provider_root))
             libraries = root / ('binary-' + language)
             libraries.mkdir()

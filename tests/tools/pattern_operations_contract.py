@@ -6,8 +6,13 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
 import subprocess
 import tempfile
+
+# The toolchain appends .exe to extensionless executables on Windows.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from native_output_staging import linked_executable_path
 
 
 SOURCE = r'''import nil.std.text
@@ -204,7 +209,7 @@ def main() -> int:
             return result
 
         def native(artifact, name, mode):
-            obj, executable = root / (name + '.o'), root / name
+            obj, executable = root / (name + '.o'), linked_executable_path(root / name)
             run([tools['assembler'], *(['--unmanaged'] if mode == 'unsafe' else []),
                  '-o', obj, artifact])
             run([tools['linker'], '--runtime', tools['runtime'], '-o', executable, obj])
@@ -213,7 +218,7 @@ def main() -> int:
         base = [tools['compiler'], '--quiet', '--no-bundle', '--no-stdlib',
                 '--sdk-path', tools['stdlib']]
         source = root / 'operations.ny'
-        source.write_text(SOURCE)
+        source.write_text(SOURCE, newline='\n')
         expected = b'pattern operation bounds and lifetime checks passed\n'
         for encoding, flags in (('text', []), ('binary', ['--emit-binary-nil'])):
             artifact = root / (encoding + '.nil')
@@ -237,7 +242,7 @@ def main() -> int:
         # Exercise real runtime text, not an already rejected source literal.
         (root / 'nul-input.txt').write_bytes(b'a\0b')
         nul_source = root / 'nul-operations.ny'
-        nul_source.write_text(NUL_SOURCE)
+        nul_source.write_text(NUL_SOURCE, newline='\n')
         for encoding, flags in (('text', []), ('binary', ['--emit-binary-nil'])):
             artifact = root / ('nul-' + encoding + '.nil')
             run([*base, *flags, '-o', artifact, nul_source])

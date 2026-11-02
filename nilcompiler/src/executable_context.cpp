@@ -364,6 +364,104 @@ bool overlaps(std::uint64_t a, std::uint64_t size_a, std::uint64_t b, std::uint6
   return a < b + size_b && b < a + size_a;
 }
 
+// Read the embedded manifest out of a PE image or a COFF object.
+//
+// The section is named ".nyctx" rather than ".ny.context" because a PE image
+// keeps only the eight bytes of a section name that fit in the section
+// header; COFF's string-table indirection for longer names exists in object
+// files and does not survive linking.
+//
+// Validation mirrors inspect_elf: the artifact must be the one architecture
+// this inspects, every offset is bounds-checked against the file actually
+// read, the section may not overlap the header it was found through, and a
+// second section of the same name is a malformed artifact rather than a
+// tie to break.
+std::string inspect_pe(const std::vector<char> &bytes) {
+  const auto integer = [&](std::size_t offset, unsigned width) {
+    if (!range(offset, width, bytes.size())) invalid("truncated PE record");
+    std::uint64_t result = 0;
+    for (unsigned i = 0; i < width; ++i)
+      result |= std::uint64_t(static_cast<unsigned char>(bytes[offset + i])) << (i * 8);
+    return result;
+  };
+
+  // An image starts with the DOS stub and points at the PE signature; an
+  // object file is a bare COFF header with no stub at all.
+  std::uint64_t coff = 0;
+  const bool image = bytes.size() >= 2 && bytes[0] == 'M' && bytes[1] == 'Z';
+  if (image) {
+    const auto signature = integer(0x3c, 4);
+    if (signature < 0x40 || !range(signature, 4, bytes.size()) ||
+        bytes[signature] != 'P' || bytes[signature + 1] != 'E' ||
+        bytes[signature + 2] != '\0' || bytes[signature + 3] != '\0')
+      invalid("native inspection requires a PE image or COFF object");
+    coff = signature + 4;
+  }
+
+  if (integer(coff, 2) != 0x8664)
+    invalid("native inspection requires PE/COFF x86_64");
+  const auto count = integer(coff + 2, 2);
+  const auto optional_size = integer(coff + 16, 2);
+  // 96 is the number of sections a PE image may contain.
+  if (count == 0 || count > 96) invalid("invalid or unsupported PE section table");
+  if (image) {
+    // PE32+ only: a 32-bit image would carry a different optional header and
+    // is not a target this produces. Its fixed fields occupy 112 bytes; the
+    // declared directory array must fit in the optional header as well.
+    if (optional_size < 112 || !range(coff + 20, optional_size, bytes.size()) ||
+        integer(coff + 20, 2) != 0x20b)
+      invalid("native inspection requires PE32+ (64-bit) images");
+    if (integer(coff + 20 + 108, 4) > (optional_size - 112) / 8)
+      invalid("PE data directories exceed the optional header");
+  } else if (optional_size != 0) {
+    invalid("a COFF object must not carry an optional header");
+  }
+
+  const auto table = coff + 20 + optional_size;
+  if (table < coff || !range(table, count * 40, bytes.size()))
+    invalid("invalid or unsupported PE section table");
+  const auto table_end = table + count * 40;
+  const auto headers_end = image ? integer(coff + 20 + 60, 4) : table_end;
+  if (headers_end < table_end || headers_end > bytes.size())
+    invalid("invalid PE header extent");
+
+  std::vector<std::uint8_t> context;
+  bool found = false;
+  for (std::uint64_t i = 0; i < count; ++i) {
+    const auto header = table + i * 40;
+    std::string name;
+    for (unsigned c = 0; c < 8; ++c) {
+      const auto byte = static_cast<char>(integer(header + c, 1));
+      if (byte == '\0') break;
+      name += byte;
+    }
+    if (name != ".nyctx") continue;
+    if (found) invalid("duplicate native context section");
+    found = true;
+    const auto virtual_size = integer(header + 8, 4);
+    const auto raw_size = integer(header + 16, 4);
+    const auto offset = integer(header + 20, 4);
+    const auto characteristics = integer(header + 36, 4);
+    // A linked image pads SizeOfRawData up to the file alignment, so
+    // VirtualSize is the only exact length there; a COFF object leaves
+    // VirtualSize zero and SizeOfRawData is exact. Do not let an object's
+    // VirtualSize hide trailing bytes, or accept an image whose context would
+    // need virtual zero-fill. The complete raw range, including image padding,
+    // must exist and lie beyond all headers, not only the section table.
+    const auto size = image ? virtual_size : raw_size;
+    if ((characteristics & 0x00000040) == 0 ||    // CNT_INITIALIZED_DATA
+        (characteristics & 0x00000020) != 0 ||    // CNT_CODE
+        (characteristics & 0x00000080) != 0 ||    // CNT_UNINITIALIZED_DATA
+        (characteristics & 0x20000000) != 0 ||    // MEM_EXECUTE
+        size == 0 || size > max_bytes || size > raw_size || offset < headers_end ||
+        !range(offset, raw_size, bytes.size()))
+      invalid("invalid native context section range or flags");
+    context.assign(bytes.begin() + offset, bytes.begin() + offset + size);
+  }
+  if (!found) invalid("native artifact has no embedded context (embedding is opt-in)");
+  return json(decode(context));
+}
+
 std::string inspect_elf(const std::vector<char> &bytes) {
   const auto integer = [&](std::size_t offset, unsigned width) {
     if (!range(offset, width, bytes.size())) invalid("truncated ELF record");
@@ -428,6 +526,15 @@ std::string inspect_context_artifact(const std::vector<char> &bytes) {
   if (bytes.size() > 512ULL * 1024ULL * 1024ULL) invalid("artifact exceeds 512 MiB limit");
   if (bytes.size() >= 4 && bytes[0] == '\x7f' && bytes[1] == 'E' && bytes[2] == 'L' && bytes[3] == 'F')
     return inspect_elf(bytes);
+  // "MZ" is a PE image; a bare COFF object has no magic of its own, so it is
+  // recognised by its machine type sitting in the first two bytes. A NIL
+  // artifact cannot be mistaken for either: the text form begins with
+  // "module" or a comment and the binary form with "NIL\0".
+  if (bytes.size() >= 2 &&
+      ((bytes[0] == 'M' && bytes[1] == 'Z') ||
+       (static_cast<unsigned char>(bytes[0]) == 0x64 &&
+        static_cast<unsigned char>(bytes[1]) == 0x86)))
+    return inspect_pe(bytes);
   if (bytes.size() > 256ULL * 1024ULL * 1024ULL) invalid("NIL exceeds 256 MiB limit");
   std::istringstream input(std::string(bytes.begin(), bytes.end()), std::ios::in | std::ios::binary);
   const bool binary = bytes.size() >= 4 && bytes[0] == 'N' && bytes[1] == 'I' &&

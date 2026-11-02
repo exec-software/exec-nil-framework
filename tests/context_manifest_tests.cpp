@@ -178,6 +178,47 @@ Bytes elf(const Bytes &context, bool duplicate = false) {
   return bytes;
 }
 
+Bytes pe(const Bytes &context, bool image, bool duplicate = false) {
+  const std::size_t signature = 0x100;
+  const std::size_t coff = image ? signature + 4 : 0;
+  const std::size_t optional_size = image ? 240 : 0;
+  const std::size_t table = coff + 20 + optional_size;
+  const std::size_t count = duplicate ? 2 : 1;
+  const std::size_t offset = image ? 1024 : table + count * 40;
+  const std::size_t raw_size = image ? (context.size() + 511) & ~std::size_t(511)
+                                     : context.size();
+  Bytes bytes(offset + raw_size, 0);
+  if (image) {
+    bytes[0] = 'M'; bytes[1] = 'Z';
+    put(bytes, 0x3c, signature, 4);
+    bytes[signature] = 'P'; bytes[signature + 1] = 'E';
+    put(bytes, coff + 18, 0x22, 2); // executable, large-address aware.
+    const auto optional = coff + 20;
+    put(bytes, optional, 0x20b, 2);
+    put(bytes, optional + 32, 4096, 4); // SectionAlignment.
+    put(bytes, optional + 36, 512, 4); // FileAlignment.
+    put(bytes, optional + 56, 8192, 4); // SizeOfImage.
+    put(bytes, optional + 60, offset, 4); // SizeOfHeaders.
+    put(bytes, optional + 68, 3, 2); // Console subsystem.
+    put(bytes, optional + 108, 16, 4); // NumberOfRvaAndSizes.
+  }
+  put(bytes, coff, 0x8664, 2);
+  put(bytes, coff + 2, count, 2);
+  put(bytes, coff + 16, optional_size, 2);
+  for (std::size_t index = 0; index < count; ++index) {
+    const auto header = table + index * 40;
+    const std::string name = ".nyctx";
+    std::copy(name.begin(), name.end(), bytes.begin() + header);
+    put(bytes, header + 8, image ? context.size() : 0, 4);
+    put(bytes, header + 12, image ? 4096 : 0, 4);
+    put(bytes, header + 16, raw_size, 4);
+    put(bytes, header + 20, offset, 4);
+    put(bytes, header + 36, 0x40000040, 4); // initialized, readable data.
+  }
+  std::copy(context.begin(), context.end(), bytes.begin() + offset);
+  return bytes;
+}
+
 std::string inspect(const Bytes &bytes) {
   return ny::inspect_context_artifact(std::vector<char>(bytes.begin(), bytes.end()));
 }
@@ -419,6 +460,87 @@ void elf_negatives() {
   std::fill(bad.begin() + names_offset + 11, bad.begin() + names_offset + 23, 'x');
   rejects([&] { inspect(bad); }, "unterminated section name");
 }
+
+void pe_boundaries() {
+  const auto manifest = ny::encode_context_manifest(fixture());
+  const auto expected = ny::context_manifest_json(fixture());
+  check(inspect(pe(manifest, false)) == expected, "COFF object context agrees with manifest");
+  check(inspect(pe(manifest, true)) == expected, "PE32+ image ignores raw alignment padding");
+  for (const bool image : {false, true}) {
+    const std::string kind = image ? "PE" : "COFF";
+    const auto payload = wire();
+    const auto valid = pe(payload, image);
+    const std::size_t coff = image ? 0x104 : 0;
+    const std::size_t optional = coff + 20;
+    const std::size_t table = optional + (image ? 240 : 0);
+    const auto mutate = [&](std::size_t offset, std::uint64_t value, unsigned width,
+                            const std::string &label) {
+      auto bad = valid;
+      put(bad, offset, value, width);
+      rejects([&] { inspect(bad); }, kind + ": " + label);
+    };
+    check(inspect(valid) == ny::decode_context_manifest_json(payload),
+          kind + " legacy context wire remains readable");
+    for (std::size_t size = 0; size < valid.size(); ++size) {
+      const Bytes truncated(valid.begin(), valid.begin() + size);
+      rejects([&] { inspect(truncated); }, kind + " truncated at " + std::to_string(size));
+    }
+    mutate(coff, 0x14c, 2, "unsupported machine");
+    mutate(coff + 2, 0, 2, "missing section table");
+    mutate(coff + 2, 97, 2, "section-count bound");
+    mutate(coff + 2, 96, 2, "truncated section table");
+    mutate(table, 'x', 1, "missing context section");
+    mutate(table + 16, 0, 4, "empty raw context");
+    mutate(table + 16, 0xffffffffU, 4, "raw range extends beyond file");
+    mutate(table + 20, 0xffffffffU, 4, "raw offset extends beyond file");
+    mutate(table + 20, 1, 4, "context intersects file header");
+    mutate(table + 20, table, 4, "context intersects section table");
+    for (const auto flags : {0U, 0x40000060U, 0x400000c0U, 0x60000040U})
+      mutate(table + 36, flags, 4, "context must be initialized nonexecutable data");
+    const auto duplicate = pe(payload, image, true);
+    rejects([&] { inspect(duplicate); }, kind + " duplicate context sections");
+    if (image) {
+      mutate(0x3c, 0x20, 4, "PE signature overlaps DOS header");
+      mutate(0x3c, 0xffffffffU, 4, "PE signature outside file");
+      mutate(0x100, 'x', 1, "invalid PE signature");
+      mutate(coff + 16, 2, 2, "missing fixed optional-header fields");
+      mutate(coff + 16, 111, 2, "truncated fixed optional header");
+      mutate(coff + 16, 0xffff, 2, "optional header extends beyond file");
+      mutate(optional, 0x10b, 2, "unsupported PE32 image");
+      mutate(optional + 108, 17, 4, "directory array exceeds optional header");
+      mutate(optional + 108, 0xffffffffU, 4, "directory count cannot overflow");
+      mutate(optional + 60, table + 39, 4, "SizeOfHeaders omits section-table tail");
+      mutate(optional + 60, valid.size() + 1, 4, "SizeOfHeaders extends beyond file");
+      mutate(table + 8, 0, 4, "image has no exact context size");
+      mutate(table + 8, 513, 4, "image context cannot require virtual zero-fill");
+      mutate(table + 8, 1024 * 1024 + 1, 4, "manifest size bound");
+      // A complete, valid wire in either area must not masquerade as a
+      // section payload merely because it does not overlap the section table.
+      for (const std::size_t offset : {std::size_t(64), table + 40}) {
+        auto bad = valid;
+        std::copy(payload.begin(), payload.end(), bad.begin() + offset);
+        put(bad, table + 20, offset, 4);
+        rejects([&] { inspect(bad); }, "PE context stored inside DOS/header padding");
+      }
+      auto bad = valid;
+      bad.resize(1024 + payload.size());
+      rejects([&] { inspect(bad); }, "PE complete payload with missing raw padding");
+    } else {
+      mutate(coff + 16, 2, 2, "COFF has no optional header");
+      auto bad = valid;
+      put(bad, table + 8, payload.size(), 4);
+      bad.push_back(0);
+      put(bad, table + 16, payload.size() + 1, 4);
+      rejects([&] { inspect(bad); }, "COFF VirtualSize cannot hide trailing raw bytes");
+      // VirtualSize is not a COFF payload-length field; ignore it rather than
+      // truncate a perfectly valid object's SizeOfRawData.
+      bad = valid;
+      put(bad, table + 8, 1, 4);
+      check(inspect(bad) == ny::decode_context_manifest_json(payload),
+            "COFF payload length does not depend on VirtualSize");
+    }
+  }
+}
 } // namespace
 
 int main() {
@@ -429,6 +551,7 @@ int main() {
     wire_negatives();
     encode_negatives();
     elf_negatives();
+    pe_boundaries();
   } catch (const std::exception &error) {
     std::cerr << "Unexpected context manifest failure: " << error.what() << '\n';
     return 1;

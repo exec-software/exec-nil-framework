@@ -54,3 +54,19 @@ end fn
 @intrinsic("environment.user_name")
 pub fn get_user_name() -> text
 end fn
+
+# The host's own line terminator: "\r\n" on Windows, "\n" everywhere else.
+#
+# Nothing in the framework uses this by default, and that is the point.
+# println and the whole io surface emit "\n" on every host, so identical Ny
+# source produces identical bytes everywhere and a recorded transcript
+# describes every platform at once. That is the right default for data a
+# program reads back, hashes, or compares.
+#
+# It is the wrong default for a file a *person* will open in a Windows editor,
+# or for a protocol that specifies CRLF. Ask for the terminator in those
+# cases, the way C# code reaches for Environment.NewLine -- explicitly, where
+# a reader can see the choice was made.
+@intrinsic("environment.newline")
+pub fn newline() -> text
+end fn

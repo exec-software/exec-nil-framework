@@ -196,7 +196,7 @@ def check_foreign_keywords(compiler, workdir):
         page = pathlib.Path(workdir) / f"foreign-{index}.matrix"
         page.write_text(
             "book foreign.check\n\nmain returns number begin paragraph\n"
-            f"    {snippet}\n    give 0\nend paragraph\n")
+            f"    {snippet}\n    give 0\nend paragraph\n", newline='\n')
         nil = pathlib.Path(workdir) / f"foreign-{index}.nil"
         done = subprocess.run(
             [str(compiler), "--no-stdlib", "--no-bundle", "--output", str(nil),
@@ -277,7 +277,7 @@ def check_include_path_resolution(compiler, interpreter, workdir):
         "public point begin record\n"
         "    field x as number\n"
         "    field y as number\n"
-        "end record\n")
+        "end record\n", newline='\n')
     (root / "lib" / "geo" / "point-ext.mat").write_text(
         "book geo.point-ext\n\n"
         "read everything from geo.point\n\n"
@@ -285,7 +285,7 @@ def check_include_path_resolution(compiler, interpreter, workdir):
         "    public sum returns number begin paragraph\n"
         "        give my x plus my y\n"
         "    end paragraph\n"
-        "end extension\n")
+        "end extension\n", newline='\n')
     page = root / "app.matrix"
     page.write_text(
         "book app\n\n"
@@ -295,7 +295,7 @@ def check_include_path_resolution(compiler, interpreter, workdir):
         "    value p is build point with x being 3, y being 4\n"
         "    say p.sum with nothing\n"
         "    give 0\n"
-        "end paragraph\n")
+        "end paragraph\n", newline='\n')
 
     nil_path = root / "app.nil"
     compiled = subprocess.run(
@@ -331,7 +331,7 @@ def check_import_diagnostic_surface(compiler, workdir):
             dependency.write_text(
                 "book bridge.helper\n"
                 "public answer returns override integer begin paragraph\n"
-                "    give 42\nend paragraph\n")
+                "    give 42\nend paragraph\n", newline='\n')
             application = (
                 "import bridge.helper\n"
                 "fn main() -> i32\n"
@@ -344,7 +344,7 @@ def check_import_diagnostic_surface(compiler, workdir):
             dependency.write_text(
                 "module bridge.helper\n"
                 "pub fn answer() -> i32\n"
-                "    return 42\nend fn\n")
+                "    return 42\nend fn\n", newline='\n')
             application = (
                 "book consumer\n"
                 "read everything from bridge.helper\n"
@@ -355,7 +355,7 @@ def check_import_diagnostic_surface(compiler, workdir):
                         f"  --> {page.resolve()}:5\n"
                         "  |\n"
                         "5 |     give missing\n")
-        page.write_text(application)
+        page.write_text(application, newline='\n')
         base = [str(compiler.resolve()), "--no-stdlib", "--no-bundle", "--quiet"]
 
         for mode in ("source", "binary"):
@@ -430,7 +430,7 @@ def check_declaration_context(compiler, workdir):
         "    value box is build rectangle with width being 8\n"
         "    say widen with box being box\n"
         "    give 0\n"
-        "end paragraph\n")
+        "end paragraph\n", newline='\n')
     nil_path = root / "intent.nil"
     compiled = subprocess.run(
         [str(compiler), "--no-bundle", "--no-stdlib", "--output", str(nil_path), str(page)],
@@ -490,7 +490,7 @@ def check_debug_metadata(compiler, interpreter, workdir):
         "main returns number begin paragraph\n"
         "    value sample as Reading is build Reading with level being 7\n"
         "    say identity with input-value being (sample.doubled with nothing)\n"
-        "    give 0\nend paragraph\n")
+        "    give 0\nend paragraph\n", newline='\n')
     failures = []
     for debug, binary in ((False, False), (True, False), (True, True)):
         artifact = pathlib.Path(workdir) / f"source-debug-{debug}-{binary}.nil"
@@ -502,7 +502,12 @@ def check_debug_metadata(compiler, interpreter, workdir):
             failures.append(f"source debug: compile failed: {built.stdout}{built.stderr}")
             continue
         data = artifact.read_bytes()
-        if (str(page).encode() in data) != debug:
+        # The textual format quotes the source path and escapes backslashes in
+        # it, so a Windows path appears doubled there; the binary format stores
+        # it verbatim. On a host whose separator is '/' both spellings are the
+        # same string and this reduces to the original check.
+        spelling = str(page) if binary else str(page).replace("\\", "\\\\")
+        if (spelling.encode() in data) != debug:
             failures.append(f"source debug: path presence incorrect for debug={debug}, binary={binary}")
         if debug and not binary:
             functions = [part for part in data.decode().split("\nfunction ")[1:]]
@@ -523,7 +528,7 @@ def check_source_extensions(compiler, interpreter, workdir):
             "book suffix-check\n\n"
             "main returns number begin paragraph\n"
             '    say "Matrix extension selected"\n'
-            "    give 0\nend paragraph\n")
+            "    give 0\nend paragraph\n", newline='\n')
         output, code, problem = compile_and_run(
             compiler, interpreter, page, workdir)
         if problem or code != 0 or output != "Matrix extension selected\n":

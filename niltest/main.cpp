@@ -1,6 +1,10 @@
+#include "../common/standard_streams.hpp"
 #include "../nilbuild/process.hpp"
 #include "../common/strict_json.hpp"
 #include "../nilcompiler/src/nildata.hpp"
+#include "../common/private_directory.hpp"
+#include "../common/native_executable_path.hpp"
+#include "../common/tool_discovery.hpp"
 #include "nil_version.hpp"
 
 #include <cmath>
@@ -54,7 +58,8 @@ void usage() {
       "Tests run in separate processes; successful completion exits 77.\n"
       "Capture is bounded to 16 MiB per child and 64 MiB per run; compilation allows 300 seconds.\n"
       "NILData reports use the 1 MiB document limit; use JSON for larger reports.\n"
-      "Execution currently supports POSIX hosts; Windows is not supported.\n";
+      "A cancelled case reports 128 + the signal that stopped it; Windows has no\n"
+      "signals, so it reports 0 there and cancellation shows in the exit code.\n";
 }
 options parse(int argc, char **argv) {
   if (argc < 2) throw std::runtime_error("expected list or run; use --help");
@@ -110,68 +115,31 @@ options parse(int argc, char **argv) {
   }
   return result;
 }
-bool executable(const fs::path &path) {
-  std::error_code error;
-  if (!fs::is_regular_file(path, error)) return false;
-#ifdef _WIN32
-  return true;
-#else
-  return access(path.c_str(), X_OK) == 0;
-#endif
-}
 std::optional<fs::path> on_path(const std::string &name) {
-  const char *raw = std::getenv("PATH");
-  if (!raw) return {};
-  std::string paths(raw);
-  std::size_t start = 0;
-  while (start <= paths.size()) {
-    const auto end = paths.find(':', start);
-    const auto part = paths.substr(start, end == std::string::npos ? end : end - start);
-    if (!part.empty()) {
-      const auto candidate = fs::absolute(fs::path(part) / name);
-      if (executable(candidate)) return candidate;
-    }
-    if (end == std::string::npos) break;
-    start = end + 1;
-  }
-  return {};
+  return nil::detail::executable_on_path(name, fs::current_path());
 }
 fs::path tool(const std::string &name, const std::optional<std::string> &override,
               const fs::path &self) {
   if (override) {
     if (fs::path(*override).has_parent_path()) {
-      const auto candidate = fs::absolute(*override);
-      if (executable(candidate)) return candidate;
+      if (const auto candidate = nil::detail::executable_candidate(fs::absolute(*override)))
+        return *candidate;
     } else if (const auto candidate = on_path(*override)) return *candidate;
     throw std::runtime_error("cannot execute specified " + name + ": " + *override);
   }
-  const auto sibling = self.parent_path() / name;
-  if (executable(sibling)) return sibling;
+  if (const auto sibling = nil::detail::executable_candidate(self.parent_path() / name))
+    return *sibling;
   if (const auto found = on_path(name)) return *found;
   throw std::runtime_error("cannot find " + name + "; install it beside niltest or configure its path");
 }
 fs::path self_path(const char *argv0) {
-#ifdef __linux__
-  std::error_code error;
-  auto path = fs::read_symlink("/proc/self/exe", error);
-  if (!error) return path;
-#endif
-  if (fs::path(argv0).has_parent_path()) return fs::absolute(argv0);
-  if (auto path = on_path(argv0)) return *path;
-  return fs::absolute(argv0);
+  return nil::detail::running_executable_path(argv0, fs::current_path());
 }
 struct temporary_directory {
   fs::path path;
-  temporary_directory() {
-#ifdef _WIN32
-    throw std::runtime_error("niltest execution currently requires a POSIX host; Windows is not supported");
-#else
-    std::string pattern = (fs::temp_directory_path() / "niltest-XXXXXX").string();
-    const char *created = mkdtemp(pattern.data());
-    if (!created) throw std::runtime_error("could not create private test artifact directory");
-    path = created;
-#endif
-  }
+  temporary_directory()
+      : path(nil::detail::create_private_directory(fs::temp_directory_path(),
+                                                   "niltest-")) {}
   ~temporary_directory() { std::error_code error; if (!path.empty()) fs::remove_all(path, error); }
 };
 std::string text(const json &value, const std::string &key) {
@@ -269,9 +237,6 @@ json case_result(const json &metadata, const std::string &route,
   return item;
 }
 int execute(const options &opts, const fs::path &self, json &report) {
-#ifdef _WIN32
-  throw std::runtime_error("niltest execution currently requires a POSIX host; Windows is not supported");
-#else
   nilbuild::cancellation_scope cancellation;
   const auto compiler = tool("nilcompiler", opts.compiler, self);
   auto discovery = compiler_arguments(opts, compiler);
@@ -313,9 +278,15 @@ int execute(const options &opts, const fs::path &self, json &report) {
   for (const std::string route : {"vm", "native"}) {
     if (opts.target != "all" && opts.target != route) continue;
     auto compile = compiler_arguments(opts, compiler);
-    const auto artifact = artifacts.path / (route == "vm" ? "tests.nil" : "tests.native");
+    const auto requested = artifacts.path / (route == "vm" ? "tests.nil" : "tests.native");
+    // The native backend installs the executable at the requested path plus
+    // the host's suffix, so that -- not the requested name -- is what exists
+    // afterwards and what has to be run.
+    const auto artifact = route == "vm"
+                              ? requested
+                              : nil::detail::native_executable_path(requested);
     compile.push_back("--test"); compile.push_back(route == "vm" ? "--no-bundle" : "--native");
-    compile.insert(compile.end(), {"--output", artifact.string()});
+    compile.insert(compile.end(), {"--output", requested.string()});
     compile.insert(compile.end(), opts.sources.begin(), opts.sources.end());
     const auto built = nilbuild::execute_many({{compile, fs::current_path()}}, 1, compile_options).front();
     if (built.status || built.timed_out || built.output_limited || built.cancelled || !fs::is_regular_file(artifact)) {
@@ -346,10 +317,10 @@ int execute(const options &opts, const fs::path &self, json &report) {
   if (nilbuild::pending_signal) return 128 + nilbuild::pending_signal;
   if (report.at("summary").at("errors").text != "0") return 2;
   return report.at("summary").at("failed").text == "0" ? 0 : 1;
-#endif
 }
 } // namespace
 int main(int argc, char **argv) {
+  ny::use_untranslated_standard_streams();
   if (argc == 2 && std::string(argv[1]) == "--version") { std::cout << "niltest " << NIL_VERSION << '\n'; return 0; }
   if (argc == 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) { usage(); return 0; }
   std::string format = "human";
@@ -360,9 +331,7 @@ int main(int argc, char **argv) {
   try { const auto opts = parse(argc, argv); format = opts.format; status = execute(opts, self_path(argv[0]), report); }
   catch (const std::exception &error) {
     report.object["errors"].array.push_back(json::str(clean_text(error.what())));
-#ifndef _WIN32
     if (nilbuild::pending_signal) status = 128 + nilbuild::pending_signal;
-#endif
   }
   if (!list) summarize(report);
   try { emit(report, format, list); }

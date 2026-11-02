@@ -1,4 +1,5 @@
 #include "vm.hpp"
+#include "../../common/standard_streams.hpp"
 #include "nil_version.hpp"
 #include <array>
 #include <cstdlib>
@@ -22,6 +23,11 @@
 #include <mach-o/dyld.h>
 #endif
 #ifdef _WIN32
+// <windows.h> defines min/max as macros, which breaks
+// std::numeric_limits<...>::max() and std::min/std::max.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <psapi.h>
 #else
@@ -660,6 +666,7 @@ static void print_usage(std::ostream &out) {
 }
 
 int main(int argc, char *argv[]) {
+  ny::use_untranslated_standard_streams();
   if (argc == 2 && std::string(argv[1]) == "--version") {
     std::cout << "nilinterpreter " << NIL_VERSION << '\n';
     return 0;

@@ -76,12 +76,23 @@ def digest(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def sdk_tool(sdk: Path, name: str) -> Path:
+    return sdk / (name + (".exe" if sys.platform == "win32" else ""))
+
+
+def require_supported_host(require_rc: bool) -> None:
+    if require_rc and sys.platform != "linux":
+        raise ValueError("RC installed consumer qualification currently requires Linux")
+    if sys.platform not in ("linux", "win32"):
+        raise ValueError("installed consumer validation currently supports Linux and Windows")
+
+
 def check_report(report: dict, source: Path, sdk: Path, library: Path,
                  expected: Path, expected_text: str) -> None:
     """Do not turn XFAIL, skipped routes, or an empty report into a proof."""
     expected_inputs = {
-        "source": str(source), "compiler": str(sdk / "nilcompiler"),
-        "interpreter": str(sdk / "nilinterpreter"), "expected_exit": 0,
+        "source": str(source), "compiler": str(sdk_tool(sdk, "nilcompiler")),
+        "interpreter": str(sdk_tool(sdk, "nilinterpreter")), "expected_exit": 0,
         "routes": list(ROUTES), "strict": True,
         "compiler_args": ["--sdk-path", str(library)],
         "expected_stdout": str(expected), "expected_stderr": None,
@@ -166,8 +177,9 @@ def run_contract(sdk: Path, revision: str, require_rc: bool) -> dict:
     validator = ROOT / "scripts/validate-sdk.py"
     harness = ROOT / "tests/routes/ny_route_matrix.py"
     pipeline = ROOT / "tests/tools/native_toolchain_pipeline.py"
-    if sys.platform != "linux":
-        raise ValueError("installed native consumer qualification currently requires Linux")
+    # Development consumer regression evidence is useful on Windows too. This
+    # does not broaden the Linux-only RC/release qualification contract.
+    require_supported_host(require_rc)
     with diagnostic_directory() as work:
         validation = [sys.executable, str(validator), str(sdk),
                       "--expected-revision", revision]
@@ -200,8 +212,8 @@ def run_contract(sdk: Path, revision: str, require_rc: bool) -> dict:
             for library_name in ("nilstd", "nillib"):
                 library = sdk / library_name
                 report_path = work / (name + "-" + library_name + ".json")
-                run([sys.executable, str(harness), "--compiler", str(sdk / "nilcompiler"),
-                     "--interpreter", str(sdk / "nilinterpreter"), "--source", str(source),
+                run([sys.executable, str(harness), "--compiler", str(sdk_tool(sdk, "nilcompiler")),
+                     "--interpreter", str(sdk_tool(sdk, "nilinterpreter")), "--source", str(source),
                      "--expected-stdout", str(expected), "--expected-exit", "0",
                      "--routes", "all", "--strict", "--compiler-arg=--sdk-path",
                      "--compiler-arg=" + str(library), "--work-dir", str(work / "routes"),
@@ -209,9 +221,9 @@ def run_contract(sdk: Path, revision: str, require_rc: bool) -> dict:
                 report = json.loads(report_path.read_text(encoding="utf-8"))
                 check_report(report, source, sdk, library, expected,
                              expected.read_text(encoding="utf-8"))
-                output = run([sys.executable, str(pipeline), "--compiler", str(sdk / "nilcompiler"),
-                              "--assembler", str(sdk / "nilassembler"),
-                              "--linker", str(sdk / "nillinker"), "--runtime", str(runtime),
+                output = run([sys.executable, str(pipeline), "--compiler", str(sdk_tool(sdk, "nilcompiler")),
+                              "--assembler", str(sdk_tool(sdk, "nilassembler")),
+                              "--linker", str(sdk_tool(sdk, "nillinker")), "--runtime", str(runtime),
                               "--source", str(source), "--expected-stdout", str(expected),
                               "--stdlib", str(library), "--work-dir", str(work / "pipeline")],
                              work, environment)
@@ -230,6 +242,23 @@ def run_contract(sdk: Path, revision: str, require_rc: bool) -> dict:
         return result
 
 
+def write_report(output: Path, report: dict) -> None:
+    """Publish only after closing the temporary file (required on Windows)."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    pending = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
+                                         dir=output.parent, prefix=".ny-consumer-",
+                                         delete=False) as stream:
+            pending = Path(stream.name)
+            json.dump(report, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+        os.replace(pending, output)
+    finally:
+        if pending is not None:
+            pending.unlink(missing_ok=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sdk", type=Path, required=True)
@@ -244,17 +273,7 @@ def main() -> int:
         if output.is_symlink() or sdk == output.resolve() or sdk in output.resolve().parents:
             raise ValueError("consumer report must be outside the sealed SDK and not a symlink")
         report = run_contract(sdk, args.expected_revision, args.require_rc_checks)
-        output.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=output.parent,
-                                         prefix=".ny-consumer-", delete=False) as stream:
-            pending = Path(stream.name)
-            try:
-                json.dump(report, stream, indent=2, sort_keys=True)
-                stream.write("\n")
-                stream.flush()
-                os.replace(pending, output)
-            finally:
-                pending.unlink(missing_ok=True)
+        write_report(output, report)
         print("installed SDK consumer routes: {} passed (source and binary libraries)".format(
             report["execution_count"]))
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:

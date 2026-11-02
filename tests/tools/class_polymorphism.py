@@ -166,7 +166,7 @@ end fn
         root = Path(temporary)
         for name, source in negatives.items():
             path = root / f"{name}.ny"
-            path.write_text(source, encoding="utf-8")
+            path.write_text(source, encoding="utf-8", newline='\n')
             for mode, flags in (("text", []), ("binary", ["--emit-binary-nil"]),
                                 ("unchecked-text", ["--no-typecheck"]),
                                 ("unchecked-binary", ["--no-typecheck", "--emit-binary-nil"])):
@@ -186,7 +186,7 @@ end fn
                     raise AssertionError(f"{name}/{mode}: rejection replaced prior artifact")
         for name, (source, expected) in positives.items():
             path = root / f"{name}.ny"
-            path.write_text(source, encoding="utf-8")
+            path.write_text(source, encoding="utf-8", newline='\n')
             for mode, flags in (("text", []), ("binary", ["--emit-binary-nil"])):
                 output = root / f"{name}-{mode}.nil"
                 compiled = subprocess.run([str(compiler), "--no-stdlib", "--no-bundle", "--quiet",
@@ -220,7 +220,7 @@ extra: i32
 pub override fn read(self) -> i32 { return self.value + self.extra }
 end class
 pub fn make() -> Base { return Derived { value: 30, extra: 1 } }
-""", encoding="utf-8")
+""", encoding="utf-8", newline='\n')
         library_root = root / "binary-sdk"
         library = library_root / "ny" / "test" / "polymorphism.nil"
         library.parent.mkdir(parents=True)
@@ -252,7 +252,7 @@ println(base.identity().read())
 println(make().read())
 return 0
 end fn
-""", encoding="utf-8")
+""", encoding="utf-8", newline='\n')
         for mode, flags in (("text", []), ("binary", ["--emit-binary-nil"])):
             output = consumer_root / f"consumer-{mode}.nil"
             compiled = subprocess.run(

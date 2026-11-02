@@ -374,10 +374,10 @@ int main(int argc, char **argv) {
 }
 """,
             encoding="utf-8",
-        )
+         newline='\n')
         helper_source.write_text(
             'extern "C" int ny_link_helper() { return 37; }\n', encoding="utf-8"
-        )
+        , newline='\n')
         compile_object(args.cxx, main_source, main_object, root)
         compile_object(args.cxx, helper_source, helper_object, root)
 
@@ -548,7 +548,7 @@ int main(int argc, char **argv) {
         )
 
         invalid_object = root / "not an object.o"
-        invalid_object.write_text("not a native object\n", encoding="utf-8")
+        invalid_object.write_text("not a native object\n", encoding="utf-8", newline='\n')
         preserved_output = root / (
             "preserved output.exe" if os.name == "nt" else "preserved output"
         )
@@ -861,7 +861,7 @@ int main(int argc, char **argv) {
         unresolved_source.write_text(
             'extern "C" int missing_symbol();\nint main() { return missing_symbol(); }\n',
             encoding="utf-8",
-        )
+         newline='\n')
         compile_object(args.cxx, unresolved_source, unresolved_object, root)
         unresolved = run(
             [

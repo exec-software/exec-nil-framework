@@ -203,7 +203,7 @@ def reference_parameter_session(debugger, compiler, root):
     }
     for language, contents in sources.items():
         source = root / ("reference-debug." + language)
-        source.write_text(contents, encoding="utf-8")
+        source.write_text(contents, encoding="utf-8", newline='\n')
         for binary in (False, True):
             program = root / ("reference-" + language + ("-binary.nil" if binary else "-text.nil"))
             compile_program(compiler, program, source, binary=binary)
@@ -245,13 +245,13 @@ def binary_library_session(debugger, compiler, root):
     for directory in (producer, consumer, sdk):
         directory.mkdir()
     library = producer / "library.ny"
-    library.write_text("module custom\npub fn value() -> i32\n    return 7\nend fn\npub fn failing(value: i32) -> i32\n    return 10 / value\nend fn\n")
+    library.write_text("module custom\npub fn value() -> i32\n    return 7\nend fn\npub fn failing(value: i32) -> i32\n    return 10 / value\nend fn\n", newline='\n')
     result = subprocess.run([str(compiler), "--no-stdlib", "--no-bundle", "--quiet",
                              "--emit-binary-nil", "--emit-library", "--output", str(sdk / "custom.nil"),
                              str(library)], capture_output=True, timeout=30)
     assert result.returncode == 0, result.stderr
     source = consumer / "main.ny"
-    source.write_text("import custom\nfn main() -> i32\n    let answer = custom::value()\n    println(answer)\n    return 0\nend fn\n")
+    source.write_text("import custom\nfn main() -> i32\n    let answer = custom::value()\n    println(answer)\n    return 0\nend fn\n", newline='\n')
     program = consumer / "program.nil"
     result = subprocess.run([str(compiler), "--no-stdlib", "--no-bundle", "--quiet", "--debug-info",
                              "--sdk-path", str(sdk), "--output", str(program), str(source)],
@@ -272,7 +272,7 @@ def binary_library_session(debugger, compiler, root):
         assert client.evaluate("answer") == "7"
     finally:
         client.close()
-    source.write_text("import custom\nfn main() -> i32\n    return custom::failing(0)\nend fn\n")
+    source.write_text("import custom\nfn main() -> i32\n    return custom::failing(0)\nend fn\n", newline='\n')
     result = subprocess.run([str(compiler), "--no-stdlib", "--no-bundle", "--quiet", "--debug-info",
                              "--sdk-path", str(sdk), "--output", str(program), str(source)],
                             capture_output=True, timeout=30)
@@ -304,8 +304,8 @@ def main():
         root = Path(temporary)
         main_source = root / "main.ny"
         helper_source = root / "space λ helper.ny"
-        main_source.write_text("fn main() -> i32\n    let value: i64 = 40\n    let result = helper(value)\n    println(result)\n    println(value)\n    return 0\nend fn\n")
-        helper_source.write_text("fn helper(value: i64) -> i64\n    let value: i64 = value + 1\n    if true then\n        let value: i64 = value + 2\n        println(value)\n    end if\n    return value\nend fn\n")
+        main_source.write_text("fn main() -> i32\n    let value: i64 = 40\n    let result = helper(value)\n    println(result)\n    println(value)\n    return 0\nend fn\n", newline='\n')
+        helper_source.write_text("fn helper(value: i64) -> i64\n    let value: i64 = value + 1\n    if true then\n        let value: i64 = value + 2\n        println(value)\n    end if\n    return value\nend fn\n", newline='\n')
         for binary in (False, True):
             program = root / ("binary.nil" if binary else "text.nil")
             compile_program(compiler, program, main_source, helper_source, binary=binary)
@@ -332,7 +332,7 @@ def main():
             finally:
                 client.close()
         loop = root / "loop.ny"
-        loop.write_text('fn main() -> i32\n    let mut value: i64 = 0\n    println("alive")\n    while true\n        value = value + 1\n    end while\n    return 0\nend fn\n')
+        loop.write_text('fn main() -> i32\n    let mut value: i64 = 0\n    println("alive")\n    while true\n        value = value + 1\n    end while\n    return 0\nend fn\n', newline='\n')
         loop_nil = root / "loop.nil"
         compile_program(compiler, loop_nil, loop)
         asynchronous_session(debugger, loop_nil)

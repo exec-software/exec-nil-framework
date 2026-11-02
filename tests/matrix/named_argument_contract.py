@@ -33,7 +33,7 @@ def main():
         def check(name, source, expected, native=False):
             nonlocal checks
             path = root / (name + '.matrix')
-            path.write_text(source, encoding='utf-8')
+            path.write_text(source, encoding='utf-8', newline='\n')
             analysis = json.loads(run([*common, '--analyze', '--semantic-index', str(path)]).stdout)
             assert analysis['success'] and analysis['semantic'], analysis
             checks += 1
@@ -54,7 +54,7 @@ def main():
         def rejected(name, source, message):
             nonlocal checks
             path = root / (name + '.matrix')
-            path.write_text(source, encoding='utf-8')
+            path.write_text(source, encoding='utf-8', newline='\n')
             result = json.loads(run([*common, '--analyze', '--semantic-index', str(path)], 1).stdout)
             assert not result['success'] and result['semantic'] is None, result
             assert any(message in item['message'] for item in result['diagnostics']), result
@@ -112,9 +112,9 @@ end paragraph
             'pub fn ordered(first_part: i64, second_part: i64) -> i64\n'
             ' return first_part * 100 + second_part\nend fn\n'
             'pub fn select<T>(chosen: T, ignored: i64) -> T\n return chosen\nend fn\n'
-            'pub type Callback = fn(i64, i64) -> i64\n', encoding='utf-8')
+            'pub type Callback = fn(i64, i64) -> i64\n', encoding='utf-8', newline='\n')
         (root / 'matrix_provider.matrix').write_text('book matrix-provider\npublic ' + alternate,
-            encoding='utf-8')
+            encoding='utf-8', newline='\n')
         imports = '''book imports
 read ordered, select from ny-provider
 read everything from matrix-provider
@@ -139,7 +139,7 @@ end paragraph
             ' pub fn make(chosen: T, ignored: i64) -> Container<T>\n'
             '  return Container<T> { item: chosen }\n end fn\n'
             ' pub fn choose(self, chosen: T, ignored: i64) -> T\n'
-            '  return chosen\n end fn\nend impl\n', encoding='utf-8')
+            '  return chosen\n end fn\nend impl\n', encoding='utf-8', newline='\n')
         generic_methods = '''book generic-methods
 read Container from generic-provider
 main returns number begin paragraph

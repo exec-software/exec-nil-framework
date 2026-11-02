@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,10 +18,17 @@ consumer = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(consumer)
 
 
+# check_report requires an absolute run directory, and on Windows a path with
+# no drive letter is not absolute -- "/private/..." is rooted but relative to
+# the current drive. Anchor these notional paths to a real root so the fixture
+# describes an absolute location on every host.
+ANCHOR = Path(Path.cwd().anchor or "/")
+
+
 class ConsumerTests(unittest.TestCase):
-    sdk = Path("/sdk")
-    source = Path("/private/source.ny")
-    expected = Path("/private/expected.stdout")
+    sdk = ANCHOR / "sdk"
+    source = ANCHOR / "private/source.ny"
+    expected = ANCHOR / "private/expected.stdout"
     library = sdk / "nillib"
 
     def test_consumer_frontend_extension_is_preserved(self):
@@ -27,27 +36,29 @@ class ConsumerTests(unittest.TestCase):
             directory = Path(temporary)
             for suffix in (".ny", ".matrix", ".mat"):
                 source = directory / ("consumer" + suffix)
-                source.write_text("fixture")
+                source.write_text("fixture", newline='\n')
                 self.assertEqual(consumer.fixture_source("consumer", directory), source)
                 source.unlink()
             with self.assertRaises(ValueError):
                 consumer.fixture_source("consumer", directory)
-            (directory / "consumer.ny").write_text("fixture")
-            (directory / "consumer.matrix").write_text("fixture")
+            (directory / "consumer.ny").write_text("fixture", newline='\n')
+            (directory / "consumer.matrix").write_text("fixture", newline='\n')
             with self.assertRaises(ValueError):
                 consumer.fixture_source("consumer", directory)
 
     def fixture(self):
         report = {
             "schema": "ny.route-matrix.v1",
-            "inputs": {"source": str(self.source), "compiler": "/sdk/nilcompiler",
-                       "interpreter": "/sdk/nilinterpreter", "expected_exit": 0,
+            "inputs": {"source": str(self.source),
+                       "compiler": str(consumer.sdk_tool(self.sdk, "nilcompiler")),
+                       "interpreter": str(consumer.sdk_tool(self.sdk, "nilinterpreter")),
+                       "expected_exit": 0,
                        "routes": list(consumer.ROUTES), "strict": True,
                        "compiler_args": ["--sdk-path", str(self.library)],
                        "expected_stdout": str(self.expected), "expected_stderr": None,
                        "with_stdlib": False, "interpreter_args": [], "program_args": [],
                        "text_nil_contains": [], "xfail_stderr_contains": {}},
-            "run_directory": "/private/routes/run",
+            "run_directory": str(self.source.parent / "routes/run"),
             "summary": {"PASS": 6, "FAIL": 0, "SKIP": 0, "XFAIL": 0, "XPASS": 0},
             "results": [{"route": name, "status": "PASS", "raw_status": "PASS",
                          "checks": [{"passed": True}],
@@ -74,6 +85,65 @@ class ConsumerTests(unittest.TestCase):
 
     def test_positive(self):
         self.check(self.fixture())
+
+    def test_platform_tools_and_exact_evidence(self):
+        for platform, suffix in (("linux", ""), ("win32", ".exe")):
+            with self.subTest(platform=platform), mock.patch.object(consumer.sys, "platform", platform):
+                for name in ("nilcompiler", "nilinterpreter", "nilassembler", "nillinker"):
+                    self.assertEqual(consumer.sdk_tool(self.sdk, name), self.sdk / (name + suffix))
+                report = self.fixture()
+                self.check(report)
+                report["inputs"]["compiler"] = str(self.sdk / (
+                    "nilcompiler" if suffix else "nilcompiler.exe"))
+                with self.assertRaises(ValueError):
+                    self.check(report)
+
+    def test_windows_development_is_not_rc_qualification(self):
+        for platform in ("linux", "win32", "darwin"):
+            with self.subTest(platform=platform), mock.patch.object(consumer.sys, "platform", platform):
+                if platform in ("linux", "win32"):
+                    consumer.require_supported_host(False)
+                else:
+                    with self.assertRaises(ValueError):
+                        consumer.require_supported_host(False)
+                if platform == "linux":
+                    consumer.require_supported_host(True)
+                else:
+                    with self.assertRaisesRegex(ValueError, "RC.*requires Linux"):
+                        consumer.require_supported_host(True)
+
+    def test_report_publish_closes_temporary_before_replace(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "consumer.json"
+            original_factory = tempfile.NamedTemporaryFile
+            original_replace = consumer.os.replace
+            opened = []
+
+            def capture(*args, **kwargs):
+                stream = original_factory(*args, **kwargs)
+                opened.append(stream)
+                return stream
+
+            def replace(source, destination):
+                self.assertTrue(opened[-1].closed)
+                original_replace(source, destination)
+
+            with mock.patch.object(consumer.tempfile, "NamedTemporaryFile", side_effect=capture), \
+                    mock.patch.object(consumer.os, "replace", side_effect=replace):
+                consumer.write_report(output, {"status": "PASS", "execution_count": 16})
+            self.assertEqual(json.loads(output.read_bytes()), {"status": "PASS", "execution_count": 16})
+            self.assertNotIn(b"\r", output.read_bytes())
+            self.assertEqual(list(output.parent.iterdir()), [output])
+
+    def test_report_publish_failure_preserves_previous_and_cleans_temporary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "consumer.json"
+            output.write_bytes(b"previous report\n")
+            with mock.patch.object(consumer.os, "replace", side_effect=PermissionError("held open")):
+                with self.assertRaises(PermissionError):
+                    consumer.write_report(output, {"status": "PASS"})
+            self.assertEqual(output.read_bytes(), b"previous report\n")
+            self.assertEqual(list(output.parent.iterdir()), [output])
 
     def test_every_nonpass_status_rejects(self):
         for status in ("XFAIL", "XPASS", "FAIL", "SKIP", None):

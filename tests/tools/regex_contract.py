@@ -6,8 +6,13 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
 import subprocess
 import tempfile
+
+# The toolchain appends .exe to extensionless executables on Windows.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from native_output_staging import linked_executable_path
 
 
 def main() -> int:
@@ -35,7 +40,7 @@ def main() -> int:
             return result
 
         def native(nil, name, mode):
-            obj, exe = root / (name + '.o'), root / name
+            obj, exe = root / (name + '.o'), linked_executable_path(root / name)
             run([tools['assembler'], *(['--unmanaged'] if mode == 'unsafe' else []), '-o', obj, nil])
             run([tools['linker'], '--runtime', tools['runtime'], '-o', exe, obj])
             return [exe]
@@ -87,7 +92,7 @@ fn main() -> i32
     println(first_match(over_limit, "a").unwrap_error())
     return 0
 end fn
-'''.replace('PATTERN_LIMIT_PLACEHOLDER', 'a' * 4097))
+'''.replace('PATTERN_LIMIT_PLACEHOLDER', 'a' * 4097), newline='\n')
         nil = root / 'guards.nil'
         run([*base, '-o', nil, guards])
         commands = [[tools['interpreter'], '--no-ai', nil]]
@@ -133,7 +138,7 @@ CALL println 1
 PUSH_CONST 0
 RET
 end function
-''')
+''', newline='\n')
         commands = [[tools['interpreter'], '--no-ai', direct]]
         if args.llvm == 'ON': commands.append(native(direct, 'direct', 'safe'))
         for command in commands:
@@ -152,7 +157,7 @@ end function
             for name, (declaration, body) in invalid.items():
                 nil, output = root / (name + '.nil'), root / (name + '.o')
                 nil.write_text('module invalid_regex\nconst text = "a"\n' + declaration +
-                    '\nfunction main() -> i32:\n' + body + '\nPUSH_CONST 0\nRET\nend function\n')
+                    '\nfunction main() -> i32:\n' + body + '\nPUSH_CONST 0\nRET\nend function\n', newline='\n')
                 result = run([tools['assembler'], '-o', output, nil], status=1)
                 assert b'regex' in result.stderr and not output.exists(), result
     print(f'regex contract: {checks} executions/checks passed')

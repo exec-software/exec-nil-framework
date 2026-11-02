@@ -1,6 +1,7 @@
 #pragma once
 
 #include "process.hpp"
+#include "windows_toolchain_inputs.hpp"
 
 #include <cctype>
 #include <cstdlib>
@@ -234,11 +235,31 @@ public:
 #endif
 
 inline std::optional<std::vector<std::filesystem::path>> native_toolchain_files(
-    const std::filesystem::path &driver, const std::filesystem::path &directory) {
+    const std::filesystem::path &driver, const std::filesystem::path &directory,
+    const std::filesystem::path &runtime = {},
+    const std::vector<std::filesystem::path> &library_paths = {}) {
 #if defined(__linux__)
+  (void)runtime; (void)library_paths;
   return toolchain_detail::collector(driver, directory).files();
+#elif defined(_WIN32)
+  if (library_paths.empty()) return std::nullopt;
+  // These can inject arbitrary response files, objects, search paths or tools
+  // that are outside the supported closure. Compile normally, without reuse.
+  for (const auto *name : {"LINK", "_LINK_"}) {
+    const char *value = std::getenv(name);
+    if (value && *value) return std::nullopt;
+  }
+  const char *lib = std::getenv("LIB");
+  const auto inspect = [&](const std::filesystem::path &archive) -> std::optional<std::string> {
+    const auto result = execute({driver.string(), "/dump", "/nologo", "/directives", archive.string()}, directory);
+    if (result.cancelled) throw process_cancelled(result.status);
+    if (result.status || !result.error.empty()) return {};
+    return result.output;
+  };
+  return windows_toolchain_detail::collector(driver, directory, runtime,
+      library_paths, lib ? lib : "", inspect).files();
 #else
-  (void)driver; (void)directory;
+  (void)driver; (void)directory; (void)runtime; (void)library_paths;
   return std::nullopt;
 #endif
 }

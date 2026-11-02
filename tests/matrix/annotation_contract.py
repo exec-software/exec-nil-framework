@@ -8,6 +8,10 @@ import subprocess
 import sys
 import tempfile
 
+# Piping a source through a text-mode stdin would rewrite its newlines.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from exact_stdin import run_with_exact_stdin
+
 REPO = Path(__file__).resolve().parents[2]
 ARGS = '"cache, warm", enabled=true, limit=-4, ratio=1.25, target=net::Peer'
 NY = '''module annotation_contract
@@ -75,8 +79,7 @@ def main():
         root = Path(directory)
 
         def run(command, *, status=0, source=None):
-            result = subprocess.run([str(x) for x in command], cwd=root, env=env,
-                                    input=source, text=True, capture_output=True, timeout=90)
+            result = run_with_exact_stdin(command, source, cwd=root, env=env, timeout=90)
             assert result.returncode == status, (command, result.stdout, result.stderr)
             return result
 
@@ -95,7 +98,7 @@ def main():
                 'note policy with "cache, warm", enabled being true, limit being negative 4, ratio being 1.25, target being net::Peer')),
         ):
             path = root / name
-            path.write_text(source)
+            path.write_text(source, newline='\n')
             reflected = analyze(path)['reflection']
             annotations = reflected['annotations']
             assert [a['name'] for a in annotations] == ['policy', 'doc', 'doc', 'doc', 'doc'], annotations
@@ -111,7 +114,7 @@ def main():
             assert shape == declarations, shape
             checks += 1
             expected_stdout = root / (name + '.stdout')
-            expected_stdout.write_text('7\n')
+            expected_stdout.write_text('7\n', newline='\n')
             routes = 'all' if opts.llvm == 'ON' else 'text-interpreter,binary-interpreter,bundle-text,bundle-binary'
             run([sys.executable, REPO / 'tests/routes/ny_route_matrix.py', '--compiler', compiler,
                  '--interpreter', interpreter, '--source', path, '--expected-stdout', expected_stdout,
@@ -123,10 +126,10 @@ def main():
                 output = root / (name + '.nil')
                 # ai_context selects the emitted declaration for public inspection.
                 inspected_source = source.replace('@doc(', '@ai_context(')
-                path.write_text(inspected_source)
+                path.write_text(inspected_source, newline='\n')
                 run([compiler, '--quiet', '--no-stdlib', '--no-bundle', *flags, '-o', output, path])
                 inspected.append(json.loads(run([compiler, '--inspect-context', output]).stdout))
-                path.write_text(source)
+                path.write_text(source, newline='\n')
             assert inspected[0] == inspected[1], inspected
             checks += 1
 
@@ -137,9 +140,9 @@ def main():
                    'context "a\0b"', 'note doc with text being "a\0b"', '@doc("a\0b")']
         for annotation in invalid:
             path = root / 'invalid.matrix'
-            path.write_text(base.replace('{annotation}', annotation))
+            path.write_text(base.replace('{annotation}', annotation), newline='\n')
             output = root / 'previous.nil'
-            output.write_text('sentinel')
+            output.write_text('sentinel', newline='\n')
             run([compiler, '--quiet', '--no-stdlib', '--no-bundle', '-o', output, path], status=1)
             assert output.read_text() == 'sentinel'
             if '\0' in annotation:
@@ -152,13 +155,13 @@ def main():
                             'main begin paragraph\n @flag\n value local is 1\nend paragraph',
                             'Parcel begin extension\nend extension', ''):
             path = root / 'target.matrix'
-            path.write_text('book invalid\n@flag\n' + declaration + '\n')
+            path.write_text('book invalid\n@flag\n' + declaration + '\n', newline='\n')
             run([compiler, '--analyze', '--no-stdlib', path], status=1)
             checks += 1
 
         # Named test declarations now retain declaration annotations too.
         path = root / 'annotated-test.matrix'
-        path.write_text('book annotated\n@flag\nTask begin test\n expect yes\nend test\n')
+        path.write_text('book annotated\n@flag\nTask begin test\n expect yes\nend test\n', newline='\n')
         report = json.loads(run([compiler, '--analyze', '--no-stdlib', path]).stdout)
         assert report['success'], report
         manifest = json.loads(run([compiler, '--test-list', '--no-stdlib', path]).stdout)
@@ -182,7 +185,7 @@ end text
  say ANSWER
  give 0
 end paragraph
-''')
+''', newline='\n')
         result = analyze(path, extra=['--semantic-index'])
         assert result['success'], result
         no_editable_symbols(result)
@@ -192,11 +195,11 @@ end paragraph
         assert run([interpreter, output]).stdout == '42\n'
         checks += 1
         raw = root / 'raw.matrix'
-        raw.write_text('book raw\n@path("C:\\folder\\next")\nmain returns override integer begin paragraph\n give 0\nend paragraph\n')
+        raw.write_text('book raw\n@path("C:\\folder\\next")\nmain returns override integer begin paragraph\n give 0\nend paragraph\n', newline='\n')
         assert analyze(raw)['reflection']['annotations'][0]['parsed_arguments'][0]['value'] == 'C:\\folder\\next'
         checks += 1
         raw.write_text(base.replace('book invalid', 'book casing').replace(
-            '{annotation}', '@INLINE\n@policy(enabled=TRUE, disabled=FALSE)'))
+            '{annotation}', '@INLINE\n@policy(enabled=TRUE, disabled=FALSE)'), newline='\n')
         annotations = analyze(raw)['reflection']['annotations']
         assert annotations[0]['name'] == 'inline', annotations
         assert [(a['kind'], a['value']) for a in annotations[1]['parsed_arguments']] == [
@@ -204,17 +207,17 @@ end paragraph
         checks += 1
         for sign in ('negative ', 'minus ', '-'):
             raw.write_text(base.replace('{annotation}',
-                f'note bounds with minimum being {sign}9223372036854775808'))
+                f'note bounds with minimum being {sign}9223372036854775808'), newline='\n')
             argument = analyze(raw)['reflection']['annotations'][0]['parsed_arguments'][0]
             assert argument == {'name': 'minimum', 'kind': 'integer', 'value': '-9223372036854775808'}, argument
             checks += 1
         for value in ('9223372036854775808', 'negative 9223372036854775809'):
-            raw.write_text(base.replace('{annotation}', f'note bounds with minimum being {value}'))
+            raw.write_text(base.replace('{annotation}', f'note bounds with minimum being {value}'), newline='\n')
             run([compiler, '--analyze', '--no-stdlib', raw], status=1)
             checks += 1
         # A namespace separator on a prose annotation must not consume the
         # declaration on the following line as another name component.
-        raw.write_text(base.replace('{annotation}', 'note policy::'))
+        raw.write_text(base.replace('{annotation}', 'note policy::'), newline='\n')
         run([compiler, '--analyze', '--no-stdlib', raw], status=1)
         checks += 1
         for body, code, has_location in (
@@ -223,7 +226,7 @@ end paragraph
             ('main returns override integer begin paragraph\n give unknown-name\nend paragraph\n', 'NIL0002', False),
         ):
             source = 'book provenance\n@define VALUE 2\n' + body
-            raw.write_text(source)
+            raw.write_text(source, newline='\n')
             result = json.loads(run([compiler, '--analyze', '--no-stdlib', raw], status=1).stdout)
             diagnostic = next(d for d in result['diagnostics'] if d['code'] == code)
             assert (diagnostic['start'] is not None) == has_location, diagnostic
@@ -243,9 +246,9 @@ end paragraph
         no_editable_symbols(result)
         assert result['reflection']['annotations'][0]['arguments'] == '"unsaved"', result
         checks += 1
-        (root / 'included.matrix').write_text('@error included marker\n')
+        (root / 'included.matrix').write_text('@error included marker\n', newline='\n')
         entry = root / 'entry.matrix'
-        entry.write_text(sources['entry.matrix'])
+        entry.write_text(sources['entry.matrix'], newline='\n')
         result = json.loads(run([compiler, '--analyze', '--no-stdlib', entry], status=1).stdout)
         diagnostic = next(d for d in result['diagnostics'] if d['code'] == 'MX0002')
         assert 'included.matrix:1: included marker' in diagnostic['message'], diagnostic

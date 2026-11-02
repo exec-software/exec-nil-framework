@@ -238,7 +238,7 @@ end values
         # fail promptly without needing a writer, rather than blocking on open.
         paths = [root, root / 'missing input.json']
         regular = root / 'regular input.json'
-        regular.write_text('{}', encoding='utf-8')
+        regular.write_text('{}', encoding='utf-8', newline='\n')
         oversized = root / 'oversized input.json'
         oversized.write_bytes(b' ' * (1024 * 1024 + 1))
         paths.append(oversized)

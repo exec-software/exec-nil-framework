@@ -7,32 +7,40 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
 
+from incremental_build_contract import windows_launcher
+from process_contract_support import (assert_stopped, cancel_process,
+                                      cleanup_process, console_options,
+                                      process_alive)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tester", required=True, type=Path)
+    parser.add_argument("--cxx", type=Path, help="C compiler for Windows fixture launchers")
     arguments = parser.parse_args()
     tester = arguments.tester.resolve()
-    if os.name != "posix":
-        print("niltest process contracts require a POSIX host")
-        raise SystemExit(77)
     checks = 0
-    child_pids: set[int] = set()
+    child_processes: list[dict[str, int]] = []
     with tempfile.TemporaryDirectory(prefix="niltest-process-") as temporary:
         root = Path(temporary)
+        shutil.copyfile(Path(__file__).with_name('process_contract_support.py'),
+                        root / 'process_contract_support.py')
         source = root / "example.ny"
-        source.write_text("// Fake compiler input\n", encoding="utf-8")
+        source.write_text("// Fake compiler input\n", encoding="utf-8", newline='\n')
         manifest_file = root / "discovery.json"
         actions_file = root / "actions.json"
         log = root / "compile.jsonl"
-        compiler = root / "compiler"
-        interpreter = root / "interpreter"
-        compiler.write_text("#!" + sys.executable + "\n" + '''import json, pathlib, runpy, sys
+        compiler_script = root / "compiler"
+        interpreter_script = root / "interpreter"
+        compiler = compiler_script
+        interpreter = interpreter_script
+        compiler_script.write_text("#!" + sys.executable + "\n" + '''import json, os, pathlib, runpy, shutil, sys
 root = pathlib.Path(__file__).parent
 arguments = sys.argv[1:]
 with (root / "compile.jsonl").open("a") as log:
@@ -43,32 +51,52 @@ if "--test-list" in arguments:
 assert "--test" in arguments, arguments
 artifact = pathlib.Path(arguments[arguments.index("--output") + 1])
 if "--native" in arguments:
-    artifact.write_text("#!" + sys.executable + "\\nimport runpy\\nrunpy.run_path(" + repr(str(root / "interpreter")) + ", run_name='__main__')\\n")
-    artifact.chmod(0o755)
+    if os.name == "nt":
+        # A real executable, just like the production native route. The
+        # launcher embeds the absolute interpreter-script path.
+        if artifact.suffix.lower() != ".exe": artifact = pathlib.Path(str(artifact) + ".exe")
+        shutil.copyfile(root / "interpreter.exe", artifact)
+    else:
+        artifact.write_text("#!" + sys.executable + "\\nimport runpy\\nrunpy.run_path(" + repr(str(root / "interpreter")) + ", run_name='__main__')\\n")
+        artifact.chmod(0o755)
 else:
     artifact.write_text("fake NIL artifact")
-''', encoding="utf-8")
-        interpreter.write_text("#!" + sys.executable + "\n" + '''import json, os, pathlib, signal, subprocess, sys, time
+''', encoding="utf-8", newline='\n')
+        interpreter_script.write_text("#!" + sys.executable + "\n" + '''import json, os, pathlib, signal, subprocess, sys, time
+sys.stdout.reconfigure(newline="\\n")
+sys.stderr.reconfigure(newline="\\n")
 root = pathlib.Path(__file__).parent
+sys.path.insert(0, str(root))
+from process_contract_support import record_processes
 case = json.loads((root / "actions.json").read_text())[sys.argv[-1]]
 action = case.get("action", "pass")
 if case.get("pidFile"):
-    (root / case["pidFile"]).write_text(str(os.getpid()))
-if action in ("descendant", "cancel-descendant"):
+    record_processes(root / case["pidFile"], os.getpid())
+if action in ("descendant", "cancel-descendant", "overflow", "timeout-descendant"):
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL)
-    (root / case["childFile"]).write_text(str(child.pid))
+    record_processes(root / case["childFile"], child.pid)
 if action == "signal":
     os.kill(os.getpid(), signal.SIGTERM)
-if action in ("timeout", "cancel-descendant"):
+if action == "terminate":
+    os._exit(31)
+if action in ("timeout", "cancel-descendant", "timeout-descendant"):
     time.sleep(60)
+if action == "overflow":
+    sys.stdout.buffer.write(b"x" * (17 * 1024 * 1024))
+    sys.stdout.buffer.flush()
 sys.stdout.write(case.get("stdout", ""))
 sys.stderr.write(case.get("stderr", ""))
 sys.exit(case.get("exit", 77))
-''', encoding="utf-8")
-        compiler.chmod(0o755)
-        interpreter.chmod(0o755)
+''', encoding="utf-8", newline='\n')
+        compiler_script.chmod(0o755)
+        interpreter_script.chmod(0o755)
+        if os.name == "nt":
+            assert arguments.cxx is not None, "--cxx is required on Windows"
+            compiler, interpreter = root / "compiler.exe", root / "interpreter.exe"
+            windows_launcher(arguments.cxx, compiler, compiler_script, root)
+            windows_launcher(arguments.cxx, interpreter, interpreter_script, root)
         base = [str(tester), "run", "--compiler", str(compiler), "--interpreter", str(interpreter),
                 "--no-stdlib", "--format", "json", str(source)]
 
@@ -76,9 +104,9 @@ sys.exit(case.get("exit", 77))
             metadata = [{"id": name, "name": name, "suite": "process", "kind": "unit",
                          "function": "case_" + str(index), "file": str(source), "line": index + 1}
                         for index, name in enumerate(actions)]
-            manifest_file.write_text(json.dumps({"schema": "nil.tests.v1", "tests": metadata}), encoding="utf-8")
-            actions_file.write_text(json.dumps(actions), encoding="utf-8")
-            log.write_text("", encoding="utf-8")
+            manifest_file.write_text(json.dumps({"schema": "nil.tests.v1", "tests": metadata}), encoding="utf-8", newline='\n')
+            actions_file.write_text(json.dumps(actions), encoding="utf-8", newline='\n')
+            log.write_text("", encoding="utf-8", newline='\n')
             return metadata
 
         def report(result: subprocess.CompletedProcess | subprocess.Popen,
@@ -96,37 +124,15 @@ sys.exit(case.get("exit", 77))
                                     text=True, timeout=20)
             return report(result, result.stdout, result.stderr, status)
 
-        def alive(pid: int) -> bool:
-            # A reaped parent's child can briefly remain a zombie under PID 1.
-            # It has terminated and cannot execute more code.
-            stat = Path("/proc") / str(pid) / "stat"
-            if stat.exists():
-                try:
-                    if stat.read_text().rsplit(")", 1)[1].strip().split()[0] == "Z":
-                        return False
-                except (OSError, IndexError):
-                    pass
-            try:
-                os.kill(pid, 0)
-                return True
-            except ProcessLookupError:
-                return False
-
-        def stopped(pid: int) -> None:
-            deadline = time.monotonic() + 5
-            while alive(pid) and time.monotonic() < deadline:
-                time.sleep(.02)
-            assert not alive(pid), f"test child {pid} survived runner completion"
-
-        def wait_pid(filename: str, runner: subprocess.Popen | None = None) -> int:
+        def wait_pid(filename: str, runner: subprocess.Popen | None = None) -> dict[str, int]:
             path = root / filename
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 if path.exists():
                     try:
-                        pid = int(path.read_text())
-                        child_pids.add(pid)
-                        return pid
+                        identity = json.loads(path.read_text())[0]
+                        child_processes.append(identity)
+                        return identity
                     except ValueError:
                         pass  # Writer can be between open and write.
                 if runner is not None and runner.poll() is not None:
@@ -154,38 +160,58 @@ sys.exit(case.get("exit", 77))
             compilations = [json.loads(line) for line in log.read_text().splitlines()]
             assert sum("--test" in command for command in compilations) == 2
 
-            configure({"slow": {"action": "timeout", "pidFile": "timeout.pid"}, "after-timeout": {}})
-            document = run("--timeout", "0.15", "--jobs", "1", status=1)
+            configure({"slow": {"action": "timeout-descendant", "pidFile": "timeout.pid", "childFile": "timeout-child.pid"}, "after-timeout": {}})
+            # The deadline includes process/launcher startup, which is much
+            # slower on Windows. Both values remain far below the 60s sleep.
+            document = run("--timeout", "2" if os.name == "nt" else "0.15", "--jobs", "1", status=1)
             cases = {case["id"]: case for case in document["tests"]}
             assert cases["slow"]["status"] == "timeout" and cases["slow"]["timedOut"]
             assert cases["after-timeout"]["status"] == "passed"
-            stopped(wait_pid("timeout.pid"))
+            assert_stopped(wait_pid("timeout.pid"))
+            assert_stopped(wait_pid("timeout-child.pid"))
 
-            configure({"signalled": {"action": "signal"}, "after-signal": {}})
+            configure({"signalled": {"action": "terminate" if os.name == "nt" else "signal"}, "after-signal": {}})
             document = run("--jobs", "1", status=1)
             cases = {case["id"]: case for case in document["tests"]}
-            assert cases["signalled"]["status"] == "failed" and cases["signalled"]["signal"] == signal.SIGTERM
+            assert cases["signalled"]["status"] == "failed"
+            if os.name == "nt":
+                assert cases["signalled"]["signal"] == 0 and cases["signalled"]["exitCode"] == 31
+            else:
+                assert cases["signalled"]["signal"] == signal.SIGTERM
             assert cases["after-signal"]["status"] == "passed"
 
             configure({"background": {"action": "descendant", "childFile": "background.pid"}})
             document = run()
             assert document["tests"][0]["status"] == "passed"
-            stopped(wait_pid("background.pid"))
+            assert_stopped(wait_pid("background.pid"))
+
+            configure({"overflow": {"action": "overflow", "pidFile": "overflow.pid", "childFile": "overflow-child.pid"}, "after-overflow": {}})
+            document = run("--jobs", "1", status=2)
+            cases = {case["id"]: case for case in document["tests"]}
+            assert cases["overflow"]["status"] == "error", cases["overflow"]["status"]
+            assert "capture limit" in cases["overflow"]["message"]
+            assert len(cases["overflow"]["stdout"]) == 16 * 1024 * 1024
+            assert cases["after-overflow"]["status"] == "passed"
+            assert_stopped(wait_pid("overflow.pid"))
+            assert_stopped(wait_pid("overflow-child.pid"))
 
             configure({"first-passed": {}, "cancelled": {"action": "cancel-descendant", "pidFile": "cancel.pid", "childFile": "cancel-child.pid"}, "queued": {}})
             runner = subprocess.Popen([*base, "--jobs", "1"], cwd=root, stdout=subprocess.PIPE,
-                                      stderr=subprocess.PIPE, text=True)
+                                      stderr=subprocess.PIPE, text=True, **console_options())
             try:
                 parent_pid = wait_pid("cancel.pid", runner)
                 descendant_pid = wait_pid("cancel-child.pid", runner)
-                runner.send_signal(signal.SIGTERM)
+                cancel_process(runner, signal.SIGTERM)
                 output, error = runner.communicate(timeout=10)
-                document = report(runner, output, error, 128 + signal.SIGTERM)
+                document = report(runner, output, error, 130 if os.name == "nt" else 128 + signal.SIGTERM)
                 cases = {case["id"]: case for case in document["tests"]}
                 assert cases["first-passed"]["status"] == "passed"
                 assert cases["cancelled"]["status"] == cases["queued"]["status"] == "cancelled"
-                stopped(parent_pid)
-                stopped(descendant_pid)
+                if os.name == "nt":
+                    assert cases["cancelled"]["signal"] == cases["queued"]["signal"] == 0
+                    assert cases["cancelled"]["exitCode"] == cases["queued"]["exitCode"] == 130
+                assert_stopped(parent_pid)
+                assert_stopped(descendant_pid)
             finally:
                 if runner.poll() is None:
                     runner.kill()
@@ -214,9 +240,9 @@ sys.exit(case.get("exit", 77))
                 {"schema": "nil.tests.v1", "tests": {}},
                 {"schema": "wrong", "tests": []},
             ):
-                manifest_file.write_text(json.dumps(invalid), encoding="utf-8")
+                manifest_file.write_text(json.dumps(invalid), encoding="utf-8", newline='\n')
                 assert run(status=2)["errors"]
-            manifest_file.write_text("not JSON", encoding="utf-8")
+            manifest_file.write_text("not JSON", encoding="utf-8", newline='\n')
             assert run(status=2)["errors"]
             configure({})
             assert run(status=2)["errors"]
@@ -224,12 +250,15 @@ sys.exit(case.get("exit", 77))
             listing[1] = "list"
             assert run(command=listing)["tests"] == []
         finally:
-            for pid in child_pids:
-                if alive(pid):
-                    try:
-                        os.kill(pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+            # Collect even when an assertion failed before wait_pid reached
+            # the fixture, so failure reporting cannot leave children behind.
+            for path in root.glob("*.pid"):
+                try:
+                    child_processes.extend(json.loads(path.read_text()))
+                except ValueError:
+                    pass
+            for identity in child_processes:
+                cleanup_process(identity)
     print(f"niltest process contracts passed ({checks} runner invocations)")
 
 

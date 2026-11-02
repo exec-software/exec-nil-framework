@@ -15,6 +15,7 @@
 #include "integer_conversion.hpp"
 #include "secure_file_io.hpp"
 #include "time_support.hpp"
+#include "../../common/windows_environment.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -47,6 +48,11 @@ extern char **environ;
 #endif
 
 #ifdef _WIN32
+// <windows.h> defines min/max as macros, which breaks
+// std::numeric_limits<...>::max() and std::min/std::max.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -2776,7 +2782,12 @@ void VM::executeInstruction(const Instruction &instr) {
         if (!valid_environment_name(name))
           throw std::runtime_error("environment.get: invalid variable name");
         EnumValue result;
+#ifdef _WIN32
+        const auto host_value = nil::detail::windows_environment_get(name);
+        const char *value = host_value ? host_value->c_str() : nullptr;
+#else
         const char *value = std::getenv(name.c_str());
+#endif
         if (value == nullptr) {
           result.variant_name = "Option::None";
         } else {
@@ -2809,7 +2820,7 @@ void VM::executeInstruction(const Instruction &instr) {
           return;
         }
 #ifdef _WIN32
-        const int status = _putenv_s(name.c_str(), value.c_str());
+        const int status = nil::detail::windows_environment_set(name, value) ? 0 : -1;
 #else
         const int status = setenv(name.c_str(), value.c_str(), 1);
 #endif
@@ -2827,7 +2838,7 @@ void VM::executeInstruction(const Instruction &instr) {
           return;
         }
 #ifdef _WIN32
-        const int status = _putenv_s(name.c_str(), "");
+        const int status = nil::detail::windows_environment_set(name, std::nullopt) ? 0 : -1;
 #else
         const int status = unsetenv(name.c_str());
 #endif
@@ -2857,19 +2868,24 @@ void VM::executeInstruction(const Instruction &instr) {
                                entry.substr(separator + 1));
         };
 #ifdef _WIN32
-        LPCH block = GetEnvironmentStringsA();
+        LPWCH block = GetEnvironmentStringsW();
         if (block == nullptr)
           throw std::runtime_error(
               "environment.list: host environment is unavailable");
         try {
-          for (const char *entry = block; *entry != '\0';
-               entry += std::strlen(entry) + 1)
-            append_entry(entry);
+          for (const wchar_t *entry = block; *entry != L'\0';) {
+            const auto length = std::wcslen(entry);
+            if (length > max_environment_entry_bytes)
+              throw std::runtime_error(
+                  "environment.list: environment exceeds the 8 MiB safety limit");
+            append_entry(nil::detail::environment_utf8(entry, length));
+            entry += length + 1;
+          }
         } catch (...) {
-          FreeEnvironmentStringsA(block);
+          FreeEnvironmentStringsW(block);
           throw;
         }
-        FreeEnvironmentStringsA(block);
+        FreeEnvironmentStringsW(block);
 #else
         if (::environ == nullptr)
           throw std::runtime_error(
@@ -2918,6 +2934,18 @@ void VM::executeInstruction(const Instruction &instr) {
                       "environment.set_current_directory: " + error.message());
         else
           push_result(true, {});
+        return;
+      }
+      if (fn_name == "environment.newline") {
+        require_count(0);
+        // Deliberately the only place in the runtime that knows the host's
+        // line terminator. Everything else writes '\n' untranslated; see
+        // common/standard_streams.hpp.
+#ifdef _WIN32
+        pushStack(std::string("\r\n"));
+#else
+        pushStack(std::string("\n"));
+#endif
         return;
       }
       if (fn_name == "environment.machine_name") {
@@ -3187,7 +3215,7 @@ void VM::executeInstruction(const Instruction &instr) {
       if (args.size() == 2) {
         fs::path p1 = get_str(args[0]);
         fs::path p2 = get_str(args[1]);
-        pushStack((p1 / p2).string());
+        pushStack((p1 / p2).generic_string());
       } else {
         pushStack(std::string(""));
       }
@@ -3195,21 +3223,21 @@ void VM::executeInstruction(const Instruction &instr) {
     }
     if (fn_name == "path.basename") {
       if (args.size() == 1)
-        pushStack(fs::path(get_str(args[0])).filename().string());
+        pushStack(fs::path(get_str(args[0])).filename().generic_string());
       else
         pushStack(std::string(""));
       return;
     }
     if (fn_name == "path.dirname") {
       if (args.size() == 1)
-        pushStack(fs::path(get_str(args[0])).parent_path().string());
+        pushStack(fs::path(get_str(args[0])).parent_path().generic_string());
       else
         pushStack(std::string(""));
       return;
     }
     if (fn_name == "path.extension") {
       if (args.size() == 1)
-        pushStack(fs::path(get_str(args[0])).extension().string());
+        pushStack(fs::path(get_str(args[0])).extension().generic_string());
       else
         pushStack(std::string(""));
       return;
@@ -3218,7 +3246,7 @@ void VM::executeInstruction(const Instruction &instr) {
       if (args.size() == 1 &&
           std::holds_alternative<std::string>(args[0])) {
         std::string extension =
-            fs::path(std::get<std::string>(args[0])).extension().string();
+            fs::path(std::get<std::string>(args[0])).extension().generic_string();
         if (!extension.empty() && extension.front() == '.')
           extension.erase(extension.begin());
         pushStack(std::move(extension));
@@ -3229,7 +3257,7 @@ void VM::executeInstruction(const Instruction &instr) {
     }
     if (fn_name == "path.stem") {
       if (args.size() == 1)
-        pushStack(fs::path(get_str(args[0])).stem().string());
+        pushStack(fs::path(get_str(args[0])).stem().generic_string());
       else
         pushStack(std::string(""));
       return;
@@ -3237,7 +3265,7 @@ void VM::executeInstruction(const Instruction &instr) {
     if (fn_name == "path.absolute") {
       if (args.size() == 1) {
         try {
-          pushStack(fs::absolute(get_str(args[0])).string());
+          pushStack(fs::absolute(get_str(args[0])).generic_string());
         } catch (...) {
           pushStack(std::string(""));
         }
@@ -3306,12 +3334,26 @@ void VM::executeInstruction(const Instruction &instr) {
     }
 
     // --- Additional Path Intrinsics ---
+    //
+    // Every path intrinsic reports '/' as the separator, on every host, and
+    // accepts either on input -- std::filesystem parses '\' on Windows, so a
+    // caller may hand us a native path and still get a portable one back.
+    //
+    // The alternative is to return the host separator, which is what Go's
+    // filepath does. It was rejected deliberately: it makes identical Ny
+    // source produce different output per platform, which is the one thing
+    // this port exists to eliminate, and it produces mixed spellings like
+    // "/tmp\file.ny" the moment a POSIX-looking literal meets combine().
+    // '/' is accepted by every Windows file API, so nothing is lost at the
+    // syscall boundary. A program that genuinely needs the host's own
+    // spelling -- to paste into cmd.exe, say -- can ask for the separator and
+    // substitute it.
+    //
+    // This is why the implementations below say generic_string() rather than
+    // string(). On POSIX the two are identical, so the intent is stated once
+    // instead of being conditional.
     if (fn_name == "path.separator") {
-#ifdef _WIN32
-      pushStack(std::string("\\"));
-#else
       pushStack(std::string("/"));
-#endif
       return;
     }
     if (fn_name == "path.normalize") {
@@ -3319,7 +3361,7 @@ void VM::executeInstruction(const Instruction &instr) {
           std::holds_alternative<std::string>(args[0])) {
         pushStack(fs::path(std::get<std::string>(args[0]))
                       .lexically_normal()
-                      .string());
+                      .generic_string());
       } else {
         pushStack(std::string(""));
       }
@@ -3331,7 +3373,7 @@ void VM::executeInstruction(const Instruction &instr) {
           std::holds_alternative<std::string>(args[1])) {
         pushStack(fs::path(std::get<std::string>(args[1]))
                       .lexically_relative(std::get<std::string>(args[0]))
-                      .string());
+                      .generic_string());
       } else {
         pushStack(std::string(""));
       }
@@ -3358,7 +3400,7 @@ void VM::executeInstruction(const Instruction &instr) {
           std::holds_alternative<std::string>(args[1])) {
         fs::path path(std::get<std::string>(args[0]));
         path.replace_extension(std::get<std::string>(args[1]));
-        pushStack(path.string());
+        pushStack(path.generic_string());
       } else {
         pushStack(std::string(""));
       }

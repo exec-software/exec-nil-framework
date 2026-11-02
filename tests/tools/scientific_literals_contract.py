@@ -48,7 +48,7 @@ def main():
                         source = ('book tests.invalid-literal\n'
                                   'main returns override integer begin paragraph\n'
                                   f'{body}\ngive 0\nend paragraph\n')
-                    path.write_text(source)
+                    path.write_text(source, newline='\n')
                     for route_flags in flags:
                         output = root / 'protected-output'
                         output.write_bytes(b'previous artifact')

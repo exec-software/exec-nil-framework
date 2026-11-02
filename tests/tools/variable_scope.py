@@ -202,7 +202,7 @@ end fn
         def compile_source(name: str, source: str, extra=()):
             path = root / (name + ".ny")
             output = root / (name + ".nil")
-            path.write_text(source, encoding="utf-8")
+            path.write_text(source, encoding="utf-8", newline='\n')
             output.write_bytes(b"previous artifact")
             process = subprocess.run(
                 [str(compiler), "--no-stdlib", "--quiet", "--no-bundle",

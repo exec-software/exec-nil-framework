@@ -64,8 +64,44 @@ def require(condition: bool, message: str) -> None:
         fail(message)
 
 
+def run_line_endings(command: list[str], lines: list[str], context: str
+                     ) -> subprocess.CompletedProcess[str]:
+    baseline: bytes | None = None
+    for terminator in (b"\n", b"\r\n"):
+        completed = subprocess.run(
+            command,
+            input=terminator.join(line.encode("utf-8") for line in lines) +
+                  terminator,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+            check=False,
+        )
+        if completed.returncode != 0 or completed.stderr:
+            fail(
+                f"{context} with {terminator!r} failed: {completed.returncode}",
+                stdout=repr(completed.stdout),
+                stderr=repr(completed.stderr),
+            )
+        require(b"\r\n" not in completed.stdout,
+                f"{context} translated output LF bytes into CRLF")
+        if baseline is None:
+            baseline = completed.stdout
+        else:
+            require(completed.stdout == baseline,
+                    f"{context} produced different bytes for LF and CRLF input")
+    # Decode only after raw-byte checks; do not normalize newlines on either
+    # side of the subprocess boundary (including on Windows).
+    return subprocess.CompletedProcess(
+        completed.args, completed.returncode,
+        completed.stdout.decode("utf-8"), completed.stderr.decode("utf-8")
+    )
+
+
 def run_protocol(debugger: pathlib.Path, fixture: pathlib.Path) -> None:
     requests = [
+        "",
+        " \t",
         '{"cmd":"regs"} trailing',
         json.dumps({"cmd": "regs"}),
         json.dumps({"cmd": "locals"}),
@@ -117,15 +153,7 @@ def run_protocol(debugger: pathlib.Path, fixture: pathlib.Path) -> None:
         "alpha",
         "two words",
     ]
-    completed = subprocess.run(
-        command,
-        input="\n".join(requests) + "\n",
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=10,
-        check=False,
-    )
+    completed = run_line_endings(command, requests, "JSON debugger session")
     if completed.returncode != 0:
         fail(
             f"JSON debugger exited with {completed.returncode}",
@@ -348,25 +376,25 @@ def run_artifact_loading_boundaries(
 def run_text_condition_failures(
     debugger: pathlib.Path, fixture: pathlib.Path
 ) -> None:
-    commands = "\n".join(
-        [
-            f"b {fixture}:12 if G == 7junk",
-            f"b {fixture}:12 if G == 999",
-            "cond 1 G == 7junk",
-            f"b {fixture}:12 if",
-            f"b {fixture}:12 unexpected",
-            "bl",
-            "quit",
-        ]
-    ) + "\n"
-    completed = subprocess.run(
+    commands = [
+        "",
+        " \t",
+        f"b {fixture}:12 if G == 7junk",
+        f"b {fixture}:12 if G == 999",
+        "cond 1 G == 7junk",
+        f"b {fixture}:12 if",
+        f"b {fixture}:12 unexpected",
+        "bl",
+        "cond 1",
+        "bl",
+        "p",
+        "watch",
+        "quit",
+    ]
+    completed = run_line_endings(
         [str(debugger), "run", str(fixture)],
-        input=commands,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=5,
-        check=False,
+        commands,
+        "text debugger condition-validation session",
     )
     if completed.returncode != 0 or completed.stderr:
         fail(
@@ -388,6 +416,36 @@ def run_text_condition_failures(
             "text protocol ignored an unsupported breakpoint suffix")
     require("if G == 999" in completed.stdout,
             "failed text condition update did not preserve the valid condition")
+    require("Condition cleared on breakpoint 1." in completed.stdout,
+            "text protocol did not clear a condition without an expression")
+    require(f"  [1] {fixture}:12\n" in completed.stdout,
+            "cleared condition remained on the listed breakpoint")
+    require("Usage: p <expression>\n" in completed.stdout and
+            "Usage: watch <expression>\n" in completed.stdout,
+            "text protocol treated a line terminator as an expression")
+    require("\r" not in completed.stdout,
+            "text protocol retained a CRLF terminator in a command")
+
+    literal = run_line_endings(
+        [str(debugger), "run", str(fixture)],
+        ["watch marker\rvalue", "watches", "quit"],
+        "text debugger embedded-CR session",
+    )
+    require("Watch 1 added: marker\rvalue\n" in literal.stdout and
+            "[1] marker\rvalue = " in literal.stdout,
+            "text protocol discarded an embedded payload CR")
+
+    eof = subprocess.run(
+        [str(debugger), "run", str(fixture)],
+        input=b"watch marker\r",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=5,
+        check=False,
+    )
+    require(eof.returncode == 0 and not eof.stderr and
+            b"Watch 1 added: marker\r\n" in eof.stdout,
+            "text protocol discarded a bare payload CR at EOF")
 
 
 def parse_json_lines(completed: subprocess.CompletedProcess[str], context: str
@@ -525,11 +583,11 @@ def main() -> int:
     try:
         with tempfile.TemporaryDirectory(prefix="nildebugger-json-") as temp:
             fixture = pathlib.Path(temp) / "protocol.nil"
-            fixture.write_text(PROGRAM, encoding="utf-8")
+            fixture.write_text(PROGRAM, encoding="utf-8", newline='\n')
             exit_fixture = pathlib.Path(temp) / "exit.nil"
-            exit_fixture.write_text(EXIT_PROGRAM, encoding="utf-8")
+            exit_fixture.write_text(EXIT_PROGRAM, encoding="utf-8", newline='\n')
             input_fixture = pathlib.Path(temp) / "input.nil"
-            input_fixture.write_text(INPUT_PROGRAM, encoding="utf-8")
+            input_fixture.write_text(INPUT_PROGRAM, encoding="utf-8", newline='\n')
             run_protocol(debugger, fixture)
             run_cli_failures(debugger, fixture)
             run_cli_metadata(debugger)

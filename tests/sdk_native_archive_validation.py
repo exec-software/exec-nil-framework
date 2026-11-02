@@ -456,7 +456,7 @@ def main() -> int:
 
         validator = modules[1]
         source = root / "fixture.ny"
-        source.write_text("module ny.test.fixture\n", encoding="utf-8")
+        source.write_text("module ny.test.fixture\n", encoding="utf-8", newline='\n')
 
         def library_manifest(artifacts: list[tuple[str, Path]], label: str) -> tuple[dict, dict]:
             files = {}

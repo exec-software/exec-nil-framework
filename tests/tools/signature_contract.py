@@ -5,6 +5,12 @@ import json
 import pathlib
 import subprocess
 import tempfile
+import sys
+from pathlib import Path
+
+# Piping a source through a text-mode stdin would rewrite its newlines.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from exact_stdin import run_with_exact_stdin
 
 
 def main():
@@ -40,8 +46,8 @@ def main():
                     command += ['--source-stdin']
             if enabled:
                 command += ['--signature-at', str(cursor)]
-            result = subprocess.run(command + list(extra), input=payload, text=True,
-                                    capture_output=True, timeout=30, cwd=root)
+            result = run_with_exact_stdin(command + list(extra), payload,
+                                          timeout=30, cwd=root)
             assert not result.stderr and result.returncode in (0, 1), (result.returncode, result.stdout, result.stderr)
             if status is not None:
                 assert result.returncode == status, (result.returncode, result.stdout)
@@ -256,7 +262,7 @@ def main():
         libraries = root / 'libraries'
         libraries.mkdir()
         binary_source = root / 'build_binary.ny'
-        binary_source.write_text('module binary_dependency\n')
+        binary_source.write_text('module binary_dependency\n', newline='\n')
         compiled = subprocess.run([compiler, '--no-stdlib', '--no-bundle', '--emit-binary-nil',
             '--emit-library', '-q', '-o', str(libraries / 'binary_dependency.nil'), str(binary_source)],
             text=True, capture_output=True, timeout=20, cwd=root)
@@ -266,7 +272,7 @@ def main():
               extra=('-I', str(libraries)), available=False, status=0)
         # Query options remain strict and are never forwarded to codegen.
         source = root / 'options.ny'
-        source.write_text(ny.replace('|', ''))
+        source.write_text(ny.replace('|', ''), newline='\n')
         for options in [('--signature-at', '-1'), ('--signature-at', 'x'),
                         ('--signature-at', '2097153'), ('--signature-at', '1', '--signature-at', '2')]:
             result = subprocess.run([compiler, '--analyze', '--no-stdlib', str(source), *options], capture_output=True, text=True)

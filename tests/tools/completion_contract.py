@@ -5,6 +5,12 @@ import json
 import pathlib
 import subprocess
 import tempfile
+import sys
+from pathlib import Path
+
+# Piping a source through a text-mode stdin would rewrite its newlines.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from exact_stdin import run_with_exact_stdin
 
 
 def main():
@@ -40,8 +46,8 @@ def main():
                     command.append('--source-stdin')
             if enabled:
                 command += ['--completion-at', str(cursor)]
-            result = subprocess.run(command + list(extra), input=payload, text=True,
-                                    capture_output=True, timeout=30, cwd=root)
+            result = run_with_exact_stdin(command + list(extra), payload,
+                                          timeout=30, cwd=root)
             assert result.returncode == status and not result.stderr, (result.returncode, result.stdout, result.stderr)
             value = json.loads(result.stdout)
             checks += 1
@@ -202,7 +208,7 @@ def main():
         libraries = root / 'libraries'
         libraries.mkdir()
         binary_source = root / 'build_binary.ny'
-        binary_source.write_text('module binary_dependency\n')
+        binary_source.write_text('module binary_dependency\n', newline='\n')
         compiled = subprocess.run([compiler, '--no-stdlib', '--no-bundle', '--emit-binary-nil',
             '--emit-library', '-q', '-o', str(libraries / 'binary_dependency.nil'), str(binary_source)],
             text=True, capture_output=True, timeout=20, cwd=root)

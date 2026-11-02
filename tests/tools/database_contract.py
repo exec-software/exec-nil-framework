@@ -26,7 +26,7 @@ def main() -> int:
         original = source.read_text()
         output = root / 'probe.o'
         def assemble(payload: str) -> subprocess.CompletedProcess[str]:
-            source.write_text(payload)
+            source.write_text(payload, newline='\n')
             return subprocess.run([str(args.assembler.resolve()), '-o', str(output), str(source)], env=env, capture_output=True, text=True, timeout=30)
         accepted = assemble(original)
         if accepted.returncode:

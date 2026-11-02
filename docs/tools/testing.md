@@ -212,14 +212,19 @@ Tool overrides are `--compiler PATH` and `--interpreter PATH`; otherwise tools
 resolve beside `niltest`, then on `PATH`. Repeat `--sdk-path PATH` and `-I PATH`
 to supply import roots. `--no-stdlib` disables implicit standard-library lookup.
 Native execution requires an LLVM-enabled compiler and a working host linker.
-Execution currently requires a POSIX host; Windows execution is not supported.
+Execution supports POSIX hosts and the Windows development target. Native VM
+tests cover Windows deadlines, output limits, descendant cleanup, and console
+interruption; this does not extend the Linux-only release qualification.
 
-Each requested route compiles once into a private temporary directory. Selected
+Each requested route compiles once into a fresh temporary directory. POSIX
+creation is owner-only; Windows inherits TEMP's permissions, so use a trusted,
+user-controlled TEMP directory. Selected
 cases then run independently, with standard input closed and captured standard
 output and standard error. `--jobs` allows 1–64 concurrent cases, defaulting to
 at most four. A failing case does not cancel its siblings. Cancellation stops
-new cases and terminates active process groups. Background descendants in those
-process groups are cleaned up when a case finishes.
+new cases and terminates active process groups on POSIX or Job Objects on
+Windows. Background descendants in those groups/jobs are cleaned up when a
+case finishes.
 
 The default case deadline is 30 seconds. `--timeout` accepts 0.001–3600 seconds.
 Discovery and each compilation have a 300-second limit. Capture is bounded to

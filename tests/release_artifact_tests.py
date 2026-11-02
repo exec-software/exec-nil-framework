@@ -226,7 +226,7 @@ class ArchiveTests(unittest.TestCase):
                 return "aperture 0.1.0-dev (NIL Framework)" if name == "aperture" else name + " " + VERSION
             with patch.object(release, "capture", side_effect=identity):
                 self.assertEqual(release.validate_tool_versions(sdk, VERSION), {})
-                (sdk / "aperture").write_text("fixture")
+                (sdk / "aperture").write_text("fixture", newline='\n')
                 self.assertEqual(release.validate_tool_versions(sdk, VERSION), {"aperture": "0.1.0-dev"})
             with patch.object(release, "capture", return_value="nilcompiler wrong"):
                 with self.assertRaisesRegex(release.ReleaseError, "nilcompiler.*committed VERSION"):
@@ -239,7 +239,7 @@ class ArchiveTests(unittest.TestCase):
             root = Path(directory)
             source, destination = root / "source", root / "destination"
             source.mkdir()
-            (source / "payload").write_text("retained")
+            (source / "payload").write_text("retained", newline='\n')
             destination.mkdir()
             with self.assertRaises(FileExistsError):
                 release.rename_no_replace(source, destination)
@@ -293,7 +293,7 @@ class ArchiveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "input.json"
             for value in ('{"reviewed":true,"reviewed":false}', "[]", "null"):
-                path.write_text(value)
+                path.write_text(value, newline='\n')
                 with self.assertRaises(release.ReleaseError):
                     release.load_json(path)
 
@@ -305,7 +305,7 @@ class ArchiveTests(unittest.TestCase):
             manifest = {"publishedAssets": names, "assets": [{"name": "sdk.tar.gz", "bytes": 13,
                                                               "sha256": release.sha256(root / "sdk.tar.gz")}]}
             (root / "release-manifest.json").write_bytes(release.json_bytes(manifest))
-            (root / "SHA256SUMS").write_text("".join(release.sha256(root / name) + "  " + name + "\n" for name in names if name != "SHA256SUMS"))
+            (root / "SHA256SUMS").write_text("".join(release.sha256(root / name) + "  " + name + "\n" for name in names if name != "SHA256SUMS"), newline='\n')
             release.verify_assets(root)
             (root / "extra.txt").write_bytes(b"unexpected")
             with self.assertRaisesRegex(release.ReleaseError, "exactly"):
@@ -420,6 +420,8 @@ class LocalStagingTests(unittest.TestCase):
                                   dependency_policy=policy_path, notices=notices_path, vsix=None)
 
     def test_full_local_assembly_is_deterministic_without_activation(self):
+        if sys.platform != "linux":
+            self.skipTest("release assembly targets Linux only")
         with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
             root = Path(directory)
             args = self.setup_stage(root, stack)

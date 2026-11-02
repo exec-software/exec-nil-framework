@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: MIT
  * See the LICENSE file in the project root for license terms.
  */
+#include "../common/standard_streams.hpp"
+#include "../common/windows_utf8_manifest.hpp"
 #include "nillinker.hpp"
 #include "process_runner.hpp"
 #include "secure_file_io.hpp"
@@ -31,6 +33,11 @@
 #include <vector>
 
 #ifdef _WIN32
+// <windows.h> defines min/max as macros, which breaks
+// std::numeric_limits<...>::max() and std::min/std::max.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <shellapi.h>
 #elif defined(__APPLE__)
@@ -1414,6 +1421,24 @@ bool Linker::link(const fs::path &requested_output) {
   }
   std::vector<char>().swap(runtime_snapshot.bytes);
 
+#ifdef _WIN32
+  const auto manifest_path = *staging_directory / "utf8.manifest";
+  const auto manifest_publish = ny::detail::write_file_atomic(
+      manifest_path,
+      std::vector<char>(nil::detail::windows_utf8_manifest.begin(),
+                        nil::detail::windows_utf8_manifest.end()),
+      false);
+  if (!manifest_publish.ok) {
+    error_ = "cannot stage native UTF-8 manifest: " + manifest_publish.error;
+    return false;
+  }
+  const auto manifest_argument = process_path_argument(manifest_path);
+  if (!manifest_argument) {
+    error_ = "cannot encode native UTF-8 manifest path as UTF-8";
+    return false;
+  }
+#endif
+
   std::vector<std::string> arguments;
   arguments.push_back(driver_);
   const auto staged_output_argument = process_path_argument(staged_output);
@@ -1434,10 +1459,42 @@ bool Linker::link(const fs::path &requested_output) {
   }
 #ifdef NILLINKER_MSVC_DRIVER
   arguments.push_back("/nologo");
+  // The NIL runtime archive is compiled against the dynamic CRT (/MD). Used
+  // link-only, the MSVC driver would otherwise default to the static CRT and
+  // pull in a second, conflicting runtime (LNK4098).
+  arguments.push_back("/MD");
   for (const auto &object : staged_object_arguments)
     arguments.push_back(object);
   arguments.push_back(*staged_runtime_argument);
+  // Host objects emitted by the LLVM backend call the out-of-line printf
+  // family, which the UCRT headers otherwise only ever inline, so those
+  // symbols exist in no library the driver links by default. Without this the
+  // link fails with "unresolved external symbol printf".
+  arguments.push_back("legacy_stdio_definitions.lib");
+  // A linked program gets exactly one C runtime, and nil.lib decides which:
+  // it is built /MD, so every reference it makes is an import (__imp_*) that
+  // only the dynamic CRT satisfies. `cl /c` defaults to the *static* CRT,
+  // though, so a host object compiled the obvious way asks for the static one
+  // and drags it in first, leaving every nil.lib import unresolved. Name the
+  // dynamic CRT and refuse the static one here rather than making every host
+  // object repeat a flag to avoid a link error it cannot interpret. Two CRTs
+  // in one image would mean two heaps and two sets of stdio state.
+  for (const char *library : {"msvcrt.lib", "ucrt.lib", "vcruntime.lib"})
+    arguments.push_back(library);
   arguments.push_back("/Fe:" + *staged_output_argument);
+  // /NODEFAULTLIB is a linker option, and the driver only forwards what
+  // follows /link. Everything after this point reaches link.exe verbatim, so
+  // nothing that the driver itself must read may be added below.
+  arguments.push_back("/link");
+  arguments.push_back("/MANIFEST:EMBED");
+  arguments.push_back("/MANIFESTINPUT:" + *manifest_argument);
+  for (const char *excluded : {"/NODEFAULTLIB:LIBCMT.lib",
+                               "/NODEFAULTLIB:LIBCMTD.lib",
+                               "/NODEFAULTLIB:libucrt.lib",
+                               "/NODEFAULTLIB:libucrtd.lib",
+                               "/NODEFAULTLIB:libvcruntime.lib",
+                               "/NODEFAULTLIB:libvcruntimed.lib"})
+    arguments.push_back(excluded);
 #else
 #ifndef _WIN32
   arguments.push_back("-pthread");
@@ -1452,6 +1509,14 @@ bool Linker::link(const fs::path &requested_output) {
   for (const auto &object : staged_object_arguments)
     arguments.push_back(object);
   arguments.push_back(*staged_runtime_argument);
+#ifdef _WIN32
+  // A clang-style driver must forward these as separate linker arguments;
+  // in particular a manifest path containing spaces or commas is one token.
+  arguments.push_back("-Xlinker");
+  arguments.push_back("/MANIFEST:EMBED");
+  arguments.push_back("-Xlinker");
+  arguments.push_back("/MANIFESTINPUT:" + *manifest_argument);
+#endif
 #if defined(__linux__)
   arguments.push_back("-ldl");
 #endif
@@ -1623,6 +1688,7 @@ int run_linker_windows_cli() {
 #endif
 
 int main(int argc, char **argv) {
+  ny::use_untranslated_standard_streams();
   try {
 #ifdef _WIN32
     (void)argc;

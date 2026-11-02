@@ -77,9 +77,9 @@ fn main() -> i32
  println(absent.is_none())
  return 0
 end fn
-''')
+''', newline='\n')
         expected = work / 'optional.stdout'
-        expected.write_text('ready\n1\n1\n')
+        expected.write_text('ready\n1\n1\n', newline='\n')
         routes(optional, expected, stdlib=True)
 
         ny = lambda body: 'fn main() -> i32\n' + body + '\nreturn 0\nend fn\n'
@@ -100,7 +100,7 @@ end fn
         }
         for name, (source, diagnostic) in invalid.items():
             path = work / (name + '.ny')
-            path.write_text(source)
+            path.write_text(source, newline='\n')
             for flags in (['--no-bundle'], *([['--native']] if args.llvm == 'ON' else [])):
                 destination = work / 'protected-artifact'
                 destination.write_bytes(b'previous artifact')
@@ -141,7 +141,7 @@ end fn
         }
         for name, (source, diagnostics) in cases.items():
             path = work / (name + '.ny')
-            path.write_text(source)
+            path.write_text(source, newline='\n')
             for binary in (False, True):
                 nil = work / (name + '.nil')
                 run([compiler, '--quiet', '--no-stdlib', '--no-bundle',

@@ -241,6 +241,12 @@ void test_successful_leader_with_descendant(const fs::path &self) {
          "successful leader with descendant was accepted as success");
   expect(result.error.find("descendant") != std::string::npos,
          "residual descendant diagnostic is missing: " + result.error);
+#ifdef _WIN32
+  expect(result.error.find("job members=") != std::string::npos &&
+             result.error.find("pid=") != std::string::npos &&
+             result.error.find("image=" + self.filename().string()) != std::string::npos,
+         "residual descendant identity evidence is missing: " + result.error);
+#endif
   expect(result.error.find("cleanup could not be confirmed") ==
              std::string::npos,
          "residual descendant cleanup was not confirmed: " + result.error);

@@ -1,3 +1,4 @@
+#include "../common/standard_streams.hpp"
 #include "codegen.hpp"
 #include "nil_loader.hpp"
 #include "nil_contract.hpp"
@@ -50,7 +51,7 @@ void print_usage(std::ostream &stream) {
       << "Options:\n"
       << "  -o, --output <path>  Write the host relocatable object to <path>\n"
       << "  --unmanaged          Use manual native memory management\n"
-      << "  --embed-context      Retain explicit AI annotations in Linux x86_64 objects\n"
+      << "  --embed-context      Retain explicit AI annotations in x86_64 ELF or PE/COFF objects\n"
       << "  --version            Show the nilassembler version\n"
       << "  -h, --help           Show this help\n";
 }
@@ -428,6 +429,7 @@ int run_assembler(const command_line &arguments) {
 } // namespace
 
 int main(int argc, char **argv) {
+  ny::use_untranslated_standard_streams();
   command_line arguments;
   std::string error;
   if (!parse_command_line(argc, argv, arguments, error)) {

@@ -92,9 +92,19 @@ if(BUILD_TESTING)
         NAME nillinker.process-deadline
         COMMAND $<TARGET_FILE:nillinker_process_runner_tests>
     )
+    # This budget is a hang guard, not a performance assertion: the deadline
+    # behaviour itself is policed inside the test, which bounds each driver
+    # wait (elapsed < 1500ms and similar) and does not move.
+    #
+    # 15s was too close to the test's own worst case. It re-executes itself as
+    # children that sleep 5s and relies on the parent cutting them short, so a
+    # host that delays those terminations walks the runtime toward 3 x 5s
+    # rather than slowing it uniformly. Measured in isolation on Windows:
+    # 2.72-2.76s over six runs, and 3.1-3.8s in six consecutive full suites --
+    # then one 15s timeout under ctest --parallel 8 on a loaded VM.
     set_tests_properties(
         nillinker.process-deadline
-        PROPERTIES LABELS "nillinker;process" TIMEOUT 15
+        PROPERTIES LABELS "nillinker;process" TIMEOUT 60
     )
 
     add_executable(

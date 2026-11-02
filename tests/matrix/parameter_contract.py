@@ -451,9 +451,9 @@ def main() -> int:
 
         for language, source in (('ny', NY), ('matrix', MATRIX)):
             path = root / ('parameter-contract.' + language)
-            path.write_text(source, encoding='utf-8')
+            path.write_text(source, encoding='utf-8', newline='\n')
             expected = path.with_suffix('.stdout')
-            expected.write_text(EXPECTED, encoding='utf-8')
+            expected.write_text(EXPECTED, encoding='utf-8', newline='\n')
             routes = 'all' if args.llvm == 'ON' else 'text-interpreter,binary-interpreter,bundle-text,bundle-binary'
             run([sys.executable, REPOSITORY / 'tests/routes/ny_route_matrix.py',
                  '--compiler', compiler, '--interpreter', interpreter,
@@ -476,7 +476,7 @@ def main() -> int:
         # Native indirect calls retain their pre-existing unsupported status.
         (root / 'parameter_callbacks.ny').write_text(
             'module parameter_callbacks\npub type Callback = fn(i64) -> i64\n',
-            encoding='utf-8')
+            encoding='utf-8', newline='\n')
         for name, ny, matrix, stdout, native in (
             ('callbacks', CALLBACK_NY, CALLBACK_MATRIX, '16\n16\n12\n', False),
             ('text-operations', TEXT_NY, TEXT_MATRIX, 'bc\nnew\nnew!\n', True),
@@ -484,9 +484,9 @@ def main() -> int:
         ):
             for language, source in (('ny', ny), ('matrix', matrix)):
                 path = root / (name + '.' + language)
-                path.write_text(source, encoding='utf-8')
+                path.write_text(source, encoding='utf-8', newline='\n')
                 expected = path.with_suffix('.stdout')
-                expected.write_text(stdout, encoding='utf-8')
+                expected.write_text(stdout, encoding='utf-8', newline='\n')
                 native_enabled = native and args.llvm == 'ON'
                 routes = 'all' if native_enabled else 'text-interpreter,binary-interpreter,bundle-text,bundle-binary'
                 run([sys.executable, REPOSITORY / 'tests/routes/ny_route_matrix.py',
@@ -511,7 +511,7 @@ def main() -> int:
                 'module provider\npub fn bump(ref target: i64)\ntarget = target + 1\nend fn\n'
                 if provider_language == 'ny' else
                 'book provider\npublic bump receives reference target as number begin paragraph\n'
-                'set target to target plus 1\nend paragraph\n', encoding='utf-8')
+                'set target to target plus 1\nend paragraph\n', encoding='utf-8', newline='\n')
             consumer_language = 'matrix' if provider_language == 'ny' else 'ny'
             consumer = root / ('consumer.' + consumer_language)
             consumer.write_text(
@@ -522,7 +522,7 @@ def main() -> int:
                 'relay receives reference target as number begin paragraph\n'
                 'evaluate bump with target being reference to target\nend paragraph\n'
                 'main returns override integer begin paragraph\nvariable total as number is 41\n'
-                'evaluate relay with reference to total\nsay total\ngive 0\nend paragraph\n', encoding='utf-8')
+                'evaluate relay with reference to total\nsay total\ngive 0\nend paragraph\n', encoding='utf-8', newline='\n')
             library = root / 'provider.nil'
             for dependency in ('source', 'library'):
                 if dependency == 'library':
@@ -572,7 +572,7 @@ def main() -> int:
                     )
                 for name, body, extra in alias_invalid:
                     path = root / ('alias-' + reference_word + '-' + name + '.' + language)
-                    path.write_text(program(language, body, extra), encoding='utf-8')
+                    path.write_text(program(language, body, extra), encoding='utf-8', newline='\n')
                     for flags in ([], ['--no-typecheck']):
                         output = root / 'protected-alias-output'
                         output.write_bytes(b'previous successful artifact')
@@ -603,7 +603,7 @@ def main() -> int:
             for language, body in (('ny', ny), ('matrix', matrix)):
                 source = program(language, body, declarations[language])
                 path = root / (name + '.' + language)
-                path.write_text(source, encoding='utf-8')
+                path.write_text(source, encoding='utf-8', newline='\n')
                 for flags in ([], ['--emit-binary-nil'], ['--no-typecheck'],
                               ['--no-typecheck', '--emit-binary-nil'],
                               *([['--native']] if args.llvm == 'ON' else [])):
@@ -625,7 +625,7 @@ def main() -> int:
              'fn choose(worker: fn(i64) -> void) -> fn(i64) -> void\nreturn worker\nend fn\n'),
         ]:
             path = root / (name + '.ny')
-            path.write_text(program('ny', body, declarations['ny'] + extra), encoding='utf-8')
+            path.write_text(program('ny', body, declarations['ny'] + extra), encoding='utf-8', newline='\n')
             analysis = json.loads(run([*common, '--analyze', path], 1).stdout)
             assert not analysis['success'] and any('must be called directly' in item['message']
                 for item in analysis['diagnostics']), (name, analysis)
@@ -666,7 +666,7 @@ def main() -> int:
         for name, ny, matrix in invalid_declarations:
             for language, declaration in (('ny', ny), ('matrix', matrix)):
                 path = root / ('declaration-' + name + '.' + language)
-                path.write_text(program(language, '', declarations[language] + declaration), encoding='utf-8')
+                path.write_text(program(language, '', declarations[language] + declaration), encoding='utf-8', newline='\n')
                 for flags in ([], ['--no-typecheck']):
                     output = root / 'protected-declaration'
                     output.write_bytes(b'previous successful artifact')

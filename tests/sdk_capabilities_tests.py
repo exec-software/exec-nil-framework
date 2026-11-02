@@ -47,7 +47,18 @@ class CapabilityTests(unittest.TestCase):
             report = self.route_report(item)
             path = Path(item["report_path"])
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(report), encoding="utf-8")
+            path.write_text(json.dumps(report), encoding="utf-8", newline='\n')
+            # Pin the file's mtime to the timestamp the report itself carries.
+            # read_proof wants mtime >= recorded_ns and created_at >=
+            # recorded_ns - 1ms, and recorded_ns is derived from mtime just
+            # below, so the two clocks have to agree to within a millisecond.
+            # On Windows they need not: datetime.now() advances in ~15.6ms
+            # ticks there, so a report written immediately afterwards can carry
+            # an mtime that far ahead of its own created_at. Deriving both from
+            # one value removes the disagreement rather than widening the
+            # validator's tolerance, which is the thing under test.
+            stamp = int(datetime.fromisoformat(report["created_at"]).timestamp() * 1e9)
+            os.utime(path, ns=(stamp, stamp))
             self.report_paths.append(path)
         # read_proof requires every route report's st_mtime_ns to be >=
         # recorded_ns. Taking recorded_ns from time.time_ns() before writing
@@ -74,7 +85,7 @@ class CapabilityTests(unittest.TestCase):
     def write_junit(self, child=""):
         self.junit.write_text("<testsuite>" + "".join(
             '<testcase name="{}">{}</testcase>'.format(proof["test"], child if index == 0 else "")
-            for index, proof in enumerate(self.catalog["proofs"])) + "</testsuite>", encoding="utf-8")
+            for index, proof in enumerate(self.catalog["proofs"])) + "</testsuite>", encoding="utf-8", newline='\n')
 
     def route_report(self, item):
         root = self.build / "tests/routes" / item["test"]
@@ -103,7 +114,7 @@ class CapabilityTests(unittest.TestCase):
         path = self.report_paths[0]
         value = json.loads(path.read_text(encoding="utf-8"))
         change(value)
-        path.write_text(json.dumps(value), encoding="utf-8")
+        path.write_text(json.dumps(value), encoding="utf-8", newline='\n')
 
     def rejection(self, change):
         path = self.report_paths[0]

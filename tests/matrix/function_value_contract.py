@@ -92,7 +92,7 @@ end paragraph
         check('folded', source, '11\n12\n13\n14\n25\n', bindings)
 
         (root / 'callbacks.ny').write_text('module callbacks\n'
-            'pub type Callback = fn(i64) -> i64\n', encoding='utf-8')
+            'pub type Callback = fn(i64) -> i64\n', encoding='utf-8', newline='\n')
         source = '''book lexical-values
 read everything from callbacks
 read-count receives sample-value as number returns number begin paragraph
@@ -146,10 +146,10 @@ end paragraph
         ])
 
         (root / 'ny_provider.ny').write_text('module ny_provider\n'
-            'pub fn ny_value(input: i64) -> i64\n return input + 100\nend fn\n', encoding='utf-8')
+            'pub fn ny_value(input: i64) -> i64\n return input + 100\nend fn\n', encoding='utf-8', newline='\n')
         (root / 'matrix_provider.matrix').write_text('book matrix-provider\n'
             'public matrix-value receives input-value as number returns number begin paragraph\n'
-            ' give input-value plus 200\nend paragraph\n', encoding='utf-8')
+            ' give input-value plus 200\nend paragraph\n', encoding='utf-8', newline='\n')
         source = '''book imported-values
 read ny-value from ny-provider
 read everything from matrix-provider
@@ -170,7 +170,7 @@ end paragraph
         # An external declaration is not in this parser's declaration map.
         # The fix must preserve ordinary imports' case-sensitive NIL spelling.
         path = root / 'external-case.matrix'
-        path.write_text(source.replace('the paragraph ny-value', 'the paragraph NY_VALUE'), encoding='utf-8')
+        path.write_text(source.replace('the paragraph ny-value', 'the paragraph NY_VALUE'), encoding='utf-8', newline='\n')
         result = json.loads(run([compiler, '--analyze', '--semantic-index', '--no-stdlib',
             '-I', str(root), str(path)], status=1).stdout)
         assert result['semantic'] is None and any("Undefined identifier 'NY_VALUE'" in item['message']

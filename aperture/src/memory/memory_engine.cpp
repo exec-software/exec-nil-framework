@@ -13,7 +13,14 @@
 #include <sstream>
 #include <stdexcept>
 
-#ifndef _WIN32
+#include "../../../common/private_directory.hpp"
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
@@ -150,17 +157,12 @@ void print_profile(const Profile& profile, bool json, std::ostream& stream) {
     for (const auto& message : data.at("errors").array) stream << "  Profile error: " << message.text << '\n';
 }
 
-#ifndef _WIN32
 class TemporaryDirectory {
 public:
     fs::path path;
-    TemporaryDirectory() {
-        auto pattern = (fs::temp_directory_path() / "aperture-memory-XXXXXX").string();
-        std::vector<char> storage(pattern.begin(), pattern.end()); storage.push_back('\0');
-        auto created = mkdtemp(storage.data());
-        if (!created) throw std::runtime_error("cannot create private profile directory");
-        path = created;
-    }
+    TemporaryDirectory()
+        : path(nil::detail::create_private_directory(fs::temp_directory_path(),
+                                                     "aperture-memory-")) {}
     ~TemporaryDirectory() { std::error_code error; fs::remove_all(path, error); }
 };
 
@@ -168,19 +170,56 @@ public:
 // removes only the new file this invocation created; existing files are intact.
 class OutputFile {
     fs::path path;
+#ifdef _WIN32
+    HANDLE handle = INVALID_HANDLE_VALUE;
+#else
     int descriptor = -1;
+#endif
     bool published = false;
 public:
     explicit OutputFile(const std::string& requested) : path(requested) {
         if (path.empty()) return;
+#ifdef _WIN32
+        // CREATE_NEW is O_CREAT|O_EXCL: the destination is reserved only if it
+        // did not already exist, so an existing report is never truncated by a
+        // run that may yet fail.
+        handle = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                             FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (handle == INVALID_HANDLE_VALUE)
+            throw std::runtime_error("cannot create output report: " + path.string());
+#else
         descriptor = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
         if (descriptor < 0) throw std::runtime_error("cannot create output report: " + path.string() + ": " + std::strerror(errno));
+#endif
     }
     ~OutputFile() {
+#ifdef _WIN32
+        if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+#else
         if (descriptor >= 0) close(descriptor);
+#endif
         if (!path.empty() && !published) { std::error_code error; fs::remove(path, error); }
     }
     void publish(const std::string& raw) {
+#ifdef _WIN32
+        if (handle == INVALID_HANDLE_VALUE) return;
+        std::size_t offset = 0;
+        while (offset < raw.size()) {
+            const auto remaining = raw.size() - offset;
+            const DWORD request = static_cast<DWORD>(remaining > 1u << 20 ? 1u << 20 : remaining);
+            DWORD written = 0;
+            if (!WriteFile(handle, raw.data() + offset, request, &written, nullptr) || written == 0)
+                throw std::runtime_error("cannot write output report: " + path.string());
+            offset += written;
+        }
+        // FlushFileBuffers is fsync: a report that is reported as written has
+        // reached the disk, not just the cache.
+        if (!FlushFileBuffers(handle))
+            throw std::runtime_error("cannot flush output report: " + path.string());
+        const bool closed = CloseHandle(handle) != 0;
+        handle = INVALID_HANDLE_VALUE;
+        if (!closed) throw std::runtime_error("cannot close output report: " + path.string());
+#else
         if (descriptor < 0) return;
         std::size_t offset = 0;
         while (offset < raw.size()) {
@@ -192,10 +231,12 @@ public:
         if (fsync(descriptor) != 0) throw std::runtime_error("cannot flush output report: " + path.string());
         const auto closed = close(descriptor); descriptor = -1;
         if (closed != 0) throw std::runtime_error("cannot close output report: " + path.string());
+#endif
         published = true;
     }
 };
 
+#ifndef _WIN32
 volatile sig_atomic_t active_child = 0;
 volatile sig_atomic_t pending_signal = 0;
 void forward_signal(int signal) {
@@ -225,8 +266,114 @@ public:
         sigaction(SIGTERM, &previous_term, nullptr);
     }
 };
+#else
+// Windows needs no forwarding class. A console delivers Ctrl+C to every
+// process attached to it, so the target receives the interruption directly --
+// which is the behaviour the POSIX side installs a handler to reproduce. The
+// target is deliberately left in this console and process group for exactly
+// that reason, and so its own stdin keeps working.
+#endif
+
+#ifdef _WIN32
+std::wstring widen(const std::string& value, const char* what) {
+    if (value.empty()) return {};
+    const int needed = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.c_str(),
+                                           static_cast<int>(value.size()), nullptr, 0);
+    if (needed <= 0)
+        throw std::runtime_error(std::string("cannot encode ") + what + " as UTF-16: " + value);
+    std::wstring wide(static_cast<std::size_t>(needed), L'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.c_str(),
+                        static_cast<int>(value.size()), wide.data(), needed);
+    return wide;
+}
+
+// Quote one argument the way CommandLineToArgvW will parse it back. Windows
+// passes a single command-line string, not an argv array, so an argument with
+// a space or a quote has to be escaped here or the child silently sees two.
+void append_quoted(std::wstring& line, const std::wstring& argument) {
+    if (!argument.empty() && argument.find_first_of(L" \t\n\v\"") == std::wstring::npos) {
+        line += argument;
+        return;
+    }
+    line += L'"';
+    for (auto it = argument.begin();; ++it) {
+        std::size_t backslashes = 0;
+        while (it != argument.end() && *it == L'\\') { ++it; ++backslashes; }
+        if (it == argument.end()) { line.append(backslashes * 2, L'\\'); break; }
+        if (*it == L'"') line.append(backslashes * 2 + 1, L'\\');
+        else line.append(backslashes, L'\\');
+        line += *it;
+    }
+    line += L'"';
+}
+
+// The child inherits this process's environment, so the variable is set here
+// and restored afterwards rather than between fork and exec -- there is no
+// such window on Windows. aperture runs one target at a time, so no other
+// thread can observe the change.
+class ScopedEnvironment {
+    std::wstring name;
+    std::wstring previous;
+    bool had_previous = false;
+public:
+    ScopedEnvironment(const wchar_t* variable, const std::string& value, bool set)
+        : name(variable) {
+        // A zero-sized call reports the length to allocate, including the
+        // terminator; zero means the variable is not set at all.
+        const DWORD needed = GetEnvironmentVariableW(name.c_str(), nullptr, 0);
+        if (needed > 0) {
+            previous.resize(needed);
+            const DWORD copied = GetEnvironmentVariableW(name.c_str(), previous.data(), needed);
+            previous.resize(copied <= needed ? copied : 0);
+            had_previous = true;
+        }
+        const auto wide = set ? widen(value, "profile report path") : std::wstring();
+        if (!SetEnvironmentVariableW(name.c_str(), set ? wide.c_str() : nullptr))
+            throw std::runtime_error("cannot configure the target's profile environment");
+    }
+    ScopedEnvironment(const ScopedEnvironment&) = delete;
+    ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
+    ~ScopedEnvironment() {
+        SetEnvironmentVariableW(name.c_str(), had_previous ? previous.c_str() : nullptr);
+    }
+};
+#endif
 
 int execute(const std::vector<std::string>& arguments, const std::string& report = {}) {
+#ifdef _WIN32
+    ScopedEnvironment profile(L"NIL_MEMORY_PROFILE", report, !report.empty());
+    std::wstring line;
+    for (std::size_t i = 0; i < arguments.size(); ++i) {
+        if (i) line += L' ';
+        append_quoted(line, widen(arguments[i], "target argument"));
+    }
+    line += L'\0';
+    const auto application = widen(arguments.front(), "target");
+    std::cout.flush(); std::cerr.flush();
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    // Tool progress belongs with diagnostics, never on the target's stdout.
+    startup.hStdOutput = report.empty() ? GetStdHandle(STD_ERROR_HANDLE)
+                                        : GetStdHandle(STD_OUTPUT_HANDLE);
+    startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    PROCESS_INFORMATION information{};
+    if (!CreateProcessW(application.c_str(), line.data(), nullptr, nullptr, TRUE,
+                        CREATE_UNICODE_ENVIRONMENT, nullptr, nullptr, &startup,
+                        &information))
+        throw std::runtime_error("cannot start target process");
+    CloseHandle(information.hThread);
+    if (WaitForSingleObject(information.hProcess, INFINITE) != WAIT_OBJECT_0) {
+        CloseHandle(information.hProcess);
+        throw std::runtime_error("cannot collect target exit status");
+    }
+    DWORD status = 1;
+    const bool read = GetExitCodeProcess(information.hProcess, &status) != 0;
+    CloseHandle(information.hProcess);
+    if (!read) throw std::runtime_error("cannot collect target exit status");
+    return static_cast<int>(status);
+#else
     SignalForwarding forwarding;
     std::vector<char*> argv;
     for (const auto& argument : arguments) argv.push_back(const_cast<char*>(argument.c_str()));
@@ -257,15 +404,22 @@ int execute(const std::vector<std::string>& arguments, const std::string& report
     }
     active_child = 0;
     return WIFEXITED(status) ? WEXITSTATUS(status) : WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 1;
+#endif
 }
 
 std::string tool(const MemoryOptions& options, const char* name) {
     auto path = fs::path(options.tool_directory) / name;
+#ifdef _WIN32
+    // Executables carry the suffix here, and Windows has no execute bit to
+    // test: being a regular file in the tool directory is the whole check.
+    path += ".exe";
+    if (!fs::is_regular_file(path))
+#else
     if (!fs::is_regular_file(path) || access(path.c_str(), X_OK) != 0)
+#endif
         throw std::runtime_error("required adjacent NIL tool is unavailable: " + path.string());
     return path.string();
 }
-#endif
 } // namespace
 
 int MemoryEngine::run(const MemoryOptions& options) {
@@ -274,9 +428,6 @@ int MemoryEngine::run(const MemoryOptions& options) {
         print_profile(profile, options.json, std::cout);
         return complete(profile) ? 0 : 1;
     }
-#ifdef _WIN32
-    throw std::runtime_error("memory recording currently requires a POSIX host; saved reports can be inspected on this platform");
-#else
     auto target = fs::absolute(options.target);
     if (!fs::is_regular_file(target)) throw std::runtime_error("target is not a regular file: " + target.string());
     auto extension = target.extension().string();
@@ -337,6 +488,5 @@ int MemoryEngine::run(const MemoryOptions& options) {
         std::cerr << "aperture: " << error.what() << '\n';
         return status != 0 ? status : 1;
     }
-#endif
 }
 } // namespace aperture

@@ -26,7 +26,7 @@ class PipelineArtifactsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ny-pipeline-artifact-test-") as temporary:
             parent = Path(temporary)
             expected = parent / "expected.stdout"
-            expected.write_text("ok\n", encoding="utf-8")
+            expected.write_text("ok\n", encoding="utf-8", newline='\n')
             args = argparse.Namespace(
                 compiler=parent / "nilcompiler", assembler=parent / "nilassembler",
                 linker=parent / "nillinker", runtime=parent / "libnil.a",

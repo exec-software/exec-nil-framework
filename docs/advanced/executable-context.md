@@ -17,10 +17,14 @@ pipeline, use `nilassembler --embed-context -o program.o program.nil`, then
 inspected. The compiler rejects `--embed-context` for NIL/bundled output or JIT,
 because those are not native file-output requests.
 
-The initial native profile is Linux x86_64 ELF64 little-endian. The inspector
-also accepts executable text and binary NIL without LLVM support. It does not
-execute libraries, resolve embedded source capsules, or interpret arbitrary
-native formats. Native files without `.ny.context` report its absence.
+The native profile is x86_64 little-endian, in either container: Linux ELF64
+or Windows PE/COFF, as an object or a linked executable. The section is named
+`.ny.context` in ELF and `.nyctx` in PE/COFF, because a PE image keeps only
+the eight bytes of a section name that fit in the section header. The
+inspector also accepts executable text and binary NIL without LLVM support. It
+does not execute libraries, resolve embedded source capsules, or interpret
+arbitrary native formats. Native files without the section report its
+absence.
 NIL carrying neither functions nor type declarations rejects; NIL bearing
 either can be inspected without a `main` entry point. Inspection checks
 metadata, not program runnability.

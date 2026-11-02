@@ -7,9 +7,14 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
 import struct
 import subprocess
 import tempfile
+
+# The toolchain appends .exe to extensionless executables on Windows.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from native_output_staging import linked_executable_path
 
 
 def binary_module(body: list[tuple[str, list[str]]]) -> bytes:
@@ -76,7 +81,7 @@ def main() -> None:
                     for opcode, operands in body)
                 path.write_text('module global_contract\nconst message = "global text"\n'
                                 'function main() -> i32:\n' + instructions
-                                + '\nend function\n', encoding="utf-8")
+                                + '\nend function\n', encoding="utf-8", newline='\n')
             return path
 
         # Non-scalar globals keep their established interpreted representation;
@@ -89,7 +94,7 @@ def main() -> None:
             "let record: Record = Record { value: 17 }\n"
             "let choice: Choice = Choice.One\n"
             "fn main() -> i32\nprintln(values[1])\nprintln(record.value)\n"
-            "return 0\nend fn\n", encoding="utf-8")
+            "return 0\nend fn\n", encoding="utf-8", newline='\n')
         for binary in (False, True):
             output = root / ("aggregates-binary.nil" if binary else "aggregates-text.nil")
             require(run([args.compiler, "--quiet", "--no-stdlib", "--no-bundle",
@@ -106,7 +111,7 @@ def main() -> None:
                 output = root / "source-control"
                 require(run([args.compiler, "--quiet", "--no-stdlib", *flags, *extra,
                              "--output", output, *providers, path]))
-                require(run([output] if "--native" in flags else
+                require(run([linked_executable_path(output)] if "--native" in flags else
                             [args.interpreter, "--no-ai", output]), output=expected)
 
         fixture = Path(__file__).resolve().parents[1] / "language" / "module-global-contract.ny"
@@ -118,9 +123,9 @@ def main() -> None:
                          'const private_constant: i32 = 11\n'
                          'pub const public_constant: i32 = 13\n'
                          'pub fn read_private() -> i32\n'
-                         'return private_value + private_constant\nend fn\n', encoding="utf-8")
+                         'return private_value + private_constant\nend fn\n', encoding="utf-8", newline='\n')
         second.write_text('module global_second\npub let mut shared: text = "second"\n',
-                          encoding="utf-8")
+                          encoding="utf-8", newline='\n')
         for name, imports, body, expected in (
                 ("named", "import global_first.{shared}",
                  'shared = "named"\nprintln(shared)\nprintln(global_second::shared)', "named\nsecond\n"),
@@ -136,7 +141,7 @@ def main() -> None:
                  "local changed\nfirst\nsecond\n")):
             path = root / (name + "-globals.ny")
             path.write_text("module global_client\n" + imports + "\nfn main() -> i32\n" +
-                            body + "\nreturn 0\nend fn\n", encoding="utf-8")
+                            body + "\nreturn 0\nend fn\n", encoding="utf-8", newline='\n')
             source_control(path, expected, (first, second))
             if name == "named":
                 # This flag continues after checker errors; it does not skip
@@ -175,7 +180,7 @@ def main() -> None:
             path = root / (name + ".ny")
             path.write_text("module global_client\n" + declarations +
                             "\nfn main() -> i32\n" + body + "\nreturn 0\nend fn\n",
-                            encoding="utf-8")
+                            encoding="utf-8", newline='\n')
             for flags in source_modes:
                 output = root / "protected-global-output"
                 output.write_bytes(b"previous global artifact\n")
@@ -185,13 +190,14 @@ def main() -> None:
 
         forward = root / "forward-global.ny"
         forward.write_text('module forward\nlet early: text = later\nlet later: text = "late"\n'
-                           'fn main() -> i32\nprintln(early)\nreturn 0\nend fn\n', encoding="utf-8")
+                           'fn main() -> i32\nprintln(early)\nreturn 0\nend fn\n', encoding="utf-8", newline='\n')
         for flags in source_modes:
             output = root / "forward-output"
             require(run([args.compiler, "--quiet", "--no-stdlib", *flags,
                          "--output", output, forward]))
             native = "--native" in flags
-            require(run([output] if native else [args.interpreter, "--no-ai", output]),
+            require(run([linked_executable_path(output)] if native
+                        else [args.interpreter, "--no-ai", output]),
                     diagnostic="read before initialization" if native else "Global not found")
 
         finish = [("PUSH_CONST", ["0"]), ("RET", [])]
@@ -257,7 +263,7 @@ def main() -> None:
                         diagnostic="Global not found" if uninitialized else "")
                 if args.llvm != "ON":
                     continue
-                obj, executable = root / "control.o", root / "control"
+                obj, executable = root / "control.o", linked_executable_path(root / "control")
                 require(run([args.assembler, "-o", obj, path]), output=None)
                 require(run([args.linker, "--runtime", args.runtime, "-o", executable, obj]), output=None)
                 require(run([executable]), output=output,

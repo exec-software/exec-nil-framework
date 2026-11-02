@@ -9,6 +9,12 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+
+# The toolchain's two executable-suffix rules; see the module for why
+# they are not interchangeable.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from native_output_staging import linked_executable_path, native_output_path
 
 
 SOURCE = r'''module context_fixture
@@ -104,7 +110,7 @@ def main() -> int:
             return value
 
         source = root / "context.ny"
-        source.write_text(SOURCE, encoding="utf-8")
+        source.write_text(SOURCE, encoding="utf-8", newline='\n')
         base = [tools["compiler"], "--quiet", "--no-stdlib", "--no-bundle"]
         nils = []
         manifests = []
@@ -165,19 +171,19 @@ def main() -> int:
         # accept mixed compile/inspection invocations.
         marker = root / "must-not-exist"
         executable_text = root / "not-a-ny-artifact"
-        executable_text.write_text("#!/bin/sh\nprintf executed > '" + str(marker) + "'\n", encoding="utf-8")
+        executable_text.write_text("#!/bin/sh\nprintf executed > '" + str(marker) + "'\n", encoding="utf-8", newline='\n')
         executable_text.chmod(0o700)
         failure(run([tools["compiler"], "--inspect-context", executable_text]), "inspect does not execute")
         if marker.exists():
             raise AssertionError("inspecting an artifact executed it")
         for index, contents in enumerate(("", "# ordinary comment\n", "module empty\n")):
             nonexecutable = root / f"nonexecutable-{index}.nil"
-            nonexecutable.write_text(contents, encoding="utf-8")
+            nonexecutable.write_text(contents, encoding="utf-8", newline='\n')
             failure(run([tools["compiler"], "--inspect-context", nonexecutable]),
                     "reject NIL context inspection without function records")
         metadata_only = root / "metadata-only.nil"
         metadata_only.write_text("module only_functions\n@ai_context\nfunction helper() -> i32:\n"
-                                 "PUSH_CONST 0\nRET\nend function\n", encoding="utf-8")
+                                 "PUSH_CONST 0\nRET\nend function\n", encoding="utf-8", newline='\n')
         metadata_manifest = inspect(metadata_only)
         if [function["name"] for function in metadata_manifest["functions"]] != ["helper"]:
             raise AssertionError("function-bearing metadata inspection incorrectly requires main")
@@ -203,7 +209,7 @@ def main() -> int:
             failure(run([tools["compiler"], "--inspect-context", fifo]), "reject FIFO without blocking")
 
         oversize = root / "oversize.ny"
-        oversize.write_text('@ai_context("' + "x" * 16384 + '")\nfn main() -> i32\nreturn 0\nend fn\n', encoding="utf-8")
+        oversize.write_text('@ai_context("' + "x" * 16384 + '")\nfn main() -> i32\nreturn 0\nend fn\n', encoding="utf-8", newline='\n')
         for binary in (False, True):
             artifact = root / ("oversize-binary.nil" if binary else "oversize-text.nil")
             success(run([*base, *(["--emit-binary-nil"] if binary else []),
@@ -219,16 +225,21 @@ def main() -> int:
             print(f"context manifest: {checks} inspection/option checks passed; native execution explicitly skipped (LLVM OFF)")
             return 0
 
+        # The native backend installs the executable at the requested path
+        # plus the host's suffix, so the artifact to inspect and run is not
+        # always the name that was asked for.
         default_native = root / "default-native"
+        default_artifact = native_output_path(default_native)
         success(run([*base, "--native", "-o", default_native, source]), "default native compilation")
-        failure(run([tools["compiler"], "--inspect-context", default_native]), "native context defaults off", diagnostic="context")
-        success(run([default_native]), "default native execution", EXPECTED)
+        failure(run([tools["compiler"], "--inspect-context", default_artifact]), "native context defaults off", diagnostic="context")
+        success(run([default_artifact]), "default native execution", EXPECTED)
         native_executions += 1
         embedded = root / "embedded-native"
+        embedded_artifact = native_output_path(embedded)
         success(run([*base, "--native", "--embed-context", "-o", embedded, source]), "embedded compiler AOT")
-        if inspect(embedded) != manifest:
+        if inspect(embedded_artifact) != manifest:
             raise AssertionError("compiler AOT context differs from NIL")
-        success(run([embedded]), "embedded compiler execution", EXPECTED)
+        success(run([embedded_artifact]), "embedded compiler execution", EXPECTED)
         native_executions += 1
         # Each artifact is compared against its own NIL's context: the
         # assembler's job is to preserve exactly what it was handed.
@@ -239,9 +250,12 @@ def main() -> int:
             if inspect(obj) != source_manifest:
                 raise AssertionError("standalone object context differs from NIL")
             success(run([tools["linker"], "--runtime", tools["runtime"], "-o", linked, obj]), "embedded linking")
-            if inspect(linked) != source_manifest:
+            # nillinker's suffix rule, which is not the backend's: it appends
+            # only when the requested name has no extension.
+            linked_artifact = linked_executable_path(linked)
+            if inspect(linked_artifact) != source_manifest:
                 raise AssertionError("linker did not retain context exactly")
-            success(run([linked]), "standalone context execution", EXPECTED)
+            success(run([linked_artifact]), "standalone context execution", EXPECTED)
             native_executions += 1
             default_obj = root / (artifact.stem + "-default.o")
             success(run([tools["assembler"], "-o", default_obj, artifact]), "default assembly")

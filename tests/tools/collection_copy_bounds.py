@@ -155,7 +155,7 @@ def main() -> int:
 
         for collection, label in COLLECTIONS:
             source = root / f"{collection}.ny"
-            source.write_text(source_for(collection), encoding="utf-8")
+            source.write_text(source_for(collection), encoding="utf-8", newline='\n')
             artifact = root / f"{collection}.nil"
             compile_ok([*base, "--no-bundle", "-o", artifact, source])
             routes: list[tuple[str, list[object]]] = [

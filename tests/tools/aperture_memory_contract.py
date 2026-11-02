@@ -10,6 +10,10 @@ import subprocess
 import sys
 import tempfile
 
+# Piping a source through a text-mode stdin would rewrite its newlines.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from exact_stdin import run_with_exact_stdin
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -29,11 +33,10 @@ def main() -> None:
 
         def run(command, status=0, env=None, input_text=None):
             nonlocal checks
-            result = subprocess.run(list(map(str, command)), cwd=root,
-                                    env=environment if env is None else env,
-                                    stdin=subprocess.DEVNULL if input_text is None else None,
-                                    input=input_text, capture_output=True,
-                                    text=True, timeout=120)
+            result = run_with_exact_stdin(
+                command, input_text, cwd=root, timeout=120,
+                env=environment if env is None else env,
+                **({'stdin': subprocess.DEVNULL} if input_text is None else {}))
             assert result.returncode == status, (command, result.returncode,
                                                 result.stdout, result.stderr)
             checks += 1
@@ -77,7 +80,7 @@ def main() -> None:
     println(pair.0.len())
     return 0
 end fn
-''')
+''', newline='\n')
         expected = '42\nitems-65\n65\n'
         nil = root / 'compiled program.nil'
         run([compiler, '--quiet', '--debug-info', '--no-bundle', '--no-stdlib', '-o', nil, source])
@@ -141,7 +144,7 @@ main returns override integer begin paragraph
     say (items at 0).1
     give 0
 end paragraph
-''')
+''', newline='\n')
         for route in ('vm', 'native') if args.llvm == 'ON' else ('vm',):
             output = root / ('matrix-' + route + '.json')
             flags = ['--native'] if route == 'native' else []
@@ -160,7 +163,7 @@ end paragraph
             '5 as i64, 6 as i64, 7 as i64, 8 as i64]\n'
             'let outputs = parallel_map(transform, inputs)\n'
             'println(outputs[7])\nprintln(inputs[2])\nprintln(outputs.len())\n'
-            'println(transform(5))\nreturn 0\nend fn\n')
+            'println(transform(5))\nreturn 0\nend fn\n', newline='\n')
         for route in ('vm', 'native') if args.llvm == 'ON' else ('vm',):
             output = root / ('parallel-' + route + '.json')
             flags = ['--native'] if route == 'native' else []
@@ -186,7 +189,7 @@ end paragraph
 
         # Normal nonzero program exits are propagated with a usable report.
         failure = root / 'failure.ny'
-        failure.write_text('fn main() -> i32\nlet values = [7]\nprintln(values[0])\nreturn 7\nend fn\n')
+        failure.write_text('fn main() -> i32\nlet values = [7]\nprintln(values[0])\nreturn 7\nend fn\n', newline='\n')
         for route in ('vm', 'native') if args.llvm == 'ON' else ('vm',):
             output = root / ('failure-' + route + '.json')
             flags = ['--native'] if route == 'native' else []
@@ -200,7 +203,7 @@ end paragraph
         gc_source.write_text('import nil.std.runtime.*\n'
             'fn discarded() -> i32\nlet transient: array<i32> = [1, 2, 3]\nreturn transient[0]\nend fn\n'
             'fn main() -> i32\nlet retained: array<i32> = [42]\n'
-            'println(discarded())\ncollect(2)\nprintln(retained[0])\nreturn 0\nend fn\n')
+            'println(discarded())\ncollect(2)\nprintln(retained[0])\nreturn 0\nend fn\n', newline='\n')
         gc_report = root / 'collection.json'
         gc_result = run([aperture, 'memory', '--memory-mode', 'safe', '--sdk-path', stdlib,
                          '--output', gc_report, gc_source])
@@ -217,7 +220,7 @@ end paragraph
             # gc.collect intrinsic is not yet lowered on that route.
             fixture = Path(__file__).resolve().parents[1] / 'language/stdlib-native-primitives-lifetime.ny'
             native_gc = root / 'native collection.ny'
-            native_gc.write_text(fixture.read_text())
+            native_gc.write_text(fixture.read_text(), newline='\n')
             output = root / 'native-collection.json'
             result = run([aperture, 'memory', '--native', '--output', output, native_gc])
             assert result.stdout == fixture.with_suffix('.stdout').read_text(), result
@@ -230,14 +233,14 @@ end paragraph
 
         owned = root / 'owned.ny'
         owned.write_text('fn main() -> i32\nif true then\nlet value = owned<i32>(4)\n'
-                         'println(42)\nend if\nreturn 0\nend fn\n')
+                         'println(42)\nend if\nreturn 0\nend fn\n', newline='\n')
         fault = root / 'fault.ny'
         fault.write_text('struct Problem\ncode: i32\nend struct\nfn main() -> i32\n'
                          'let values = [42]\nprintln(values[0])\n'
-                         'raise Problem { code: 7 }\nreturn 0\nend fn\n')
+                         'raise Problem { code: 7 }\nreturn 0\nend fn\n', newline='\n')
         explicit_exit = root / 'explicit exit.ny'
         explicit_exit.write_text('import nil.std.system.*\nfn main() -> i32\n'
-                                 'let values = [42]\nprintln(values[0])\nexit(7)\nreturn 0\nend fn\n')
+                                 'let values = [42]\nprintln(values[0])\nexit(7)\nreturn 0\nend fn\n', newline='\n')
         for route in ('vm', 'native') if args.llvm == 'ON' else ('vm',):
             flags = ['--native'] if route == 'native' else []
             output = root / ('owned-' + route + '.json')
@@ -262,7 +265,7 @@ end paragraph
         forwarding.write_text('import nil.std.system.*\nimport nil.std.io.*\n'
             'fn main() -> i32\nlet values = [42]\nprintln(arg_count())\n'
             'println(arg(0))\nprintln(arg(1))\nprintln(arg(2))\n'
-            'println(read_line())\nprintln(values[0])\nreturn 0\nend fn\n')
+            'println(read_line())\nprintln(values[0])\nreturn 0\nend fn\n', newline='\n')
         for route in ('vm', 'native') if args.llvm == 'ON' else ('vm',):
             flags = ['--native'] if route == 'native' else []
             output = root / ('arguments-' + route + '.json')
@@ -284,7 +287,7 @@ end paragraph
         # Console EOF is a target failure, with a usable incomplete profile.
         eof_source = root / 'console EOF.ny'
         eof_source.write_text('import nil.std.io.*\nfn main() -> i32\n'
-            'let values = [42]\nprintln(values[0])\nprintln(read_line())\nreturn 0\nend fn\n')
+            'let values = [42]\nprintln(values[0])\nprintln(read_line())\nreturn 0\nend fn\n', newline='\n')
         for route in ('vm', 'native') if args.llvm == 'ON' else ('vm',):
             output = root / ('console-eof-' + route + '.json')
             flags = ['--native'] if route == 'native' else []
@@ -299,7 +302,7 @@ end paragraph
         # The requested destination must be writable and fresh before target
         # execution. Existing files, target source, and symlink referents survive.
         sentinel = root / 'existing.json'
-        sentinel.write_text('do not replace')
+        sentinel.write_text('do not replace', newline='\n')
         alias = root / 'existing-link.json'
         alias.symlink_to(sentinel)
         for output in (sentinel, alias, root / 'absent-parent' / 'out.json', root):
@@ -310,7 +313,7 @@ end paragraph
         result = run([aperture, 'memory', root / 'missing.nil'], 1)
         assert 'not a regular file' in result.stderr, result
         invalid = root / 'invalid.nil'
-        invalid.write_text('not valid NIL')
+        invalid.write_text('not valid NIL', newline='\n')
         failed_report = root / 'invalid.json'
         run([aperture, 'memory', '--output', failed_report, invalid], 1)
         # A loader failure can either carry an explicitly failed report or no
@@ -334,15 +337,15 @@ end paragraph
         inconsistent['totals']['live_bytes'] += 1
         mutations.append(inconsistent)
         for profile in mutations:
-            malformed.write_text('not JSON' if profile is None else json.dumps(profile))
+            malformed.write_text('not JSON' if profile is None else json.dumps(profile), newline='\n')
             result = run([aperture, 'memory', '--report', malformed], 1)
             assert not result.stdout, result
-        malformed.write_text('{"schema":"aperture.memory.v1","schema":"duplicate"}')
+        malformed.write_text('{"schema":"aperture.memory.v1","schema":"duplicate"}', newline='\n')
         run([aperture, 'memory', '--report', malformed], 1)
         unfinished = json.loads(json.dumps(original))
         unfinished['completed'] = False
         unfinished['status'] = 'failed'
-        malformed.write_text(json.dumps(unfinished))
+        malformed.write_text(json.dumps(unfinished), newline='\n')
         inspected = run([aperture, 'memory', '--json', '--report', malformed], 1)
         assert json.loads(inspected.stdout) == unfinished, inspected
         for command in ('explore', 'trace', 'agent'):

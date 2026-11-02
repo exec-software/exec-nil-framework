@@ -9,6 +9,11 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+
+# Piping a source through a text-mode stdin would rewrite its newlines.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from exact_stdin import run_with_exact_stdin
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,9 +38,8 @@ def main() -> None:
         work = Path(temporary)
 
         def run(command, *, source=None, status=0):
-            result = subprocess.run([str(part) for part in command], cwd=work,
-                                    env=environment, input=source, text=True,
-                                    capture_output=True, timeout=60)
+            result = run_with_exact_stdin(command, source, cwd=work,
+                                          env=environment, timeout=60)
             assert result.returncode == status, (command, result.returncode, result.stdout, result.stderr)
             return result
 
@@ -62,7 +66,7 @@ public point begin record
     field x as number
     field y as number
 end record
-''', encoding="utf-8")
+''', encoding="utf-8", newline='\n')
         ny = work / "target.ny"
         ny.write_text('''module demo.render
 @ai_context("Draw a frame.")
@@ -73,7 +77,7 @@ pub struct point
     x: i64
     y: i64
 end struct
-''', encoding="utf-8")
+''', encoding="utf-8", newline='\n')
         snapshot = work / "analysis_snapshot.ny"
         report = analyze(matrix, destination=snapshot)
         reflection = report["reflection"]
@@ -125,7 +129,7 @@ end struct
                 invalid = work / "invalid.ny"
                 invalid.write_text("import analysis_snapshot\nfn main() -> i32\n"
                                    f" let rejected = declaration({index})\n"
-                                   " println(rejected.name)\n return 0\nend fn\n", encoding="utf-8")
+                                   " println(rejected.name)\n return 0\nend fn\n", encoding="utf-8", newline='\n')
                 execute(invalid, native, should_panic=True)
 
         properties = work / "properties.ny"
@@ -137,7 +141,7 @@ end fn
 pub fn legacy() -> i32
  return 2
 end fn
-''', encoding="utf-8")
+''', encoding="utf-8", newline='\n')
         property_report = analyze(properties, destination=snapshot)["reflection"]
         attribute = property_report["annotations"][0]
         assert attribute["line"] == 1 and attribute["arguments_parsed"], attribute
@@ -168,7 +172,7 @@ fn main() -> i32
  println(annotation_argument(4).value)
  return 0
 end fn
-''', encoding="utf-8")
+''', encoding="utf-8", newline='\n')
         matrix_property_consumer = work / "properties_consumer.matrix"
         matrix_property_consumer.write_text('''book property-consumer
 read everything from nil.std.reflection
@@ -193,15 +197,15 @@ main returns override integer begin paragraph
     say provider-property.`value`
     give 0
 end paragraph
-''', encoding="utf-8")
+''', encoding="utf-8", newline='\n')
         for native in routes:
             for consumer in (property_consumer, matrix_property_consumer):
                 assert execute(consumer, native) == "5\nlabel\nenabled\ntrue\nfloating\nio.console.write\n"
 
         included = work / "included.ny"
-        included.write_text('@ai_context("included declaration")\npub fn included() -> i32\n return 1\nend fn\n', encoding="utf-8")
+        included.write_text('@ai_context("included declaration")\npub fn included() -> i32\n return 1\nend fn\n', encoding="utf-8", newline='\n')
         owner = work / "owner.ny"
-        owner.write_text('module included_owner\n@include "included.ny"\nfn main() -> i32\n return included()\nend fn\n', encoding="utf-8")
+        owner.write_text('module included_owner\n@include "included.ny"\nfn main() -> i32\n return included()\nend fn\n', encoding="utf-8", newline='\n')
         expanded = analyze(owner)["reflection"]
         assert expanded["declarations"] and expanded["annotations"]
         assert all(item["line"] == 0 for item in expanded["declarations"] + expanded["annotations"])
@@ -211,7 +215,7 @@ end paragraph
         long_name = "record_" + "x" * 16384
         large.write_text("pub struct " + long_name + "\n" +
                          "".join(f" field_{index}: i32\n" for index in range(128)) +
-                         "end struct\n", encoding="utf-8")
+                         "end struct\n", encoding="utf-8", newline='\n')
         bounded = analyze(large)["reflection"]
         assert bounded["semantic_checked"] and bounded["truncated"]
         assert 1 <= len(bounded["declarations"]) < 129
@@ -221,10 +225,10 @@ end paragraph
         assert "snapshot exceeds the export limit" in result.stderr and not rejected.exists()
 
         empty = work / "empty.ny"
-        empty.write_text("module empty\n", encoding="utf-8")
+        empty.write_text("module empty\n", encoding="utf-8", newline='\n')
         assert analyze(empty, destination=snapshot)["reflection"]["declarations"] == []
         invalid = work / "invalid.ny"
-        invalid.write_text("import analysis_snapshot\nfn main() -> i32\n let rejected = declaration(0)\n return 0\nend fn\n", encoding="utf-8")
+        invalid.write_text("import analysis_snapshot\nfn main() -> i32\n let rejected = declaration(0)\n return 0\nend fn\n", encoding="utf-8", newline='\n')
         for native in routes:
             execute(invalid, native, should_panic=True)
 

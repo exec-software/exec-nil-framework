@@ -92,7 +92,7 @@ end fn
         root = Path(directory)
         for name, (source, diagnostic) in cases.items():
             path = root / (name + ".ny")
-            path.write_text(source, encoding="utf-8")
+            path.write_text(source, encoding="utf-8", newline='\n')
             for mode, extra in (("text", []), ("binary", ["--emit-binary-nil"]),
                                 ("unchecked-text", ["--no-typecheck"]),
                                 ("unchecked-binary", ["--no-typecheck", "--emit-binary-nil"])):
@@ -111,7 +111,7 @@ end fn
                 if output.read_bytes() != sentinel:
                     raise AssertionError(f"{name}/{mode}: rejection replaced a prior artifact")
         source = root / "exact-schema.ny"
-        source.write_text(positive, encoding="utf-8")
+        source.write_text(positive, encoding="utf-8", newline='\n')
         output = root / "exact-schema.nil"
         result = subprocess.run([str(compiler), "--no-stdlib", "--no-bundle", "--quiet",
                                  "--output", str(output), str(source)],

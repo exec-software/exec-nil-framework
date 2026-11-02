@@ -51,7 +51,7 @@ bool matches(std::uint64_t slot, const std::string &type) {
   return nyrt_fault_v1_match(slot, type.data(), type.size()) != 0;
 }
 
-void *bind(std::uint64_t slot, const std::string &type) {
+void *bind_slot(std::uint64_t slot, const std::string &type) {
   return nyrt_fault_v1_bind(slot, type.data(), type.size());
 }
 
@@ -82,7 +82,7 @@ void pending_crosses_frames_and_roots_nested_graph() {
           "saving did not suspend propagation");
   require(matches(3, std::string("first::") + "Problem") && !matches(3, "second::Problem"),
           "fault matching used short name or string-pointer identity");
-  require(bind(3, "first::Problem") == payload && std::strcmp(text, "123456789") == 0,
+  require(bind_slot(3, "first::Problem") == payload && std::strcmp(text, "123456789") == 0,
           "saved fault lost original payload identity");
   nyrt_collect();
   require(nyrt_managed_objects() == 4, "saved fault graph was not rooted");
@@ -103,15 +103,15 @@ void nested_slots_and_non_lifo_cleanup() {
   const auto nested = nyrt_fault_v1_frame_enter();
   raise("Inner", inner, 45);
   nyrt_fault_v1_save(11); // Same slot number in another invocation is independent.
-  require(bind(11, "Inner") == inner, "recursive slot identity aliased its caller");
+  require(bind_slot(11, "Inner") == inner, "recursive slot identity aliased its caller");
   nyrt_fault_v1_resume(11, 1);
   nyrt_fault_v1_frame_leave(nested);
   nyrt_fault_v1_save(22);
-  require(bind(11, "Outer") == outer && bind(22, "Inner") == inner,
+  require(bind_slot(11, "Outer") == outer && bind_slot(22, "Inner") == inner,
           "nested propagation overwrote suspended outer fault");
   nyrt_fault_v1_drop(11); // Cleanup may replace an earlier saved fault.
   nyrt_collect();
-  require(nyrt_managed_objects() == 1 && bind(22, "Inner") == inner,
+  require(nyrt_managed_objects() == 1 && bind_slot(22, "Inner") == inner,
           "non-LIFO drop lost replacement fault or retained old root");
   nyrt_fault_v1_resume(22, 1);
   require(nyrt_fault_v1_saved_depth() == 0, "consuming resume retained its saved slot");
@@ -135,8 +135,8 @@ void retaining_rethrow_and_enter_snapshot() {
   require(nyrt_fault_v1_saved_depth() == 2, "retaining rethrow consumed source slot");
   nyrt_fault_v1_unwind(saved_at_enter, 1);
   nyrt_fault_v1_save(12);
-  require(nyrt_fault_v1_saved_depth() == 2 && bind(9, "Outer") == outer &&
-              bind(12, "Outer") == outer,
+  require(nyrt_fault_v1_saved_depth() == 2 && bind_slot(9, "Outer") == outer &&
+              bind_slot(12, "Outer") == outer,
           "exceptional snapshot restore discarded outer token or payload identity");
   nyrt_collect();
   require(nyrt_managed_objects() == 1, "unwind retained younger discarded fault root");
@@ -155,7 +155,7 @@ void exact_byte_identity_and_unmanaged_caller_contract() {
   raise(identity, &manually_owned_payload);
   nyrt_fault_v1_save(0);
   require(matches(0, identity) && !matches(0, "Problem") &&
-              bind(0, identity) == &manually_owned_payload,
+              bind_slot(0, identity) == &manually_owned_payload,
           "fault identity was truncated at NUL or unmanaged payload changed");
   nyrt_fault_v1_drop(0);
   require(manually_owned_payload == 37, "fault clear took ownership of manual payload");
@@ -211,7 +211,7 @@ void malformed_runtime_protocol_is_fatal() {
   }, expected);
   subprocess_failure([] {
     nyrt_fault_v1_frame_enter(); raise("First", &fatal_probe_payload); nyrt_fault_v1_save(1);
-    bind(1, "Other");
+    bind_slot(1, "Other");
   }, expected);
   subprocess_failure([] {
     nyrt_fault_v1_frame_enter(); raise("First", &fatal_probe_payload); nyrt_fault_v1_save(1);

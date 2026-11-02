@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 
@@ -33,7 +34,7 @@ def main():
                 'return Choice.None\nend fn\n'
                 'pub fn value(item: Choice<i32>) -> i32\nmatch item\n'
                 f'{owner}::Choice::Some(payload) -> return payload\n'
-                f'Choice.None -> return {empty}\nend match\nreturn 0\nend fn\n')
+                f'Choice.None -> return {empty}\nend match\nreturn 0\nend fn\n', newline='\n')
         common = [compiler, '--quiet', '--no-stdlib', '--sdk-path', stdlib, '-I', root]
         flags = [('--no-bundle',), ('--no-bundle', '--emit-binary-nil'),
                  (), ('--emit-binary-nil',)]
@@ -41,7 +42,7 @@ def main():
             flags += [('--native',), ('--native', '--jit')]
 
         expected = root / 'owners.stdout'
-        expected.write_text('7\n8\n9\n10\n')
+        expected.write_text('7\n8\n9\n10\n', newline='\n')
         for language in ('ny', 'matrix'):
             if language == 'ny':
                 source = 'import left\nimport right\nfn main() -> i32\n'
@@ -57,9 +58,9 @@ def main():
                         source += f'say {owner}::value with item being ({owner}::make with present being {present})\n'
                 source += 'give 0\nend paragraph\n'
             path = root / ('valid-owners.' + language)
-            path.write_text(source)
+            path.write_text(source, newline='\n')
             harness = Path(__file__).resolve().parents[1] / 'routes/ny_route_matrix.py'
-            command = ['python3', harness, '--compiler', compiler,
+            command = [sys.executable, harness, '--compiler', compiler,
                        '--interpreter', args.interpreter.resolve(), '--source', path,
                        '--expected-stdout', expected, '--expected-exit', '0',
                        '--compiler-arg=-I', '--compiler-arg=' + str(root),
@@ -134,7 +135,7 @@ def main():
                                 f'value selected as {matrix_type} is \n',
                                 f'reject receives selected as {matrix_type} returns override integer begin paragraph\n')
                             source += 'main returns override integer begin paragraph\ngive 0\nend paragraph\n'
-                    path.write_text(source)
+                    path.write_text(source, newline='\n')
                     for route_flags in flags:
                         output = root / 'protected-output'
                         output.write_bytes(b'previous artifact')

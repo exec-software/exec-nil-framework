@@ -1,3 +1,8 @@
+// <windows.h> defines min/max as macros, which breaks
+// std::numeric_limits<...>::max() and std::min/std::max.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <stdint.h>
 

@@ -83,7 +83,7 @@ depends on the selected backend.
 | `--bundle`, `--bundle=true` | Append NIL to `nilinterpreter`, found beside `nilcompiler` first and then on `PATH`. This is the default for the NIL path. |
 | `--emit-binary-nil` | Emit the binary form of NIL. The old `--emit-binary-mil` spelling remains accepted for compatibility. |
 | `--emit-library` | Emit a NIL library capsule (v2, or v4 when carrying classes). Requires `--emit-binary-nil --no-bundle`, cannot be combined with `--native`, and expects all explicit inputs to declare one logical module. |
-| `--embed-context` | Opt native file output into retaining annotated function context. Requires `--native`, not JIT. Linux x86_64 only. |
+| `--embed-context` | Opt native file output into retaining annotated function context. Requires `--native`, not JIT. x86_64 ELF or PE/COFF. |
 | `--debug-info` | Retain source paths and lexical variable maps in executable NIL for source debugging. Binary output uses v5. Not available with `--native` or `--emit-library`. |
 
 For a deterministic compiler/interpreter workflow, request a separate NIL file:
@@ -347,8 +347,11 @@ untouched unless a complete executable passes validation.
 Windows command-line arguments are recovered from the native UTF-16 command
 line, and linker file operations and driver launch stay in the wide-path domain;
 non-ASCII object, runtime, staging, and output paths are part of the component
-contract. Windows support is currently cross-compiled rather than natively
-verified, so Linux remains the supported native-link host.
+contract. Native Windows VM tests cover these paths and generated UTF-8 process
+manifests, including byte-exact Unicode program arguments through compiler AOT
+and standalone object links. This is development validation, not a Windows
+release qualification; Linux remains the supported native release host. See
+the [Windows development SDK workflow](../getting-started/index.md#windows-development-sdk).
 
 The linker links every input with the matching `nilruntime` archive and
 publishes the executable through private same-directory staging.

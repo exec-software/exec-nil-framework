@@ -5,9 +5,14 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
 import struct
 import subprocess
 import tempfile
+
+# The toolchain appends .exe to extensionless executables on Windows.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from native_output_staging import linked_executable_path
 
 
 def binary_module(body):
@@ -73,7 +78,7 @@ def main():
                 path.write_text('module formatted_nil\nconst message = "héllo text"\n'
                                 'enum Probe\nOnly\nend enum\n'
                                 'function main() -> i32:\n' + instructions +
-                                '\nend function\n')
+                                '\nend function\n', newline='\n')
             return path
 
         # CAST and comparisons preserve bool metadata natively; unlike plain
@@ -105,7 +110,7 @@ def main():
             checks += len(cases)
             if args.llvm == 'ON':
                 object_path = root / ('binary.o' if binary else 'text.o')
-                executable = root / ('binary' if binary else 'text')
+                executable = linked_executable_path(root / ('binary' if binary else 'text'))
                 successful(run([args.assembler, '-o', object_path, source]))
                 successful(run([args.linker, '--runtime', args.runtime, '-o', executable, object_path]))
                 successful(run([executable]), '\n'.join(expected) + '\n')

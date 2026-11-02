@@ -1,5 +1,8 @@
+#include "../common/standard_streams.hpp"
 #include "project_format.hpp"
 #include "../common/content_digest.hpp"
+#include "../common/private_directory.hpp"
+#include "../common/tool_discovery.hpp"
 #include "process.hpp"
 #include "toolchain_inputs.hpp"
 #include "nil_version.hpp"
@@ -13,7 +16,12 @@
 #include <functional>
 #include <memory>
 #include <thread>
-#ifndef _WIN32
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <sys/file.h>
 #include <sys/stat.h>
 #endif
@@ -322,54 +330,28 @@ fs::path discover_project(const options &opts, const fs::path &caller) {
   throw std::runtime_error("no nil.project.nildata (or legacy JSON/YAML project) found; use --project FILE");
 }
 bool executable(const fs::path &path) {
-  std::error_code error;
-  if (!fs::is_regular_file(path, error)) return false;
-#ifdef _WIN32
-  return true;
-#else
-  return access(path.c_str(), X_OK) == 0;
-#endif
+  return nil::detail::is_executable_file(path);
 }
 std::optional<fs::path> search_path(const std::string &name, const fs::path &caller) {
-  const char *environment = std::getenv("PATH");
-  if (!environment) return std::nullopt;
-  std::istringstream paths(environment);
-  std::string item;
-#ifdef _WIN32
-  constexpr char separator = ';';
-#else
-  constexpr char separator = ':';
-#endif
-  while (std::getline(paths, item, separator)) {
-    const auto candidate = absolute(fs::path(item) / name, caller);
-    if (executable(candidate)) return candidate;
-  }
-  return std::nullopt;
+  return nil::detail::executable_on_path(name, caller);
 }
 fs::path tool_path(const std::string &name, const std::optional<std::string> &override,
                    const fs::path &self, const fs::path &caller) {
   if (override) {
     if (fs::path(*override).has_parent_path()) {
-      const auto candidate = absolute(*override, caller);
-      if (executable(candidate)) return candidate;
+      if (const auto candidate = nil::detail::executable_candidate(absolute(*override, caller)))
+        return *candidate;
     } else if (const auto found = search_path(*override, caller)) return *found;
     throw std::runtime_error("cannot execute specified " + name + ": " + *override);
   }
-  const auto sibling = self.parent_path() / name;
-  if (executable(sibling)) return sibling;
+  if (const auto sibling = nil::detail::executable_candidate(self.parent_path() / name))
+    return *sibling;
   if (const auto found = search_path(name, caller)) return *found;
   throw std::runtime_error("cannot find " + name + "; install it beside nilbuild or use --" +
       (name == "nilcompiler" ? "compiler" : name == "niltest" ? "tester" : "interpreter") + " PATH");
 }
 fs::path self_path(const char *argument, const fs::path &caller) {
-#ifdef __linux__
-  std::error_code error;
-  const auto executable = fs::read_symlink("/proc/self/exe", error);
-  if (!error) return executable;
-#endif
-  if (fs::path(argument).has_parent_path()) return absolute(argument, caller);
-  if (const auto found = search_path(argument, caller)) return *found;
-  return caller / argument;
+  return nil::detail::running_executable_path(argument, caller);
 }
 void add_project_arguments(std::vector<std::string> &args, const project &value) {
   if (value.sdk) { args.push_back("--sdk-path"); args.push_back(value.sdk->string()); }
@@ -431,18 +413,8 @@ int check(const project &value, const fs::path &compiler, const std::optional<st
 class staging_directory {
 public:
   fs::path path;
-  explicit staging_directory(const fs::path &parent) {
-#ifdef _WIN32
-    (void)parent;
-    throw std::runtime_error("nilbuild execution currently requires a POSIX host; Windows execution is not supported");
-#else
-    fs::create_directories(parent);
-    std::string pattern = (parent / ".nilbuild-XXXXXX").string();
-    const char *created = mkdtemp(pattern.data());
-    if (!created) throw std::runtime_error("cannot create staging directory in " + parent.string());
-    path = created;
-#endif
-  }
+  explicit staging_directory(const fs::path &parent)
+      : path(nil::detail::create_private_directory(parent, ".nilbuild-")) {}
   ~staging_directory() { std::error_code error; fs::remove_all(path, error); }
 };
 bool within_directory(const fs::path &path, const fs::path &directory) {
@@ -503,7 +475,37 @@ project_graph load_graph(const project &root, const options &opts, const fs::pat
   return graph;
 }
 void write_new(const fs::path &path, const std::string &text) {
-#ifndef _WIN32
+#ifdef _WIN32
+  // CREATE_NEW is O_CREAT|O_EXCL: the call fails rather than opening a file
+  // that already exists, so this cannot overwrite a project a user has.
+  // FILE_FLAG_WRITE_THROUGH matches the POSIX path's habit of not leaving a
+  // half-written manifest behind a reported success.
+  HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH,
+                            nullptr);
+  if (file == INVALID_HANDLE_VALUE)
+    throw std::runtime_error("cannot create new file (destination must not exist): " + path.string());
+  std::size_t position = 0;
+  while (position < text.size()) {
+    const auto remaining = text.size() - position;
+    const DWORD request = static_cast<DWORD>(
+        remaining > 1u << 20 ? 1u << 20 : remaining);
+    DWORD written = 0;
+    if (!WriteFile(file, text.data() + position, request, &written, nullptr) ||
+        written == 0) {
+      CloseHandle(file);
+      std::error_code ignored;
+      fs::remove(path, ignored);
+      throw std::runtime_error("cannot write " + path.string());
+    }
+    position += written;
+  }
+  if (!CloseHandle(file)) {
+    std::error_code ignored;
+    fs::remove(path, ignored);
+    throw std::runtime_error("cannot close " + path.string());
+  }
+#else
   const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
   if (fd < 0) throw std::runtime_error("cannot create new file (destination must not exist): " + path.string());
   std::size_t position = 0;
@@ -514,8 +516,6 @@ void write_new(const fs::path &path, const std::string &text) {
     position += static_cast<std::size_t>(written);
   }
   if (close(fd) != 0) { fs::remove(path); throw std::runtime_error("cannot close " + path.string()); }
-#else
-  throw std::runtime_error("nilbuild file creation currently requires a POSIX host");
 #endif
 }
 std::string destination_format(const options &opts, const fs::path &path) {
@@ -566,23 +566,52 @@ int convert_project(const project &value, const options &opts, const fs::path &c
   return 0;
 }
 class output_locks {
-#ifndef _WIN32
+#ifdef _WIN32
+  std::vector<HANDLE> handles;
+#else
   std::vector<int> descriptors;
 #endif
 public:
   ~output_locks() {
-#ifndef _WIN32
+#ifdef _WIN32
+    // Closing the handle releases the lock range with it.
+    for (HANDLE handle : handles) CloseHandle(handle);
+#else
     for (int fd : descriptors) close(fd);
 #endif
   }
   void acquire(const fs::path &output) {
-#ifndef _WIN32
     const auto directory = output.parent_path() / ".nilbuild";
     fs::create_directories(output.parent_path());
     if (fs::exists(directory) && !fs::is_directory(fs::symlink_status(directory)))
       throw std::runtime_error("build state directory must not be a symlink: " + directory.string());
     fs::create_directory(directory);
     const auto lock = directory / (nil::detail::content_digest(fs::weakly_canonical(output).string()) + ".lock");
+#ifdef _WIN32
+    // FILE_FLAG_OPEN_REPARSE_POINT is O_NOFOLLOW: a lock path replaced by a
+    // symlink or junction must not redirect the lock somewhere else. The
+    // reparse point then opens as itself and is rejected below for not being
+    // a regular file, exactly as the POSIX path rejects a non-S_ISREG fd.
+    HANDLE handle = CreateFileW(
+        lock.c_str(), GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+      throw std::runtime_error("cannot open build lock: " + lock.string());
+    BY_HANDLE_FILE_INFORMATION information{};
+    OVERLAPPED range{};
+    // LOCKFILE_FAIL_IMMEDIATELY is flock's LOCK_NB: a lock already held by
+    // another build is reported, never waited on.
+    if (!GetFileInformationByHandle(handle, &information) ||
+        (information.dwFileAttributes &
+         (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0 ||
+        !LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                    0, 1, 0, &range)) {
+      CloseHandle(handle);
+      throw std::runtime_error("output is in use by another build or has an invalid lock: " + output.string());
+    }
+    handles.push_back(handle);
+#else
     const int fd = open(lock.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0666);
     if (fd < 0) throw std::runtime_error("cannot open build lock: " + lock.string());
     struct stat metadata{};
@@ -590,8 +619,6 @@ public:
       close(fd); throw std::runtime_error("output is in use by another build or has an invalid lock: " + output.string());
     }
     descriptors.push_back(fd);
-#else
-    throw std::runtime_error("nilbuild execution currently requires a POSIX host");
 #endif
   }
 };
@@ -600,9 +627,7 @@ fs::path state_path(const fs::path &output) {
 }
 struct build_cancelled { int status; };
 void check_cancelled() {
-#ifndef _WIN32
   if (nilbuild::pending_signal) throw build_cancelled{128 + nilbuild::pending_signal};
-#endif
 }
 using input_map = std::map<std::string, std::string>;
 void add_input(input_map &inputs, const fs::path &path) {
@@ -640,7 +665,17 @@ bool native_inputs(input_map &inputs, const json &report, const project &value) 
   if (runtime == report.object.end() || runtime->second.type != json::kind::string) return false;
   add_input(inputs, runtime->second.text);
   if (linker == report.object.end() || linker->second.type != json::kind::string) return false;
-  const auto files = nilbuild::native_toolchain_files(linker->second.text, value.directory);
+  std::vector<fs::path> library_paths;
+  const auto reported_paths = report.object.find("nativeLibraryPaths");
+  if (reported_paths != report.object.end()) {
+    for (const auto &path : string_list(reported_paths->second, "nativeLibraryPaths")) {
+      if (!fs::path(path).is_absolute())
+        throw std::runtime_error("compiler returned a relative native library path");
+      library_paths.emplace_back(path);
+    }
+  }
+  const auto files = nilbuild::native_toolchain_files(linker->second.text, value.directory,
+                                                      runtime->second.text, library_paths);
   if (!files) return false;
   for (const auto &file : *files) add_input(inputs, file);
   return true;
@@ -653,19 +688,23 @@ struct build_task {
   std::string key;
   std::unique_ptr<staging_directory> staging;
   bool cacheable = false;
+  input_map native_files;
 };
-std::string build_key(const project &value, const build_task &task, const std::vector<std::string> &references) {
+std::string build_key(const project &value, const build_task &task, const std::vector<std::string> &references,
+                      const json &report) {
   auto description = describe(value);
   description.object["schema"] = json::str("nil.build.inputs.v1");
   description.object["target"] = json::str(task.native ? "native" : "vm");
   description.object["inputs"] = json::map();
   for (const auto &[path, digest] : *task.inputs) description.object["inputs"].object[path] = json::str(digest);
   auto environment = json::map();
-  for (const auto *name : {"PATH", "NIL_STDLIB_PATH", "NY_STDLIB_PATH", "NIL_LIBRARY_PATH", "NY_LIBRARY_PATH", "LIBRARY_PATH", "LD_LIBRARY_PATH", "LD_PRELOAD", "LD_RUN_PATH", "LDEMULATION", "GNUTARGET", "COMPILER_PATH", "GCC_EXEC_PREFIX", "SDKROOT", "MACOSX_DEPLOYMENT_TARGET", "CPATH", "CPLUS_INCLUDE_PATH", "LANG", "LC_ALL"}) {
+  for (const auto *name : {"PATH", "NIL_STDLIB_PATH", "NY_STDLIB_PATH", "NIL_LIBRARY_PATH", "NY_LIBRARY_PATH", "LIBRARY_PATH", "LD_LIBRARY_PATH", "LD_PRELOAD", "LD_RUN_PATH", "LDEMULATION", "GNUTARGET", "COMPILER_PATH", "GCC_EXEC_PREFIX", "SDKROOT", "MACOSX_DEPLOYMENT_TARGET", "CPATH", "CPLUS_INCLUDE_PATH", "LANG", "LC_ALL", "LIB", "LIBPATH", "LINK", "_LINK_", "CL", "_CL_"}) {
     const char *value = std::getenv(name);
     environment.object[name] = value ? json::str(value) : json{};
   }
   description.object["environment"] = std::move(environment);
+  if (task.native && report.object.count("nativeLibraryPaths"))
+    description.object["nativeLibraryPaths"] = report.at("nativeLibraryPaths");
   description.object["references"] = json::list();
   for (const auto &reference : references) description.object["references"].array.push_back(json::str(reference));
   return nil::detail::content_digest(nilbuild::dump(description));
@@ -699,9 +738,7 @@ int failed_batch(const std::vector<nilbuild::process_result> &results) {
   return 0;
 }
 int build(const project &root, const options &opts, const fs::path &compiler, const fs::path &self, const fs::path &caller) {
-#ifndef _WIN32
   nilbuild::cancellation_scope cancellation;
-#endif
   const auto graph = load_graph(root, opts, caller);
   output_locks locks;
   for (const auto &value : graph.projects) {
@@ -757,7 +794,10 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
           if (reports[i].object.count("compilerFiles")) {
             for (const auto &file : string_list(reports[i].at("compilerFiles"), "compilerFiles")) add_input(*task.inputs, file);
           }
-          if (native && !native_inputs(*task.inputs, reports[i], value)) task.cacheable = false;
+          if (native) {
+            if (!native_inputs(task.native_files, reports[i], value)) task.cacheable = false;
+            task.inputs->insert(task.native_files.begin(), task.native_files.end());
+          }
         }
         if (task.inputs) {
           for (const auto &[input, digest] : *task.inputs) {
@@ -769,7 +809,7 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
                 throw std::runtime_error("output would overwrite a consumed build input; declare projectReferences to order generated imports: " + input);
             }
           }
-          if (task.cacheable) task.key = build_key(value, task, references);
+          if (task.cacheable) task.key = build_key(value, task, references, reports[i]);
         }
         protect_inputs(value);
         if (!opts.rebuild && reusable(task)) {
@@ -800,6 +840,20 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
         if (checked) return checked;
         if (nilbuild::dump(current.at("dependencies")) != nilbuild::dump(reports[i].at("dependencies")) || !reported_inputs(current))
           throw std::runtime_error("dependency graph changed during the build; retry: " + value.file.string());
+        if (current.object.count("compilerFiles") != reports[i].object.count("compilerFiles") ||
+            (current.object.count("compilerFiles") &&
+             nilbuild::dump(current.at("compilerFiles")) !=
+                 nilbuild::dump(reports[i].at("compilerFiles"))))
+          throw std::runtime_error("compiler module graph changed during the build; retry: " + value.file.string());
+        for (const auto &task : tasks) if (task.project_index == index && task.native && task.cacheable) {
+          input_map current_native;
+          if (!native_inputs(current_native, current, value) || current_native != task.native_files ||
+              (current.object.count("nativeLibraryPaths") &&
+               (!reports[i].object.count("nativeLibraryPaths") ||
+                nilbuild::dump(current.at("nativeLibraryPaths")) !=
+                    nilbuild::dump(reports[i].at("nativeLibraryPaths")))))
+            throw std::runtime_error("native toolchain changed during the build; retry: " + value.file.string());
+        }
       }
       for (const auto &task : tasks) {
         const auto temporary = task.staging->path / task.output.filename();
@@ -822,6 +876,7 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
 } // namespace
 
 int main(int argc, char **argv) {
+  ny::use_untranslated_standard_streams();
   try {
     if (argc == 2 && std::string(argv[1]) == "--version") {
       std::cout << "nilbuild " << NIL_VERSION << '\n'; return 0;

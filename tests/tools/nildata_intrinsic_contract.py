@@ -5,8 +5,13 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import sys
 import subprocess
 import tempfile
+
+# The toolchain appends .exe to extensionless executables on Windows.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from native_output_staging import linked_executable_path
 
 
 def main():
@@ -40,11 +45,11 @@ const empty = ""
         for mode in ('safe', 'unsafe'):
             source = root / (mode + '.nil')
             source.write_text(declarations + 'function main() -> i32:\n' + operands + call +
-                              'PUSH_CONST 1\nGET_INDEX\nCALL println 1\nPUSH_CONST 0\nRET\nend function\n')
+                              'PUSH_CONST 1\nGET_INDEX\nCALL println 1\nPUSH_CONST 0\nRET\nend function\n', newline='\n')
             result = run([args.interpreter.resolve(), '--no-ai', '--memory-mode=' + mode, source])
             assert result.stdout == '[null,9007199254740993]\n' and not result.stderr, result
             if args.llvm == 'ON':
-                output, executable = root / (mode + '.o'), root / mode
+                output, executable = root / (mode + '.o'), linked_executable_path(root / mode)
                 flags = ['--unmanaged'] if mode == 'unsafe' else []
                 run([args.assembler.resolve(), *flags, '-o', output, source])
                 run([args.linker.resolve(), '--runtime', args.runtime.resolve(), '-o', executable, output])
@@ -62,7 +67,7 @@ const empty = ""
         for name, body in invalid.items():
             source, output = root / (name + '.nil'), root / (name + '.o')
             source.write_text(declarations + 'function main() -> i32:\n' + body +
-                              'POP\nPUSH_CONST 0\nRET\nend function\n')
+                              'POP\nPUSH_CONST 0\nRET\nend function\n', newline='\n')
             result = run([args.interpreter.resolve(), '--no-ai', source], success=False)
             assert 'nildata.request' in result.stderr and not result.stdout, result
             if args.llvm == 'ON':
@@ -76,7 +81,7 @@ const empty = ""
                 source, output = root / ('wrapper-' + name + '.nil'), root / ('wrapper-' + name + '.o')
                 source.write_text(declarations + '@intrinsic("nildata.request")\nfunction wrong(' + parameters +
                                   ') -> array<text>:\nend function\nfunction main() -> i32:\n' +
-                                  operands + 'CALL wrong 4\nPOP\nPUSH_CONST 0\nRET\nend function\n')
+                                  operands + 'CALL wrong 4\nPOP\nPUSH_CONST 0\nRET\nend function\n', newline='\n')
                 result = run([args.assembler.resolve(), '-o', output, source], success=False)
                 assert 'nildata.request' in result.stderr and not output.exists(), result
     print(f'NILData intrinsic contract: {checks} checks passed')

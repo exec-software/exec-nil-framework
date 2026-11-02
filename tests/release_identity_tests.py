@@ -74,9 +74,11 @@ def main() -> None:
         for name, tool in tools.items():
             result = subprocess.run([str(tool), "--version"], cwd=temporary,
                                     stdin=subprocess.DEVNULL, capture_output=True,
-                                    text=True, timeout=10, check=False)
+                                    timeout=10, check=False)
             assert result.returncode == 0 and not result.stderr, (name, result.returncode, result.stderr)
-            assert result.stdout == f"{name} {version}\n", (name, result.stdout)
+            # Check bytes, not universal-newline text: every CLI obeys the same
+            # LF contract, including early --version/help branches on Windows.
+            assert result.stdout == f"{name} {version}\n".encode("utf-8"), (name, result.stdout)
 
         requests = b"".join(frame(document) for document in (
             {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}},

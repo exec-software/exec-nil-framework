@@ -62,11 +62,11 @@ def main():
         root = Path(temporary)
         source = root / 'harness.cpp'
         harness = root / 'harness'
-        source.write_text(DRIVER)
+        source.write_text(DRIVER, newline='\n')
         subprocess.run([args.cxx, '-std=c++17', '-Wall', '-Wextra', '-Werror', '-I',
                         str(args.root), str(source), '-o', str(harness)], check=True, timeout=45)
         fake = root / 'c++'
-        fake.write_text('#!' + sys.executable + '\n' + FAKE_DRIVER)
+        fake.write_text('#!' + sys.executable + '\n' + FAKE_DRIVER, newline='\n')
         fake.chmod(0o755)
         for name in ('crt1.o', 'crti.o', 'crtbegin.o', 'crtend.o', 'crtn.o', 'ld',
                      'libc.so.6', 'libstdc++.so.6', 'libgcc_s.so.1', 'libm.so.6',
@@ -79,9 +79,9 @@ def main():
         libc_text = ('/* script */ OUTPUT_FORMAT(elf64-x86-64) GROUP (' +
                      ' '.join(json.dumps(str(root / name)) for name in ('libc.so.6', 'libc_nonshared.a')) +
                      ' AS_NEEDED (' + json.dumps(str(root / 'ld-linux.so.2')) + '))\n')
-        libc.write_text(libc_text)
-        (root / 'libgcc_s.so').write_text('GROUP (libgcc_s.so.1 -lgcc)\n')
-        (root / 'libm.so').write_text('GROUP (libm.so.6 AS_NEEDED (libmvec.so.1))\n')
+        libc.write_text(libc_text, newline='\n')
+        (root / 'libgcc_s.so').write_text('GROUP (libgcc_s.so.1 -lgcc)\n', newline='\n')
+        (root / 'libm.so').write_text('GROUP (libm.so.6 AS_NEEDED (libmvec.so.1))\n', newline='\n')
 
         def inspect(expected=0, tool=fake):
             result = subprocess.run([str(harness), str(tool)], cwd=root, text=True,
@@ -95,18 +95,18 @@ def main():
             assert root / name in files, (name, files)
         assert root / 'libstdc++.so.6' not in files, 'the selected symlink identity was lost'
 
-        libc.write_text('SEARCH_DIR(".") ' + libc_text)
+        libc.write_text('SEARCH_DIR(".") ' + libc_text, newline='\n')
         inspect(1)
-        libc.write_text('GROUP(libc.so)')
+        libc.write_text('GROUP(libc.so)', newline='\n')
         inspect(1)
-        libc.write_text(libc_text)
+        libc.write_text(libc_text, newline='\n')
         (root / 'libgcc.a').write_bytes(b'!<thin>\n')
         inspect(1)
         (root / 'libgcc.a').write_bytes(b'!<arch>\n')
         (root / 'libc_nonshared.a').unlink()
         inspect(1)
         (root / 'libc_nonshared.a').write_bytes(b'!<arch>\n')
-        (root / 'specs').write_text('custom driver specs')
+        (root / 'specs').write_text('custom driver specs', newline='\n')
         inspect(1)
         (root / 'specs').unlink()
 

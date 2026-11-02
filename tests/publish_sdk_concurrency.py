@@ -123,7 +123,7 @@ def run_scenario(publisher: Path, with_previous_target: bool) -> None:
         newer_digest = write_payload(newer_stage, "newer")
 
         validator = root / "validator.py"
-        validator.write_text(VALIDATOR_SOURCE, encoding="utf-8")
+        validator.write_text(VALIDATOR_SOURCE, encoding="utf-8", newline='\n')
         environment = os.environ.copy()
         environment["NY_PUBLISH_TEST_ACTIVE"] = str(active)
         environment["NY_PUBLISH_TEST_COORDINATION"] = str(coordination)
@@ -250,7 +250,7 @@ def run_restrictive_umask_scenario(publisher: Path) -> None:
         coordination.mkdir()
         active = root / "sdk"
         validator = root / "validator.py"
-        validator.write_text(VALIDATOR_SOURCE, encoding="utf-8")
+        validator.write_text(VALIDATOR_SOURCE, encoding="utf-8", newline='\n')
         environment = os.environ.copy()
         environment["NY_PUBLISH_TEST_ACTIVE"] = str(active)
         environment["NY_PUBLISH_TEST_COORDINATION"] = str(coordination)
@@ -322,7 +322,7 @@ def run_destination_replacement_race(publisher: Path) -> None:
         stage = store / ".stage.destination"
         write_payload(stage, "destination-race")
         validator = root / "validator.py"
-        validator.write_text(VALIDATOR_SOURCE, encoding="utf-8")
+        validator.write_text(VALIDATOR_SOURCE, encoding="utf-8", newline='\n')
         environment = os.environ.copy()
         environment["NY_PUBLISH_TEST_ACTIVE"] = str(active)
         environment["NY_PUBLISH_TEST_COORDINATION"] = str(coordination)
@@ -383,7 +383,7 @@ def run_rollback_preserves_changed_destination(publisher: Path) -> None:
         stage = store / ".stage.rollback"
         write_payload(stage, "rollback-race")
         validator = root / "validator.py"
-        validator.write_text(VALIDATOR_SOURCE, encoding="utf-8")
+        validator.write_text(VALIDATOR_SOURCE, encoding="utf-8", newline='\n')
         environment = os.environ.copy()
         environment["NY_PUBLISH_TEST_ACTIVE"] = str(active)
         environment["NY_PUBLISH_TEST_COORDINATION"] = str(coordination)
@@ -427,15 +427,25 @@ def main() -> int:
     args = arguments()
     publisher = args.publisher.resolve(strict=True)
 
-    # SDK publication itself requires directory symlinks. Report a standard
-    # CTest skip on platforms or policies that do not permit creating them.
+    # SDK publication requires directory symlinks that can be swapped
+    # atomically: a reader must never observe the SDK pathname missing. Report
+    # a standard CTest skip on a platform or policy that does not permit that.
+    #
+    # Probing only symlink *creation* is not enough. Windows creates directory
+    # symlinks under Developer Mode but has no atomic replacement for them --
+    # MoveFileEx refuses to overwrite a directory reparse point, so os.replace
+    # fails with access denied. Exercise the whole operation the publisher
+    # performs, not the part that happens to be portable.
     with tempfile.TemporaryDirectory(prefix="nil-sdk-symlink-probe-") as raw:
         root = Path(raw)
         target = root / "target"
         target.mkdir()
         link = root / "link"
+        replacement = root / "replacement"
         try:
             link.symlink_to(target, target_is_directory=True)
+            replacement.symlink_to(target, target_is_directory=True)
+            os.replace(replacement, link)
         except OSError as exc:
             print("SDK publication concurrency test skipped: {}".format(exc))
             return 77

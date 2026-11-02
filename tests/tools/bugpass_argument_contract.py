@@ -30,10 +30,10 @@ def main():
         def source(name, body, declarations='', language='ny'):
             path = root / (name + '.' + language)
             if language == 'ny':
-                path.write_text(declarations + '\nfn main() -> i32\n' + body + '\nreturn 0\nend fn\n')
+                path.write_text(declarations + '\nfn main() -> i32\n' + body + '\nreturn 0\nend fn\n', newline='\n')
             else:
                 path.write_text('book arguments\n' + declarations + '\nmain returns override integer begin paragraph\n' +
-                                body + '\ngive 0\nend paragraph\n')
+                                body + '\ngive 0\nend paragraph\n', newline='\n')
             return path
 
         def rejected(name, body, declarations='', language='ny', diagnostic='incompatible'):

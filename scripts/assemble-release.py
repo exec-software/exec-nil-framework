@@ -321,6 +321,11 @@ def validate_vsix(path: Path, version: str) -> str:
 
 def rename_no_replace(source: Path, destination: Path) -> None:
     """Linux-only release profile: fail closed unless atomic no-replace exists."""
+    if not sys.platform.startswith("linux"):
+        # CDLL(None) means "the main program" only where dlopen does; on
+        # Windows it raises TypeError, which would read as a bug in this script
+        # rather than as the host refusing the guarantee the release needs.
+        raise ReleaseError("atomic no-replace release staging requires Linux renameat2")
     library = ctypes.CDLL(None, use_errno=True)
     rename = getattr(library, "renameat2", None)
     if rename is None:

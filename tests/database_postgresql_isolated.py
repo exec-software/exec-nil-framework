@@ -45,7 +45,7 @@ def main() -> int:
         if args.postgres_share:
             init += ['-L', str(args.postgres_share.resolve())]
         initialized = subprocess.run(init, env=env, capture_output=True, text=True, timeout=30)
-        (report / 'initdb.log').write_text(initialized.stdout + initialized.stderr)
+        (report / 'initdb.log').write_text(initialized.stdout + initialized.stderr, newline='\n')
         if initialized.returncode:
             print(initialized.stderr, file=sys.stderr)
             return 1
@@ -61,7 +61,7 @@ def main() -> int:
             address = f'host={socket} dbname=postgres user=nil_test'
             if args.provider_test:
                 checked = subprocess.run([str(args.provider_test.resolve()), address], env=env, capture_output=True, text=True, timeout=30)
-                (report / 'provider.log').write_text(checked.stdout + checked.stderr)
+                (report / 'provider.log').write_text(checked.stdout + checked.stderr, newline='\n')
                 if checked.returncode:
                     print(checked.stderr, file=sys.stderr)
                     return 1
@@ -69,10 +69,10 @@ def main() -> int:
             # route harness. Embed only this runner-created private address.
             source = root / 'postgresql.ny'
             fixture = (repo / 'tests/language/database-postgresql-runtime.ny').read_text()
-            source.write_text(fixture.replace('arg(0)', json.dumps(address)))
+            source.write_text(fixture.replace('arg(0)', json.dumps(address)), newline='\n')
             command = [sys.executable, str(repo / 'tests/routes/ny_route_matrix.py'), '--compiler', str(args.compiler.resolve()), '--interpreter', str(args.interpreter.resolve()), '--source', str(source), '--expected-stdout', str(repo / 'tests/language/database-postgresql-runtime.stdout'), '--expected-exit', '0', '--routes', 'all', '--with-stdlib', '--timeout', '30', '--work-dir', str(report / 'routes'), '--report-json', str(report / 'routes.json')]
             run = subprocess.run(command, env=env, capture_output=True, text=True, timeout=180)
-            (report / 'routes.log').write_text(run.stdout + run.stderr)
+            (report / 'routes.log').write_text(run.stdout + run.stderr, newline='\n')
             print(run.stdout, end='')
             if run.returncode:
                 print(run.stderr, file=sys.stderr)
@@ -80,7 +80,7 @@ def main() -> int:
         finally:
             if started:
                 stopped = subprocess.run(control + ['-m', 'immediate', '-w', 'stop'], env=env, capture_output=True, text=True, timeout=30)
-                (report / 'shutdown.log').write_text(stopped.stdout + stopped.stderr)
+                (report / 'shutdown.log').write_text(stopped.stdout + stopped.stderr, newline='\n')
             if log.exists():
                 shutil.copyfile(log, report / 'postgres.log')
 

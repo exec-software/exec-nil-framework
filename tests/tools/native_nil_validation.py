@@ -431,7 +431,7 @@ def main() -> int:
             )
 
         probe = root / "valid.nil"
-        probe.write_text(module("PUSH_CONST 0\nRET"), encoding="utf-8")
+        probe.write_text(module("PUSH_CONST 0\nRET"), encoding="utf-8", newline='\n')
         process = assemble(probe, root / "valid.o")
         diagnostic = process.stderr.lower()
         if process.returncode and "llvm" in diagnostic and (
@@ -451,7 +451,7 @@ def main() -> int:
             module("RET", "helper() -> void")
             + "function main() -> i32:\nPUSH_CONST 7\nCALL helper 0\nRET\nend function\n",
             encoding="utf-8",
-        )
+         newline='\n')
         process = assemble(valid_void, root / "void-call.o")
         if process.returncode:
             raise AssertionError(f"valid void call was rejected: {process.stderr}")
@@ -476,7 +476,7 @@ def main() -> int:
             )
         for name, (payload, _) in scalar_field_controls.items():
             source = root / f"{name}.nil"
-            source.write_text(payload, encoding="utf-8")
+            source.write_text(payload, encoding="utf-8", newline='\n')
             process = assemble(source, root / f"{name}.o")
             if process.returncode:
                 raise AssertionError(f"{name}: valid scalar field was rejected: {process.stderr}")
@@ -547,7 +547,7 @@ def main() -> int:
             ),
         }.items():
             source = root / f"{name}.nil"
-            source.write_text(module(body), encoding="utf-8")
+            source.write_text(module(body), encoding="utf-8", newline='\n')
             process = assemble(source, root / f"{name}.o")
             if process.returncode:
                 raise AssertionError(f"{name}: valid CFG was rejected: {process.stderr}")
@@ -565,7 +565,7 @@ def main() -> int:
         for name, (payload, diagnostic) in invalid.items():
             source = root / f"{name}.nil"
             output = root / f"{name}.o"
-            source.write_text(payload, encoding="utf-8")
+            source.write_text(payload, encoding="utf-8", newline='\n')
             output.write_bytes(sentinel)
             process = assemble(source, output)
             if process.returncode <= 0:
@@ -614,7 +614,7 @@ def main() -> int:
                     enum_schema + 'const message = "enum payload"\n'
                     + module(f"{creation}\n{unwrap}\nCALL println 1\nPUSH_CONST 0\nRET"),
                     encoding="utf-8",
-                )
+                 newline='\n')
                 output = root / f"{name}.o"
                 process = assemble(source, output)
                 if process.returncode:
@@ -646,7 +646,7 @@ def main() -> int:
                          "NEW_VARIANT Example::Pair 2\nUNWRAP_VARIANT 2\n"
                          "CALL println 1\nCALL println 1\nPUSH_CONST 0\nRET"),
                 encoding="utf-8",
-            )
+             newline='\n')
             output = root / "tuple-payload.o"
             process = assemble(source, output)
             if process.returncode:

@@ -41,11 +41,11 @@ def main() -> None:
         def source(name, expression):
             path = root / (name + ".ny")
             path.write_text("fn main() -> i32\nprintln(" + expression +
-                            ")\nreturn 0\nend fn\n", encoding="utf-8")
+                            ")\nreturn 0\nend fn\n", encoding="utf-8", newline='\n')
             return path
 
         control = root / "control.ny"
-        control.write_text("fn main() -> i32\nreturn 0\nend fn\n", encoding="utf-8")
+        control.write_text("fn main() -> i32\nreturn 0\nend fn\n", encoding="utf-8", newline='\n')
         native = args.llvm == "ON"
         if native:
             probe = run([*base, "--native", "--output", root / "control", control])

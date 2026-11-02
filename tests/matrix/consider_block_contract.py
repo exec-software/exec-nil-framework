@@ -59,7 +59,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='nil-consider-block-') as directory:
         work = Path(directory)
         source = work / 'nested.matrix'
-        source.write_text(SOURCE)
+        source.write_text(SOURCE, newline='\n')
         command = [args.tester.resolve(), 'run', '--compiler', args.compiler.resolve(),
                    '--interpreter', args.interpreter.resolve(), '--target',
                    'all' if args.llvm == 'ON' else 'vm', '--format', 'json', source]
@@ -74,9 +74,9 @@ def main():
         }
         for name, (text, diagnostic) in invalid.items():
             path = work / (name + '.matrix')
-            path.write_text('book invalid.arm\n' + text)
+            path.write_text('book invalid.arm\n' + text, newline='\n')
             artifact = work / (name + '.nil')
-            artifact.write_text('retained output')
+            artifact.write_text('retained output', newline='\n')
             result = subprocess.run([str(args.compiler.resolve()), '--no-bundle', '-o', str(artifact), str(path)],
                                     capture_output=True, text=True, timeout=30)
             assert result.returncode != 0 and diagnostic in result.stderr, (name, result.stdout, result.stderr)

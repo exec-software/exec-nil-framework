@@ -74,7 +74,7 @@ def main() -> int:
         root = Path(temporary)
         for name, (source, diagnostic) in cases.items():
             path = root / (name + ".ny")
-            path.write_text(source, encoding="utf-8")
+            path.write_text(source, encoding="utf-8", newline='\n')
             for mode, extra in (("text", []), ("binary", ["--emit-binary-nil"]),
                                 ("unchecked-text", ["--no-typecheck"]),
                                 ("unchecked-binary", ["--no-typecheck", "--emit-binary-nil"])):
@@ -92,7 +92,7 @@ def main() -> int:
                 if output.read_bytes() != sentinel:
                     raise AssertionError(f"{name}/{mode}: rejection replaced prior artifact")
         unchecked = root / "unchecked.ny"
-        unchecked.write_text(program(base, "let value = Base {}\nprintln(value.score())"), encoding="utf-8")
+        unchecked.write_text(program(base, "let value = Base {}\nprintln(value.score())"), encoding="utf-8", newline='\n')
         for extra in ([], ["--emit-binary-nil"]):
             output = root / "unchecked.nil"
             output.write_bytes(sentinel)

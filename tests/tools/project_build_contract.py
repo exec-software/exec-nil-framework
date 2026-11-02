@@ -26,8 +26,19 @@ def main():
     args.tester = str(Path(args.tester).resolve())
     args.stdlib = str(Path(args.stdlib).resolve())
     if sys.platform == 'win32':
-        print('nilbuild execution currently supports POSIX hosts; Windows contract is descriptive only')
-        return
+        # This contract asserts POSIX process semantics, not merely POSIX
+        # tooling. `nilbuild run` replaces its own image with the program via
+        # execv, and the cases below check exactly that: the program's stdout
+        # must carry nilbuild's *own* pid, and a controlling terminal acquired
+        # with pty/termios must reach it. Windows has no execv -- the driver
+        # stays resident as a parent and forwards the exit status -- so the
+        # property under test does not exist there rather than being
+        # unimplemented. The Windows behaviour of the same code paths is
+        # covered by nilbuild.incremental-contract and nilbuild.project-edition.
+        # See docs/platform-behavior.md.
+        print('nilbuild.project-contract asserts POSIX exec and controlling-terminal '
+              'semantics, which Windows does not have; skipped')
+        return 77
     count = 0
     with tempfile.TemporaryDirectory(prefix='nil project ; space ') as directory:
         root = Path(directory)
@@ -39,25 +50,25 @@ def main():
         matrix = sources / 'main.matrix'
         ny = sources / 'main.ny'
         (library / 'nyhelper.ny').write_text(
-            'module nyhelper\npub fn ny_answer() -> i32\n return 17\nend fn\n')
+            'module nyhelper\npub fn ny_answer() -> i32\n return 17\nend fn\n', newline='\n')
         (library / 'matrixhelper.matrix').write_text(
             'book matrixhelper\npublic matrix-answer returns override integer begin paragraph\n'
-            '    give 25\nend paragraph\n')
+            '    give 25\nend paragraph\n', newline='\n')
         matrix.write_text(
             'book mixed\nread everything from nyhelper\nread everything from matrixhelper\n'
             'main returns override integer begin paragraph\n'
             '    say "program executed"\n'
             '    say (ny-answer with nothing) plus (matrix-answer with nothing)\n'
-            '    give 0\nend paragraph\n')
+            '    give 0\nend paragraph\n', newline='\n')
         ny.write_text(
             'module mixed\nimport nyhelper\nimport matrixhelper\n'
             'fn main() -> i32\n println("program executed")\n'
-            ' println(ny_answer() + matrix_answer())\n return 0\nend fn\n')
+            ' println(ny_answer() + matrix_answer())\n return 0\nend fn\n', newline='\n')
         base = {'schema': 'nil.project.v1', 'name': 'mixed',
                 'entry': 'src/main.matrix', 'includePaths': ['library with spaces', '.']}
 
         def save(value=base, *, file=project):
-            file.write_text(json.dumps(value), encoding='utf8')
+            file.write_text(json.dumps(value), encoding='utf8', newline='\n')
 
         def invoke(command, *flags, status=0, cwd=root, explicit_tools=True, sdk=True,
                    project_flag=True, environment=None, timeout=45):
@@ -159,7 +170,7 @@ main returns number begin paragraph
  say "APPLICATION_ENTRY_MUST_NOT_RUN"
  give 0
 end paragraph
-''', encoding='utf-8')
+''', encoding='utf-8', newline='\n')
         save({**base, 'entry': 'src/project checks.matrix', 'sdkPath': args.stdlib})
         application_outputs = [root / 'build/mixed.nil', root / 'build/mixed']
         previous_outputs = {path: path.read_bytes() if path.is_file() else None
@@ -209,7 +220,7 @@ end paragraph
         ny.write_text(
             'import nil.std.system\nfn main() -> i32\n'
             ' println(arg_count())\n println(arg(0))\n println(arg(1))\n'
-            ' println(arg(2))\n return 7\nend fn\n')
+            ' println(arg(2))\n return 7\nend fn\n', newline='\n')
         save({**base, 'entry': 'src/main.ny'})
         targets = ['vm'] + (['native'] if args.llvm.lower() in ('on', 'true', '1') else [])
         for target in targets:
@@ -217,7 +228,7 @@ end paragraph
             assert result.stdout == '3\nwords with spaces\n;echo nope\n\n', result
 
         # Warning policy comes from the compiler and is shared by check/build.
-        ny.write_text('fn main() -> i32\n println("λ🙂")  \n return 0\nend fn\n')
+        ny.write_text('fn main() -> i32\n println("λ🙂")  \n return 0\nend fn\n', newline='\n')
         warning = json.loads(invoke('check', '--format', 'json').stdout)
         assert any(d['code'] == 'NIL1001' for d in warning['diagnostics'])
         assert f'{ny}:2:16:' in invoke('check').stderr
@@ -234,7 +245,7 @@ end paragraph
         save({**base, 'entry': 'src/main.ny', 'analysis': {
             'disabledRules': ['NIL1001'], 'warningsAsErrors': True}})
         assert json.loads(invoke('check', '--format', 'json').stdout)['diagnostics'] == []
-        ny.write_text('fn main() -> i32\n return "wrong type"\nend fn\n')
+        ny.write_text('fn main() -> i32\n return "wrong type"\nend fn\n', newline='\n')
         invoke('run', status=1)
         assert artifact.read_bytes() == b'previous valid artifact'
         save()
@@ -244,14 +255,14 @@ end paragraph
         fake = root / 'compiler with spaces'
         marker = root / 'stale program ran'
         native = root / 'build/mixed'
-        native.write_text('#!' + sys.executable + '\nfrom pathlib import Path\nPath(' + repr(str(marker)) + ').touch()\n')
+        native.write_text('#!' + sys.executable + '\nfrom pathlib import Path\nPath(' + repr(str(marker)) + ').touch()\n', newline='\n')
         native.chmod(0o755)
         original = native.read_bytes()
         report = json.dumps({'schema': 'nil.analysis.v1', 'success': True, 'diagnostics': []})
 
         def fake_compiler(body):
             fake.write_text('#!' + sys.executable + '\nimport sys\nfrom pathlib import Path\n'
-                            'if "--analyze" in sys.argv:\n print(' + repr(report) + ')\n sys.exit(0)\n' + body)
+                            'if "--analyze" in sys.argv:\n print(' + repr(report) + ')\n sys.exit(0)\n' + body, newline='\n')
             fake.chmod(0o755)
 
         fake_compiler('output = Path(sys.argv[sys.argv.index("--output") + 1])\n'
@@ -403,4 +414,6 @@ end paragraph
 
 
 if __name__ == '__main__':
-    main()
+    # main() returns 77 to report a skip, so its value has to reach the exit
+    # status; calling it bare would turn a skip back into a silent pass.
+    raise SystemExit(main())

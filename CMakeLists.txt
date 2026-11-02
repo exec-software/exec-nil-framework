@@ -23,6 +23,17 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
+if(MSVC)
+    # Without /utf-8, MSVC reads a source file in the regional "ANSI" code page
+    # and re-encodes narrow literals into it, so a non-ASCII string literal in
+    # a UTF-8 source compiles to different bytes than it does elsewhere. The
+    # framework is UTF-8 end to end, so say so for both charsets.
+    add_compile_options(/utf-8)
+    # And make the narrow Win32/CRT entry points agree: see cmake/utf8.manifest.
+    add_link_options(/MANIFEST:EMBED
+        "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/cmake/utf8.manifest")
+endif()
+
 add_subdirectory(nilcompiler)
 add_subdirectory(nilinterpreter)
 add_subdirectory(nillsp)
@@ -68,6 +79,11 @@ if(BUILD_TESTING)
     target_compile_features(ny_nil_loader_tests PRIVATE cxx_std_17)
 
     add_test(NAME nil.loader COMMAND $<TARGET_FILE:ny_nil_loader_tests>)
+
+    add_executable(nilbuild_windows_toolchain_inputs_tests tests/windows_toolchain_inputs_tests.cpp)
+    target_compile_features(nilbuild_windows_toolchain_inputs_tests PRIVATE cxx_std_17)
+    add_test(NAME nilbuild.windows-toolchain-inputs COMMAND $<TARGET_FILE:nilbuild_windows_toolchain_inputs_tests>)
+    set_tests_properties(nilbuild.windows-toolchain-inputs PROPERTIES LABELS "tools;project;rc" TIMEOUT 60)
 
     add_executable(ny_array_identity_vm_tests tests/vm_array_identity_tests.cpp)
     target_link_libraries(ny_array_identity_vm_tests PRIVATE nilcompiler_core)
@@ -502,17 +518,37 @@ if(BUILD_TESTING)
                     --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
                     --llvm "${NIL_ENABLE_LLVM}"
         )
-        set_tests_properties(nilbuild.project-contract PROPERTIES LABELS "tools;project;analysis;rc" TIMEOUT 180)
+        # Reports 77 on Windows: the contract asserts POSIX exec and
+        # controlling-terminal semantics. Recording it as a skip keeps it
+        # from reading as coverage that host does not have.
+        set_tests_properties(nilbuild.project-contract PROPERTIES
+            LABELS "tools;project;analysis;rc" SKIP_RETURN_CODE 77 TIMEOUT 180)
         add_test(NAME nilbuild.incremental-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/incremental_build_contract.py"
                 --builder $<TARGET_FILE:nilbuild> --compiler $<TARGET_FILE:nilcompiler>
                 --interpreter $<TARGET_FILE:nilinterpreter> --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                # Windows only: the stand-in compiler is a Python script, and
+                # there is no shebang to run it with, so the test compiles a
+                # launcher. Unused on POSIX.
+                --cxx "${CMAKE_C_COMPILER}"
                 --llvm "${NIL_ENABLE_LLVM}")
-        set_tests_properties(nilbuild.incremental-contract PROPERTIES LABELS "tools;project;rc" TIMEOUT 180)
+        set_tests_properties(nilbuild.incremental-contract PROPERTIES LABELS "tools;project;rc" TIMEOUT 240)
         add_test(NAME nilbuild.parallel-process-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/parallel_process_contract.py"
                 --root "${CMAKE_CURRENT_SOURCE_DIR}" --cxx "${CMAKE_CXX_COMPILER}")
-        set_tests_properties(nilbuild.parallel-process-contract PROPERTIES LABELS "tools;project;rc" TIMEOUT 60)
+        set_tests_properties(nilbuild.parallel-process-contract PROPERTIES LABELS "tools;project;rc" TIMEOUT 240)
+        add_test(NAME nilbuild.tool-discovery-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/tool_discovery_contract.py"
+                --builder $<TARGET_FILE:nilbuild> --tester $<TARGET_FILE:niltest>
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src")
+        set_tests_properties(nilbuild.tool-discovery-contract PROPERTIES LABELS "tools;project;rc" TIMEOUT 180)
+        add_test(NAME nil.platform.raw-byte-routes
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/raw_byte_routes_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --assembler $<TARGET_FILE:nilassembler> --linker $<TARGET_FILE:nillinker>
+                --runtime $<TARGET_FILE:nilruntime> --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.platform.raw-byte-routes PROPERTIES LABELS "tools;routes;native;rc" TIMEOUT 240)
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             add_test(NAME nilbuild.toolchain-inputs
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/toolchain_inputs_contract.py"
@@ -665,8 +701,8 @@ if(BUILD_TESTING)
         set_tests_properties(niltest.source-contract PROPERTIES LABELS "matrix;ny;testing;routes" TIMEOUT 240)
         add_test(NAME niltest.process-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/niltest_process_contract.py"
-                --tester $<TARGET_FILE:niltest>)
-        set_tests_properties(niltest.process-contract PROPERTIES LABELS "testing;process" TIMEOUT 120 SKIP_RETURN_CODE 77)
+                --tester $<TARGET_FILE:niltest> --cxx "${CMAKE_C_COMPILER}")
+        set_tests_properties(niltest.process-contract PROPERTIES LABELS "testing;process" TIMEOUT 240)
         # Matrix execution conformance: each page lowers to NIL and runs on the
         # interpreter with exact expected output. Acceptance is covered by the
         # lexer test; this checks that the lowering means what the surface says.
@@ -2855,8 +2891,15 @@ if(BUILD_TESTING)
                     --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
                     --llvm "${NIL_ENABLE_LLVM}"
         )
+        # This case performs a full native link per fixture, and linking is
+        # several times slower on Windows -- process creation costs more and a
+        # scanner inspects every executable as it appears. Measured alone:
+        # 25s on Linux, 117s on Windows. 180s left Linux 7x of headroom and
+        # Windows 1.5x, so it timed out there under ctest --parallel 8 while
+        # passing on its own. The budget is a guard against a hang, not a
+        # performance assertion, so give it room on the slower host.
         set_tests_properties(ny.random-range-contract PROPERTIES
-            LABELS "stdlib;runtime;rc" TIMEOUT 180)
+            LABELS "stdlib;runtime;rc" TIMEOUT 600)
         add_ny_route_test(
             ny.routes.math-invalid-range-runtime
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/math-invalid-range-runtime.ny"

@@ -221,7 +221,11 @@ def main() -> int:
                 # Deliberately exercise paths that would be unsafe if either tool
                 # built a shell command from untrusted user strings.
                 object_output = root / f"route {label};literal.o"
-                executable_output = root / f"route {label};literal"
+                # nillinker appends .exe on Windows, so ask for the name the
+                # tool will actually produce. The space and the semicolon that
+                # make this path adversarial are preserved on both platforms.
+                executable_suffix = ".exe" if os.name == "nt" else ""
+                executable_output = root / f"route {label};literal{executable_suffix}"
                 ok, message = assemble_and_link(
                     assembler=args.assembler,
                     linker=args.linker,
@@ -244,7 +248,7 @@ def main() -> int:
             malformed_nil.write_text(
                 "module root\nfunction main:\n    NOT_AN_OPCODE\nend function\n",
                 encoding="utf-8",
-            )
+             newline='\n')
             protected_object = root / "protected.o"
             error = expect_rejection_preserves_output(
                 [

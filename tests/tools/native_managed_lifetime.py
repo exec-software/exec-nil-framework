@@ -36,7 +36,7 @@ fn main() -> i32
     println(total)
     return 0
 end fn
-''', encoding="utf-8")
+''', encoding="utf-8", newline='\n')
         environment = {key: value for key, value in os.environ.items() if not key.startswith("NY_")}
         compiled = subprocess.run([str(args.compiler.resolve()), "--quiet", "--no-stdlib",
             "--sdk-path", str(args.stdlib.resolve()), "--native", "--output", str(output), str(source)],

@@ -87,7 +87,7 @@ def main():
         }
         for name, (body, diagnostic) in cases.items():
             source = root / (name + ".ny")
-            source.write_text("fn main() -> i32\n" + body + "\nreturn 0\nend fn\n")
+            source.write_text("fn main() -> i32\n" + body + "\nreturn 0\nend fn\n", newline='\n')
             output = root / (name + ".nil")
             output.write_bytes(b"previous artifact")
             result = run([*base, "--no-bundle", "--output", output, source], root)
@@ -104,7 +104,7 @@ def main():
             }.items():
                 assert text != original, name
                 nil = root / (name + ".nil")
-                nil.write_text(text)
+                nil.write_text(text, newline='\n')
                 obj = root / (name + ".o")
                 obj.write_bytes(b"previous object")
                 result = run([args.assembler, "-o", obj, nil], root)

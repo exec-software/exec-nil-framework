@@ -104,7 +104,7 @@ def main():
 
         for name, source, message, line in invalid:
             path = root / (name + '.ny')
-            path.write_text(source)
+            path.write_text(source, newline='\n')
             for route_flags in flags:
                 artifact = root / 'protected-output'
                 artifact.write_bytes(b'previous artifact')
@@ -129,7 +129,7 @@ def main():
 
         for name, source, expected in valid:
             path = root / (name + '.ny')
-            path.write_text(source)
+            path.write_text(source, newline='\n')
             artifact = path.with_suffix('.nil')
             result = run([compiler, '--quiet', '--no-stdlib', '--no-bundle', '-o', artifact, path])
             assert result.returncode == 0 and not result.stdout and not result.stderr, (name, result)

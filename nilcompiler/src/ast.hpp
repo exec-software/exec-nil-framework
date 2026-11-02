@@ -21,6 +21,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <deque>
 #include <vector>
 
 namespace ny {
@@ -1742,7 +1743,16 @@ public:
   }
 
 private:
-  std::vector<std::unordered_map<std::string, symbol>> scopes;
+  // A deque, not a vector: lookup() hands out `const symbol *` pointing into
+  // these maps, and callers hold them across enter_scope(). Growing a vector
+  // reallocates, and because MSVC's std::unordered_map move constructor is not
+  // noexcept, that reallocation copy-constructs the maps and then destroys the
+  // originals - freeing every node and dangling every outstanding symbol
+  // pointer. libstdc++ moves instead, so the nodes survive and the same stale
+  // pointers happen to keep working, which is why this only ever crashed on
+  // Windows. std::deque::emplace_back never invalidates references to existing
+  // elements, so the pointers stay valid on every standard library.
+  std::deque<std::unordered_map<std::string, symbol>> scopes;
 
   static std::string kind_to_string(symbol_kind k) {
     switch (k) {

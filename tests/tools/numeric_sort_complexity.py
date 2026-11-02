@@ -107,7 +107,7 @@ def profile(args, root: Path, stdlib: Path, kind: str, pattern: str,
     label = f"{prefix}-{kind}-{pattern}-{'desc' if descending else 'asc'}-{size}"
     source = root / (label + ".ny")
     artifact = root / (label + ".nil")
-    source.write_text(source_for(kind, pattern, size, descending), encoding="utf-8")
+    source.write_text(source_for(kind, pattern, size, descending), encoding="utf-8", newline='\n')
     compiled = run([args.compiler, "--quiet", "--no-stdlib", "--no-bundle", "-I", stdlib,
                     "--output", artifact, source], root)
     if compiled.stderr:
@@ -183,7 +183,7 @@ def main() -> int:
                     break
             else:
                 raise AssertionError("historical sorting source was not found at " + args.baseline_ref)
-            (baseline / "core/sorting.ny").write_text(probe.stdout, encoding="utf-8")
+            (baseline / "core/sorting.ny").write_text(probe.stdout, encoding="utf-8", newline='\n')
             pair = [profile(args, root, baseline, "i32", "equal", size, False, "baseline") for size in SIZES]
             failures = bounds_failures(*pair)
             report["baseline"] = {"revision": args.baseline_ref, "results": pair, "detected_regressions": failures}
@@ -191,13 +191,13 @@ def main() -> int:
                 raise AssertionError("historical sorting control did not violate the algorithmic bounds")
         if args.report:
             args.report.parent.mkdir(parents=True, exist_ok=True)
-            args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+            args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8", newline='\n')
         largest_depth = max(result["max_call_depth"] for result in report["results"])
         print(f"Numeric/text sort complexity: {len(report['results'])} profiles passed; maximum VM call depth {largest_depth}")
         if report["baseline"]:
             print("Historical control rejected: " + "; ".join(report["baseline"]["detected_regressions"]))
     except Exception:
-        (root / "partial-report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        (root / "partial-report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8", newline='\n')
         print(f"Numeric/text sort complexity artifacts preserved: {root}", file=sys.stderr)
         raise
     else:

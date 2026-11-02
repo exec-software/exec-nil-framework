@@ -102,6 +102,27 @@ def bundle_output_path(requested: Path) -> Path:
     return requested
 
 
+def linked_executable_path(requested: Path) -> Path:
+    """Path the toolchain actually writes for a requested executable name.
+
+    Windows builds of both ``nilcompiler --native`` and ``nillinker`` append
+    ``.exe`` when the requested name carries no extension, so a harness that
+    asks for ``control`` and then stats ``control`` fails with WinError 2 even
+    though the link succeeded. POSIX uses the name verbatim.
+
+    The two sibling helpers above encode the toolchain's other two suffix
+    rules, which differ in how they treat a name that already has an
+    extension: ``native_output_path`` mirrors nilcompiler's native path
+    (nilcompiler/src/main.cpp, which appends unless the suffix is already
+    ``.exe``, so ``out.o`` becomes ``out.o.exe``) and ``bundle_output_path``
+    mirrors its bundle path. Use this one for a plain requested name, where
+    every rule agrees.
+    """
+    if os.name == "nt" and not requested.suffix:
+        return Path(str(requested) + ".exe")
+    return requested
+
+
 def legacy_staging_names(requested: Path) -> List[Path]:
     """Return the predictable sibling paths used by the retired AOT flow."""
     executable = native_output_path(requested)
@@ -367,7 +388,7 @@ def run_bundle_regression(
     failure_sentinel = b"caller-owned bundle output must survive compilation failure\n"
     failed_output.write_bytes(failure_sentinel)
     invalid_source = root / "invalid bundle source.ny"
-    invalid_source.write_text("fn main( -> i32\n", encoding="utf-8")
+    invalid_source.write_text("fn main( -> i32\n", encoding="utf-8", newline='\n')
     failed = compile_bundle(compiler, invalid_source, failed_requested)
     if failed.returncode == 0:
         raise AssertionError("invalid Ny source unexpectedly produced a bundle")
@@ -403,7 +424,7 @@ fn main() -> i32
 end fn
 """,
         encoding="utf-8",
-    )
+     newline='\n')
     requested = root / "jit requested output.nil"
     output_sentinel = b"JIT must not materialize or replace its requested output\n"
     requested.write_bytes(output_sentinel)
@@ -492,7 +513,14 @@ def run_regression(compiler: Path, source: Path, root: Path) -> int:
         raise AssertionError("native AOT link unexpectedly accepted an absent library")
     if llvm_is_explicitly_disabled(failed):
         raise AssertionError("LLVM became unavailable after a successful native compile")
-    if "all linker strategies failed" not in compiler_diagnostic(failed).lower():
+    diagnostic = compiler_diagnostic(failed).lower()
+    linker_failures = ["all linker strategies failed"]
+    if os.name == "nt":
+        # A selected/fingerprinted MSVC toolchain must not silently fall back
+        # to a different linker on error. It reports that selected failure.
+        linker_failures.append("selected visual studio linker failed")
+    if (not any(message in diagnostic for message in linker_failures)
+            or absent_library.name.lower() not in diagnostic):
         raise AssertionError(
             "native AOT failure did not reach the forced linker failure: "
             + process_failure(failed)

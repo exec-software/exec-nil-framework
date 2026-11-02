@@ -105,10 +105,10 @@ def main() -> int:
                 'capture amount matching one or more ascii digits\n'
                 'require next to match literal " USD"', True) +
                 declaration(language, 'braced_code',
-                'literal "{"\ncapture code matching exactly 3 ascii digits\nliteral "}"', True))
+                'literal "{"\ncapture code matching exactly 3 ascii digits\nliteral "}"', True), newline='\n')
             other = 'matrix' if language == 'ny' else 'ny'
             source = root / ('consumer-' + language + '.' + other)
-            source.write_text(consumer(other))
+            source.write_text(consumer(other), newline='\n')
             routes(source, provider_root, 'source-' + language)
 
             libraries = root / ('binary-' + language)
@@ -143,7 +143,7 @@ def main() -> int:
                 cases['capture-injection'] = 'capture `x>a)(?<b` matching literal "z"'
             for name, body in cases.items():
                 source = root / (name + '.' + language)
-                source.write_text(prefix + declaration(language, 'invalid', body) + main_source)
+                source.write_text(prefix + declaration(language, 'invalid', body) + main_source, newline='\n')
                 for unchecked in (False, True):
                     for route_flags in flags:
                         artifact = root / 'protected-output'

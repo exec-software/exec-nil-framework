@@ -110,17 +110,25 @@ if(NIL_ENABLE_LLVM)
         target_sources(nilcompiler_core PRIVATE src/llvm_backend.cpp)
         target_include_directories(nilcompiler_core SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
 
-        # LLVM_DEFINITIONS contains command-line-style -D flags. Apply them only
-        # to the compiler core instead of leaking them into sibling projects.
+        # LLVM_DEFINITIONS contains command-line-style -D flags. Apply them to
+        # llvm_backend.cpp alone - the only source that includes LLVM headers -
+        # rather than to the whole core, let alone sibling projects.
+        #
+        # This is not just tidiness. On Windows LLVM_DEFINITIONS carries
+        # -DUNICODE -D_UNICODE, and the Windows SDK declares the ANSI entry
+        # point as the unsuffixed GetEnvironmentStrings, defining
+        # GetEnvironmentStringsA as an alias only when UNICODE is NOT set.
+        # Applying these flags core-wide therefore broke vm.cpp's environment
+        # lookup purely as a side effect of enabling the LLVM backend.
         if(LLVM_DEFINITIONS)
             separate_arguments(
                 NILCOMPILER_LLVM_DEFINITIONS
                 NATIVE_COMMAND
                 "${LLVM_DEFINITIONS}"
             )
-            target_compile_options(
-                nilcompiler_core
-                PRIVATE ${NILCOMPILER_LLVM_DEFINITIONS}
+            set_source_files_properties(
+                src/llvm_backend.cpp
+                PROPERTIES COMPILE_OPTIONS "${NILCOMPILER_LLVM_DEFINITIONS}"
             )
         endif()
 
@@ -169,6 +177,9 @@ if(NILCOMPILER_POSTGRESQL_INCLUDE_DIR AND NOT WIN32)
 endif()
 
 add_executable(nilcompiler src/main.cpp)
+if(WIN32)
+    target_sources(nilcompiler PRIVATE ../nillinker/process_runner.cpp)
+endif()
 nil_apply_version(nilcompiler)
 target_link_libraries(nilcompiler PRIVATE nilcompiler_core)
 target_compile_features(nilcompiler PRIVATE cxx_std_17)

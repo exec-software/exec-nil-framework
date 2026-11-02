@@ -45,7 +45,7 @@ def main() -> int:
                     "\nfn main() -> i32\n" + body + "\nreturn 0\nend fn\n")
 
         control = root / "control.ny"
-        control.write_text(program(""), encoding="utf-8")
+        control.write_text(program(""), encoding="utf-8", newline='\n')
         native = args.llvm == "ON"
         if native:
             probe = run([*base, "--native", "-o", root / "probe", control])
@@ -78,7 +78,7 @@ def main() -> int:
         }
         for name, (contents, count) in cases.items():
             source = root / f"{name}.ny"
-            source.write_text(contents, encoding="utf-8")
+            source.write_text(contents, encoding="utf-8", newline='\n')
             diagnostic = f"println expects exactly 1 argument, got {count}"
             for mode, flags in routes:
                 for unchecked in (False, True):
@@ -103,7 +103,7 @@ def main() -> int:
             'println(10000000000 as i64)\nprintln(255 as u8)\n'
             'println(true)\nprintln(1.5)\nprintln(next())\nprintln(count)',
             "let mut count: i32 = 0\nfn next() -> i32\ncount = count + 1\n"
-            "return count\nend fn\n"), encoding="utf-8")
+            "return count\nend fn\n"), encoding="utf-8", newline='\n')
         expected = "Ny λ\n\n42\n10000000000\n255\n1\n1.5\n1\n1\n"
         for mode, flags in routes:
             for unchecked in (False, True):

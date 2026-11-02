@@ -30,7 +30,11 @@ def main():
             checks += 1
             return result
 
-        source = work / 'suite "quoted".ny'
+        # The name is deliberately awkward so quoting bugs in the harness show
+        # up. '"' is a reserved character on Windows filesystems and cannot be
+        # created there at all, so use a single quote in its place; both names
+        # still carry a space and an embedded quote character.
+        source = work / ("suite 'quoted'.ny" if os.name == 'nt' else 'suite "quoted".ny')
         source.write_text('''fn initialize() -> i32
  println("initialized")
  return 41
@@ -61,7 +65,7 @@ end test
 test "failure"
  panic("intentional failure")
 end test
-''')
+''', newline='\n')
         base = [compiler, '--no-stdlib']
         manifest = json.loads(run([*base, '--test-list', source]).stdout)
         assert manifest['schema'] == 'nil.tests.v1', manifest
@@ -114,7 +118,7 @@ end test
 sample begin test
  say "matrix body"
 end test
-''')
+''', newline='\n')
         matrix_manifest = json.loads(run([*base, '--test-list', matrix]).stdout)
         assert len(matrix_manifest['tests']) == 1, matrix_manifest
         matrix_case = matrix_manifest['tests'][0]
@@ -134,7 +138,7 @@ end fn
 test "bad test"
  missing_function()
 end test
-''')
+''', newline='\n')
         run([*base, '--quiet', '--no-bundle', '-o', production, invalid])
         result = run([*base, '--test-list', invalid], 1)
         assert result.stdout == '' and 'missing_function' in result.stderr, result
@@ -152,7 +156,7 @@ end test
             assert production.read_bytes() == b'previous artifact'
 
         empty = work / 'empty.ny'
-        empty.write_text('fn helper() -> void\nend fn\n')
+        empty.write_text('fn helper() -> void\nend fn\n', newline='\n')
         assert json.loads(run([*base, '--test-list', empty]).stdout)['tests'] == []
     print(f'niltest compiler discovery/harness: {checks} checks passed')
 

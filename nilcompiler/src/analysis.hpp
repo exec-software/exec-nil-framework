@@ -49,6 +49,9 @@ struct analysis_session {
   std::map<std::string, std::string> dependencies;
   bool dependencies_consistent = true;
   std::optional<std::string> native_runtime, native_linker;
+  // Ordered /LIBPATH roots for the deterministic Windows MSVC link route.
+  // An empty list means native toolchain closure is not reported on Windows.
+  std::vector<std::string> native_library_paths;
   std::set<std::string> compiler_files;
   // Canonical native source paths only. Binary-library identities never use
   // this map, and unrelated buffers are not added to the compilation graph.

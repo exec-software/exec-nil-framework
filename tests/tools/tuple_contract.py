@@ -55,7 +55,7 @@ def main():
                 'module provider\npub fn make() -> (i64, text)\nreturn (42,"cross")\nend fn\n'
                 if provider_language == 'ny' else
                 'book provider\npublic make returns tuple of (number,text) begin paragraph\n'
-                'give (42,"cross")\nend paragraph\n')
+                'give (42,"cross")\nend paragraph\n', newline='\n')
             consumer_language = 'matrix' if provider_language == 'ny' else 'ny'
             consumer = root / ('consumer-' + provider_language + '.' + consumer_language)
             consumer.write_text(
@@ -64,7 +64,7 @@ def main():
                 if consumer_language == 'ny' else
                 'book consumer\nread everything from provider\n'
                 'main returns override integer begin paragraph\n'
-                'value (amount,label) is make with nothing\nsay amount\nsay label\ngive 0\nend paragraph\n')
+                'value (amount,label) is make with nothing\nsay amount\nsay label\ngive 0\nend paragraph\n', newline='\n')
             libraries = root / ('libraries-' + provider_language)
             libraries.mkdir()
             for dependency_mode in ('source', 'binary'):
@@ -135,7 +135,7 @@ def main():
                           'book tuple_invalid\nmain returns override integer begin paragraph\n' +
                           body + '\ngive 0\nend paragraph\n')
                 path = root / (name + '.' + language)
-                path.write_text(source)
+                path.write_text(source, newline='\n')
                 for flags in (['--no-bundle'], ['--no-bundle', '--emit-binary-nil'],
                               ['--no-bundle', '--no-typecheck'],
                               *([['--native']] if args.llvm == 'ON' else [])):
@@ -165,7 +165,7 @@ def main():
                 path = root / ('reserved-' + name + '.' + language)
                 path.write_text((declaration + 'fn main() -> i32\nreturn 0\nend fn\n')
                     if language == 'ny' else 'book reserved_tuple\n' + declaration +
-                    'main returns override integer begin paragraph\ngive 0\nend paragraph\n')
+                    'main returns override integer begin paragraph\ngive 0\nend paragraph\n', newline='\n')
                 for unchecked in (False, True):
                     output = root / 'protected-reserved.nil'
                     output.write_bytes(b'unchanged')
@@ -247,9 +247,9 @@ def main():
             source.write_text(''.join(declarations) +
                               ('fn main() -> i32\n' if ny else
                                'main returns override integer begin paragraph\n') + ''.join(body) +
-                              ('return 0\nend fn\n' if ny else 'give 0\nend paragraph\n'))
+                              ('return 0\nend fn\n' if ny else 'give 0\nend paragraph\n'), newline='\n')
             stdout = source.with_suffix('.stdout')
-            stdout.write_text('\n'.join(expected) + '\n')
+            stdout.write_text('\n'.join(expected) + '\n', newline='\n')
             run([sys.executable, REPOSITORY / 'tests/routes/ny_route_matrix.py',
                  '--compiler', compiler, '--interpreter', interpreter, '--source', source,
                  '--expected-stdout', stdout, '--expected-exit', '0',

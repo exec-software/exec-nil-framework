@@ -113,12 +113,12 @@ end paragraph
     }
     expected = root / 'flag.stdout'
     expected.write_text('2147483649\n2147483649\n4294967303\n4294967303\n'
-                        '-9223372036854775808\n9223372036854775807\n4294967296\n')
+                        '-9223372036854775808\n9223372036854775807\n4294967296\n', newline='\n')
     routes = ('all' if llvm == 'ON' else
               'text-interpreter,binary-interpreter,bundle-text,bundle-binary')
     for language, source in sources.items():
         path = root / f'flag.{language}'
-        path.write_text(source)
+        path.write_text(source, newline='\n')
         command = [sys.executable, REPOSITORY / 'tests/routes/ny_route_matrix.py',
                    '--compiler', compiler, '--interpreter', interpreter,
                    '--source', path, '--expected-stdout', expected, '--expected-exit', '0',
@@ -161,7 +161,7 @@ def main():
             for index, (literal, expected_message) in enumerate(cases):
                 for context in ('expression', 'statement-pattern', 'expression-pattern', 'default'):
                     path = root / f'invalid-{index}-{context}.{language}'
-                    path.write_text(source_with_literal(language, context, literal))
+                    path.write_text(source_with_literal(language, context, literal), newline='\n')
                     for route_flags in flags:
                         rejected_source(compiler, path, route_flags, environment, root,
                                         expected_message)
@@ -185,7 +185,7 @@ def main():
                               f'value invalid as array of {names[destination_type]} is original\n'
                               'give 0\nend paragraph\n')
                 path = root / f'invariant-{source_type}.{language}'
-                path.write_text(source)
+                path.write_text(source, newline='\n')
                 display = ({'i32': 'i32', 'i64': 'i64'} if language == 'ny' else
                            {'i32': 'override integer', 'i64': 'number'})
                 expected_message = (f"Expected 'array<{display[destination_type]}>', "
@@ -205,7 +205,7 @@ def main():
             for index, array in enumerate(('[1, true, 2147483648]',
                                            '[2147483648, true, 1]')):
                 path = root / f'invalid-array-{index}.{language}'
-                path.write_text(source_with_literal(language, 'expression', array))
+                path.write_text(source_with_literal(language, 'expression', array), newline='\n')
                 for route_flags in flags:
                     if '--no-typecheck' not in route_flags:
                         rejected_source(compiler, path, route_flags, environment, root,

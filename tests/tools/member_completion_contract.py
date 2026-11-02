@@ -5,6 +5,11 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
+
+# Piping a source through a text-mode stdin would rewrite its newlines.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from exact_stdin import run_with_exact_stdin
 
 
 def main():
@@ -18,8 +23,7 @@ def main():
 
         def run(command, *, payload=None, status=0):
             nonlocal checks
-            result = subprocess.run(command, input=payload, text=True, capture_output=True,
-                                    timeout=30, cwd=root)
+            result = run_with_exact_stdin(command, payload, timeout=30, cwd=root)
             assert result.returncode == status, (command, result.returncode, result.stdout, result.stderr)
             checks += 1
             return result
@@ -61,7 +65,7 @@ def main():
             updated = (source[:value['start']] + insertion + source[value['start'] + value['length']:]).decode()
             for path, text in {name: updated, **(dependencies or {})}.items():
                 (root / path).parent.mkdir(parents=True, exist_ok=True)
-                (root / path).write_text(text)
+                (root / path).write_text(text, newline='\n')
             result = run([compiler, '--no-stdlib', '-I', str(root), '--no-bundle',
                           '-o', str(root / (name + '.nil')), str(root / name)])
             assert not result.stderr, result.stderr
@@ -137,16 +141,16 @@ def main():
         for caller in (imported.replace('sam|', 'secret'),
                        imported.replace('sam|', 'secret').replace('import helper.*', 'module entry\nimport helper.*'),
                        imported.replace('value.sam|()', 'helper::Box__secret(value)')):
-            (root / 'private.ny').write_text(caller)
-            (root / 'helper.ny').write_text(dependency)
+            (root / 'private.ny').write_text(caller, newline='\n')
+            (root / 'helper.ny').write_text(dependency, newline='\n')
             result = run([compiler, '--no-stdlib', '-I', str(root), '--no-bundle',
                           '-o', str(root / 'private.nil'), str(root / 'private.ny')], status=1)
             assert 'private to module' in result.stderr, result.stderr
         legacy = ('module legacy\npub struct Record\nitem: i32\nend struct\n'
                   'fn Record__secret(self: Record) -> i32\nreturn self.item\nend fn\n')
-        (root / 'legacy.ny').write_text(legacy)
+        (root / 'legacy.ny').write_text(legacy, newline='\n')
         (root / 'legacy_private.ny').write_text('import legacy.*\nfn main() -> i32\n'
-            'let input = Record { item: 7 }\nreturn input.secret()\nend fn\n')
+            'let input = Record { item: 7 }\nreturn input.secret()\nend fn\n', newline='\n')
         result = run([compiler, '--no-stdlib', '-I', str(root), '--no-bundle',
                       '-o', str(root / 'legacy_private.nil'), str(root / 'legacy_private.ny')], status=1)
         assert 'private to module' in result.stderr, result.stderr
@@ -159,14 +163,14 @@ def main():
             dependency = (f'module static_helper\npub struct Record{parameters}\nitem: {field_type}\nend struct\n'
                           f'impl{parameters} Record{parameters}\nfn secret() -> i32\nreturn 7\nend fn\n'
                           'pub fn public_value() -> i32\nreturn 7\nend fn\nend impl\n')
-            (root / 'static_helper.ny').write_text(dependency)
+            (root / 'static_helper.ny').write_text(dependency, newline='\n')
             receiver = 'Record<i32>' if is_generic else 'Record'
             for explicit_module in (False, True):
                 for method, status in (('secret', 1), ('public_value', 0)):
                     source = (('module entry\n' if explicit_module else '') + 'import static_helper.*\n'
                               f'fn main() -> i32\nreturn {receiver}.{method}()\nend fn\n')
                     path = root / f'static_{is_generic}_{explicit_module}_{method}.ny'
-                    path.write_text(source)
+                    path.write_text(source, newline='\n')
                     signature_at = len(source[:source.index(method + '(') + len(method) + 1].encode())
                     analysis = json.loads(run([compiler, '--analyze', '--no-stdlib', '-I', str(root),
                         '--signature-at', str(signature_at), str(path)], status=status).stdout)
@@ -245,7 +249,7 @@ def main():
         assert not query(extension_entry.replace('vis|', 'sec|'), name='extension_client.matrix',
                          dependencies=extension_sources)['items']
         private_path = root / 'extension_private.matrix'
-        private_path.write_text(extension_entry.replace('vis|', 'secret'))
+        private_path.write_text(extension_entry.replace('vis|', 'secret'), newline='\n')
         analysis = json.loads(run([compiler, '--analyze', '--no-stdlib', '-I', str(root),
                                    str(private_path)], status=1).stdout)
         assert any('private to module' in d['message'] for d in analysis['diagnostics']), analysis

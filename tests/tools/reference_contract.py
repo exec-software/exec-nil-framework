@@ -63,7 +63,7 @@ end enum
         root = Path(temporary)
         for name, source in cases.items():
             path = root / f"{name}.ny"
-            path.write_text(source, encoding="utf-8")
+            path.write_text(source, encoding="utf-8", newline='\n')
             for mode, flags in (("text", []), ("binary", ["--emit-binary-nil"]),
                                 ("unchecked-text", ["--no-typecheck"]),
                                 ("unchecked-binary", ["--no-typecheck", "--emit-binary-nil"])):

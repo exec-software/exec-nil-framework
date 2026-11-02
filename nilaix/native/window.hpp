@@ -5,6 +5,11 @@
 
 #ifdef _WIN32
     #define PLATFORM_WINDOWS
+    // <windows.h> defines min/max as macros, which breaks
+    // std::numeric_limits<...>::max() and std::min/std::max.
+    #ifndef NOMINMAX
+    #define NOMINMAX
+    #endif
     #include <windows.h>
 #elif defined(__linux__)
     #define PLATFORM_LINUX

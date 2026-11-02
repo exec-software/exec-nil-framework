@@ -1,6 +1,7 @@
 # NIL-0093: executable context is artifact self-description
 
 - **Status:** Implemented within the documented inspection profile
+- **Amended:** 2026-11-02 — inspection profile extended to Windows PE/COFF
 - **Scope:** Shared NIL artifacts produced by Ny and Matrix
 - **Recorded:** 2026-10-16
 
@@ -15,10 +16,16 @@ The current `ny.context.v2` manifest includes annotated functions and annotated
 struct, class, and enum declarations. Type identity is the emitted kind and
 name together. Textual and binary NIL preserve the same annotations. Native
 embedding is an explicit option, with inspection supported for the bounded
-Linux x86_64 ELF64 little-endian profile.
+x86_64 little-endian profile. That profile was Linux ELF64 when this was
+recorded; it now also covers Windows PE/COFF, as an object or a linked image.
+Extending the container set does not change what is disclosed or the rule that
+inspection never executes the artifact.
 
-The existing `ny.context.v2` schema, `.ny.context` native section, and binary
-format markers retain their compatibility spellings. Renaming this decision
+The existing `ny.context.v2` schema and binary format markers retain their
+compatibility spellings, as does the `.ny.context` section name in ELF. PE/COFF
+uses `.nyctx`: a PE image keeps only the eight bytes of a section name that fit
+in the section header, so the longer spelling would not survive linking and
+could not be found again. Renaming this decision
 does not change an artifact format or its reader contract.
 
 ## Boundaries

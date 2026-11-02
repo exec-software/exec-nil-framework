@@ -5,8 +5,13 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 import subprocess
 import tempfile
+
+# The toolchain appends .exe to extensionless executables on Windows.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from native_output_staging import linked_executable_path
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -184,15 +189,15 @@ def main() -> int:
                 # the erased raw VM value cannot distinguish true from one.
                 if name == "direct-boolean-size":
                     continue
-                source.write_text(module(body), encoding="utf-8")
+                source.write_text(module(body), encoding="utf-8", newline='\n')
                 result = run([interpreter, str(source)])
                 if result.returncode <= 0 or result.stdout or diagnostic not in result.stderr:
                     raise AssertionError(f"{name}: interpreter accepted invalid array ABI: {result}")
-            source.write_text(direct_control, encoding="utf-8")
+            source.write_text(direct_control, encoding="utf-8", newline='\n')
             result = run([interpreter, str(source)])
             if result.returncode or result.stdout != direct_expected or result.stderr:
                 raise AssertionError(f"direct interpreter control failed: {result}")
-        source.write_text(module(""), encoding="utf-8")
+        source.write_text(module(""), encoding="utf-8", newline='\n')
         result = run([assembler, "-o", str(output), str(source)])
         if result.returncode and "llvm" in result.stderr.lower() and any(
                 marker in result.stderr.lower()
@@ -202,7 +207,7 @@ def main() -> int:
         if result.returncode:
             raise AssertionError(f"valid NIL rejected: {result.stderr}")
         for name, (body, diagnostic) in invalid.items():
-            source.write_text(module(body), encoding="utf-8")
+            source.write_text(module(body), encoding="utf-8", newline='\n')
             sentinel = b"preserve existing object\n"
             output.write_bytes(sentinel)
             result = run([assembler, "-o", str(output), str(source)])
@@ -210,11 +215,11 @@ def main() -> int:
                 raise AssertionError(f"{name}: missing rejection: {result}")
             if output.read_bytes() != sentinel:
                 raise AssertionError(f"{name}: damaged existing object")
-        source.write_text(control, encoding="utf-8")
+        source.write_text(control, encoding="utf-8", newline='\n')
         result = run([assembler, "-o", str(output), str(source)])
         if result.returncode:
             raise AssertionError(f"intrinsic control assembly failed: {result.stderr}")
-        executable = directory / "control"
+        executable = linked_executable_path(directory / "control")
         result = run([linker, "--runtime", runtime, "-o", str(executable), str(output)])
         if result.returncode:
             raise AssertionError(f"intrinsic control link failed: {result.stderr}")
@@ -223,7 +228,7 @@ def main() -> int:
         if result.returncode or result.stdout != expected or result.stderr:
             raise AssertionError(f"intrinsic control result mismatch: {result}")
         for name, (body, diagnostic) in runtime_errors.items():
-            source.write_text(module(body), encoding="utf-8")
+            source.write_text(module(body), encoding="utf-8", newline='\n')
             result = run([assembler, "-o", str(output), str(source)])
             if result.returncode:
                 raise AssertionError(f"{name}: assembly failed: {result.stderr}")
@@ -233,7 +238,7 @@ def main() -> int:
             result = run([str(executable)])
             if result.returncode <= 0 or result.stdout or diagnostic not in result.stderr:
                 raise AssertionError(f"{name}: native runtime guard failed: {result}")
-        source.write_text(direct_control, encoding="utf-8")
+        source.write_text(direct_control, encoding="utf-8", newline='\n')
         result = run([assembler, "-o", str(output), str(source)])
         if result.returncode:
             raise AssertionError(f"direct control assembly failed: {result.stderr}")

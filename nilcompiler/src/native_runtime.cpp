@@ -1,4 +1,5 @@
 #include "native_runtime.hpp"
+#include "../../common/standard_streams.hpp"
 #include "dynamic_type.hpp"
 #include "database_runtime.hpp"
 #include "ui_runtime.hpp"
@@ -818,6 +819,9 @@ void *nyrt_parallel_map_v1(const void *inputs, std::uint32_t input_kind,
 }
 
 void nyrt_context_begin(int argc, const char *const *argv) noexcept {
+  // A native program's entry point is generated, so this is the first place
+  // the runtime controls on every host.
+  ny::use_untranslated_standard_streams();
   nyrt_context_end();
   if (!context.profile.begin("native"))
     nyrt_fail("NIL native runtime error: could not start memory capture\n");

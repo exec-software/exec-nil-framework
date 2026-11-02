@@ -45,7 +45,7 @@ def main() -> None:
         def source(name, body, declarations=""):
             path = root / (name + ".ny")
             path.write_text(declarations + "\nfn main() -> i32\n" + body +
-                            "\nreturn 0\nend fn\n", encoding="utf-8")
+                            "\nreturn 0\nend fn\n", encoding="utf-8", newline='\n')
             return path
 
         native = args.llvm == "ON"
@@ -128,7 +128,7 @@ def main() -> None:
             "module cast_members\npub enum Maybe<T>\nSome(T)\nNone\nend enum\n"
             "pub struct Box<T>\npub value: T\nend struct\n"
             "impl<T> Box<T>\npub fn get(self) -> Maybe<T>\n"
-            "return Maybe.Some(self.value)\nend fn\nend impl\n", encoding="utf-8")
+            "return Maybe.Some(self.value)\nend fn\nend impl\n", encoding="utf-8", newline='\n')
         consumer = root / "generic_member_consumer.ny"
         consumer.write_text(
             "module cast_member_client\nimport cast_members.{Box, Maybe}\n"
@@ -141,14 +141,14 @@ def main() -> None:
             "fn main() -> i32\n"
             "println(byte_value(Box<u8> { value: 251 as u8 }))\n"
             'println(text_value(Box<text> { value: "concrete" }))\n'
-            "return 0\nend fn\n", encoding="utf-8")
+            "return 0\nend fn\n", encoding="utf-8", newline='\n')
         rejected_consumer = root / "generic_member_retype.ny"
         rejected_consumer.write_text(
             "module cast_member_retype\nimport cast_members.{Box, Maybe}\n"
             "fn retype(value: Box<array<u8>>) -> array<i32>\n"
             "match value.get()\nMaybe.Some(item) -> return item as array<i32>\n"
             "Maybe.None -> return []\nend match\nend fn\n"
-            "fn main() -> i32\nreturn 0\nend fn\n", encoding="utf-8")
+            "fn main() -> i32\nreturn 0\nend fn\n", encoding="utf-8", newline='\n')
         for binary in (False, True):
             flags = ["--emit-binary-nil"] if binary else []
             output = root / "generic_member.nil"
@@ -255,7 +255,7 @@ def main() -> None:
                 ("empty", 'CAST ""', "CAST: exactly one nonempty target type is required")):
             nil = root / ("raw_" + name + ".nil")
             nil.write_text("function main() -> i32:\nPUSH_CONST 1\n" + instruction +
-                           "\nRET\nend function\n", encoding="utf-8")
+                           "\nRET\nend function\n", encoding="utf-8", newline='\n')
             rejection(run([interpreter, "--no-ai", nil]), diagnostic)
 
         if native:

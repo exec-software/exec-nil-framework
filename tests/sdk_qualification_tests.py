@@ -7,6 +7,7 @@ import json
 import importlib.util
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -43,6 +44,19 @@ def fixture(revision="a" * 40):
             },
         },
     }
+
+
+def require_bash() -> str:
+    """The thing under test is a POSIX shell script, so it needs a shell.
+
+    Hosts without one cannot build the SDK at all, which is a property of the
+    builder rather than something these cases can assert; say so instead of
+    failing with a bare "file not found" from CreateProcess.
+    """
+    shell = shutil.which("bash")
+    if shell is None:
+        raise unittest.SkipTest("scripts/build-sdk.sh needs a POSIX shell; no bash on PATH")
+    return shell
 
 
 class QualificationTests(unittest.TestCase):
@@ -166,7 +180,7 @@ class QualificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="nil-sdk-evidence-test-") as temporary:
             report = Path(temporary) / "ctest.xml"
             report.write_text('<testsuite><testcase name="a"/><testcase name="b"><skipped/>'
-                              '</testcase></testsuite>', encoding="utf-8")
+                              '</testcase></testsuite>', encoding="utf-8", newline='\n')
             result = qualification.summarize_ctest(report, ["a", "b"], 0)
             self.assertEqual((result["tests"], result["passed"], result["skipped"]), (2, 1, 1))
             self.assertEqual(result["report_sha256"], qualification.digest(report))
@@ -174,7 +188,7 @@ class QualificationTests(unittest.TestCase):
                 qualification.summarize_ctest(report, ["a"], 0)
             with self.assertRaisesRegex(ValueError, "predates"):
                 qualification.summarize_ctest(report, ["a", "b"], report.stat().st_mtime_ns + 1)
-            report.write_text('<!DOCTYPE x [<!ENTITY a "a">]><testsuite/>', encoding="utf-8")
+            report.write_text('<!DOCTYPE x [<!ENTITY a "a">]><testsuite/>', encoding="utf-8", newline='\n')
             with self.assertRaisesRegex(ValueError, "entity"):
                 qualification.summarize_ctest(report, [], 0)
 
@@ -182,7 +196,7 @@ class QualificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="nil-sdk-report-duplicates-") as temporary:
             report = Path(temporary) / "ctest.xml"
             report.write_text('<testsuite><testcase name="a"/><testcase name="a"/></testsuite>',
-                              encoding="utf-8")
+                              encoding="utf-8", newline='\n')
             with self.assertRaisesRegex(ValueError, "registered tests"):
                 qualification.summarize_ctest(report, ["a", "a"], 0)
 
@@ -194,18 +208,18 @@ class QualificationTests(unittest.TestCase):
             llvm = root / "llvm"
             llvm.mkdir()
             (llvm / "LLVMConfig.cmake").write_text('set(LLVM_PACKAGE_VERSION "18.1.3")\n',
-                                                   encoding="utf-8")
+                                                   encoding="utf-8", newline='\n')
             (root / "build/CMakeCache.txt").write_text(
                 "CMAKE_HOME_DIRECTORY:INTERNAL={}\nCMAKE_BUILD_TYPE:STRING=Release\n"
                 "CMAKE_CACHE_MAJOR_VERSION:INTERNAL=3\nCMAKE_CACHE_MINOR_VERSION:INTERNAL=28\n"
                 "CMAKE_CACHE_PATCH_VERSION:INTERNAL=3\nNIL_ENABLE_LLVM:BOOL=ON\n"
-                "BUILD_TESTING:BOOL=ON\nLLVM_DIR:PATH={}\n".format(root, llvm), encoding="utf-8")
+                "BUILD_TESTING:BOOL=ON\nLLVM_DIR:PATH={}\n".format(root, llvm), encoding="utf-8", newline='\n')
             (configured / "CMakeCXXCompiler.cmake").write_text(
                 'set(CMAKE_CXX_COMPILER "/configured/c++")\nset(CMAKE_CXX_COMPILER_ID "GNU")\n'
-                'set(CMAKE_CXX_COMPILER_VERSION "13.3.0")\n', encoding="utf-8")
+                'set(CMAKE_CXX_COMPILER_VERSION "13.3.0")\n', encoding="utf-8", newline='\n')
             (configured / "CMakeSystem.cmake").write_text(
                 'set(CMAKE_SYSTEM_NAME "Linux")\nset(CMAKE_SYSTEM_PROCESSOR "x86_64")\n'
-                'set(CMAKE_CROSSCOMPILING "FALSE")\n', encoding="utf-8")
+                'set(CMAKE_CROSSCOMPILING "FALSE")\n', encoding="utf-8", newline='\n')
             configuration = qualification.build_configuration(root, root / "build")
             self.assertEqual(configuration["cmake_version"], "3.28.3")
             self.assertEqual(configuration["cxx_path"], "/configured/c++")
@@ -228,14 +242,14 @@ class QualificationTests(unittest.TestCase):
             stage = root / "stage"
             stage.mkdir()
             for name in qualification.TOOLS:
-                (stage / qualification.executable(name)).write_text(name, encoding="utf-8")
+                (stage / qualification.executable(name)).write_text(name, encoding="utf-8", newline='\n')
             runtime = root / "libnil.a"
             runtime.write_bytes(b"fixture archive")
             shared = root / "libnil.so"
             shared.write_bytes(b"fixture shared runtime")
             report = root / "ctest.xml"
             report.write_text('<testsuite><testcase name="a"/><testcase name="b"/></testsuite>',
-                              encoding="utf-8")
+                              encoding="utf-8", newline='\n')
             value = fixture()["qualification"]["evidence"]
             snapshot = {"schema": "nil.sdk.build-evidence.v1", "recorded_ns": 0,
                         "source": value["source"], "build": value["build"],
@@ -245,7 +259,7 @@ class QualificationTests(unittest.TestCase):
                         "runtime_sha256": qualification.digest(runtime),
                         "shared_runtime_sha256": qualification.digest(shared)}
             evidence = root / "evidence.json"
-            evidence.write_text(json.dumps(snapshot), encoding="utf-8")
+            evidence.write_text(json.dumps(snapshot), encoding="utf-8", newline='\n')
             with patch.object(qualification, "source_identity", return_value=value["source"]) as identity, \
                  patch.object(qualification, "command", return_value="nilcompiler 0.1.0"), \
                  patch.object(qualification, "native_backend_available", return_value=True):
@@ -303,7 +317,7 @@ class QualificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="nil-sdk-clean-source-") as temporary:
             root = Path(temporary)
             source = root / "source.ny"
-            source.write_text("fn main() -> i32\nreturn 0\nend fn\n", encoding="utf-8")
+            source.write_text("fn main() -> i32\nreturn 0\nend fn\n", encoding="utf-8", newline='\n')
             subprocess.run(["git", "init", "--quiet", str(root)], check=True,
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             subprocess.run(["git", "add", "source.ny"], cwd=root, check=True)
@@ -315,7 +329,7 @@ class QualificationTests(unittest.TestCase):
             value = fixture(identity["revision"])
             value["qualification"]["evidence"]["source"] = identity
             self.assertEqual(qualification.qualification_errors(value, True, identity["revision"]), [])
-            source.write_text("changed\n", encoding="utf-8")
+            source.write_text("changed\n", encoding="utf-8", newline='\n')
             changed = qualification.source_identity(root)
             self.assertTrue(changed["dirty"])
             self.assertNotEqual(changed["fingerprint"], identity["fingerprint"])
@@ -329,7 +343,7 @@ class QualificationTests(unittest.TestCase):
                                NIL_BUILD_TYPE="Release", NIL_BUILD_EXPERIMENTAL_TOOLS="ON",
                                NIL_BUILD_DIR=str(ROOT / "build"))
             environment.update(setting)
-            result = subprocess.run(["bash", str(ROOT / "scripts/build-sdk.sh")], env=environment,
+            result = subprocess.run([require_bash(), str(ROOT / "scripts/build-sdk.sh")], env=environment,
                                     capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 2, result.stderr)
             self.assertIn("RC SDK checks require", result.stderr)
@@ -337,13 +351,13 @@ class QualificationTests(unittest.TestCase):
     def test_builder_canonical_environment_wins_over_legacy_alias(self):
         environment = {key: value for key, value in os.environ.items() if not key.startswith(("NY_", "NIL_"))}
         environment.update(NIL_SDK_QUALIFICATION="invalid", NY_SDK_QUALIFICATION="development")
-        result = subprocess.run(["bash", str(ROOT / "scripts/build-sdk.sh")], env=environment,
+        result = subprocess.run([require_bash(), str(ROOT / "scripts/build-sdk.sh")], env=environment,
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 2)
         self.assertIn("NIL_SDK_QUALIFICATION must", result.stderr)
         environment.pop("NIL_SDK_QUALIFICATION")
         environment["NY_SDK_QUALIFICATION"] = "invalid"
-        result = subprocess.run(["bash", str(ROOT / "scripts/build-sdk.sh")], env=environment,
+        result = subprocess.run([require_bash(), str(ROOT / "scripts/build-sdk.sh")], env=environment,
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 2)
         self.assertIn("NIL_SDK_QUALIFICATION must", result.stderr)
@@ -377,7 +391,7 @@ class RuntimeLayoutTests(unittest.TestCase):
             (self.root / name).mkdir()
         for name in (*self.package.REQUIRED_TOOLS, "LICENSE"):
             path = self.root / (name if name == "LICENSE" else self.package.executable_name(name))
-            path.write_text("fixture")
+            path.write_text("fixture", newline='\n')
             path.chmod(0o755)
         from sdk_native_archive_validation import sysv_archive
         self.static = self.root / "libnil.a"
@@ -403,7 +417,7 @@ class RuntimeLayoutTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "missing files=.*aperture"):
             self.package.validate_stage_input(self.root)
         if os.name != "nt":
-            aperture.write_text("fixture")
+            aperture.write_text("fixture", newline='\n')
             aperture.chmod(0o644)
             with self.assertRaisesRegex(SystemExit, "tool is not executable.*aperture"):
                 self.package.validate_stage_input(self.root)
@@ -414,7 +428,7 @@ class RuntimeLayoutTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "missing files=.*niltest"):
             self.package.validate_stage_input(self.root)
         if os.name != "nt":
-            tester.write_text("fixture")
+            tester.write_text("fixture", newline='\n')
             tester.chmod(0o644)
             with self.assertRaisesRegex(SystemExit, "tool is not executable.*niltest"):
                 self.package.validate_stage_input(self.root)
@@ -427,7 +441,7 @@ class RuntimeLayoutTests(unittest.TestCase):
         native.mkdir(parents=True)
         self.static.rename(native / self.static.name)
         self.shared.rename(native / self.shared.name)
-        (self.root / "manifest.json").write_text("{}")
+        (self.root / "manifest.json").write_text("{}", newline='\n')
 
         def records(names):
             return [{"name": name, "path": validator.executable_name(name),
@@ -455,10 +469,11 @@ class RuntimeLayoutTests(unittest.TestCase):
         validator.validate_tools(full_records, files, errors)
         self.assertTrue(any("missing file: niltest" in error for error in errors), errors)
         aperture = self.root / validator.executable_name("aperture")
-        aperture.write_text("changed payload")
+        aperture.write_text("changed payload", newline='\n')
         errors = []
         validator.validate_tools(full_records, files, errors)
-        self.assertTrue(any("aperture hash mismatch" in error for error in errors), errors)
+        expected = validator.executable_name("aperture") + " hash mismatch"
+        self.assertTrue(any(expected in error for error in errors), errors)
         aperture.unlink()
         errors = validator.root_layout_errors(self.root)
         files, directories = validator.inventory_tree(self.root, errors)
@@ -467,7 +482,7 @@ class RuntimeLayoutTests(unittest.TestCase):
         self.assertEqual(errors, [])
         validator.validate_tools(aperture_records, files, errors)
         self.assertTrue(any("missing file: aperture" in error for error in errors), errors)
-        (self.root / "unexpected-tool").write_text("fixture")
+        (self.root / "unexpected-tool").write_text("fixture", newline='\n')
         self.assertTrue(validator.root_layout_errors(self.root))
         self.assertIn("9 tools", validator.validation_success_message(False, 1, 1, 9))
 

@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "../../common/standard_streams.hpp"
 #include "memory/memory_engine.hpp"
 
 #ifndef _WIN32
@@ -55,6 +56,7 @@ static std::string tool_directory(const char* executable) {
 }
 
 int main(int argc, char* argv[]) {
+  ny::use_untranslated_standard_streams();
     try {
         if (argc == 2 && std::string(argv[1]) == "--version") {
             std::cout << "aperture 0.1.0-dev (NIL Framework)\n";

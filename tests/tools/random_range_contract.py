@@ -103,7 +103,7 @@ def main() -> int:
             for instance in (False, True):
                 for case in CASES:
                     source = root / f"{case.name}-{instance}.{language}"
-                    source.write_text(source_for(language, instance, case), encoding="utf-8")
+                    source.write_text(source_for(language, instance, case), encoding="utf-8", newline='\n')
                     for route, flags in routes:
                         output = root / f"{case.name}-{instance}-{language}-{route}"
                         command = [compiler, "--quiet", "--sdk-path", stdlib,

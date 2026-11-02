@@ -144,13 +144,15 @@ preservation, replacement, and invalid-path rejection. This is not a native
 claim for stream handles, the compatibility whole-file APIs, or the remaining
 path helpers.
 
-The supported native platform boundary is currently Linux. Windows runtime and
-linker branches exist but remain experimental; macOS has not received
-equivalent route verification. In particular, Windows uses narrow host file
-APIs with weaker namespace guarantees, and Windows AOT linking builds a command
-string for `std::system`. Treat untrusted paths and link-library arguments as
-unsafe on that compilation route until it uses an argv-based process launch and
-has equivalent hostile-path tests.
+The supported native release boundary is currently Linux. Windows remains a
+development target; macOS has not received equivalent route verification.
+Windows compiler AOT and standalone linking now launch argument vectors through
+`CreateProcessW` and embed UTF-8 process manifests in generated executables.
+Native Windows tests cover Unicode arguments and paths, shell metacharacters in
+output paths, and exact output bytes. This does not promote every file API's
+namespace or security behavior to parity: the API-specific file limitations
+above still apply. See the [Windows development workflow](../getting-started/index.md#windows-development-sdk)
+and [platform behavior](../platform-behavior.md).
 
 Ny's byte boundary is intentionally wrapping rather than range-asserting.
 Explicit `as u8` conversion and writes to `array<u8>` or `ptr<u8>` retain the

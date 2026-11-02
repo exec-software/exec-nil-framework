@@ -3,6 +3,12 @@
  * SPDX-License-Identifier: MIT
  * See the LICENSE file in the project root for license terms.
  */
+#include "../../common/standard_streams.hpp"
+#include "../../common/native_executable_path.hpp"
+#include "../../common/windows_utf8_manifest.hpp"
+#ifdef _WIN32
+#include "../../nillinker/process_runner.hpp"
+#endif
 #include "codegen.hpp"
 #include "analysis.hpp"
 #include "default_analyzer.hpp"
@@ -27,6 +33,7 @@
 #endif
 #include <algorithm>
 #include <cerrno>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib> // for std::system
 #include <filesystem>
@@ -54,6 +61,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <tlhelp32.h>
 #else
 #include <sys/stat.h>
 #endif
@@ -311,12 +319,27 @@ static bool replace_output_file(const std::filesystem::path &staging,
                                 const std::filesystem::path &output,
                                 std::error_code &error) {
 #ifdef _WIN32
-  if (MoveFileExW(staging.c_str(), output.c_str(),
-                  MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-    return true;
-  error =
-      std::error_code(static_cast<int>(GetLastError()), std::system_category());
-  return false;
+  // Windows can refuse to replace an executable that ran moments ago: the
+  // image section outlives the process for a short while, and a scanner may
+  // hold a freshly written file open while it inspects it. Both clear on their
+  // own within milliseconds, and neither means the compiler did anything
+  // wrong, so retry briefly rather than fail the build. Observed as
+  // "Failed to install linked executable: Access is denied." on a test that
+  // compiles to the same output path twice and runs it in between.
+  for (int attempt = 0;; ++attempt) {
+    if (MoveFileExW(staging.c_str(), output.c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+      return true;
+    const DWORD code = GetLastError();
+    const bool transient = code == ERROR_ACCESS_DENIED ||
+                           code == ERROR_SHARING_VIOLATION ||
+                           code == ERROR_LOCK_VIOLATION;
+    if (!transient || attempt >= 50) {
+      error = std::error_code(static_cast<int>(code), std::system_category());
+      return false;
+    }
+    Sleep(20);
+  }
 #else
   std::filesystem::rename(staging, output, error);
   return !error;
@@ -439,9 +462,34 @@ static void print_usage(std::ostream &out = std::cerr) {
 
 // Find Visual Studio link.exe and library paths
 static std::pair<std::string, std::string> find_vs_linker() {
+#ifdef _WIN32
+  // Prefer the toolchain used to build this compiler, including BuildTools
+  // and custom installation roots. cl.exe and link.exe share bin/Host*/x64;
+  // derive lib/x64 from that same MSVC version rather than mixing installs.
+  const auto configured = std::filesystem::u8path(NIL_NATIVE_LINKER_DRIVER);
+  const auto compiler = configured.has_parent_path()
+                            ? existing_executable_path(configured)
+                            : find_executable_on_path(configured);
+  if (compiler) {
+    auto filename = compiler->filename().u8string();
+    std::transform(filename.begin(), filename.end(), filename.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (filename == "cl.exe") {
+      const auto bin = compiler->parent_path();
+      const auto linker = existing_executable_path(bin / "link.exe");
+      const auto libraries = bin.parent_path().parent_path().parent_path() / "lib/x64";
+      std::error_code error;
+      if (linker && std::filesystem::is_directory(libraries, error) && !error)
+        return {linker->u8string(), libraries.u8string()};
+    }
+  }
+#endif
   // Common Visual Studio installation paths
   std::vector<std::string> search_paths = {
+      "C:/Program Files/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC",
       "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC",
+      "C:/Program Files/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC",
+      "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC",
       "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC",
       "C:/Program Files/Microsoft Visual "
       "Studio/2022/Professional/VC/Tools/MSVC",
@@ -452,6 +500,7 @@ static std::pair<std::string, std::string> find_vs_linker() {
       "Studio/2019/Professional/VC/Tools/MSVC",
       "C:/Program Files (x86)/Microsoft Visual "
       "Studio/2019/Enterprise/VC/Tools/MSVC",
+      "C:/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools/VC/Tools/MSVC",
   };
 
   for (const auto &base_path : search_paths) {
@@ -528,6 +577,58 @@ static std::pair<std::string, std::string> find_windows_sdk_lib() {
   }
   return {"", ""};
 }
+
+#ifdef _WIN32
+struct windows_native_toolchain {
+  std::string linker;
+  std::vector<std::string> library_paths;
+};
+
+static std::optional<windows_native_toolchain> select_windows_native_toolchain() {
+  auto [linker, msvc_libraries] = find_vs_linker();
+  auto [sdk_libraries, ucrt_libraries] = find_windows_sdk_lib();
+  if (linker.empty() || msvc_libraries.empty() || sdk_libraries.empty() ||
+      ucrt_libraries.empty())
+    return std::nullopt;
+  return windows_native_toolchain{
+      std::move(linker), {std::move(msvc_libraries), std::move(sdk_libraries),
+                          std::move(ucrt_libraries)}};
+}
+
+static bool collect_windows_compiler_modules(std::set<std::string> &files) {
+  HANDLE snapshot = INVALID_HANDLE_VALUE;
+  // The loader can change its module list while a snapshot is being made.
+  // Retry that documented transient condition, but keep analysis bounded.
+  for (int attempt = 0; attempt < 8; ++attempt) {
+    snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32,
+                                       GetCurrentProcessId());
+    if (snapshot != INVALID_HANDLE_VALUE || GetLastError() != ERROR_BAD_LENGTH)
+      break;
+  }
+  if (snapshot == INVALID_HANDLE_VALUE)
+    return false;
+  struct snapshot_cleanup {
+    HANDLE handle;
+    ~snapshot_cleanup() { CloseHandle(handle); }
+  } cleanup{snapshot};
+  MODULEENTRY32W module{};
+  module.dwSize = sizeof(module);
+  if (!Module32FirstW(snapshot, &module))
+    return false;
+  try {
+    do {
+      const std::filesystem::path path(module.szExePath);
+      std::error_code error;
+      if (!path.is_absolute() || !std::filesystem::is_regular_file(path, error) || error)
+        return false;
+      files.insert(path.u8string());
+    } while (Module32NextW(snapshot, &module));
+    return GetLastError() == ERROR_NO_MORE_FILES;
+  } catch (...) {
+    return false;
+  }
+}
+#endif
 
 static std::string find_module_name(const std::shared_ptr<ny::ast_program> &p,
                                     const std::string &fallback_path) {
@@ -1578,11 +1679,24 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
         if (std::filesystem::is_regular_file(path, error)) analysis->compiler_files.insert(path);
       }
     }
+#elif defined(_WIN32)
+    // Compiler DLLs (including LLVM and the CRT) are executable inputs just
+    // as loaded .so files are on Linux. Incomplete discovery must disable
+    // incremental reuse rather than silently fingerprint only nilcompiler.
+    if (!collect_windows_compiler_modules(analysis->compiler_files))
+      analysis->dependencies_consistent = false;
 #endif
 #if defined(NY_HAS_LLVM)
     if (const auto runtime = find_native_runtime_archive(argv[0]))
       analysis->native_runtime = runtime->string();
-#if !defined(_WIN32)
+#if defined(_WIN32)
+    // Only report the deterministic, complete primary toolchain. An
+    // undiscoverable or fallback driver is intentionally not cacheable.
+    if (const auto toolchain = select_windows_native_toolchain()) {
+      analysis->native_linker = toolchain->linker;
+      analysis->native_library_paths = toolchain->library_paths;
+    }
+#else
     const std::filesystem::path driver = NIL_NATIVE_LINKER_DRIVER;
     const auto linker = driver.has_parent_path() ? existing_executable_path(driver)
                                                  : find_executable_on_path(driver);
@@ -2081,12 +2195,9 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
       return ret;
     } else {
       // Emit object file and link
-      std::filesystem::path exe_path = output_path;
+      const std::filesystem::path exe_path =
+          nil::detail::native_executable_path(output_path);
 #ifdef _WIN32
-      // Native Windows applications conventionally use the .exe suffix.
-      if (exe_path.extension() != ".exe") {
-        exe_path += ".exe";
-      }
       constexpr const char *object_filename = "module.obj";
       constexpr const char *linked_filename = "program.exe";
 #else
@@ -2132,88 +2243,112 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
         std::string cmd;
 
 #ifdef _WIN32
+        // Objects produced by the LLVM backend carry none of the
+        // /DEFAULTLIB directives that cl.exe embeds, so an MSVC link line must
+        // name the C runtime itself or nothing pulls the UCRT in at all.
+        // msvcrt/ucrt/vcruntime match the dynamic CRT (/MD) that the NIL
+        // runtime archive is built with, and legacy_stdio_definitions.lib
+        // supplies the out-of-line printf family that the UCRT headers
+        // otherwise only ever inline - without it a generated call to printf
+        // is an unresolved external.
+        const std::vector<std::string> windows_crt_libraries = {
+            "kernel32.lib", "msvcrt.lib", "ucrt.lib", "vcruntime.lib",
+            "legacy_stdio_definitions.lib"};
+        const auto manifest_path = *private_output_workspace / "utf8.manifest";
+        const auto manifest_publish = ny::detail::write_file_atomic(
+            manifest_path,
+            std::vector<char>(nil::detail::windows_utf8_manifest.begin(),
+                              nil::detail::windows_utf8_manifest.end()),
+            false);
+        if (!manifest_publish.ok) {
+          std::cerr << "[Native] Failed to stage UTF-8 manifest: "
+                    << manifest_publish.error << "\n";
+          return 1;
+        }
+        const std::string manifest_argument =
+            "/MANIFESTINPUT:" + manifest_path.u8string();
+        auto run_windows_linker = [&](const std::vector<std::string> &arguments) {
+          // Reuse nillinker's bounded CreateProcessW runner. Do not send
+          // user-controlled output/library paths through cmd.exe: quoting a
+          // shell token does not prevent percent-variable expansion there.
+          cmd = arguments.front(); // diagnostic only, never shell input
+          const auto process = ny::linker_detail::run_process(
+              arguments, std::chrono::minutes(5));
+          link_ret = process.exit_code;
+          if (!process.launched || process.timed_out || !process.error.empty()) {
+            std::cerr << "[Native] Linker process: " << process.error << "\n";
+          }
+          return process.launched && !process.timed_out && link_ret == 0;
+        };
+        auto msvc_arguments = [&](const std::string &driver) {
+          std::vector<std::string> arguments = {
+              driver, "/nologo", "/out:" + link_output_path.u8string(),
+              obj_path.u8string(), native_runtime->u8string(),
+              "/MANIFEST:EMBED", manifest_argument};
+          arguments.insert(arguments.end(), windows_crt_libraries.begin(),
+                           windows_crt_libraries.end());
+          arguments.insert(arguments.end(), link_libraries.begin(),
+                           link_libraries.end());
+          return arguments;
+        };
+
         // Prefer an explicitly discovered MSVC toolchain on Windows.
         // Strategy 1: Try to find Visual Studio link.exe
-        auto [vs_linker, vs_lib_path] = find_vs_linker();
-        if (!vs_linker.empty()) {
-          auto [sdk_um_path, sdk_ucrt_path] = find_windows_sdk_lib();
-
-          // Use cmd.exe /c to properly handle paths with spaces
-          cmd = "cmd.exe /c \"\"" + vs_linker + "\" /nologo";
-
-          // Add library paths
-          if (!vs_lib_path.empty()) {
-            cmd += " /LIBPATH:\"" + vs_lib_path + "\"";
-          }
-          if (!sdk_um_path.empty()) {
-            cmd += " /LIBPATH:\"" + sdk_um_path + "\"";
-          }
-          if (!sdk_ucrt_path.empty()) {
-            cmd += " /LIBPATH:\"" + sdk_ucrt_path + "\"";
-          }
-
-          cmd += " /out:\"" + link_output_path_text + "\" \"" + obj_path_text +
-                 "\" \"" + native_runtime->string() + "\" kernel32.lib";
-          for (const auto &lib : link_libraries) {
-            cmd += " \"" + lib + "\"";
-          }
-          cmd += "\"";
+        if (const auto toolchain = select_windows_native_toolchain()) {
+          auto arguments = msvc_arguments(toolchain->linker);
+          for (const auto &path : toolchain->library_paths)
+            arguments.push_back("/LIBPATH:" + path);
 
           ny::diag_success("[LLVM] Using Visual Studio linker...");
-          link_ret = std::system(cmd.c_str());
-          if (link_ret == 0) {
+          if (run_windows_linker(arguments)) {
             linked = true;
             ny::diag_success("[LLVM] Visual Studio linker completed.");
+          } else {
+            // --analyze reports this exact toolchain for the incremental
+            // build key. Falling back after it fails would build with inputs
+            // different from the ones the caller fingerprinted.
+            std::cerr << "[Native] Selected Visual Studio linker failed.\n";
+            return 1;
           }
         }
 
-        // Strategy 2: Try clang with LLVM.
+        // Strategy 2: Try clang with LLVM. Probe before invoking so an
+        // absent optional driver does not produce a spurious diagnostic.
         if (!linked) {
-          cmd = "clang++ -o \"" + link_output_path_text + "\" \"" +
-                obj_path_text + "\" \"" + native_runtime->string() + "\"";
-          for (const auto &lib : link_libraries) {
-            cmd += " \"" + lib + "\"";
-          }
-
-          ny::diag_success("[LLVM] Trying clang linker...");
-          link_ret = std::system(cmd.c_str());
-          if (link_ret == 0) {
-            linked = true;
-            ny::diag_success("[LLVM] Clang linker completed.");
+          if (const auto driver = find_executable_on_path("clang++")) {
+            std::vector<std::string> arguments = {
+                driver->u8string(), "-o", link_output_path.u8string(),
+                obj_path.u8string(), native_runtime->u8string(),
+                "-Xlinker", "/MANIFEST:EMBED", "-Xlinker", manifest_argument};
+            arguments.insert(arguments.end(), link_libraries.begin(),
+                             link_libraries.end());
+            ny::diag_success("[LLVM] Trying clang linker...");
+            if (run_windows_linker(arguments)) {
+              linked = true;
+              ny::diag_success("[LLVM] Clang linker completed.");
+            }
           }
         }
 
         // Strategy 3: Try link.exe in PATH
         if (!linked) {
-          cmd = "link.exe /nologo /out:\"" + link_output_path_text + "\" \"" +
-                obj_path_text + "\" \"" + native_runtime->string() +
-                "\" kernel32.lib";
-          for (const auto &lib : link_libraries) {
-            cmd += " \"" + lib + "\"";
-          }
-
-          ny::diag_success("[LLVM] Trying MSVC linker in PATH...");
-          link_ret = std::system(cmd.c_str());
-          if (link_ret == 0) {
-            linked = true;
-            ny::diag_success("[LLVM] MSVC linker completed.");
+          if (const auto driver = find_executable_on_path("link.exe")) {
+            ny::diag_success("[LLVM] Trying MSVC linker in PATH...");
+            if (run_windows_linker(msvc_arguments(driver->u8string()))) {
+              linked = true;
+              ny::diag_success("[LLVM] MSVC linker completed.");
+            }
           }
         }
 
         // Strategy 4: Try LLVM's lld-link
         if (!linked) {
-          cmd = "lld-link /out:\"" + link_output_path_text + "\" \"" +
-                obj_path_text + "\" \"" + native_runtime->string() +
-                "\" kernel32.lib";
-          for (const auto &lib : link_libraries) {
-            cmd += " \"" + lib + "\"";
-          }
-
-          ny::diag_success("[LLVM] Trying lld-link...");
-          link_ret = std::system(cmd.c_str());
-          if (link_ret == 0) {
-            linked = true;
-            ny::diag_success("[LLVM] lld-link completed.");
+          if (const auto driver = find_executable_on_path("lld-link")) {
+            ny::diag_success("[LLVM] Trying lld-link...");
+            if (run_windows_linker(msvc_arguments(driver->u8string()))) {
+              linked = true;
+              ny::diag_success("[LLVM] lld-link completed.");
+            }
           }
         }
 #else
@@ -2292,6 +2427,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
 }
 
 int main(int argc, char **argv) {
+  ny::use_untranslated_standard_streams();
   for (int i = 1; i < argc; ++i) {
     if (std::string(argv[i]) == "--") break;
     if (std::string(argv[i]) == "--list-analysis-rules") {

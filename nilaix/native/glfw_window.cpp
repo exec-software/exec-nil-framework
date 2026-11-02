@@ -2,6 +2,11 @@
 #include <GLFW/glfw3.h>
 #include <iostream>
 #ifdef _WIN32
+// <windows.h> defines min/max as macros, which breaks
+// std::numeric_limits<...>::max() and std::min/std::max.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <unistd.h>

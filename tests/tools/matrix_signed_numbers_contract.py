@@ -57,7 +57,7 @@ def main():
                           'main returns override integer begin paragraph\n' +
                           body + '\ngive 0\nend paragraph\n')
                 path = root / f'invalid-{index}-{context}.matrix'
-                path.write_text(source)
+                path.write_text(source, newline='\n')
                 for route_flags in flags:
                     output = root / 'protected-output'
                     output.write_bytes(b'previous artifact')

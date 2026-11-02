@@ -24,6 +24,7 @@
 
 #include "ipc_hot_reload.hpp"
 #include "nil_version.hpp"
+#include "../common/standard_streams.hpp"
 
 // Base controller interface
 class Controller {
@@ -743,6 +744,7 @@ public:
 };
 
 int main(int argc, char* argv[]) {
+    ny::use_untranslated_standard_streams();
     if (argc == 2 && std::string(argv[1]) == "--version") {
         std::cout << "nilagent " << NIL_VERSION << '\n';
         return 0;

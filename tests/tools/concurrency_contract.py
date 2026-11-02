@@ -6,8 +6,13 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import sys
 import subprocess
 import tempfile
+
+# The toolchain appends .exe to extensionless executables on Windows.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from native_output_staging import linked_executable_path
 
 
 def main() -> int:
@@ -52,7 +57,7 @@ def main() -> int:
         }
         for name, contents in cases.items():
             source = root / f"{name}.ny"
-            source.write_text(contents, encoding="utf-8")
+            source.write_text(contents, encoding="utf-8", newline='\n')
             for mode, flags in (("text", []), ("binary", ["--emit-binary-nil"]),
                                 ("unchecked-text", ["--no-typecheck"]),
                                 ("unchecked-binary", ["--no-typecheck", "--emit-binary-nil"])):
@@ -68,8 +73,8 @@ def main() -> int:
         first = root / "parallel_first.ny"
         second = root / "parallel_second.ny"
         first.write_text("module parallel_first\npub fn worker(value:i64)->i64 { return value + 10 }\n"
-                         "fn private_worker(value:i64)->i64 { return value }\n", encoding="utf-8")
-        second.write_text("module parallel_second\npub fn worker(value:i64)->i64 { return value + 100 }\n", encoding="utf-8")
+                         "fn private_worker(value:i64)->i64 { return value }\n", encoding="utf-8", newline='\n')
+        second.write_text("module parallel_second\npub fn worker(value:i64)->i64 { return value + 100 }\n", encoding="utf-8", newline='\n')
         for name, imports, body, expected in (
             ("qualified", "", "let first=parallel_map(parallel_first::worker,inputs)\n"
              "let second=parallel_map(parallel_second::worker,inputs)\nprintln(first[0])\nprintln(second[0])", "11\n101\n"),
@@ -83,7 +88,7 @@ def main() -> int:
             source = root / f"module-{name}.ny"
             source.write_text("module parallel_client\n" + imports + "\nfn main()->i32\n"
                               "let inputs:array<i64> = [1 as i64, 2 as i64]\n" + body +
-                              "\nreturn 0\nend fn\n", encoding="utf-8")
+                              "\nreturn 0\nend fn\n", encoding="utf-8", newline='\n')
             for mode, flags in (("text", []), ("binary", ["--emit-binary-nil"]),
                                 ("unchecked-text", ["--no-typecheck"]),
                                 ("unchecked-binary", ["--no-typecheck", "--emit-binary-nil"])):
@@ -94,7 +99,7 @@ def main() -> int:
                     raise AssertionError(f"module worker resolved incorrectly: {name}/{mode}\n{result.stdout}\n{result.stderr}")
                 controls += 1
             if args.llvm == "ON":
-                executable = root / f"module-{name}-native"
+                executable = linked_executable_path(root / f"module-{name}-native")
                 good([*base, "--native", "-o", executable, first, second, source])
                 result = good([executable])
                 if result.stdout != expected or result.stderr:
@@ -109,7 +114,7 @@ def main() -> int:
             body = "let local=parallel_first::worker\n" if name == "qualified_local_value" else ""
             source.write_text("module parallel_client\n" + imports + "\nfn main()->i32\n"
                               "let inputs:array<i64> = [1 as i64]\n" + body +
-                              f"let result=parallel_map({worker},inputs)\nreturn 0\nend fn\n", encoding="utf-8")
+                              f"let result=parallel_map({worker},inputs)\nreturn 0\nend fn\n", encoding="utf-8", newline='\n')
             for mode, flags in (("text", []), ("binary", ["--emit-binary-nil"]),
                                 ("unchecked-text", ["--no-typecheck"]),
                                 ("unchecked-binary", ["--no-typecheck", "--emit-binary-nil"])):
@@ -133,7 +138,7 @@ let output=parallel_map(worker,inputs)
 println(output[1])
 return 0
 end fn
-""", encoding="utf-8")
+""", encoding="utf-8", newline='\n')
 
         def joined_failure(command: list[object]) -> None:
             nonlocal executed
@@ -153,7 +158,7 @@ end fn
                 joined_failure([executable])
         if args.llvm == "ON":
             joined_failure([*base, "--native", "--jit", "-o", root / "jit-output", failure_source])
-            executable = root / "failure-native"
+            executable = linked_executable_path(root / "failure-native")
             good([*base, "--native", "-o", executable, failure_source])
             joined_failure([executable])
         # A recursive clone must propagate failure before its caller resumes.
@@ -176,7 +181,7 @@ let output=parallel_map(worker,inputs)
 println(output[0])
 return 0
 end fn
-""", encoding="utf-8")
+""", encoding="utf-8", newline='\n')
         for mode, flags in (("text", []), ("binary", ["--emit-binary-nil"])):
             nil = root / f"recursive-{mode}.nil"
             good([*base, *flags, "-o", nil, recursive])
@@ -188,7 +193,7 @@ end fn
                 joined_failure([executable])
         if args.llvm == "ON":
             joined_failure([*base, "--native", "--jit", "-o", root / "recursive-jit", recursive])
-            executable = root / "recursive-native"
+            executable = linked_executable_path(root / "recursive-native")
             good([*base, "--native", "-o", executable, recursive])
             joined_failure([executable])
     print(f"concurrency contract: {rejected} rejected compilations; {controls} qualified/imported execution controls; {executed} joined-failure execution routes")

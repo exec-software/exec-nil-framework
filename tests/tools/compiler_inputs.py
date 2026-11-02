@@ -19,7 +19,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="ny-compiler-inputs-") as directory:
         root = Path(directory)
         source = root / "valid.ny"
-        source.write_text("fn main() -> i32\nreturn 0\nend fn\n", encoding="utf-8")
+        source.write_text("fn main() -> i32\nreturn 0\nend fn\n", encoding="utf-8", newline='\n')
         output = root / "previous.nil"
         sentinel = b"previous output must remain intact\n"
         cases = [

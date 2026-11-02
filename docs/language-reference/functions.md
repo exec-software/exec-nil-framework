@@ -247,7 +247,7 @@ annotations such as `@intrinsic`, `@interop`, `@inline`, and `@ai_context` have
 special handling. Current binary executable NIL v3 preserves function
 annotations, flags, and declaration lines alongside type schemas; legacy v1
 does not. Class-bearing artifacts use v4, and `--debug-info` uses v5 for source
-paths and lexical bindings. Native Linux x86_64 output can separately opt into
+paths and lexical bindings. Native x86_64 output can separately opt into
 [executable context](../advanced/executable-context.md) with `--embed-context`;
 `--inspect-context` reads retained metadata without executing the artifact.
 Foreign-interface declarations remain experimental and require a built,

@@ -8,6 +8,11 @@
 #include <thread>
 #include <unordered_map>
 #ifdef _WIN32
+// <windows.h> defines min/max as macros, which breaks
+// std::numeric_limits<...>::max() and std::min/std::max.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -98,7 +103,8 @@ struct SQLite {
  X(sqlite3_step) X(sqlite3_errstr) X(sqlite3_column_count) X(sqlite3_column_name) \
  X(sqlite3_column_type) X(sqlite3_column_text) X(sqlite3_column_bytes) \
  X(sqlite3_changes64) X(sqlite3_total_changes64) X(sqlite3_stmt_readonly) X(sqlite3_busy_timeout) \
- X(sqlite3_progress_handler) X(sqlite3_busy_handler) X(sqlite3_limit)
+ X(sqlite3_progress_handler) X(sqlite3_busy_handler) X(sqlite3_limit) \
+ X(sqlite3_initialize)
 #define FIELD(name) decltype(&::name) name = nullptr;
  DB_SQLITE_FUNCTIONS(FIELD)
 #undef FIELD
@@ -111,6 +117,16 @@ struct SQLite {
    DB_SQLITE_FUNCTIONS(LOAD)
 #undef LOAD
    symbol(h, error_offset, "sqlite3_error_offset");
+   // SQLite initializes itself from its own entry points only when it was
+   // built *without* SQLITE_OMIT_AUTOINIT, and whether it was is a property
+   // of whichever library is found at run time, not of this build. A library
+   // compiled with that option drops the implicit call, so sqlite3_open_v2
+   // reads uninitialized global state and the process dies -- which is
+   // exactly what the sqlite3.dll shipped with CPython does. Initializing
+   // explicitly is idempotent where autoinit exists and required where it is
+   // not, and SQLite documents it as the portable spelling. A library that
+   // will not initialize is reported unavailable rather than used.
+   if (sqlite3_initialize() != SQLITE_OK) return;
    loaded = true;
  }
 };

@@ -11,6 +11,9 @@ and explicit about evidence, uncertainty, and implementation status.
 
 ## Contents
 
+- [`2026-11-02-windows-port.md`](2026-11-02-windows-port.md) — recovery of the
+  native Windows port, cross-platform route evidence, and an isolated
+  development-SDK workflow without release promotion.
 - [`2026-09-09-recovery-baseline.md`](2026-09-09-recovery-baseline.md) — the
   first verified snapshot after the repository cleanup.
 - [`2026-09-13-toolchain-debugger-milestone.md`](2026-09-13-toolchain-debugger-milestone.md)

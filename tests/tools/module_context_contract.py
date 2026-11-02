@@ -28,7 +28,7 @@ def main():
 
         (root / 'helper.ny').write_text('module helper\npub let shared_value: i32 = 40\n'
             'fn hidden() -> i32\nreturn 2\nend fn\n'
-            'pub fn visible(input: i32) -> i32\nreturn shared_value + hidden() + input\nend fn\n')
+            'pub fn visible(input: i32) -> i32\nreturn shared_value + hidden() + input\nend fn\n', newline='\n')
         fixtures = {
             'root.ny': 'import helper.*\nlet shared_value: i32 = 100\nfn main() -> i32\n'
                        'println(visible(0))\nprintln(shared_value)\nreturn 0\nend fn\n',
@@ -38,7 +38,7 @@ def main():
         }
         for name, source in fixtures.items():
             path = root / name
-            path.write_text(source)
+            path.write_text(source, newline='\n')
             result = json.loads(run([*common, '--analyze', '--semantic-index', str(path)]).stdout)
             assert result['success'] and result['semantic'], result
             checks += 1
@@ -73,7 +73,7 @@ def main():
                 if language == 'matrix':
                     source = source.replace('(hidden with)', 'the paragraph hidden')
                 path = root / (f'private_{explicit}.' + language)
-                path.write_text(source)
+                path.write_text(source, newline='\n')
                 analysis = json.loads(run([*common, '--analyze', str(path)], 1).stdout)
                 assert not analysis['success'] and any('private to module' in d['message'] for d in analysis['diagnostics']), analysis
                 checks += 1

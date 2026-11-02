@@ -22,6 +22,8 @@ command-line help, and executable tests as bugs.
   VM/native builds, running and live editor analysis.
 - [Developer tooling](developer-tooling.md) — current editor support and the
   sequence toward shared workspace semantics.
+- [Platform behavior](platform-behavior.md) — line endings, path separators, and
+  the host differences the framework cannot reconcile.
 - [Standard-library status](standard-library/index.md) — layout, maturity, and
   what is deliberately outside the core library.
 - [NILData](standard-library/nildata.md) — structured data, JSON interchange and explicit NyData migration.

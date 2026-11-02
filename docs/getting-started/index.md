@@ -46,7 +46,7 @@ modules, `nilstd` with the matching Ny and Matrix sources, compiled HTML in `doc
 hash-bearing `manifest.json`.
 
 The complete command set is `nilcompiler`, `nilinterpreter`, `nilassembler`,
-`nillinker`, `nillsp`, `nildebugger`, `nilschema`, `nilagent`, `nilbuild`, and `aperture` (with the host
+`nillinker`, `nillsp`, `nildebugger`, `nilschema`, `nilagent`, `nilbuild`, `niltest`, and `aperture` (with the host
 platform's executable suffix where needed). The helper validates this layout
 and only replaces the active SDK after the entire standard library and smoke
 path pass.
@@ -103,11 +103,62 @@ LLVM is optional. If CMake cannot find it, configure with
 compiler, NIL interpreter, debugger, language server, assembler, and linker are
 always built. `NIL_BUILD_EXPERIMENTAL_TOOLS=OFF` omits only `nilschema` and
 `nilagent` in a direct developer build. The SDK helper keeps the option enabled
-because the complete SDK includes all ten commands. Aperture is a separately versioned preview.
+because the complete SDK includes all eleven commands. Aperture is a separately versioned preview.
 
 When tests are enabled, CMake requires Python rather than silently omitting the
 route matrix and application contracts. Set `NIL_RUN_TESTS=OFF` with the helper,
 or `-DBUILD_TESTING=OFF` with CMake, only for an intentional test-free build.
+
+## Windows development SDK
+
+Windows x64 has native VM development coverage, including interpreter, bundles,
+JIT, compiler AOT, and standalone assembler/linker execution. It is **not** a
+qualified Windows v1/RC release target. The reviewed release profile remains
+Linux-only, and host-specific CTest skips remain visible in development evidence.
+The installed consumer suite requires every selected execution to pass; a skip,
+expected failure, or unavailable native backend is not accepted as a pass.
+
+Use Windows 10 version 1903 or newer (the current validation VM runs Windows 11),
+an x64 Visual Studio developer PowerShell environment with MSVC and the Windows
+SDK, CMake, Ninja, Python, and Pandoc on `PATH`. Install LLVM development libraries
+built for the MSVC ABI, not just the compiler command-line tools. The current
+Windows development configuration uses MSVC 14.44 and LLVM 18.1.8. SQLite tests
+also require `sqlite3.h` at configure time and a compatible x64 `sqlite3.dll`
+available to the Windows loader; SQLite is not included in the SDK. The
+PostgreSQL provider remains POSIX-only.
+
+For example, adapting the dependency paths to your installation:
+
+```powershell
+cmake -S . -B build/windows -G Ninja `
+  -DCMAKE_BUILD_TYPE=Release -DNIL_ENABLE_LLVM=ON `
+  -DNIL_BUILD_EXPERIMENTAL_TOOLS=ON -DBUILD_TESTING=ON `
+  -DCMAKE_INSTALL_BINDIR=. `
+  -DLLVM_DIR=C:/llvm/clang+llvm-18.1.8-x86_64-pc-windows-msvc/lib/cmake/llvm `
+  -DNILCOMPILER_SQLITE_INCLUDE_DIR=C:/sqlite/include
+& ./scripts/build-sdk.ps1 -BuildDirectory ./build/windows -Parallel 4
+```
+
+The PowerShell helper consumes this existing single-configuration build and
+requires clean source by default. `-AllowDirtySource` is an explicit diagnostic
+development option, not a release override. Each run creates a new
+`build/windows-candidates/development-<unique-id>/sdk` (or a child of
+`-CandidateParent`). It rebuilds, records fresh source/tool identities, runs the
+complete CTest suite, installs tools and library sources, builds HTML docs,
+strictly compiles the standard library, seals a development manifest, validates
+the SDK, and runs installed source/binary-library consumers outside the checkout.
+Logs and evidence stay beside `sdk`, outside its sealed payload. A failed
+candidate is retained with `FAILED.txt`; it is not reported ready.
+
+There is no SDK activation, replacement, release publication, or Lich upload in
+this workflow. Successful candidates contain eleven `.exe` tools at their root,
+`nilstd` sources, `nillib` binaries with `native/nil.lib` and `native/nil.dll`, and
+compiled `docs`. Use the candidate explicitly through `PATH` or `ny.sdkPath`.
+The programs also need the matching x64
+[Microsoft Visual C++ runtime](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170)
+on the consumer host; the SDK does not redistribute it. Native compilation and
+linking still require MSVC/Windows SDK development tools. A successful run on a
+developer VM is not proof of installation on a bare Windows machine.
 
 ## Compile and run a program
 

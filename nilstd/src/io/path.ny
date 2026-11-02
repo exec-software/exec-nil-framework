@@ -5,6 +5,15 @@ module nil.std.io
 import nil.std.core
 import nil.std.collections
 
+# The separator every function in this module produces: always "/".
+#
+# Windows accepts "/" in every file API, so a path built here works there
+# unchanged, and identical Ny source produces identical output on every host.
+# These functions also accept "\\" on input, so a native Windows path handed
+# in comes back portable.
+#
+# This is not the host's own spelling. Use it to split or rebuild a path, not
+# to decide how one should look to a user or to cmd.exe.
 @intrinsic("path.separator")
 pub fn separator() -> text
 end fn

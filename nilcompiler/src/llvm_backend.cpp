@@ -15,6 +15,11 @@
 #include "scalar_text.hpp"
 #include "inline_asm.hpp"
 
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
 #ifdef NY_HAS_LLVM
 
 // LLVM Headers
@@ -1432,11 +1437,16 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
   if (impl_->embed_context) {
     const llvm::Triple target(impl_->module->getTargetTriple());
     const auto &layout = impl_->module->getDataLayout();
-    if (!target.isOSLinux() || !target.isOSBinFormatELF() ||
-        target.getArch() != llvm::Triple::x86_64 ||
+    // The manifest is read back by walking the artifact's own section table,
+    // so the container format has to be one inspect_context_artifact knows:
+    // ELF64 or PE/COFF, 64-bit little-endian x86_64 either way.
+    const bool supported_container =
+        (target.isOSLinux() && target.isOSBinFormatELF()) ||
+        (target.isOSWindows() && target.isOSBinFormatCOFF());
+    if (!supported_container || target.getArch() != llvm::Triple::x86_64 ||
         layout.getPointerSize() != 8 || !layout.isLittleEndian()) {
-      std::cerr << "[NativeCodegen] --embed-context requires a Linux ELF64 "
-                   "little-endian x86_64 target\n";
+      std::cerr << "[NativeCodegen] --embed-context requires a 64-bit "
+                   "little-endian x86_64 Linux ELF or Windows PE/COFF target\n";
       return false;
     }
     try {
@@ -2058,7 +2068,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         element ? native_array_kind_for_element(*element) : std::nullopt;
     if (!kind)
       return nullptr;
-    return llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false));
+    return llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false));
   };
 
   auto array_length_value = [&](llvm::Value *array_pointer) -> llvm::Value * {
@@ -3083,7 +3093,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
             runtime_type, runtime.getCallee(),
             {impl_->current_function->getArg(0),
              llvm::ConstantInt::get(
-                 ctx, llvm::APInt(32, console_writeln ? 1 : 0, false))});
+                 ctx, llvm::APInt(32, static_cast<std::uint64_t>(console_writeln ? 1 : 0), false))});
         impl_->builder->CreateRetVoid();
         annotation_handled = true;
       } else if (ann.find("@intrinsic(\"convert.i32_to_text\")") !=
@@ -3510,7 +3520,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
               "nyrt_array_new_with_value", runtime_type);
           auto *pointer = impl_->builder->CreateCall(
               runtime_type, runtime.getCallee(),
-              {llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false)),
+              {llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)),
                size_i64, value_i64});
           emit_allocation_null_check(pointer, "array.new_with_value");
           impl_->builder->CreateRet(pointer);
@@ -3548,7 +3558,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         auto *length = impl_->builder->CreateCall(
             runtime_type, runtime.getCallee(),
             {array,
-             llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false))});
+             llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false))});
         auto *valid = impl_->builder->CreateAnd(
             impl_->builder->CreateICmpSGE(
                 length, llvm::ConstantInt::get(ctx, llvm::APInt(64, 0))),
@@ -3617,7 +3627,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           llvm::Value *value = impl_->builder->CreateCall(
               runtime_type, runtime.getCallee(),
               {arr_arg,
-               llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false)),
+               llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)),
                impl_->coerceToI64(idx_arg)});
           if (*kind == NYRT_ARRAY_TEXT || *kind == NYRT_ARRAY_TUPLE || *kind == NYRT_ARRAY_ANYTHING)
             value = native_array_loaded_value(value, *element_type);
@@ -3683,7 +3693,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           impl_->builder->CreateCall(
               runtime_type, runtime.getCallee(),
               {arr_arg,
-               llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false)),
+               llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)),
                impl_->coerceToI64(idx_arg),
                stored_value});
           impl_->builder->CreateRetVoid();
@@ -4466,10 +4476,10 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
               runtime_type, runtime.getCallee(),
               {lhs,
                llvm::ConstantInt::get(ctx,
-                                      llvm::APInt(32, *pointer_kind, false)),
+                                      llvm::APInt(32, static_cast<std::uint64_t>(*pointer_kind), false)),
                offset,
                llvm::ConstantInt::get(
-                   ctx, llvm::APInt(32, subtract ? 1 : 0, false))},
+                   ctx, llvm::APInt(32, static_cast<std::uint64_t>(subtract ? 1 : 0), false))},
               subtract ? "ny.pointer.subtract" : "ny.pointer.add");
         } else {
           llvm::Value *element_offset = offset;
@@ -4851,7 +4861,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
             pointer = impl_->builder->CreateCall(
                 runtime_type, runtime.getCallee(),
                 {llvm::ConstantInt::get(
-                     ctx, llvm::APInt(32, NYRT_ARRAY_I32, false)),
+                     ctx, llvm::APInt(32, static_cast<std::uint64_t>(NYRT_ARRAY_I32), false)),
                  effective_cells});
           } else {
             auto *calloc_type = llvm::FunctionType::get(
@@ -4918,7 +4928,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                 runtime_type, runtime.getCallee(),
                 {ptr,
                  llvm::ConstantInt::get(
-                     ctx, llvm::APInt(32, NYRT_ARRAY_I32, false)),
+                     ctx, llvm::APInt(32, static_cast<std::uint64_t>(NYRT_ARRAY_I32), false)),
                  llvm::ConstantInt::get(ctx, llvm::APInt(64, 0, false)),
                  word});
           } else {
@@ -4944,7 +4954,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                 runtime_type, runtime.getCallee(),
                 {ptr,
                  llvm::ConstantInt::get(
-                     ctx, llvm::APInt(32, NYRT_ARRAY_I32, false)),
+                     ctx, llvm::APInt(32, static_cast<std::uint64_t>(NYRT_ARRAY_I32), false)),
                  llvm::ConstantInt::get(ctx, llvm::APInt(64, 0, false))});
             val = impl_->builder->CreateTrunc(
                 word, llvm::Type::getInt32Ty(ctx), "ny.read_i32.value");
@@ -4986,7 +4996,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           auto *status = impl_->builder->CreateCall(
               runtime_type, runtime.getCallee(),
               {array,
-               llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false)),
+               llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)),
                stored_value});
           auto *success = llvm::BasicBlock::Create(ctx, "array.push.success",
                                                    impl_->current_function);
@@ -5632,7 +5642,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           pointer = impl_->builder->CreateCall(
               runtime_type, runtime.getCallee(),
               {llvm::ConstantInt::get(ctx,
-                                      llvm::APInt(32, *buffer_kind, false)),
+                                      llvm::APInt(32, static_cast<std::uint64_t>(*buffer_kind), false)),
                positive_count});
         } else {
           auto *calloc_type = llvm::FunctionType::get(
@@ -5704,7 +5714,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           value = impl_->builder->CreateCall(
               runtime_type, runtime.getCallee(),
               {pointer,
-               llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false)),
+               llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)),
                llvm::ConstantInt::get(ctx, llvm::APInt(64, 0, false))});
         } else {
           auto *storage_type = native_pointer_storage_type(*element_type);
@@ -5759,7 +5769,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           impl_->builder->CreateCall(
               runtime_type, runtime.getCallee(),
               {pointer,
-               llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false)),
+               llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)),
                llvm::ConstantInt::get(ctx, llvm::APInt(64, 0, false)), word});
         } else {
           auto *storage_type = native_pointer_storage_type(*element_type);
@@ -7810,7 +7820,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         auto *raw_ptr = impl_->builder->CreateCall(
             runtime_type, runtime.getCallee(),
             {llvm::ConstantInt::get(ctx,
-                                    llvm::APInt(32, NYRT_ARRAY_I64, false)),
+                                    llvm::APInt(32, static_cast<std::uint64_t>(NYRT_ARRAY_I64), false)),
              size_val});
         emit_allocation_null_check(raw_ptr, "NEW_ARRAY");
         impl_->pushValue(raw_ptr, "array<i64>");
@@ -7884,11 +7894,11 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                   {llvm::Type::getInt32Ty(ctx), llvm::Type::getInt64Ty(ctx),
                    llvm::Type::getInt64Ty(ctx)}, false));
           raw_ptr = impl_->builder->CreateCall(constructor,
-              {llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false)), size_val, initial});
+              {llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)), size_val, initial});
         } else {
           raw_ptr = impl_->builder->CreateCall(
               runtime_new_type, runtime_new.getCallee(),
-              {llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false)), size_val});
+              {llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)), size_val});
         }
         emit_allocation_null_check(raw_ptr, "NEW_ARRAY_LITERAL");
 
@@ -7923,7 +7933,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           impl_->builder->CreateCall(
               runtime_set_type, runtime_set.getCallee(),
               {raw_ptr,
-               llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false)),
+               llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)),
                llvm::ConstantInt::get(
                    ctx, llvm::APInt(64, static_cast<std::uint64_t>(i), false)),
                val_to_store});
@@ -7980,7 +7990,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           val = impl_->builder->CreateCall(
               runtime_type, runtime.getCallee(),
               {arr_ptr,
-               llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false)),
+               llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)),
                index_val});
         } else if (impl_->memory_mode == MemoryMode::SAFE_GC) {
           auto *runtime_type = llvm::FunctionType::get(
@@ -7993,7 +8003,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           val = impl_->builder->CreateCall(
               runtime_type, runtime.getCallee(),
               {arr_ptr,
-               llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false)),
+               llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)),
                index_val});
         } else {
           auto *storage_type = native_pointer_storage_type(*element_type);
@@ -8081,7 +8091,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           impl_->builder->CreateCall(
               runtime_type, runtime.getCallee(),
               {arr_ptr,
-               llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false)),
+               llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)),
                index_val, val_to_store});
         } else if (impl_->memory_mode == MemoryMode::SAFE_GC) {
           auto *runtime_type = llvm::FunctionType::get(
@@ -8094,7 +8104,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           impl_->builder->CreateCall(
               runtime_type, runtime.getCallee(),
               {arr_ptr,
-               llvm::ConstantInt::get(ctx, llvm::APInt(32, *kind, false)),
+               llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)),
                index_val, val_to_store});
         } else {
           auto *storage_type = native_pointer_storage_type(*element_type);
@@ -8832,7 +8842,15 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
     auto *manifest = new llvm::GlobalVariable(
         *impl_->module, bytes->getType(), true,
         llvm::GlobalValue::PrivateLinkage, bytes, "__ny_context_v1");
-    manifest->setSection(".ny.context");
+    // A PE image truncates every section name to the eight bytes that fit in
+    // the section header -- the string-table indirection COFF objects use for
+    // longer names does not survive linking. ".ny.context" would arrive as
+    // ".ny.cont", so COFF gets a name that fits as written and means the same
+    // in the object and in the image.
+    manifest->setSection(
+        llvm::Triple(impl_->module->getTargetTriple()).isOSBinFormatCOFF()
+            ? ".nyctx"
+            : ".ny.context");
     manifest->setAlignment(llvm::Align(1));
     llvm::appendToUsed(*impl_->module, {manifest});
   }
@@ -8987,6 +9005,33 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_try_i64", &nyrt_try_i64);
   expose_runtime_symbol("nyrt_i32_to_text", &nyrt_i32_to_text);
   expose_runtime_symbol("nyrt_i64_to_text", &nyrt_i64_to_text);
+  // The same reasoning covers the libc entry points generated code calls
+  // directly -- the set reserved in reserved_native_symbols, plus the two
+  // functions LLVM may rewrite a printf into. Left to the process symbol
+  // generator, these resolve to whichever module happens to export the name,
+  // which need not be the copy the compiler itself uses. On Windows that is
+  // observable: the UCRT exports printf from ucrtbase while the compiler calls
+  // the copy inlined from <stdio.h>, so a program printing through both printf
+  // (say) and nyrt_write_stdout (an @intrinsic("console.writeln") provider)
+  // had its two streams buffered separately and emitted out of order under
+  // --jit while --native was correct. Binding them here restores the stated
+  // invariant: JIT and AOT resolve the same symbol to the same code.
+  expose_runtime_symbol("printf", &std::printf);
+  expose_runtime_symbol("puts", &std::puts);
+  expose_runtime_symbol("putchar", &std::putchar);
+  expose_runtime_symbol("strlen", &std::strlen);
+  expose_runtime_symbol("strcmp", &std::strcmp);
+  expose_runtime_symbol("memcpy", &std::memcpy);
+  expose_runtime_symbol("malloc", &std::malloc);
+  expose_runtime_symbol("calloc", &std::calloc);
+  expose_runtime_symbol("free", &std::free);
+  expose_runtime_symbol("tan", static_cast<double (*)(double)>(&std::tan));
+  expose_runtime_symbol("asin", static_cast<double (*)(double)>(&std::asin));
+  expose_runtime_symbol("acos", static_cast<double (*)(double)>(&std::acos));
+  expose_runtime_symbol("atan", static_cast<double (*)(double)>(&std::atan));
+  expose_runtime_symbol("atan2",
+                        static_cast<double (*)(double, double)>(&std::atan2));
+  expose_runtime_symbol("cbrt", static_cast<double (*)(double)>(&std::cbrt));
   if (auto define_error = impl_->jit->getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(runtime_symbols)))) {
     std::cerr << "[NativeCodegen] JIT runtime symbol registration failed: "

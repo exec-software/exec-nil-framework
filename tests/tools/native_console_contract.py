@@ -6,9 +6,14 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
 import selectors
 import subprocess
 import tempfile
+
+# The toolchain appends .exe to extensionless executables on Windows.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from native_output_staging import linked_executable_path
 
 
 def main() -> int:
@@ -35,7 +40,7 @@ def main() -> int:
             return result
 
         def build_native(nil, name, unmanaged=False):
-            obj, executable = root / (name + '.o'), root / name
+            obj, executable = root / (name + '.o'), linked_executable_path(root / name)
             flags = ['--unmanaged'] if unmanaged else []
             run([tools['assembler'], *flags, '-o', obj, nil])
             run([tools['linker'], '--runtime', tools['runtime'], '-o', executable, obj])
@@ -142,7 +147,7 @@ CALL println 1
 PUSH_CONST 0
 RET
 end function
-''')
+''', newline='\n')
         for mode in ('safe', 'unsafe'):
             command = build_native(direct, 'direct-' + mode, mode == 'unsafe')
             result = run(command, data=b'one\ntwo')
@@ -166,7 +171,7 @@ CALL println 1
 PUSH_CONST 0
 RET
 end function
-''')
+''', newline='\n')
         for mode in ('safe', 'unsafe'):
             command = build_native(prompt, 'implicit-flush-' + mode, mode == 'unsafe')
             check_prompt(command)
@@ -177,7 +182,7 @@ end function
             explicit = root / 'explicit-flush.nil'
             explicit.write_text(prompt.read_text().replace(
                 'INTEROP_CALL intrinsic console.read_line 0 text\nCALL println 1',
-                'INTEROP_CALL intrinsic console.flush 0 void\nPUSH_CONST 60000\nTIME_SLEEP'))
+                'INTEROP_CALL intrinsic console.flush 0 void\nPUSH_CONST 60000\nTIME_SLEEP'), newline='\n')
             for mode in ('safe', 'unsafe'):
                 command = build_native(explicit, 'explicit-flush-' + mode, mode == 'unsafe')
                 with subprocess.Popen(list(map(str, command)), cwd=root, env=environment,
@@ -210,7 +215,7 @@ end function
         for name, (declaration, body) in invalid.items():
             nil, output = root / (name + '.nil'), root / (name + '.o')
             nil.write_text('module rejected_console\n' + declaration +
-                           '\nfunction main() -> i32:\n' + body + '\nPUSH_CONST 0\nRET\nend function\n')
+                           '\nfunction main() -> i32:\n' + body + '\nPUSH_CONST 0\nRET\nend function\n', newline='\n')
             result = run([tools['assembler'], '-o', output, nil], status=1)
             assert b'requires the exact () ->' in result.stderr, result
             assert not output.exists(), output

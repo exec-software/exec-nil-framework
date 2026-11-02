@@ -302,7 +302,7 @@ fn main() -> i32
 end fn
 """,
             encoding="utf-8",
-        )
+         newline='\n')
         alias_text_nil = work_dir / "generic_enum_case_alias.nil"
         alias_binary_nil = work_dir / "generic_enum_case_alias.binary.nil"
         run_checked(

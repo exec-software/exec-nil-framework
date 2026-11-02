@@ -50,23 +50,23 @@ def main():
             checks += 6 if opts.llvm == 'ON' else 4
 
         character_source = work / 'characters.ny'
-        character_source.write_text("fn main() -> i32\nprintln(switch 'A' { case 'A': break 65; default: break 0; })\nprintln(switch 10 { case '\\n': break 10; default: break 0; })\nreturn 0\nend fn\n")
+        character_source.write_text("fn main() -> i32\nprintln(switch 'A' { case 'A': break 65; default: break 0; })\nprintln(switch 10 { case '\\n': break 10; default: break 0; })\nreturn 0\nend fn\n", newline='\n')
         character_expected = work / 'characters.stdout'
-        character_expected.write_text('65\n10\n')
+        character_expected.write_text('65\n10\n', newline='\n')
         routes(character_source, character_expected)
         checks += 6 if opts.llvm == 'ON' else 4
 
         mask_source = work / 'mask-labels.ny'
-        mask_source.write_text("fn main() -> i32\nprintln(switch 1 { case -0xFFFFFFFF: break 1; case -4294967295: break 2; default: break 0; })\nreturn 0\nend fn\n")
+        mask_source.write_text("fn main() -> i32\nprintln(switch 1 { case -0xFFFFFFFF: break 1; case -4294967295: break 2; default: break 0; })\nreturn 0\nend fn\n", newline='\n')
         mask_expected = work / 'mask-labels.stdout'
-        mask_expected.write_text('1\n')
+        mask_expected.write_text('1\n', newline='\n')
         routes(mask_source, mask_expected)
         checks += 6 if opts.llvm == 'ON' else 4
 
         forward_source = work / 'forward-enum.ny'
-        forward_source.write_text("fn choose(input: Choice) -> i32\nreturn switch input { case Choice::A: break 1; default: break 0; }\nend fn\nenum Choice\nA\nB\nend enum\nfn main() -> i32\nprintln(choose(Choice::A))\nreturn 0\nend fn\n")
+        forward_source.write_text("fn choose(input: Choice) -> i32\nreturn switch input { case Choice::A: break 1; default: break 0; }\nend fn\nenum Choice\nA\nB\nend enum\nfn main() -> i32\nprintln(choose(Choice::A))\nreturn 0\nend fn\n", newline='\n')
         forward_expected = work / 'forward-enum.stdout'
-        forward_expected.write_text('1\n')
+        forward_expected.write_text('1\n', newline='\n')
         routes(forward_source, forward_expected)
         checks += 6 if opts.llvm == 'ON' else 4
 
@@ -76,10 +76,10 @@ def main():
             'matrix': 'book contextual-names\nswitch receives input as number returns number begin paragraph\ngive input plus 1\nend paragraph\nmain returns override integer begin paragraph\nvalue case is 3\nvalue default is 4\nsay (switch with input being case) plus default\ngive 0\nend paragraph\n',
         }
         expected_names = work / 'names.stdout'
-        expected_names.write_text('8\n')
+        expected_names.write_text('8\n', newline='\n')
         for language, contents in names.items():
             source = work / ('names.' + language)
-            source.write_text(contents)
+            source.write_text(contents, newline='\n')
             routes(source, expected_names)
             checks += 6 if opts.llvm == 'ON' else 4
 
@@ -132,7 +132,7 @@ def main():
         }
         for name, source in invalid.items():
             path = work / name
-            path.write_text(source)
+            path.write_text(source, newline='\n')
             for flags in ([], ['--emit-binary-nil'], ['--no-typecheck']):
                 output = work / 'prior.nil'
                 output.write_bytes(b'prior artifact')
@@ -175,9 +175,9 @@ main returns override integer begin paragraph
     say inner
     give 0
 end paragraph
-''')
+''', newline='\n')
         expected = work / 'explicit.stdout'
-        expected.write_text('7\n8\n102\n')
+        expected.write_text('7\n8\n102\n', newline='\n')
         routes(explicit, expected)
         checks += 6 if opts.llvm == 'ON' else 4
 
@@ -206,7 +206,7 @@ fn main() -> i32
  println(result)
  return 0
 end fn
-''')
+''', newline='\n')
         report = json.loads(run([compiler, '--analyze', '--no-stdlib', source]).stdout)
         warnings = [d for d in report['diagnostics'] if d['code'] == 'NIL2001']
         assert len(warnings) == 3, report
@@ -223,7 +223,7 @@ end fn
         }
         for language, contents in debug_sources.items():
             source = work / ('debug.' + language)
-            source.write_text(contents)
+            source.write_text(contents, newline='\n')
             for binary in (False, True):
                 output = work / ('debug-' + language + ('-binary.nil' if binary else '-text.nil'))
                 dap.compile_program(compiler, output, source, binary=binary)

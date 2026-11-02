@@ -43,7 +43,7 @@ def main() -> int:
         root = Path(temporary)
         for name, source in cases.items():
             path = root / f"{name}.ny"
-            path.write_text(source, encoding="utf-8")
+            path.write_text(source, encoding="utf-8", newline='\n')
             for index, flags in enumerate(modes):
                 output = root / f"{name}-{index}.nil"
                 output.write_bytes(sentinel)

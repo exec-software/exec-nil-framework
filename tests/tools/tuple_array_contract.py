@@ -75,7 +75,7 @@ def main() -> None:
                 'book provider\npublic make returns array of tuple of (number,text) begin paragraph\n'
                 'value pair as tuple of (number,text) is (42,"cross")\ngive [pair,pair]\nend paragraph\n'
                 'public identity of type T receives items as array of T returns array of T begin paragraph\n'
-                'give items\nend paragraph\n')
+                'give items\nend paragraph\n', newline='\n')
             consumer_language = 'matrix' if provider_language == 'ny' else 'ny'
             consumer = root / ('consumer-' + provider_language + '.' + consumer_language)
             consumer.write_text(program(consumer_language,
@@ -90,7 +90,7 @@ def main() -> None:
                 'say (values at 0).0\nsay (values at 0).1\n'
                 'say (values at 1).0\nsay (values at 1).1',
                 imports='import provider.*\n' if consumer_language == 'ny' else
-                        'read everything from provider\n'))
+                        'read everything from provider\n'), newline='\n')
             libraries = root / ('libraries-' + provider_language)
             libraries.mkdir()
             for dependency_mode in ('source', 'binary'):
@@ -135,7 +135,7 @@ def main() -> None:
         for name, ny, matrix in invalid:
             for language, body in [('ny', ny), ('matrix', matrix)]:
                 path = root / (name + '.' + language)
-                path.write_text(program(language, body))
+                path.write_text(program(language, body), newline='\n')
                 for unchecked in (False, True):
                     for flags in (['--no-bundle'], ['--no-bundle', '--emit-binary-nil'],
                                   *([['--native']] if args.llvm == 'ON' else [])):
@@ -166,7 +166,7 @@ def main() -> None:
                 body = (f'let wrong = {values}\nprintln(first_value(wrong))' if ny else
                         f'value wrong is {values}\nsay first-value with items being wrong')
                 path = root / ('argument-' + name + '.' + language)
-                path.write_text(program(language, body, declaration))
+                path.write_text(program(language, body, declaration), newline='\n')
                 for unchecked in (False, True):
                     for flags in (['--no-bundle'], ['--no-bundle', '--emit-binary-nil'],
                                   *([['--native']] if args.llvm == 'ON' else [])):
@@ -191,9 +191,9 @@ def main() -> None:
                 'value exact as array of tuple of (number,text) is [(2,"existing")]\n'
                 'say first-value with items being exact')
             path = root / ('argument-positive.' + language)
-            path.write_text(program(language, body, declaration))
+            path.write_text(program(language, body, declaration), newline='\n')
             stdout = path.with_suffix('.stdout')
-            stdout.write_text('1\n2\n')
+            stdout.write_text('1\n2\n', newline='\n')
             run([sys.executable, REPOSITORY / 'tests/routes/ny_route_matrix.py',
                  '--compiler', compiler, '--interpreter', interpreter, '--source', path,
                  '--expected-stdout', stdout, '--expected-exit', '0',
@@ -227,7 +227,7 @@ def main() -> None:
                 path = root / (name + '.' + language)
                 path.write_text(program(language, ny if language == 'ny' else matrix,
                     imports='import nil.std.collections\n' if language == 'ny' else
-                            'read everything from nil.std.collections\n'))
+                            'read everything from nil.std.collections\n'), newline='\n')
                 for flags, suffix in [([], 'text'), (['--emit-binary-nil'], 'binary'),
                                       *([(['--native'], 'native')] if args.llvm == 'ON' else [])]:
                     artifact = root / (name + '-' + language + '-' + suffix)
@@ -256,7 +256,7 @@ def main() -> None:
                 for language, declaration, body in [('ny', ny_decl, ny_body),
                                                      ('matrix', matrix_decl, matrix_body)]:
                     path = root / ('unsupported-' + name + '.' + language)
-                    path.write_text(program(language, body, declaration))
+                    path.write_text(program(language, body, declaration), newline='\n')
                     output = root / 'protected-native'
                     output.write_bytes(b'keep previous executable')
                     result = run([compiler, '--quiet', '--no-stdlib', '--native', '-o', output, path], 1)

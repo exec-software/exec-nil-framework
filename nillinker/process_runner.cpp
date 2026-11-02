@@ -192,6 +192,83 @@ bool windows_job_is_empty(HANDLE job, bool &empty, std::string &error) {
   return true;
 }
 
+std::string windows_job_member_diagnostic(HANDLE job) {
+  // Capture evidence before cleanup; never use these numeric IDs to signal a
+  // process. A member can exit between enumeration and OpenProcess, so verify
+  // the opened handle still belongs to this exact job before describing it.
+  constexpr std::size_t maximum_members = 4096;
+  constexpr std::size_t maximum_displayed_members = 8;
+  const std::size_t bytes = sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) +
+                            (maximum_members - 1) * sizeof(ULONG_PTR);
+  std::vector<ULONG_PTR> storage((bytes + sizeof(ULONG_PTR) - 1) / sizeof(ULONG_PTR));
+  auto *members = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST *>(storage.data());
+  if (!QueryInformationJobObject(job, JobObjectBasicProcessIdList, members,
+                                 static_cast<DWORD>(bytes), nullptr)) {
+    return "job members unavailable: " + windows_error_message(GetLastError());
+  }
+  const auto count = std::min<std::size_t>(members->NumberOfProcessIdsInList,
+                                         maximum_members);
+  std::string summary = "job members=" + std::to_string(count);
+  for (std::size_t index = 0; index < std::min(count, maximum_displayed_members); ++index) {
+    const auto pid = static_cast<DWORD>(members->ProcessIdList[index]);
+    summary += "; pid=" + std::to_string(pid);
+    unique_handle member(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
+                                     FALSE, pid));
+    if (member.get() == nullptr) {
+      summary += " (unavailable: " + windows_error_message(GetLastError()) + ")";
+      continue;
+    }
+    BOOL belongs = FALSE;
+    if (!IsProcessInJob(member.get(), job, &belongs) || !belongs) {
+      summary += " (no longer a member)";
+      continue;
+    }
+    const DWORD state = WaitForSingleObject(member.get(), 0);
+    summary += state == WAIT_OBJECT_0 ? " (exited" :
+               state == WAIT_TIMEOUT ? " (running" : " (state unavailable";
+    std::wstring path(32768, L'\0');
+    DWORD length = static_cast<DWORD>(path.size());
+    if (QueryFullProcessImageNameW(member.get(), 0, path.data(), &length)) {
+      path.resize(length);
+      const auto separator = path.find_last_of(L"\\/");
+      const auto name = separator == std::wstring::npos ? path : path.substr(separator + 1);
+      const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, name.data(),
+                                           static_cast<int>(name.size()), nullptr, 0,
+                                           nullptr, nullptr);
+      if (size > 0) {
+        std::string encoded(static_cast<std::size_t>(size), '\0');
+        if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, name.data(),
+                                static_cast<int>(name.size()), encoded.data(), size,
+                                nullptr, nullptr) == size)
+          summary += ", image=" + encoded;
+      }
+    }
+    summary += ")";
+  }
+  if (count > maximum_displayed_members)
+    summary += "; additional members omitted";
+  return summary;
+}
+
+// A driver that spawns its own children - cl.exe launching link.exe, for
+// instance - can exit a moment before they finish exiting themselves. Sampling
+// the job the instant the leader goes away therefore reports residual
+// descendants for a perfectly ordinary successful link, and does so far more
+// often under parallel load. Give the job a bounded grace period to drain
+// before deciding, which is the same allowance wait_for_posix_cleanup() already
+// makes on the POSIX side. A descendant that genuinely outlives the grace is
+// still reported.
+bool wait_for_windows_job_drain(HANDLE job, steady_clock::time_point deadline,
+                                bool &empty, std::string &error) {
+  for (;;) {
+    if (!windows_job_is_empty(job, empty, error))
+      return false;
+    if (empty || steady_clock::now() >= deadline)
+      return true;
+    std::this_thread::sleep_for(wait_poll_interval);
+  }
+}
+
 bool wait_for_windows_process(HANDLE process,
                               steady_clock::time_point deadline,
                               std::string &error) {
@@ -701,16 +778,22 @@ process_result run_process(const std::vector<std::string> &arguments,
 
       bool job_empty = false;
       std::string job_error;
-      if (windows_job_is_empty(job.get(), job_empty, job_error) && job_empty)
+      if (wait_for_windows_job_drain(job.get(),
+                                     deadline_after(termination_grace),
+                                     job_empty, job_error) &&
+          job_empty)
         return {true, false, static_cast<int>(exit_code), {}};
 
       const bool residual_processes = job_error.empty();
+      const auto member_diagnostic = residual_processes
+                                         ? windows_job_member_diagnostic(job.get())
+                                         : std::string{};
       std::string cleanup_error;
       const bool cleaned =
           terminate_windows_job(job.get(), process.get(), cleanup_error);
       std::string error = residual_processes
                               ? "linker driver exited while descendant processes "
-                                "remained"
+                                "remained (" + member_diagnostic + ")"
                               : std::move(job_error);
       if (!cleaned)
         error += "; cleanup could not be confirmed: " + cleanup_error;

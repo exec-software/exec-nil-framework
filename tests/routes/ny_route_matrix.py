@@ -1937,7 +1937,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report["report_path"] = str(report_path)
-    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8", newline='\n')
 
     for result in results:
         reason = result.get("skip_reason") or result.get("expected_failure_reason")
@@ -1964,7 +1964,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if report_path.is_file():
             report_path.write_text(
                 json.dumps(report, indent=2) + "\n", encoding="utf-8"
-            )
+            , newline='\n')
         print("Report: {}".format(report_path))
         print(
             "FAIL  could not remove successful run artifacts at {}: {}".format(
@@ -1982,7 +1982,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "policy": "preserve failures; remove passes, XFAILs, and expected skips",
     }
     if report_path.is_file():
-        report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8", newline='\n')
         print("Report: {}".format(report_path))
     else:
         print(

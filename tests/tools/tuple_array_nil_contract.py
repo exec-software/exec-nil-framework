@@ -7,9 +7,14 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
 import struct
 import subprocess
 import tempfile
+
+# The toolchain appends .exe to extensionless executables on Windows.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from native_output_staging import linked_executable_path
 
 
 PAIR = "tuple<i64,text>"
@@ -224,7 +229,7 @@ def main():
 
         def native(path, name, output):
             nonlocal checks
-            obj, executable = root / (name + ".o"), root / name
+            obj, executable = root / (name + ".o"), linked_executable_path(root / name)
             success(run([paths["assembler"], "-o", obj, path]))
             success(run([paths["linker"], "--runtime", paths["runtime"],
                          "-o", executable, obj]))
@@ -299,7 +304,7 @@ def main():
                 assert result.returncode > 0 and not result.stdout and "tuple array read" in result.stderr, result
                 checks += 1
                 if args.llvm == "ON":
-                    obj, executable = root / "bounds.o", root / "bounds"
+                    obj, executable = root / "bounds.o", linked_executable_path(root / "bounds")
                     success(run([paths["assembler"], "-o", obj, path]))
                     success(run([paths["linker"], "--runtime", paths["runtime"], "-o", executable, obj]))
                     result = run([executable])

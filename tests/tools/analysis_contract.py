@@ -6,6 +6,12 @@ import os
 import pathlib
 import subprocess
 import tempfile
+import sys
+from pathlib import Path
+
+# Piping a source through a text-mode stdin would rewrite its newlines.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from exact_stdin import run_with_exact_stdin
 
 
 def main():
@@ -29,9 +35,9 @@ def main():
         root = pathlib.Path(directory)
         primary = root / 'unsaved.ny'
         def analyze(source, *, path=primary, extra=(), status=0):
-            proc = subprocess.run([args.compiler, '--analyze', '--source-stdin',
-                                   '--no-stdlib', '-I', args.stdlib, str(path), *extra],
-                                  input=source, text=True, capture_output=True, timeout=20, cwd=root)
+            proc = run_with_exact_stdin([args.compiler, '--analyze', '--source-stdin',
+                                         '--no-stdlib', '-I', args.stdlib, str(path), *extra],
+                                        source, timeout=20, cwd=root)
             assert proc.returncode == status, (proc.returncode, proc.stdout, proc.stderr)
             assert not proc.stderr, proc.stderr
             value = json.loads(proc.stdout)
@@ -53,9 +59,9 @@ def main():
             discovery_environment.pop(name, None)
         repository = pathlib.Path(__file__).resolve().parents[2]
         def discover(source, path, include_root):
-            proc = subprocess.run([args.compiler, '--analyze', '--source-stdin',
-                                   '-I', str(include_root), str(path)], input=source, text=True,
-                                  capture_output=True, timeout=20, cwd=root, env=discovery_environment)
+            proc = run_with_exact_stdin([args.compiler, '--analyze', '--source-stdin',
+                                         '-I', str(include_root), str(path)], source,
+                                        timeout=20, cwd=root, env=discovery_environment)
             assert proc.returncode == 0 and not proc.stderr, (proc.returncode, proc.stdout, proc.stderr)
             result = json.loads(proc.stdout)
             assert result['success'] and not result['diagnostics'], result
@@ -70,12 +76,12 @@ def main():
         legacy_module = legacy_prefix / 'share/ny/stdlib/ny/lang'
         legacy_module.mkdir(parents=True)
         (legacy_module / 'discovery.ny').write_text(
-            'module ny.lang.discovery\npub fn answer() -> i32\n return 7\nend fn\n')
+            'module ny.lang.discovery\npub fn answer() -> i32\n return 7\nend fn\n', newline='\n')
         discover('import ny.lang.discovery\nfn main() -> i32\n return answer()\nend fn\n',
                  primary, legacy_prefix)
 
         # A current buffer wins over disk; main is never executed and no output file exists.
-        primary.write_text('this is deliberately invalid on disk')
+        primary.write_text('this is deliberately invalid on disk', newline='\n')
         good = 'module sample\npub fn temp_sum(value: i32) -> i32\n return value + 1\nend fn\nfn main() -> i32\n panic("MUST NEVER EXECUTE")\n return 0\nend fn\n'
         snapshot = root / 'analysis_snapshot.ny'
         data = analyze(good, extra=('--emit-reflection', str(snapshot)))
@@ -112,7 +118,7 @@ def main():
         matrix_good = 'book sample\nread everything from ny.lang.core\nmain returns override integer begin paragraph\n    say "hello"\n    give 0\nend paragraph\n'
         assert analyze(matrix_good, path=matrix)['language'] == 'matrix'
         dep = root / 'dep.ny'
-        dep.write_text('module dep\npub fn broken() -> i32\n return "bad"\nend fn\n')
+        dep.write_text('module dep\npub fn broken() -> i32\n return "bad"\nend fn\n', newline='\n')
         imported = analyze('import dep.*\nfn main() -> i32\n return broken()\nend fn\n', status=1)
         assert any(d['path'] == str(dep) and d['start'] == len('module dep\npub fn broken() -> i32\n')
                    for d in imported['diagnostics'])
@@ -125,7 +131,7 @@ def main():
         assert imported['sources'] == [{'path': str(dep), 'text': dep_source}]
         # Limit encoded JSON, not raw source bytes: a long backslash comment
         # doubles during JSON escaping and must not consume the source budget.
-        dep.write_text('#' + '\\' * 600000 + '\nmodule dep\npub fn broken() -> i32\n return "bad"\nend fn\n')
+        dep.write_text('#' + '\\' * 600000 + '\nmodule dep\npub fn broken() -> i32\n return "bad"\nend fn\n', newline='\n')
         imported = analyze('import dep.*\nfn main() -> i32\n return broken()\nend fn\n', status=1)
         assert imported['sources'] == []
         assert any(d['path'] == str(dep) and d['start'] is not None for d in imported['diagnostics'])
@@ -299,7 +305,7 @@ end paragraph
             assert [d['code'] for d in data['diagnostics']] == ['NIL2001'], data
         # Include expansion has no safe raw-source line mapping. The rule is
         # still reported, but no borrowed offsets or fix are exposed.
-        (root / 'included.ny').write_text('fn included() -> i32\n return 1\n println("dead")\nend fn\n')
+        (root / 'included.ny').write_text('fn included() -> i32\n return 1\n println("dead")\nend fn\n', newline='\n')
         data = analyze('@include "included.ny"\nfn main() -> i32\n return included()\nend fn\n')
         assert len(data['diagnostics']) == 1, data
         assert data['diagnostics'][0]['code'] == 'NIL2001'
@@ -307,7 +313,7 @@ end paragraph
         assert data['diagnostics'][0]['fix'] is None
         # Dependencies are checked but default style/semantic rules target only
         # the entry document, so imported SDK implementation details stay quiet.
-        dep.write_text('module dep\npub fn fine() -> i32\n return 1\n println("dead")  \nend fn')
+        dep.write_text('module dep\npub fn fine() -> i32\n return 1\n println("dead")  \nend fn', newline='\n')
         data = analyze('import dep.*\nfn main() -> i32\n return fine()\nend fn\n')
         assert data['diagnostics'] == [] and data['sources'] == []
         # Rules do not run on an unsuccessfully checked tree.
@@ -325,7 +331,7 @@ end paragraph
         analyze(good, path=linked)
         analyze(matrix_good, path=root / 'UPPER.MATRIX')
         blob = root / 'blob'
-        blob.write_text('invalid on disk')
+        blob.write_text('invalid on disk', newline='\n')
         linked.unlink()
         linked.symlink_to(blob)
         analyze(good, path=linked)
@@ -357,9 +363,9 @@ end paragraph
             proc = subprocess.run([args.compiler, '--analyze', str(primary), *flags],
                                   text=True, capture_output=True, timeout=20, cwd=root)
             assert proc.returncode == 2 and not proc.stdout, (flags, proc)
-        collision = subprocess.run([args.compiler, '--analyze', '--source-stdin', str(primary),
-                                    '--emit-reflection', str(primary)], input=good,
-                                   text=True, capture_output=True, timeout=20, cwd=root)
+        collision = run_with_exact_stdin([args.compiler, '--analyze', '--source-stdin',
+                                          str(primary), '--emit-reflection', str(primary)],
+                                         good, timeout=20, cwd=root)
         assert collision.returncode == 2 and not collision.stdout
         assert primary.read_text() == 'this is deliberately invalid on disk'
 
@@ -369,8 +375,8 @@ end paragraph
         workspace_root.mkdir()
         workspace_primary = workspace_root / 'entry.ny'
         workspace_dep = workspace_root / 'dependency.ny'
-        workspace_primary.write_text('invalid entry on disk')
-        workspace_dep.write_text('invalid dependency on disk')
+        workspace_primary.write_text('invalid entry on disk', newline='\n')
+        workspace_dep.write_text('invalid dependency on disk', newline='\n')
         entry_source = 'import dependency.*\nfn main() -> i32\n return answer()\nend fn\n'
         dependency_source = 'module dependency\npub fn answer() -> i32\n return 42\nend fn\n'
 
@@ -424,14 +430,14 @@ end paragraph
         assert not workspace([(matrix_entry, matrix_source), (workspace_dep, dependency_source)],
                              path=matrix_entry)['diagnostics']
         # Existing .ny candidates still win before a new .matrix alternative.
-        workspace_dep.write_text(dependency_source)
+        workspace_dep.write_text(dependency_source, newline='\n')
         data = workspace([(workspace_primary, entry_source),
                           (workspace_dep.with_suffix('.matrix'), 'invalid but unselected')])
         assert not data['diagnostics'], data
         earlier = workspace_root / 'earlier'
         later = workspace_root / 'later'
         earlier.mkdir()
-        (earlier / 'ordered.ny').write_text(dependency_source.replace('dependency', 'ordered'))
+        (earlier / 'ordered.ny').write_text(dependency_source.replace('dependency', 'ordered'), newline='\n')
         data = workspace([(workspace_primary, entry_source.replace('dependency', 'ordered')),
                           (later / 'ordered.ny', 'invalid but later in search order')],
                          extra=('-I', str(earlier), '-I', str(later)))
@@ -447,7 +453,7 @@ end paragraph
         library_dir = workspace_root / 'libraries'
         library_dir.mkdir()
         library_source = workspace_root / 'library_source.ny'
-        library_source.write_text(dependency_source.replace('dependency', 'binary_dependency'))
+        library_source.write_text(dependency_source.replace('dependency', 'binary_dependency'), newline='\n')
         library = library_dir / 'binary_dependency.nil'
         compiled = subprocess.run([args.compiler, '--no-stdlib', '--no-bundle', '--emit-binary-nil',
                                    '--emit-library', '-q', '-o', str(library), str(library_source)],
@@ -462,7 +468,7 @@ end paragraph
         assert any(d['path'] == str(library_dir / 'binary_dependency.ny') for d in data['diagnostics']), data
         large_library_source = workspace_root / 'large_library_source.ny'
         large_library_source.write_text('#' + 'x' * (2 * 1024 * 1024) + '\n' +
-                                        dependency_source.replace('dependency', 'large_binary'))
+                                        dependency_source.replace('dependency', 'large_binary'), newline='\n')
         compiled = subprocess.run([args.compiler, '--no-stdlib', '--no-bundle', '--emit-binary-nil',
                                    '--emit-library', '-q', '-o', str(library_dir / 'large_binary.nil'),
                                    str(large_library_source)], text=True, capture_output=True, timeout=20, cwd=root)
@@ -486,7 +492,7 @@ end paragraph
         # including new/nested files. Their flattened positions remain unmapped.
         include_file = workspace_root / 'included.ny'
         nested_file = workspace_root / 'nested.ny'
-        include_file.write_text('invalid include on disk')
+        include_file.write_text('invalid include on disk', newline='\n')
         include_entry = '@include "included.ny"\nfn main() -> i32\n return included()\nend fn\n'
         included = 'fn included() -> i32\n return 1\n println("dead")\nend fn\n'
         data = workspace([(workspace_primary, include_entry), (include_file, '@include "nested.ny"\n'),
@@ -520,7 +526,7 @@ end paragraph
         aggregate_entry = ''
         for index in range(9):
             name = f'budget{index}.ny'
-            (workspace_root / name).write_text('#' + 'x' * (1024 * 1024 - 2) + '\n')
+            (workspace_root / name).write_text('#' + 'x' * (1024 * 1024 - 2) + '\n', newline='\n')
             aggregate_entry += f'@include "{name}"\n'
         workspace([(workspace_primary, aggregate_entry)], status=2, error='source reads exceed 8 MiB')
 

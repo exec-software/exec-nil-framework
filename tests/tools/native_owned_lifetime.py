@@ -59,7 +59,7 @@ end fn
     with tempfile.TemporaryDirectory(prefix="ny-owned-lifetime-") as temporary:
         root = Path(temporary)
         source = root / "sustained.ny"
-        source.write_text(source_text, encoding="utf-8")
+        source.write_text(source_text, encoding="utf-8", newline='\n')
         for name, flags in (("managed", []), ("unmanaged", ["--unmanaged"])):
             output = root / name
             compiled = subprocess.run([str(args.compiler.resolve()), "--no-stdlib", "--quiet",

@@ -61,7 +61,11 @@ errors and promoted analyzer warnings stop the affected build; `run` never
 executes an old artifact after a failed check or compile. When the checked
 inputs, toolchain, settings and existing output match a previous successful
 build, compilation and linking are skipped. Otherwise, compilation writes to a
-private staging directory and replaces the output only after success.
+fresh, exclusively created staging directory and replaces the output only
+after success. POSIX staging is owner-only (`0700`). Windows staging inherits
+the parent directory's ACL: use output and TEMP directories controlled by your
+user, not locations writable by untrusted users. Random staging names do not
+provide an additional cross-user isolation boundary on Windows.
 
 ## Project contract
 

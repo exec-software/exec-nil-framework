@@ -77,7 +77,7 @@ def main() -> int:
         root = Path(temporary)
         for name, (source, diagnostic) in cases.items():
             path = root / (name + ".ny")
-            path.write_text(source, encoding="utf-8")
+            path.write_text(source, encoding="utf-8", newline='\n')
             for mode, extra in (("text", []), ("binary", ["--emit-binary-nil"])):
                 output = root / (name + "-" + mode + ".nil")
                 output.write_bytes(sentinel)
@@ -99,7 +99,7 @@ def main() -> int:
             'let mut texts: array<text> = []\ntexts.push("four")\n'
             'let mut bytes: array<u8> = []\nbytes.push(257)\n'
             'let mut flags: array<bool> = []\nflags.push(1)'
-        ), encoding="utf-8")
+        ), encoding="utf-8", newline='\n')
         for mode, extra in (("text", []), ("binary", ["--emit-binary-nil"])):
             output = root / ("array-push-valid-" + mode + ".nil")
             result = subprocess.run(

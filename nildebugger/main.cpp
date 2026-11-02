@@ -8,6 +8,12 @@
 #include "debugger_core.hpp"
 #include "dap.hpp"
 #include "nil_version.hpp"
+#include "../common/standard_streams.hpp"
+
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 // ─────────────────────────────────────────────────────────────
 // Help text
@@ -81,6 +87,15 @@ static std::string trim(const std::string& s) {
     return s.substr(a, b - a + 1);
 }
 
+static bool read_command_line(std::istream& input, std::string& line) {
+    if (!std::getline(input, line)) return false;
+    // Standard streams are byte-preserving. Both line-oriented REPLs accept
+    // LF and CRLF, without discarding embedded CR bytes or a bare CR at EOF.
+    if (!input.eof() && !line.empty() && line.back() == '\r')
+        line.pop_back();
+    return true;
+}
+
 // ─────────────────────────────────────────────────────────────
 // Text REPL
 // ─────────────────────────────────────────────────────────────
@@ -91,7 +106,7 @@ static void run_text_repl(ny::debug::Debugger& dbg) {
 
     while (true) {
         std::cout << "(nildebugger) " << std::flush;
-        if (!std::getline(std::cin, line)) break;
+        if (!read_command_line(std::cin, line)) break;
         line = trim(line);
         if (line.empty()) continue;
 
@@ -319,7 +334,7 @@ static void run_json_repl(ny::debug::Debugger& dbg,
     };
 
     std::string line;
-    while (std::getline(std::cin, line)) {
+    while (read_command_line(std::cin, line)) {
         line = trim(line);
         if (line.empty()) continue;
 
@@ -486,6 +501,7 @@ static void run_json_repl(ny::debug::Debugger& dbg,
 // ─────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
+    ny::use_untranslated_standard_streams();
     if (argc < 2) { print_help(); return 1; }
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--") break;
@@ -494,6 +510,19 @@ int main(int argc, char** argv) {
             std::cerr << "Error: --dap must be used alone.\n";
             return 1;
         }
+#ifdef _WIN32
+        // DAP uses the same byte-exact Content-Length framing as LSP, so both
+        // streams must bypass Windows text-mode newline translation. See the
+        // matching guard in nillsp/main.cpp.
+        if (_setmode(_fileno(stdin), _O_BINARY) == -1) {
+            std::cerr << "Error: cannot set stdin to binary mode.\n";
+            return 1;
+        }
+        if (_setmode(_fileno(stdout), _O_BINARY) == -1) {
+            std::cerr << "Error: cannot set stdout to binary mode.\n";
+            return 1;
+        }
+#endif
         return ny::debug::run_dap(std::cin, std::cout);
     }
 

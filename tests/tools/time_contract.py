@@ -21,7 +21,7 @@ def main() -> int:
             source = root / (name + ".ny")
             source.write_text('@intrinsic("time.sleep")\nfn sleep_ms(value: i64)\nend fn\n'
                               'fn main() -> i32\nsleep_ms(' + value + ')\nreturn 0\nend fn\n',
-                              encoding="utf-8")
+                              encoding="utf-8", newline='\n')
             for binary in (False, True):
                 output = root / (name + ("-binary" if binary else "-text") + ".nil")
                 command = [str(compiler), "--no-stdlib", "--no-bundle", "--no-typecheck",

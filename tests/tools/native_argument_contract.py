@@ -88,7 +88,7 @@ def main() -> None:
             for name, ny, matrix, stdout in cases:
                 source = root / (name + '.' + language)
                 source.write_text(program(language, ny if language == 'ny' else matrix,
-                                          declarations[language]))
+                                          declarations[language]), newline='\n')
                 execute(source, name + '-' + language, stdout=stdout)
 
             # A scalar conversion must still check nonfinite/out-of-range
@@ -96,7 +96,7 @@ def main() -> None:
             source = root / ('outside-range.' + language)
             source.write_text(program(language,
                 'exit(1e30 as i32)' if language == 'ny' else
-                'evaluate exit with code being (1e30 becomes override integer)', declarations[language]))
+                'evaluate exit with code being (1e30 becomes override integer)', declarations[language]), newline='\n')
             execute(source, 'outside-range-' + language, status=1,
                     diagnostic='CAST: floating-point value is non-finite or outside i64 range')
 
@@ -116,7 +116,7 @@ def main() -> None:
                             'give item\nend paragraph\n')
                     body += 'say exit with item being 4294967303'
                 source = root / ('shadow-' + kind + '.' + language)
-                source.write_text(program(language, body, declarations[language] + extra))
+                source.write_text(program(language, body, declarations[language] + extra), newline='\n')
                 execute(source, 'shadow-' + kind + '-' + language, status=0,
                         stdout='4294967303\n', native=False)
 
@@ -134,7 +134,7 @@ def main() -> None:
                 '@intrinsic("math.pow")\npub fn power(base: f64, exponent: f64) -> f64\nend fn\n'
                 if provider_language == 'ny' else
                 'book boundary\nnote interop "std_sys"\npublic exit receives code as override integer begin paragraph\nend paragraph\n'
-                'note intrinsic "math.pow"\npublic power receives base as floating, exponent as floating returns floating\n')
+                'note intrinsic "math.pow"\npublic power receives base as floating, exponent as floating returns floating\n', newline='\n')
             for dependency in ('source', 'binary'):
                 if dependency == 'binary':
                     run([compiler, '--quiet', '--no-stdlib', '--no-bundle', '--emit-binary-nil',
@@ -148,7 +148,7 @@ def main() -> None:
                         'say power with exponent being 2, base being 3\n'
                         'evaluate exit with code being 7', imports=
                         'import boundary.*\n' if language == 'ny' else
-                        'read everything from boundary\n'))
+                        'read everything from boundary\n'), newline='\n')
                     execute(source, 'library-' + provider_language + '-' + dependency + '-' + language,
                             search, stdout='9\n')
 
@@ -182,7 +182,7 @@ def main() -> None:
             for name, ny, matrix in invalid:
                 source = root / ('invalid-' + name + '.' + language)
                 source.write_text(program(language, ny if language == 'ny' else matrix,
-                                          declarations[language]))
+                                          declarations[language]), newline='\n')
                 for unchecked in ([], ['--no-typecheck']):
                     if not unchecked and name != 'boolean':
                         reject_checked_argument(source)
@@ -205,7 +205,7 @@ def main() -> None:
 
             source = root / ('missing.' + language)
             source.write_text(program(language, 'exit()' if language == 'ny' else
-                                      'evaluate exit with nothing', declarations[language]))
+                                      'evaluate exit with nothing', declarations[language]), newline='\n')
             for flags in (['--no-bundle'], ['--no-bundle', '--emit-binary-nil'],
                           *([['--native'], ['--native', '--jit']] if args.llvm == 'ON' else [])):
                 output = root / 'protected-output'
@@ -224,7 +224,7 @@ def main() -> None:
                                'note intrinsic "time.sleep"\nsleep-ms receives item as number\n')
                 body = 'sleep_ms(' + value + ')' if language == 'ny' else \
                        'evaluate sleep-ms with item being ' + value
-                source.write_text(program(language, body, declaration))
+                source.write_text(program(language, body, declaration), newline='\n')
                 for unchecked in ([], ['--no-typecheck']):
                     if not unchecked:
                         reject_checked_argument(source)
@@ -257,7 +257,7 @@ def main() -> None:
                         ' begin paragraph\nend paragraph\n')
                     source.write_text(program(language,
                         'exit(7)' if language == 'ny' else
-                        'evaluate exit with code being 7', declaration))
+                        'evaluate exit with code being 7', declaration), newline='\n')
                     for flags in (['--native'], ['--native', '--jit']):
                         output = root / 'protected-output'
                         output.write_bytes(b'previous artifact')
@@ -270,7 +270,7 @@ def main() -> None:
             valid = ('module raw\nfunction main() -> i32:\n'
                      'PUSH_CONST 7\nCAST i32\nINTEROP_CALL std_sys exit 1 void\n'
                      'PUSH_CONST 0\nCAST i32\nRET\nend function\n')
-            raw.write_text(valid)
+            raw.write_text(valid, newline='\n')
             run([assembler, '-o', output, raw], stdout=f'Assembled {raw} to {output}\n')
             invalid_nil = [
                 (valid.replace('CAST i32\nINTEROP_CALL', 'INTEROP_CALL'), 'requires one i32 operand'),
@@ -279,7 +279,7 @@ def main() -> None:
                 (valid.replace('exit 1 void', 'exit 1 i32'), 'malformed std_sys'),
             ]
             for payload, diagnostic in invalid_nil:
-                raw.write_text(payload)
+                raw.write_text(payload, newline='\n')
                 output.write_bytes(b'previous object')
                 run([assembler, '-o', output, raw], status=1, diagnostic=diagnostic)
                 assert output.read_bytes() == b'previous object'

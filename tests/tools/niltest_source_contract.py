@@ -9,6 +9,11 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import sys
+
+# The native backend's own .exe rule, which these artifact names need.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from native_output_staging import native_output_path
 
 
 def main() -> int:
@@ -39,7 +44,7 @@ def main() -> int:
 
         def write(name, content):
             path = work / name
-            path.write_text(content, encoding='utf-8')
+            path.write_text(content, encoding='utf-8', newline='\n')
             return path
 
         def discover(source, options=None):
@@ -49,9 +54,15 @@ def main() -> int:
             return manifest['tests']
 
         def compile_route(source, route, options=None, tests=True):
-            artifact = work / (source.name + '-' + route + ('-tests' if tests else '-production'))
+            requested = work / (source.name + '-' + route + ('-tests' if tests else '-production'))
             run([*(base if options is None else options), *(['--test'] if tests else []),
-                 '--native' if route == 'native' else '--no-bundle', '-o', artifact, source])
+                 '--native' if route == 'native' else '--no-bundle', '-o', requested, source])
+            # These names already carry an extension (the source's own), and
+            # the native backend appends .exe to anything not already ending
+            # that way -- so the file on disk is not the name that was asked
+            # for. native_output_path is that rule; linked_executable_path is
+            # nillinker's and would leave this name alone.
+            artifact = native_output_path(requested) if route == 'native' else requested
             return [artifact] if route == 'native' else [interpreter, '--no-ai', artifact, '--']
 
         ny = write('lexical.ny', '''fn echo(input: i32) -> i32

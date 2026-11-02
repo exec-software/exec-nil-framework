@@ -86,10 +86,10 @@ value `library` is 1
         with tempfile.TemporaryDirectory(prefix="nil-sdk-source-") as temporary:
             root = Path(temporary)
             source = root / "multiple.matrix"
-            source.write_text("book demo.one\nbook demo.two\n", encoding="utf-8")
+            source.write_text("book demo.one\nbook demo.two\n", encoding="utf-8", newline='\n')
             with self.assertRaisesRegex(SystemExit, "multiple logical modules"):
                 PACKAGER.logical_module_name(source, root)
-            source.write_text("book `bad name`\n", encoding="utf-8")
+            source.write_text("book `bad name`\n", encoding="utf-8", newline='\n')
             with self.assertRaisesRegex(SystemExit, "cannot be represented"):
                 PACKAGER.logical_module_name(source, root)
 
@@ -108,7 +108,7 @@ value `library` is 1
         for name, contents in sources.items():
             path = nilstd / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(contents, encoding="utf-8")
+            path.write_text(contents, encoding="utf-8", newline='\n')
         runtime = stage / OPTIONS.runtime.name
         shutil.copyfile(OPTIONS.runtime, runtime)
         shared = stage / OPTIONS.shared_runtime.name
@@ -143,7 +143,7 @@ value `library` is 1
             shutil.copytree(stage / ("nilstd" if route == "source" else "nillib"), library)
             for suffix, contents in ((".ny", ny_source), (".matrix", matrix_source)):
                 source = isolated / ("consumer" + suffix)
-                source.write_text(contents, encoding="utf-8")
+                source.write_text(contents, encoding="utf-8", newline='\n')
                 output = isolated / ("program-" + suffix[1:] + ".nil")
                 self.run_command([OPTIONS.compiler, "--no-stdlib", "--no-bundle", "-I", library,
                                   "--output", output, source], isolated)
@@ -204,8 +204,8 @@ value `library` is 1
             stage = root / "stage"
             nilstd = stage / "nilstd"
             nilstd.mkdir(parents=True)
-            (nilstd / "part.ny").write_text("module demo.shared\npub fn ny_answer() -> i32\nreturn 1\nend fn\n", encoding="utf-8")
-            (nilstd / "part.matrix").write_text("book demo.shared\npublic matrix-answer returns override integer begin paragraph\ngive 2\nend paragraph\n", encoding="utf-8")
+            (nilstd / "part.ny").write_text("module demo.shared\npub fn ny_answer() -> i32\nreturn 1\nend fn\n", encoding="utf-8", newline='\n')
+            (nilstd / "part.matrix").write_text("book demo.shared\npublic matrix-answer returns override integer begin paragraph\ngive 2\nend paragraph\n", encoding="utf-8", newline='\n')
             runtime = stage / OPTIONS.runtime.name
             shutil.copyfile(OPTIONS.runtime, runtime)
             with self.assertRaisesRegex(SystemExit, "artifacts collide"):

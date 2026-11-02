@@ -899,7 +899,12 @@ std::string analysis_session::json(bool success) const {
   }
   out << "],\"nativeRuntime\":" << (native_runtime ? quoted(*native_runtime) : "null")
       << ",\"nativeLinker\":" << (native_linker ? quoted(*native_linker) : "null")
-      << ",\"diagnostics\":[";
+      << ",\"nativeLibraryPaths\":[";
+  for (std::size_t index = 0; index < native_library_paths.size(); ++index) {
+    if (index) out << ',';
+    out << quoted(native_library_paths[index]);
+  }
+  out << "],\"diagnostics\":[";
   bool first = true;
   for (const auto &d : diagnostics) {
     if (!first) out << ','; first = false;

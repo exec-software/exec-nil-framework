@@ -280,7 +280,7 @@ end fn
             "pub type Word = text\npub fn make() -> Word { return \"owner\" }\n"
             "pub fn one(value: i32) -> i32 { return value }\n"
             "pub fn defaulted(value: i32 = 7) -> i32 { return value }\n",
-            encoding="utf-8")
+            encoding="utf-8", newline='\n')
 
         def run(command: list[str]) -> subprocess.CompletedProcess[str]:
             return subprocess.run(command, cwd=root, env=environment, stdin=subprocess.DEVNULL,
@@ -288,7 +288,7 @@ end fn
 
         for name, (source, diagnostic) in cases.items():
             path = root / (name + ".ny")
-            path.write_text(source, encoding="utf-8")
+            path.write_text(source, encoding="utf-8", newline='\n')
             for mode, extra in (("text", []), ("binary", ["--emit-binary-nil"])):
                 output = root / (name + "-" + mode + ".nil")
                 output.write_bytes(sentinel)
@@ -304,7 +304,7 @@ end fn
                     raise AssertionError(f"{name}/{mode}: rejected source replaced prior artifact")
         for name, source in controls.items():
             path = root / (name + ".ny")
-            path.write_text(source, encoding="utf-8")
+            path.write_text(source, encoding="utf-8", newline='\n')
             for mode, extra in (("text", []), ("binary", ["--emit-binary-nil"])):
                 output = root / (name + "-" + mode + ".nil")
                 inputs = [str(path)]

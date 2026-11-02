@@ -11,6 +11,10 @@ import subprocess
 import sys
 import tempfile
 
+# Piping a source through a text-mode stdin would rewrite its newlines.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from exact_stdin import run_with_exact_stdin
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -28,20 +32,20 @@ def main():
         includes.mkdir()
         header = includes / 'constant.fragment'
         nested = includes / 'nested.no-language-extension'
-        header.write_text('@include "nested.no-language-extension"\n', encoding='utf8')
-        nested.write_text('@define ANSWER 42\n', encoding='utf8')
+        header.write_text('@include "nested.no-language-extension"\n', encoding='utf8', newline='\n')
+        nested.write_text('@define ANSWER 42\n', encoding='utf8', newline='\n')
         provider = root / 'provider.ny'
-        provider.write_text('module provider\npub fn answer() -> i32\n return 42\nend fn\n', encoding='utf8')
+        provider.write_text('module provider\npub fn answer() -> i32\n return 42\nend fn\n', encoding='utf8', newline='\n')
         source.write_text('@include "shared include/constant.fragment"\nimport provider\n'
-                          'fn main() -> i32\n return answer() - ANSWER\nend fn\n', encoding='utf8')
+                          'fn main() -> i32\n return answer() - ANSWER\nend fn\n', encoding='utf8', newline='\n')
         matrix.write_text('@include "shared include/constant.fragment"\n'
                           'book dependencies\nmain returns number begin paragraph\n'
-                          '    give ANSWER\nend paragraph\n', encoding='utf8')
+                          '    give ANSWER\nend paragraph\n', encoding='utf8', newline='\n')
 
         def run(arguments, *, input=None, status=0):
             nonlocal checks
-            result = subprocess.run([str(compiler), *map(str, arguments)], cwd=root, env=environment,
-                                    input=input, text=True, capture_output=True, timeout=30)
+            result = run_with_exact_stdin([compiler, *arguments], input,
+                                          cwd=root, env=environment, timeout=30)
             checks += 1
             assert result.returncode == status, (arguments, result.returncode, result.stdout, result.stderr)
             return result
@@ -81,7 +85,7 @@ def main():
 
         # Preserving the timestamp cannot conceal an edit; the digest describes bytes.
         previous = nested.stat()
-        nested.write_text('@define ANSWER 43\n', encoding='utf8')
+        nested.write_text('@define ANSWER 43\n', encoding='utf8', newline='\n')
         os.utime(nested, ns=(previous.st_atime_ns, previous.st_mtime_ns))
         changed = analyze()
         consumed(changed, [source, provider, header, nested])
@@ -109,7 +113,7 @@ def main():
             'schema': 'nil.analysis.workspace.v1',
             'sources': [{'path': str(source), 'text': source.read_text()}]}))
         assert not workspace['dependenciesComplete'], workspace
-        provider.write_text('module provider\npub fn answer() -> i32\n return "wrong"\nend fn\n')
+        provider.write_text('module provider\npub fn answer() -> i32\n return "wrong"\nend fn\n', newline='\n')
         failed = analyze(status=1)
         assert not failed['dependenciesComplete'] and not failed['success'], failed
         provider.unlink()
