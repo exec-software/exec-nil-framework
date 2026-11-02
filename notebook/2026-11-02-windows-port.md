@@ -148,6 +148,25 @@ previous artifact. A synthetic graph-change regression verifies that contract
 and stable subsequent reuse on Linux and Windows. No module normalization,
 ignored dependency, relaxed cache check, or automatic retry was introduced.
 
+The next clean gate at `93d843607775f36b222bd313eb64a21cda295a28`
+passed the edition test, but exposed a timing assumption in the parallel-process
+fixture (536 passed, six skipped, one failed; 407.63 seconds). Its preserved
+`success-2` ledger recorded only one overlapping worker even though all five
+workers completed with exact output and no backend error. Short 50/250 ms
+sleeps cannot guarantee counted overlap when Windows byte-lock contention can
+delay a worker for a one-second retry. The fixture now holds the first wave at
+an explicit, bounded rendezvous after each worker enters the counter. It still
+requires `maximum == jobs`, zero remaining active workers, exact output, and
+all existing cancellation/descendant/output-limit checks. A deliberately
+delayed second worker exercises startup skew beyond the old overlap window.
+This changes the test, not the scheduler. Failed candidate
+`development-1ee97fe987294feb9cbbb89046f2ce6c` remains preserved.
+Focused checks passed on Linux (9.38 seconds) and Windows (8.80 seconds),
+followed by ten Windows repetitions under four bounded CPU workers (all passed,
+91.00 seconds total; workers stopped). Disposable negative controls confirmed
+that a forced-serial runner fails the rendezvous and removing the rendezvous
+reproduces the old incorrect maximum in the delayed-start scenario.
+
 Reproducible checks:
 
 ```text

@@ -111,7 +111,21 @@ if mode == "success":
                 if os.name == "nt":
                     lock.seek(0)
                     msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+    if index == 1 and Path("delay-second").exists():
+        wait_for("active-0")
+        # Deliberately exceed worker zero's old sleep-only overlap window.
+        # The rendezvous below must prove concurrency despite startup skew.
+        time.sleep(0.4)
     count(1)
+    Path(f"active-{index}").touch()
+    first_wave = int(Path("first-wave").read_text())
+    if index < first_wave:
+        # A short sleep does not prove parallelism: process startup can exceed
+        # it under load, and Windows LK_LOCK retries contention only once per
+        # second. Keep each initial worker counted until every initial slot
+        # is occupied. A serial runner still fails the bounded rendezvous.
+        for sibling in range(first_wave):
+            wait_for(f"active-{sibling}")
     time.sleep(0.25 if index % 2 == 0 else 0.05)
     print(f"output-{index}")
     print(f"error-{index}", file=sys.stderr)
@@ -244,20 +258,25 @@ def main():
             case = directory / name
             case.mkdir()
             (case / 'ledger.lock').write_bytes(b'0')
+            (case / 'first-wave').write_text(str(min(jobs, len(modes))))
             return case, [str(driver), str(jobs), str(case), sys.executable,
                           str(worker), *modes]
 
-        for jobs in (1, 2):
-            case, call = command(f'success-{jobs}', jobs, ['success'] * 5)
+        for jobs, count, delayed in ((1, 5, False), (2, 5, False), (2, 2, True)):
+            case, call = command(f'success-{jobs}' + ('-delayed' if delayed else ''),
+                                 jobs, ['success'] * count)
+            if delayed:
+                (case / 'delay-second').touch()
             completed = run_driver(call, timeout=20)
             assert completed.returncode == 0, process_diagnostic(
                 completed.returncode, completed.stdout, completed.stderr)
             records = results(completed.stdout)
-            assert len(records) == 5
+            assert len(records) == count
             for i, result in enumerate(records):
                 assert result['started'] and not result['cancelled'] and result['status'] == 0, result
                 assert result['out'] == f'output-{i}\n' and result['err'] == f'error-{i}\n', result
-            assert json.loads((case / 'ledger').read_text()) == {'active': 0, 'maximum': jobs}
+            ledger = json.loads((case / 'ledger').read_text())
+            assert ledger == {'active': 0, 'maximum': jobs}, (case, ledger, records)
 
         case, call = command('failure', 2, ['failure', 'stubborn', 'queued', 'queued'])
         completed = run_driver(call, timeout=20)
