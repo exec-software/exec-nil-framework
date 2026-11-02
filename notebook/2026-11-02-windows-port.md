@@ -351,3 +351,50 @@ unquoted scalars, vendor-version strings, malformed assignments, and complete
 Windows build-configuration extraction. All 45 qualification unit tests pass.
 The final delivery is regenerated from the corrected clean source rather than
 rewriting the already-sealed candidate's evidence.
+
+### Final parity SDK acceptance
+
+The corrected clean source revision is
+`3ba1915c3b923fd52800805c8c7809f7249e7080`. Both source commits are pushed. Its
+fresh Windows candidate
+`C:\src\exec-nil-framework\build\windows-candidates\development-dd546fb3032041e19366e121f0b41408`
+completed the unmodified full development-SDK workflow:
+
+- Linux: 547 registered, 545 passed, two optional skips, no failures
+  (115.11 seconds).
+- Windows: 546 registered, 544 passed, two documented display/PostgreSQL skips,
+  no failures (420.62 seconds). All newly ported contracts ran. The focused
+  Windows qualification unit invocation ran 43 checks and skipped the two
+  Bash-builder-only checks; all new compiler-path regressions executed.
+- Installed SDK consumers: all 1,184 executions passed, covering 74 fixtures,
+  both standard-library forms, and eight execution routes. The gate rechecked
+  every sealed payload and the unchanged manifest afterward.
+- SDK layout: 11 root EXEs, `nillib`, `nilstd`, and 66 HTML documentation pages;
+  18 logical standard-library modules and 259 payload files plus the manifest.
+- The build evidence records the complete selected MSVC compiler path, not a
+  truncated `(x86)` prefix, and clean source identity matches the package.
+
+The host handoff is
+`/home/nathan/vm/nil-win11/artifacts/3ba1915c3b92/nil-framework-windows-development-3ba1915c3b92.zip`
+(28,372,902 bytes, 260 entries), SHA-256
+`964b91b917ecc21c06d070261e2314f95df4c86a773034649f37cde683959ddf`.
+Archive CRC/inventory, every payload size/hash, manifest/consumer binding,
+copied evidence hashes, full compiler path, and the checksum sidecar were
+verified on the host without executing Windows binaries. Delivery metadata,
+Windows/Linux JUnit reports, consumer report, full pipeline log, transcript,
+and 12-file PE dependency inventory are alongside the archive. Import inventory
+does not certify a bare Windows installation or redistribute prerequisites.
+
+The superseded `development-26880430952f412b876a20c1bac4393e` candidate's
+consumer parent was deliberately stopped after the metadata defect was found;
+its observed child finished, and its logs/scratch files and failed marker were
+preserved. It is not a delivered SDK. The previously accepted `0d8c6c21b20a`
+archive also remains untouched. No resets or source changes were discarded.
+
+At final verification the VM worktree was clean, no owned compiler/build/test
+process remained, optional telemetry OptIn was still zero, and the accepted
+candidate had no failed marker. No active SDK, Lich release, or Anomalous project
+was changed. The known provider/hot-reload/platform-qualification gaps above
+remain; this is a validated Windows development SDK, not a Windows release
+declaration. This subsequent notebook checkpoint does not relabel the archive's
+pinned source revision.
