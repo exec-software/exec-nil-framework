@@ -6,6 +6,7 @@
 #include "../../common/standard_streams.hpp"
 #include "../../common/native_executable_path.hpp"
 #include "../../common/windows_utf8_manifest.hpp"
+#include "../../common/windows_private_storage.hpp"
 #ifdef _WIN32
 #include "../../nillinker/process_runner.hpp"
 #endif
@@ -257,11 +258,11 @@ create_private_staging_directory(const std::filesystem::path &output,
       const auto candidate = parent / suffix.str();
 
 #ifdef _WIN32
-      if (CreateDirectoryW(candidate.c_str(), nullptr)) {
+      if (nil::detail::create_owner_only_directory(candidate, error)) {
         error.clear();
         return candidate;
       }
-      const auto native_error = GetLastError();
+      const auto native_error = static_cast<DWORD>(error.value());
       if (native_error == ERROR_ALREADY_EXISTS ||
           native_error == ERROR_FILE_EXISTS)
         continue;
@@ -373,6 +374,7 @@ static bool ensure_staged_regular_file_permissions(
   }
 #else
   (void)required_owner_permissions;
+  if (!nil::detail::secure_owner_only_file(path, error)) return false;
 #endif
   error.clear();
   return true;

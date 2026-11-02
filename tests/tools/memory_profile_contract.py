@@ -136,15 +136,22 @@ def main():
             assert result.stdout == ""
             assert existing.read_bytes() == sentinel
             checks += 1
-        if os.name != "nt":
-            link = root / "symlink.json"
+        # A report destination must never follow a symlink on either host.
+        # A missing Windows fixture privilege is an error, not a test skip.
+        link = root / "symlink.json"
+        try:
             link.symlink_to(existing)
-            result = subprocess.run([str(probe), "basic"],
-                                    env={**environment, "NIL_MEMORY_PROFILE": str(link)},
-                                    capture_output=True, text=True, timeout=10)
-            assert result.returncode == 3 and link.is_symlink()
-            assert existing.read_bytes() == sentinel
-            checks += 1
+        except OSError as error:
+            raise AssertionError("required symlink fixture could not be created; "
+                                 "Windows needs Developer Mode or symlink privilege") from error
+        assert link.is_symlink(), "report destination fixture is not a symlink"
+        result = subprocess.run([str(probe), "basic"],
+                                env={**environment, "NIL_MEMORY_PROFILE": str(link)},
+                                capture_output=True, text=True, timeout=10)
+        assert result.returncode == 3 and "could not create capture destination" in result.stderr, result
+        assert result.stdout == "" and link.is_symlink(), result
+        assert existing.read_bytes() == sentinel
+        checks += 1
     print(f"Aperture memory collector contract: {checks} checks passed")
 
 

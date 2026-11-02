@@ -13,6 +13,16 @@ import tempfile
 # Piping a source through a text-mode stdin would rewrite its newlines.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from exact_stdin import run_with_exact_stdin
+from native_output_staging import native_output_path
+
+
+def same_source(actual: str, expected: Path) -> bool:
+    """Accept path spelling differences only when they identify the same file."""
+    path = Path(actual)
+    try:
+        return path.is_absolute() and path.samefile(expected)
+    except (OSError, ValueError):
+        return False
 
 
 def main() -> None:
@@ -44,7 +54,7 @@ def main() -> None:
 
         def validate(path, route, source=None):
             nonlocal checks
-            profile = json.loads(path.read_text())
+            profile = json.loads(path.read_text(encoding='utf-8'))
             assert profile['schema'] == 'aperture.memory.v1', profile
             assert profile['route'] == route, profile
             assert profile['completed'] and not profile['errors'], profile
@@ -56,7 +66,7 @@ def main() -> None:
                     assert values['allocated_' + units] - values['freed_' + units] == values['live_' + units], values
                     assert values['allocated_' + units] >= values['peak_' + units] >= values['live_' + units], values
             if source:
-                assert any(site['file'] == str(source) and site['line'] > 0 and 'main' in site['function']
+                assert any(same_source(site['file'], source) and site['line'] > 0 and 'main' in site['function']
                            for site in profile['sites']), profile['sites']
             checks += 1
             return profile
@@ -105,10 +115,11 @@ end fn
             inspection = run([aperture, 'memory', '--report', output, '--json'])
             assert json.loads(inspection.stdout) == profile and not inspection.stderr, inspection
             human = run([aperture, 'memory', '--report', output])
-            assert str(source) in human.stdout and not human.stderr, human
+            assert any(same_source(site['file'], source) and site['file'] in human.stdout
+                       for site in profile['sites']) and not human.stderr, human
             checks += 2
         if args.llvm == 'ON':
-            executable = root / 'native $(touch INJECTED) executable'
+            executable = native_output_path(root / 'native $(touch INJECTED) executable')
             run([compiler, '--quiet', '--no-stdlib', '--native', '-o', executable, source])
             direct = run([executable])
             assert direct.stdout == expected and not direct.stderr, direct
@@ -174,7 +185,7 @@ end paragraph
             assert totals['allocated_objects'] == totals['live_objects'] == 2, profile
             assert totals['freed_objects'] == totals['resizes'] == 0, profile
             assert all(site['function'] == 'main' and site['kind'].startswith('array')
-                       and site['file'] == str(parallel) and site['line'] > 0
+                       and same_source(site['file'], parallel) and site['line'] > 0
                        for site in profile['sites']), profile['sites']
             assert sum(site['allocated_objects'] for site in profile['sites']) == 2, profile
             assert any('parallel workers' in scope for scope in profile['scope']), profile
@@ -251,7 +262,7 @@ end paragraph
             output = root / ('fault-' + route + '.json')
             result = run([aperture, 'memory', '--output', output, *flags, fault], 1)
             assert result.stdout == '42\n', result
-            profile = json.loads(output.read_text())
+            profile = json.loads(output.read_text(encoding='utf-8'))
             assert profile['status'] == 'failed' and not profile['completed'], profile
             assert profile['totals']['allocated_objects'] > 0, profile
             output = root / ('exit-' + route + '.json')
@@ -294,7 +305,7 @@ end paragraph
             result = run([aperture, 'memory', '--sdk-path', stdlib, '--output', output,
                           *flags, eof_source], 1, input_text='')
             assert result.stdout == '42\n' and 'console.read_line' in result.stderr, result
-            profile = json.loads(output.read_text())
+            profile = json.loads(output.read_text(encoding='utf-8'))
             assert profile['status'] == 'failed' and not profile['completed'], profile
             assert profile['totals']['allocated_objects'] >= 1, profile
             checks += 1
@@ -305,10 +316,12 @@ end paragraph
         sentinel.write_text('do not replace', newline='\n')
         alias = root / 'existing-link.json'
         alias.symlink_to(sentinel)
-        for output in (sentinel, alias, root / 'absent-parent' / 'out.json', root):
+        original_source = source.read_bytes()
+        for output in (sentinel, alias, source, root / 'absent-parent' / 'out.json', root):
             result = run([aperture, 'memory', '--output', output, source], 1)
             assert not result.stdout and 'cannot create output report' in result.stderr, result
         assert sentinel.read_text() == 'do not replace' and alias.is_symlink()
+        assert source.read_bytes() == original_source
         checks += 1
         result = run([aperture, 'memory', root / 'missing.nil'], 1)
         assert 'not a regular file' in result.stderr, result
@@ -319,15 +332,22 @@ end paragraph
         # A loader failure can either carry an explicitly failed report or no
         # profile; it must never leave a successful fabricated measurement.
         if failed_report.exists():
-            assert not json.loads(failed_report.read_text())['completed']
+            assert not json.loads(failed_report.read_text(encoding='utf-8'))['completed']
         checks += 1
-        if os.name != 'nt':
-            result = run([aperture, 'memory', '/bin/true'], 1)
-            assert 'cannot read memory profile' in result.stderr, result
-            checks += 1
+        # A real non-NIL executable must run, but cannot fabricate a completed
+        # profile. Python is already required to run this contract on either
+        # host; binary stdout keeps the control byte-exact on Windows too.
+        nonprofiling_report = root / 'nonprofiling.json'
+        result = run([aperture, 'memory', '--output', nonprofiling_report,
+                      Path(sys.executable).resolve(), '--', '-c',
+                      'import sys; sys.stdout.buffer.write(b"nonprofiling target ran\\n")'], 1)
+        assert result.stdout == 'nonprofiling target ran\n', result
+        assert 'cannot read memory profile' in result.stderr, result
+        assert not nonprofiling_report.exists(), 'nonprofiling process published a fabricated report'
+        checks += 1
 
         # Report inspection is strict and never executes a file's contents.
-        original = json.loads(reports[0].read_text())
+        original = json.loads(reports[0].read_text(encoding='utf-8'))
         malformed = root / 'malformed.json'
         mutations = [None, {'schema': 'aperture.memory.v999'}, {'schema': 'aperture.memory.v1'}]
         negative = json.loads(json.dumps(original))

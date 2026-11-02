@@ -82,8 +82,19 @@ if(BUILD_TESTING)
 
     add_executable(nilbuild_windows_toolchain_inputs_tests tests/windows_toolchain_inputs_tests.cpp)
     target_compile_features(nilbuild_windows_toolchain_inputs_tests PRIVATE cxx_std_17)
+    if(WIN32)
+        target_link_libraries(nilbuild_windows_toolchain_inputs_tests PRIVATE advapi32)
+    endif()
     add_test(NAME nilbuild.windows-toolchain-inputs COMMAND $<TARGET_FILE:nilbuild_windows_toolchain_inputs_tests>)
     set_tests_properties(nilbuild.windows-toolchain-inputs PROPERTIES LABELS "tools;project;rc" TIMEOUT 60)
+
+    add_executable(nil_private_directory_tests tests/private_directory_tests.cpp)
+    target_compile_features(nil_private_directory_tests PRIVATE cxx_std_17)
+    if(WIN32)
+        target_link_libraries(nil_private_directory_tests PRIVATE advapi32)
+    endif()
+    add_test(NAME nil.private-directory-contract COMMAND $<TARGET_FILE:nil_private_directory_tests>)
+    set_tests_properties(nil.private-directory-contract PROPERTIES LABELS "tools;storage;rc" TIMEOUT 60)
 
     add_executable(ny_array_identity_vm_tests tests/vm_array_identity_tests.cpp)
     target_link_libraries(ny_array_identity_vm_tests PRIVATE nilcompiler_core)
@@ -517,12 +528,21 @@ if(BUILD_TESTING)
                     --interpreter $<TARGET_FILE:nilinterpreter>
                     --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
                     --llvm "${NIL_ENABLE_LLVM}"
+                    --cxx "${CMAKE_C_COMPILER}"
         )
-        # Reports 77 on Windows: the contract asserts POSIX exec and
-        # controlling-terminal semantics. Recording it as a skip keeps it
-        # from reading as coverage that host does not have.
         set_tests_properties(nilbuild.project-contract PROPERTIES
-            LABELS "tools;project;analysis;rc" SKIP_RETURN_CODE 77 TIMEOUT 180)
+            LABELS "tools;project;analysis;rc" TIMEOUT 180)
+        if(UNIX)
+            # exec identity, POSIX controlling terminals and FIFOs do not
+            # exist on Windows. The common contract tests Windows' resident
+            # parent, console cancellation and forwarded I/O/exit status.
+            add_test(NAME nilbuild.project-posix-process-contract
+                COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/project_build_contract.py"
+                    --builder $<TARGET_FILE:nilbuild> --posix-process-only)
+            set_tests_properties(nilbuild.project-posix-process-contract PROPERTIES
+                LABELS "tools;project;posix;rc" TIMEOUT 60)
+        endif()
         add_test(NAME nilbuild.incremental-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/incremental_build_contract.py"
                 --builder $<TARGET_FILE:nilbuild> --compiler $<TARGET_FILE:nilcompiler>
@@ -645,12 +665,21 @@ if(BUILD_TESTING)
                     --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
         )
         set_tests_properties(ny.numeric-sort-complexity PROPERTIES LABELS "stdlib;sorting;interpreter;rc" TIMEOUT 120)
+        set(NIL_MEMORY_LIMIT_ARGUMENTS)
+        if(WIN32)
+            add_executable(nil_native_memory_limiter tests/tools/native_memory_limiter.cpp)
+            target_compile_features(nil_native_memory_limiter PRIVATE cxx_std_17)
+            set(NIL_MEMORY_LIMIT_ARGUMENTS --memory-launcher $<TARGET_FILE:nil_native_memory_limiter>)
+            add_test(NAME nil.native-memory-limit-contract COMMAND nil_native_memory_limiter --self-test)
+            set_tests_properties(nil.native-memory-limit-contract PROPERTIES LABELS "native;memory;rc" TIMEOUT 60)
+        endif()
         add_test(
             NAME ny.native-managed-lifetime
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_managed_lifetime.py"
                     --compiler $<TARGET_FILE:nilcompiler>
                     --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
                     --llvm "${NIL_ENABLE_LLVM}"
+                    ${NIL_MEMORY_LIMIT_ARGUMENTS}
         )
         set_tests_properties(ny.native-managed-lifetime PROPERTIES LABELS "native;rc" SKIP_RETURN_CODE 77 TIMEOUT 150)
         add_test(NAME ny.ownership-contract
@@ -659,7 +688,8 @@ if(BUILD_TESTING)
         set_tests_properties(ny.ownership-contract PROPERTIES LABELS "typecheck;ownership;rc" TIMEOUT 120)
         add_test(NAME ny.native-owned-lifetime
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_owned_lifetime.py"
-                --compiler $<TARGET_FILE:nilcompiler> --llvm "${NIL_ENABLE_LLVM}")
+                --compiler $<TARGET_FILE:nilcompiler> --llvm "${NIL_ENABLE_LLVM}"
+                ${NIL_MEMORY_LIMIT_ARGUMENTS})
         set_tests_properties(ny.native-owned-lifetime PROPERTIES LABELS "native;ownership;rc" SKIP_RETURN_CODE 77 TIMEOUT 240)
         # Matrix lexer conformance: the sample corpus must tokenise clean, and
         # each negative fixture must be rejected for the stated reason.
@@ -1221,16 +1251,14 @@ if(BUILD_TESTING)
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/memory_profile_contract.py"
                     --probe $<TARGET_FILE:nil_memory_profile_probe>)
             set_tests_properties(aperture.memory-collector-contract PROPERTIES LABELS "aperture;memory" TIMEOUT 30)
-            if(UNIX)
-                add_test(NAME aperture.memory-contract
-                    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/aperture_memory_contract.py"
-                        --aperture $<TARGET_FILE:aperture>
-                        --compiler $<TARGET_FILE:nilcompiler>
-                        --interpreter $<TARGET_FILE:nilinterpreter>
-                        --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
-                        --llvm "${NIL_ENABLE_LLVM}")
-                set_tests_properties(aperture.memory-contract PROPERTIES LABELS "aperture;memory;routes" TIMEOUT 180)
-            endif()
+            add_test(NAME aperture.memory-contract
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/aperture_memory_contract.py"
+                    --aperture $<TARGET_FILE:aperture>
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                    --llvm "${NIL_ENABLE_LLVM}")
+            set_tests_properties(aperture.memory-contract PROPERTIES LABELS "aperture;memory;routes" TIMEOUT 180)
         endif()
         add_test(
             NAME nil.analysis

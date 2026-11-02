@@ -53,7 +53,7 @@ target_include_directories(
 )
 target_link_libraries(nillinker PRIVATE nilruntime)
 if(WIN32)
-    target_link_libraries(nillinker PRIVATE shell32)
+    target_link_libraries(nillinker PRIVATE shell32 advapi32)
 endif()
 target_compile_definitions(
     nillinker
@@ -128,7 +128,7 @@ if(BUILD_TESTING)
     )
     target_link_libraries(nillinker_timeout_fixture PRIVATE nilruntime)
     if(WIN32)
-        target_link_libraries(nillinker_timeout_fixture PRIVATE shell32)
+        target_link_libraries(nillinker_timeout_fixture PRIVATE shell32 advapi32)
     endif()
     target_compile_definitions(
         nillinker_timeout_fixture

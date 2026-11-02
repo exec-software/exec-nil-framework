@@ -88,6 +88,84 @@ def validate_generation(
         )
 
 
+def replace_directory_symlink(source: Path, destination: Path) -> None:
+    """Atomically replace the directory link itself, never either referent.
+
+    MoveFileExW (and Python's os.replace) cannot replace Windows directory
+    reparse points. FileRenameInfoEx provides the single-operation POSIX
+    replacement semantics on supported Windows filesystems. An unsupported
+    filesystem/API must fail; deleting the old link first is not a fallback.
+    """
+    if not source.is_symlink():
+        raise OSError("publication replacement source is not a symlink: " + str(source))
+    if exists_or_link(destination) and not destination.is_symlink():
+        raise OSError("refusing to replace a non-symlink SDK path: " + str(destination))
+    if os.name != "nt":
+        os.replace(source, destination)
+        return
+
+    import ctypes
+    from ctypes import wintypes
+
+    class RenameInfo(ctypes.Structure):
+        # Native SDK layout, including pointer alignment. FileNameLength is
+        # bytes, not WCHARs; the trailing terminator is outside that length.
+        _fields_ = [("Flags", wintypes.DWORD), ("RootDirectory", wintypes.HANDLE),
+                    ("FileNameLength", wintypes.DWORD), ("FileName", wintypes.WCHAR * 1)]
+
+    class AttributeTagInfo(ctypes.Structure):
+        _fields_ = [("FileAttributes", wintypes.DWORD), ("ReparseTag", wintypes.DWORD)]
+
+    def native_path(path: Path) -> str:
+        value = str(path.absolute())
+        if value.startswith("\\\\?\\"):
+            return value
+        return "\\\\?\\UNC\\" + value[2:] if value.startswith("\\\\") else "\\\\?\\" + value
+
+    api = ctypes.WinDLL("kernel32", use_last_error=True)
+    api.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+        wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    api.CreateFileW.restype = wintypes.HANDLE
+    api.GetFileInformationByHandleEx.argtypes = (wintypes.HANDLE, ctypes.c_int,
+        wintypes.LPVOID, wintypes.DWORD)
+    api.GetFileInformationByHandleEx.restype = wintypes.BOOL
+    api.SetFileInformationByHandle.argtypes = (wintypes.HANDLE, ctypes.c_int,
+        wintypes.LPVOID, wintypes.DWORD)
+    api.SetFileInformationByHandle.restype = wintypes.BOOL
+    api.CloseHandle.argtypes = (wintypes.HANDLE,)
+    api.CloseHandle.restype = wintypes.BOOL
+
+    # DELETE | FILE_READ_ATTRIBUTES; share read/write/delete; OPEN_EXISTING;
+    # OPEN_REPARSE_POINT | BACKUP_SEMANTICS. Opening the link, not its target,
+    # is essential: a successful rename must never move an SDK generation.
+    handle = api.CreateFileW(native_path(source), 0x00010080, 7, None, 3,
+                            0x00200000 | 0x02000000, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        attributes = AttributeTagInfo()
+        if not api.GetFileInformationByHandleEx(handle, 9, ctypes.byref(attributes),
+                                                ctypes.sizeof(attributes)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if (attributes.FileAttributes & (0x10 | 0x400) != (0x10 | 0x400) or
+                attributes.ReparseTag != 0xA000000C):
+            raise OSError("publication replacement handle is not a directory symlink")
+        encoded = native_path(destination).encode("utf-16-le", errors="surrogatepass")
+        buffer = ctypes.create_string_buffer(RenameInfo.FileName.offset + len(encoded) + 2)
+        rename = RenameInfo.from_buffer(buffer)
+        rename.Flags = 0x1 | 0x2  # REPLACE_IF_EXISTS | POSIX_SEMANTICS
+        rename.RootDirectory = None
+        rename.FileNameLength = len(encoded)
+        ctypes.memmove(ctypes.addressof(buffer) + RenameInfo.FileName.offset, encoded, len(encoded))
+        # FileRenameInfoEx = 22 in FILE_INFO_BY_HANDLE_CLASS (minwinbase.h).
+        if not api.SetFileInformationByHandle(handle, 22, buffer, len(buffer)):
+            error = ctypes.get_last_error()
+            raise OSError("atomic Windows SDK link replacement failed (WinError {}): {}".format(
+                error, ctypes.FormatError(error).strip()))
+    finally:
+        api.CloseHandle(handle)
+
+
 def replace_link(destination: Path, target: str) -> None:
     temporary_link = destination.parent / ".{}.link.{}.tmp".format(
         destination.name, os.getpid()
@@ -102,7 +180,7 @@ def replace_link(destination: Path, target: str) -> None:
         temporary_link.unlink()
     try:
         temporary_link.symlink_to(target, target_is_directory=True)
-        os.replace(temporary_link, destination)
+        replace_directory_symlink(temporary_link, destination)
     finally:
         if temporary_link.is_symlink():
             temporary_link.unlink()

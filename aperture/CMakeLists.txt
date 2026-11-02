@@ -26,6 +26,9 @@ target_include_directories(aperture PRIVATE src)
 
 # Link against NIL core libraries
 target_link_libraries(aperture PRIVATE nilcompiler_core nilruntime)
+if(WIN32)
+    target_link_libraries(aperture PRIVATE advapi32)
+endif()
 
 # C++17 required
 target_compile_features(aperture PRIVATE cxx_std_17)

@@ -216,10 +216,11 @@ Execution supports POSIX hosts and the Windows development target. Native VM
 tests cover Windows deadlines, output limits, descendant cleanup, and console
 interruption; this does not extend the Linux-only release qualification.
 
-Each requested route compiles once into a fresh temporary directory. POSIX
-creation is owner-only; Windows inherits TEMP's permissions, so use a trusted,
-user-controlled TEMP directory. Selected
-cases then run independently, with standard input closed and captured standard
+Each requested route compiles once into a fresh owner-only temporary directory:
+POSIX mode `0700`, or a verified protected Windows DACL for the effective user.
+Use trusted, user-controlled TEMP ancestry on either platform; this does not
+protect against administrators or a parent-directory owner replacing paths.
+Selected cases then run independently, with standard input closed and captured standard
 output and standard error. `--jobs` allows 1–64 concurrent cases, defaulting to
 at most four. A failing case does not cancel its siblings. Cancellation stops
 new cases and terminates active process groups on POSIX or Job Objects on

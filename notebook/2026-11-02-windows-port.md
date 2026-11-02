@@ -225,7 +225,7 @@ processes remained running at handoff. No SDK activation or publication occurred
 This notebook's final evidence checkpoint is documentation-only and later than
 the archive's pinned source revision; it does not re-label the existing package.
 
-## Follow-up and boundaries
+## Follow-up and boundaries at the first candidate
 
 Windows remains a development target: POSIX-only lifetime/project checks,
 optional display and
@@ -244,3 +244,87 @@ does not promise POSIX-style owner-only isolation in shared output/TEMP trees.
 The compiler/linker already had this limitation before the recovered port.
 Explicit owner-DACL creation and cross-user ACL regression tests remain a
 separate hardening task; use trusted user-controlled directories meanwhile.
+
+## Mainline parity follow-up
+
+The next pass closes behavioral/coverage gaps rather than treating skipped
+Windows checks as equivalent to Linux coverage. The original candidate above
+is unchanged; the following changes require a new source-pinned candidate.
+
+- The common project contract now runs on Windows: mixed-language checking,
+  VM/native build/run/test, manifest and path policies, atomic outputs,
+  symlinks/hardlinks, cancellation, and forwarded stdin/stdout/stderr/exit
+  status. Windows' resident parent and child identities are tested explicitly.
+  POSIX exec identity, controlling-terminal input, and FIFO rejection remain a
+  separately registered UNIX-only contract, not a broad Windows test skip.
+- Both native lifetime tests retain their original workloads (>625 MiB and
+  >2 GiB cumulative allocation) and 96 MiB limits. Windows uses a test-only
+  suspended-child Job launcher: the process committed-memory limit is attached
+  before execution. This is not the same metric as Linux's `RLIMIT_AS`, nor RSS.
+  Uncapped/capped/uncapped allocation controls prove enforcement; argument,
+  timeout, bounded-output, and lingering-descendant controls also execute. The
+  helper is not installed in the SDK.
+- SDK directory-link switching uses Windows `FileRenameInfoEx` POSIX replacement
+  semantics, with no delete-then-create fallback. Disposable tests cover 251
+  swaps with concurrent readers, a held old-generation file, Unicode/spaces,
+  unsupported-operation cleanup, real sharing violations, and existing
+  publication/rollback races. No active SDK was touched. A metadata-only handle
+  did not establish the intended sharing violation; the final negative control
+  uses actual read access and exclusive sharing.
+- Aperture's full memory contract now runs on Windows. It exposed a genuine
+  native-source bug: the linker wrote `program.exe`, but Aperture launched the
+  extensionless path. The launcher now uses the actual filename. The portable
+  contract retains source identity, allocation/ownership/GC/parallel accounting,
+  input and failure checks, and 101 assertions; a real nonprofiling Python child
+  replaces the `/bin/true`-only control. Both hosts pass it.
+- Previously hidden Windows symlink exclusions in context snapshot inspection
+  and memory-report capture are removed. These tests now require the fixture,
+  reject the operation, and verify that link and target survive. FIFO checks
+  remain POSIX-only.
+- Private staging now supplies a protected effective-user DACL at directory
+  creation and verifies it before writing sensitive descendants. Unsupported
+  security semantics fail closed. Compiler/linker staged files are checked via
+  non-reparse handles; copied interpreter stubs are secured before bundle bytes
+  are appended. The new contract checks public positive controls versus
+  restricted-token read/write/create denial, nested inheritance, collisions,
+  copied/read-only stubs, reparse rejection, and held-file delete exclusion.
+  This is real restricted-token I/O coverage, not a separate-account test.
+
+The first combined Windows gate rejected normal files whose owner came from
+`TokenOwner` (the elevated token's default group), rather than `TokenUser`.
+The correction accepts only the effective user's/default creator-owner SID in
+an already-exclusive private staging path, installs the protected user DACL,
+then obtains `WRITE_OWNER` through `ReOpenFile` on the retained object when
+needed and assigns the effective user. Final verification still requires that
+user as owner and the exact protected DACL. No privilege is enabled. A read-only
+default-owner regression covers this case; metadata-only handles are not used
+to claim delete-sharing exclusion. Original failing evidence is preserved in
+`C:\provision\codex-parity-default-owner-rejection.{log,xml}`.
+
+The first complete Linux parity gate passed 545/547 registered tests, with only
+the optional display/PostgreSQL tests skipped, in 101.44 seconds. The corrected
+combined Windows focused gate passed all 13 selected tests. A final source
+checkpoint and clean Windows SDK workflow follow; these focused results alone
+do not establish a release qualification.
+
+Remaining platform gaps are explicit: the display provider loads GTK only on
+Linux; PostgreSQL is compiled out on Windows (not merely missing a DLL); and
+`nilagent`'s Windows hot-reload connection/discovery are still stubs despite an
+older Named Pipes comment. Linux ELF toolchain closure and POSIX terminal tests
+are platform-specific; Windows has its own toolchain collector and process
+contracts. Windows release assembly, PE/CRT redistribution/minimum-OS policy,
+and bare-host validation still require their own reviewed qualification. The
+Linux-only RC profile is unchanged. The earlier intermittent module-set
+observation is still not explained; strict graph checks remain in place.
+
+Secured Windows bundle/native outputs retain their owner-only descriptor when
+published. Cross-user sharing is an explicit later permission change. Trusted
+parent ancestry remains necessary on both hosts; these controls do not protect
+against administrators or an ancestor owner replacing paths. The documentation
+now describes this boundary rather than the old inherited-ACL limitation.
+
+Relevant platform contracts:
+[directory security at creation](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createdirectoryw),
+[default token owner](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_owner),
+[reopening a retained object](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-reopenfile),
+and [restricted-token access checks](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-createrestrictedtoken).

@@ -5,13 +5,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 
 VALIDATOR_SOURCE = r'''#!/usr/bin/env python3
@@ -423,19 +426,128 @@ def run_rollback_preserves_changed_destination(publisher: Path) -> None:
             raise AssertionError("rollback damaged the previous generation")
 
 
+def run_atomic_reader_scenario(publisher) -> None:
+    """Readers see complete old/new generations, including during replacement."""
+    with tempfile.TemporaryDirectory(prefix="nil-sdk-publish-reader-") as raw:
+        root = Path(raw) / "space \u03bb"
+        root.mkdir()
+        old, new = root / "old", root / "new"
+        write_payload(old, "old")
+        write_payload(new, "new")
+        old_bytes, new_bytes = (old / "manifest.json").read_bytes(), (new / "manifest.json").read_bytes()
+        expected = {old_bytes, new_bytes}
+        active = root / "sdk"
+        active.symlink_to("old", target_is_directory=True)
+        failures = []
+        observations = [0]
+        ready, observed_new, stop = threading.Event(), threading.Event(), threading.Event()
+
+        def reader():
+            while not stop.is_set():
+                try:
+                    data = (active / "manifest.json").read_bytes()
+                    if data not in expected:
+                        raise AssertionError("reader observed an incomplete generation: " + repr(data))
+                    observations[0] += 1
+                    ready.set()
+                    if data == new_bytes:
+                        observed_new.set()
+                except BaseException as error:
+                    failures.append(error)
+                    ready.set()
+                    observed_new.set()
+                    break
+
+        worker = threading.Thread(target=reader)
+        # An already opened referent must continue to identify the old SDK.
+        with (active / "manifest.json").open("rb") as held:
+            worker.start()
+            try:
+                assert ready.wait(5), "reader did not start"
+                publisher.replace_link(active, "new")
+                assert observed_new.wait(5), "reader did not observe the new generation"
+                for index in range(250):
+                    publisher.replace_link(active, "old" if index % 2 == 0 else "new")
+                assert held.read() == old_bytes
+            finally:
+                stop.set()
+                worker.join(10)
+        assert not worker.is_alive(), "publication reader did not stop"
+        assert not failures, failures
+        assert observations[0] >= 2, observations
+        assert active.resolve(strict=True) == new
+        assert sorted(path.name for path in root.iterdir()) == ["new", "old", "sdk"]
+
+        # Simulate a filesystem refusing the atomic primitive. replace_link
+        # must neither remove the active link nor leave its temporary behind.
+        previous_identity = publisher.symlink_identity(active)
+        with patch.object(publisher, "replace_directory_symlink",
+                          side_effect=OSError("unsupported atomic replacement")):
+            try:
+                publisher.replace_link(active, "old")
+            except OSError as error:
+                assert "unsupported atomic replacement" in str(error), error
+            else:
+                raise AssertionError("failed atomic replacement unexpectedly succeeded")
+        assert publisher.symlink_identity(active) == previous_identity
+        assert active.resolve(strict=True) == new
+        assert sorted(path.name for path in root.iterdir()) == ["new", "old", "sdk"]
+
+        # A rejected source must also retain the old active link.
+        try:
+            publisher.replace_directory_symlink(root / "missing", active)
+        except OSError:
+            pass
+        else:
+            raise AssertionError("missing replacement source unexpectedly succeeded")
+        assert publisher.symlink_identity(active) == previous_identity
+        assert (active / "manifest.json").read_bytes() in expected
+        if os.name == "nt":
+            # Hold only our own replacement link without delete sharing. The
+            # real Windows source-open must fail before touching the active
+            # entry, and the caller must not emulate replacement by unlinking.
+            import ctypes
+            from ctypes import wintypes
+
+            api = ctypes.WinDLL("kernel32", use_last_error=True)
+            api.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+            api.CreateFileW.restype = wintypes.HANDLE
+            api.CloseHandle.argtypes = (wintypes.HANDLE,)
+            api.CloseHandle.restype = wintypes.BOOL
+            locked = root / "locked replacement"
+            locked.symlink_to("old", target_is_directory=True)
+            handle = api.CreateFileW(str(locked), 0x80000000, 0, None, 3,
+                                    0x00200000 | 0x02000000, None)
+            if handle == ctypes.c_void_p(-1).value:
+                raise ctypes.WinError(ctypes.get_last_error())
+            try:
+                try:
+                    publisher.replace_directory_symlink(locked, active)
+                except OSError as error:
+                    assert error.winerror == 32, error  # ERROR_SHARING_VIOLATION
+                else:
+                    raise AssertionError("replacement ignored missing delete sharing")
+                assert publisher.symlink_identity(active) == previous_identity
+                assert locked.is_symlink() and (active / "manifest.json").read_bytes() == new_bytes
+            finally:
+                api.CloseHandle(handle)
+                if locked.is_symlink():
+                    locked.unlink()
+
+
 def main() -> int:
     args = arguments()
     publisher = args.publisher.resolve(strict=True)
 
-    # SDK publication requires directory symlinks that can be swapped
-    # atomically: a reader must never observe the SDK pathname missing. Report
-    # a standard CTest skip on a platform or policy that does not permit that.
-    #
-    # Probing only symlink *creation* is not enough. Windows creates directory
-    # symlinks under Developer Mode but has no atomic replacement for them --
-    # MoveFileEx refuses to overwrite a directory reparse point, so os.replace
-    # fails with access denied. Exercise the whole operation the publisher
-    # performs, not the part that happens to be portable.
+    specification = importlib.util.spec_from_file_location("sdk_publisher", publisher)
+    assert specification is not None and specification.loader is not None
+    implementation = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(implementation)
+
+    # Symlink creation can be unavailable under local filesystem/privilege
+    # policy. Once links are available, the publisher's actual atomic primitive
+    # must work: an implementation failure is not a reason to skip this test.
     with tempfile.TemporaryDirectory(prefix="nil-sdk-symlink-probe-") as raw:
         root = Path(raw)
         target = root / "target"
@@ -445,11 +557,12 @@ def main() -> int:
         try:
             link.symlink_to(target, target_is_directory=True)
             replacement.symlink_to(target, target_is_directory=True)
-            os.replace(replacement, link)
         except OSError as exc:
             print("SDK publication concurrency test skipped: {}".format(exc))
             return 77
+        implementation.replace_directory_symlink(replacement, link)
 
+    run_atomic_reader_scenario(implementation)
     run_scenario(publisher, with_previous_target=False)
     run_scenario(publisher, with_previous_target=True)
     run_restrictive_umask_scenario(publisher)

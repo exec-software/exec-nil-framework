@@ -4,41 +4,110 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import signal
 
+from incremental_build_contract import windows_launcher
+from process_contract_support import (assert_stopped, cancel_process,
+                                      cleanup_process, console_options,
+                                      process_alive)
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from native_output_staging import native_output_path
+
+
+def posix_process_contract(builder):
+    """Keep exec image replacement, controlling terminals and FIFOs explicit."""
+    if os.name == 'nt':
+        print('POSIX exec image replacement, controlling terminals and FIFOs '
+              'are not Windows process semantics; skipped')
+        return 77
+    import fcntl
+    import pty
+    import termios
+
+    with tempfile.TemporaryDirectory(prefix='nil project posix ; ') as directory:
+        root = Path(directory)
+        project = root / 'nil.project.json'
+        project.write_text(json.dumps({'schema': 'nil.project.v1', 'name': 'terminal',
+                                       'entry': 'main.ny'}), encoding='utf-8')
+        (root / 'main.ny').write_text('fn main() -> i32\n return 0\nend fn\n', encoding='utf-8')
+        compiler = root / 'compiler with spaces'
+        program = ('#!' + sys.executable + '\nimport os\n'
+                   'print(os.getpid(), flush=True)\nprint(input(), flush=True)\n')
+        report = json.dumps({'schema': 'nil.analysis.v1', 'success': True, 'diagnostics': []})
+        compiler.write_text('#!' + sys.executable + '\nimport sys\nfrom pathlib import Path\n'
+                            'if "--analyze" in sys.argv:\n print(' + repr(report) + ')\n sys.exit(0)\n'
+                            'output=Path(sys.argv[sys.argv.index("--output")+1])\n'
+                            'output.write_text(' + repr(program) + ')\noutput.chmod(0o755)\n',
+                            encoding='utf-8', newline='\n')
+        compiler.chmod(0o755)
+        command = [builder, 'run', '--project', str(project), '--compiler', str(compiler),
+                   '--target', 'native']
+        process = subprocess.Popen(command, cwd=root, stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            output, errors = process.communicate('interactive input\n', timeout=10)
+            assert process.returncode == 0 and output == f'{process.pid}\ninteractive input\n', (output, errors)
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+
+        master, slave = pty.openpty()
+        def acquire_terminal():
+            os.setsid()
+            fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+        process = subprocess.Popen(command, cwd=root, stdin=slave,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                   preexec_fn=acquire_terminal)
+        os.close(slave)
+        try:
+            os.write(master, b'from terminal\n')
+            output, errors = process.communicate(timeout=10)
+            assert process.returncode == 0 and output == f'{process.pid}\nfrom terminal\n', (output, errors)
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+            os.close(master)
+
+        project.unlink()
+        os.mkfifo(project)
+        result = subprocess.run([builder, 'describe', '--project', str(project)],
+                                cwd=root, capture_output=True, text=True, timeout=2)
+        assert result.returncode == 2 and 'regular file' in result.stderr, result
+    print('nilbuild: POSIX exec PID, controlling-terminal stdin and FIFO rejection passed')
+    return 0
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--builder', required=True)
-    parser.add_argument('--compiler', required=True)
-    parser.add_argument('--interpreter', required=True)
-    parser.add_argument('--tester', required=True)
-    parser.add_argument('--stdlib', required=True)
-    parser.add_argument('--llvm', required=True)
+    parser.add_argument('--compiler')
+    parser.add_argument('--interpreter')
+    parser.add_argument('--tester')
+    parser.add_argument('--stdlib')
+    parser.add_argument('--llvm')
+    parser.add_argument('--cxx', help='Windows C compiler for real fixture launchers')
+    parser.add_argument('--posix-process-only', action='store_true')
     args = parser.parse_args()
     args.builder = str(Path(args.builder).resolve())
+    if args.posix_process_only:
+        return posix_process_contract(args.builder)
+    for name in ('compiler', 'interpreter', 'tester', 'stdlib', 'llvm'):
+        if getattr(args, name) is None:
+            parser.error('--' + name + ' is required for the common project contract')
+    if os.name == 'nt' and args.cxx is None:
+        parser.error('--cxx is required on Windows')
     args.compiler = str(Path(args.compiler).resolve())
     args.interpreter = str(Path(args.interpreter).resolve())
     args.tester = str(Path(args.tester).resolve())
     args.stdlib = str(Path(args.stdlib).resolve())
-    if sys.platform == 'win32':
-        # This contract asserts POSIX process semantics, not merely POSIX
-        # tooling. `nilbuild run` replaces its own image with the program via
-        # execv, and the cases below check exactly that: the program's stdout
-        # must carry nilbuild's *own* pid, and a controlling terminal acquired
-        # with pty/termios must reach it. Windows has no execv -- the driver
-        # stays resident as a parent and forwards the exit status -- so the
-        # property under test does not exist there rather than being
-        # unimplemented. The Windows behaviour of the same code paths is
-        # covered by nilbuild.incremental-contract and nilbuild.project-edition.
-        # See docs/platform-behavior.md.
-        print('nilbuild.project-contract asserts POSIX exec and controlling-terminal '
-              'semantics, which Windows does not have; skipped')
-        return 77
     count = 0
     with tempfile.TemporaryDirectory(prefix='nil project ; space ') as directory:
         root = Path(directory)
@@ -82,7 +151,7 @@ def main():
                 call += ['--sdk', args.stdlib]
             call += list(map(str, flags))
             result = subprocess.run(call, cwd=cwd, text=True, capture_output=True,
-                                    timeout=timeout, env=environment)
+                                    encoding='utf-8', timeout=timeout, env=environment)
             assert result.returncode == status, (call, result.returncode, result.stdout, result.stderr)
             count += 1
             return result
@@ -98,7 +167,7 @@ def main():
             'edition': 'original',
             'includePaths': [str(root), str(library)], 'sdkPath': None,
             'outputDirectory': str(root / 'build'), 'vmOutput': str(root / 'build/mixed.nil'),
-            'nativeOutput': str(root / 'build/mixed'),
+            'nativeOutput': str(native_output_path(root / 'build/mixed')),
             'analysis': {'disabledRules': [], 'warningsAsErrors': False}}, description
         assert json.loads(invoke('describe', '--format', 'json').stdout)['sdkPath'] == args.stdlib
         nested = sources / 'nested'
@@ -132,13 +201,12 @@ def main():
             # Test sibling tool discovery as installed SDKs depend on it.
             assert invoke('check', explicit_tools=False).returncode == 0
             (root / 'build/mixed.nil').unlink()
-            import shutil
             shutil.rmtree(root / 'build/.nilbuild')
             (root / 'build').rmdir()
         save()
         if args.llvm.lower() in ('on', 'true', '1'):
             assert invoke('run', '--target', 'native').stdout == 'program executed\n42\n'
-            assert (root / 'build/mixed').is_file()
+            assert native_output_path(root / 'build/mixed').is_file()
 
         # Project testing shares resolved SDK/include settings while keeping
         # application artifacts untouched. Both the project and import root
@@ -172,7 +240,7 @@ main returns number begin paragraph
 end paragraph
 ''', encoding='utf-8', newline='\n')
         save({**base, 'entry': 'src/project checks.matrix', 'sdkPath': args.stdlib})
-        application_outputs = [root / 'build/mixed.nil', root / 'build/mixed']
+        application_outputs = [root / 'build/mixed.nil', native_output_path(root / 'build/mixed')]
         previous_outputs = {path: path.read_bytes() if path.is_file() else None
                             for path in application_outputs}
         expected_routes = {'vm', 'native'} if args.llvm.lower() in ('on', 'true', '1') else {'vm'}
@@ -228,7 +296,7 @@ end paragraph
             assert result.stdout == '3\nwords with spaces\n;echo nope\n\n', result
 
         # Warning policy comes from the compiler and is shared by check/build.
-        ny.write_text('fn main() -> i32\n println("λ🙂")  \n return 0\nend fn\n', newline='\n')
+        ny.write_text('fn main() -> i32\n println("λ🙂")  \n return 0\nend fn\n', encoding='utf-8', newline='\n')
         warning = json.loads(invoke('check', '--format', 'json').stdout)
         assert any(d['code'] == 'NIL1001' for d in warning['diagnostics'])
         assert f'{ny}:2:16:' in invoke('check').stderr
@@ -252,18 +320,35 @@ end paragraph
 
         # Compiler failure after successful analysis must preserve existing
         # outputs and must never run the stale executable.
-        fake = root / 'compiler with spaces'
+        fake_script = root / 'compiler with spaces.py'
+        fake = fake_script
         marker = root / 'stale program ran'
-        native = root / 'build/mixed'
-        native.write_text('#!' + sys.executable + '\nfrom pathlib import Path\nPath(' + repr(str(marker)) + ').touch()\n', newline='\n')
-        native.chmod(0o755)
+        native = native_output_path(root / 'build/mixed')
+        program_script = root / 'program with spaces.py'
+        program_launcher = root / 'program launcher.exe'
+        if os.name == 'nt':
+            fake = root / 'compiler with spaces.exe'
+            windows_launcher(args.cxx, fake, fake_script, root)
+            windows_launcher(args.cxx, program_launcher, program_script, root)
+
+        def install_program(body, destination):
+            program = '#!' + sys.executable + '\n' + body
+            if os.name == 'nt':
+                program_script.write_text(program, encoding='utf-8', newline='\n')
+                shutil.copyfile(program_launcher, destination)
+            else:
+                destination.write_text(program, encoding='utf-8', newline='\n')
+                destination.chmod(0o755)
+
+        install_program('from pathlib import Path\nPath(' + repr(str(marker)) + ').touch()\n', native)
         original = native.read_bytes()
         report = json.dumps({'schema': 'nil.analysis.v1', 'success': True, 'diagnostics': []})
 
         def fake_compiler(body):
-            fake.write_text('#!' + sys.executable + '\nimport sys\nfrom pathlib import Path\n'
-                            'if "--analyze" in sys.argv:\n print(' + repr(report) + ')\n sys.exit(0)\n' + body, newline='\n')
-            fake.chmod(0o755)
+            fake_script.write_text('#!' + sys.executable + '\nimport sys\nfrom pathlib import Path\n'
+                                   'if "--analyze" in sys.argv:\n print(' + repr(report) + ')\n sys.exit(0)\n' + body,
+                                   encoding='utf-8', newline='\n')
+            fake_script.chmod(0o755)
 
         fake_compiler('output = Path(sys.argv[sys.argv.index("--output") + 1])\n'
                       'output.write_text("partial output")\nsys.exit(42)\n')
@@ -287,75 +372,103 @@ end paragraph
         assert artifact.read_bytes() == b'previous valid artifact'
         assert not list(native.parent.glob('.nilbuild-*'))
 
-        # A successful run execs the program in place, preserving native
-        # terminal/process semantics and allowing output beyond compiler limits.
+        # The program inherits stdin/stdout and has no compiler output cap on
+        # either host. POSIX exec/controlling-terminal identity is a separate
+        # contract because Windows keeps a parent to forward the exit status.
         def fake_program(body):
             program = '#!' + sys.executable + '\n' + body
-            fake_compiler('output = Path(sys.argv[sys.argv.index("--output") + 1])\n'
-                          'output.write_text(' + repr(program) + ')\noutput.chmod(0o755)\n')
+            if os.name == 'nt':
+                program_script.write_text(program, encoding='utf-8', newline='\n')
+                fake_compiler('import shutil\n'
+                              'shutil.copyfile(' + repr(str(program_launcher)) + ', '
+                              'sys.argv[sys.argv.index("--output") + 1])\n')
+            else:
+                fake_compiler('output = Path(sys.argv[sys.argv.index("--output") + 1])\n'
+                              'output.write_text(' + repr(program) + ')\noutput.chmod(0o755)\n')
 
         fake_program('import sys\nsys.stdout.write("x" * (17 * 1024 * 1024))\n')
         result = invoke('run', '--compiler', fake, '--target', 'native', explicit_tools=False)
         assert len(result.stdout) == 17 * 1024 * 1024
-        fake_program('import os\nprint(os.getpid(), flush=True)\nprint(input(), flush=True)\n')
+        program_ready = root / 'program-ready.json'
+        fake_program('import json, os, sys\nfrom pathlib import Path\n'
+                     'sys.path.insert(0, ' + repr(str(Path(__file__).resolve().parent)) + ')\n'
+                     'from process_contract_support import record_processes\n'
+                     'record_processes(' + repr(str(program_ready)) + ', os.getpid(), '
+                     '*([os.getppid()] if os.name == "nt" else []))\n'
+                     'print(os.getpid(), flush=True)\nprint(input(), flush=True)\n'
+                     'print("program stderr", file=sys.stderr, flush=True)\nsys.exit(19)\n')
         command = [args.builder, 'run', '--project', str(project), '--compiler', str(fake),
                    '--target', 'native', '--sdk', args.stdlib]
         process = subprocess.Popen(command, cwd=root, stdin=subprocess.PIPE,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        output, errors = process.communicate('interactive input\n', timeout=10)
-        assert process.returncode == 0 and output == f'{process.pid}\ninteractive input\n', (output, errors)
-        count += 1
-        # A real terminal regression catches background-process-group SIGTTIN
-        # bugs that a pipe-based stdin test cannot expose.
-        import fcntl
-        import pty
-        import termios
-        master, slave = pty.openpty()
-        def acquire_terminal():
-            os.setsid()
-            fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
-        process = subprocess.Popen(command, cwd=root, stdin=slave,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                   preexec_fn=acquire_terminal)
-        os.close(slave)
+                                   encoding='utf-8')
         try:
-            os.write(master, b'from terminal\n')
-            output, errors = process.communicate(timeout=10)
-            assert process.returncode == 0 and output == f'{process.pid}\nfrom terminal\n', (output, errors)
+            deadline = time.monotonic() + 10
+            while not program_ready.exists() and time.monotonic() < deadline:
+                assert process.poll() is None, process.communicate()
+                time.sleep(0.02)
+            assert program_ready.exists(), 'program did not start'
+            child_identities = json.loads(program_ready.read_text())
+            child_pid = child_identities[0]['pid']
+            assert child_pid > 0 and process.poll() is None, 'driver must wait for its running program'
+            if os.name == 'nt':
+                # The payload runs below the native launcher; unlike POSIX
+                # exec, nilbuild must remain alive as a distinct parent and
+                # forward stdin, output and the exact nonzero program status.
+                assert all(identity['pid'] != process.pid for identity in child_identities)
+            output, errors = process.communicate('interactive input\n', timeout=10)
+            assert process.returncode == 19 and output == f'{child_pid}\ninteractive input\n', (output, errors)
+            assert errors == 'nilbuild: building mixed (native)\nprogram stderr\n', errors
         finally:
             if process.poll() is None:
                 process.kill()
-                process.wait()
-            os.close(master)
+            process.wait(timeout=5)
+            if program_ready.exists():
+                for identity in json.loads(program_ready.read_text()):
+                    if process_alive(identity):
+                        cleanup_process(identity)
         count += 1
 
         # Compiler cancellation forwards signals to its process group, reaps
         # the child and removes staging without publishing partial artifacts.
         pid_file = root / 'compiler-pids.json'
         current_artifact = native.read_bytes()
-        for stop_signal in (signal.SIGINT, signal.SIGTERM):
+        stop_signals = (signal.SIGBREAK,) if os.name == 'nt' else (signal.SIGINT, signal.SIGTERM)
+        for stop_signal in stop_signals:
             fake_compiler('import os, subprocess, time, json, signal\n'
+                          'sys.path.insert(0, ' + repr(str(Path(__file__).resolve().parent)) + ')\n'
+                          'from process_contract_support import record_processes\n'
                           'signal.signal(signal.SIGINT, signal.SIG_IGN)\n'
                           'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+                          'if os.name == "nt": signal.signal(signal.SIGBREAK, signal.SIG_IGN)\n'
                           'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])\n'
-                          'Path(' + repr(str(pid_file)) + ').write_text(json.dumps([os.getpid(), child.pid]))\n'
+                          'record_processes(' + repr(str(pid_file)) + ', os.getpid(), child.pid)\n'
                           'time.sleep(60)\n')
-            process = subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            deadline = time.monotonic() + 10
-            while not pid_file.exists() and time.monotonic() < deadline:
-                assert process.poll() is None, process.communicate()
-                time.sleep(0.02)
-            assert pid_file.exists(), 'compiler did not start'
-            child_pids = json.loads(pid_file.read_text())
-            process.send_signal(stop_signal)
-            output, errors = process.communicate(timeout=10)
-            assert process.returncode == 128 + stop_signal, (process.returncode, output, errors)
-            assert native.read_bytes() == current_artifact
-            assert not list(native.parent.glob('.nilbuild-*'))
-            for pid in child_pids:
-                stat = Path(f'/proc/{pid}/stat')
-                if stat.exists():
-                    assert stat.read_text().split(') ')[1].startswith('Z '), f'child {pid} survived cancellation'
+            process = subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       **console_options())
+            child_pids = []
+            try:
+                deadline = time.monotonic() + 10
+                while not pid_file.exists() and time.monotonic() < deadline:
+                    assert process.poll() is None, process.communicate()
+                    time.sleep(0.02)
+                assert pid_file.exists(), 'compiler did not start'
+                child_pids = json.loads(pid_file.read_text())
+                cancel_process(process, stop_signal)
+                output, errors = process.communicate(timeout=10)
+                expected = 130 if os.name == 'nt' else 128 + stop_signal
+                assert process.returncode == expected, (process.returncode, output, errors)
+                assert native.read_bytes() == current_artifact
+                assert not list(native.parent.glob('.nilbuild-*'))
+                for identity in child_pids:
+                    assert_stopped(identity)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
+                for identity in child_pids:
+                    if process_alive(identity):
+                        cleanup_process(identity)
             pid_file.unlink()
             count += 1
 
@@ -386,17 +499,16 @@ end paragraph
             project.write_bytes(raw)
             assert not invoke('describe', '--format', 'json', status=2).stdout
         project.unlink()
-        os.mkfifo(project)
+        project.mkdir()
         assert 'regular file' in invoke('describe', status=2, timeout=2).stderr
-        project.unlink()
-        save({**base, 'name': 'nil.project.json', 'outputDirectory': '.'})
-        contents = project.read_bytes()
-        assert 'overwrite' in invoke('build', '--target', 'native', status=2).stderr
-        assert project.read_bytes() == contents
-        custom = root / 'custom.json'
-        save({**base, 'name': 'custom.json', 'outputDirectory': '.'}, file=custom)
-        assert 'overwrite' in invoke('build', '--project', custom, '--target', 'native',
-                                    project_flag=False, status=2).stderr
+        project.rmdir()
+        for name in ('nil.project.json', 'custom.json'):
+            collision = native_output_path(root / name)
+            save({**base, 'name': name, 'outputDirectory': '.'}, file=collision)
+            contents = collision.read_bytes()
+            assert 'overwrite' in invoke('build', '--project', collision, '--target', 'native',
+                                        project_flag=False, status=2).stderr
+            assert collision.read_bytes() == contents
         save()
         artifact.unlink()
         artifact.symlink_to(matrix)

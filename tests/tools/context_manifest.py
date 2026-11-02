@@ -200,10 +200,22 @@ def main() -> int:
                 "compile library rejection fixture")
         failure(run([tools["compiler"], "--inspect-context", library]), "reject library context inspection")
 
-        if os.name != "nt":
-            symlink = root / "link.nil"
+        # Snapshot rejection applies on Windows too. Missing symlink fixture
+        # privileges must fail qualification, not silently remove coverage.
+        symlink = root / "link.nil"
+        snapshot = nils[0].read_bytes()
+        try:
             symlink.symlink_to(nils[0])
-            failure(run([tools["compiler"], "--inspect-context", symlink]), "reject symlink snapshot")
+        except OSError as error:
+            raise AssertionError("required symlink fixture could not be created; "
+                                 "Windows needs Developer Mode or symlink privilege") from error
+        if not symlink.is_symlink():
+            raise AssertionError("snapshot rejection fixture is not a symlink")
+        failure(run([tools["compiler"], "--inspect-context", symlink]), "reject symlink snapshot")
+        if not symlink.is_symlink() or nils[0].read_bytes() != snapshot:
+            raise AssertionError("snapshot rejection modified the symlink or its target")
+        # FIFOs have no equivalent filesystem fixture on Windows.
+        if os.name != "nt":
             fifo = root / "fifo.nil"
             os.mkfifo(fifo)
             failure(run([tools["compiler"], "--inspect-context", fifo]), "reject FIFO without blocking")

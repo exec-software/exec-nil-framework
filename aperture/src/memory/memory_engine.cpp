@@ -457,7 +457,14 @@ int MemoryEngine::run(const MemoryOptions& options) {
             assembler.insert(assembler.end(), {"-o", object.string(), nil.string()});
             status = execute(assembler);
             if (status != 0) return status;
+            // nillinker appends .exe to an extensionless Windows output.
+            // CreateProcessW's explicit application path does not, so retain
+            // the actual linked filename for the subsequent execution.
+#ifdef _WIN32
+            target = temporary.path / "program.exe";
+#else
             target = temporary.path / "program";
+#endif
             status = execute({tool(options, "nillinker"), "-o", target.string(), object.string()});
             if (status != 0) return status;
             bytecode = false;

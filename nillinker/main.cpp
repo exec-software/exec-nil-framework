@@ -5,6 +5,7 @@
  */
 #include "../common/standard_streams.hpp"
 #include "../common/windows_utf8_manifest.hpp"
+#include "../common/windows_private_storage.hpp"
 #include "nillinker.hpp"
 #include "process_runner.hpp"
 #include "secure_file_io.hpp"
@@ -887,11 +888,11 @@ create_private_staging_directory(const fs::path &output,
       }
       const fs::path candidate = parent / suffix.str();
 #ifdef _WIN32
-      if (CreateDirectoryW(candidate.c_str(), nullptr)) {
+      if (nil::detail::create_owner_only_directory(candidate, error)) {
         error.clear();
         return candidate;
       }
-      const DWORD native_error = GetLastError();
+      const DWORD native_error = static_cast<DWORD>(error.value());
       if (native_error == ERROR_ALREADY_EXISTS ||
           native_error == ERROR_FILE_EXISTS)
         continue;
@@ -954,6 +955,8 @@ bool secure_executable(const fs::path &path, std::error_code &error) {
       error = std::make_error_code(std::errc::permission_denied);
     return false;
   }
+#else
+  if (!nil::detail::secure_owner_only_file(path, error)) return false;
 #endif
   error.clear();
   return true;

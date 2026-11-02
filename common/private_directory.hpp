@@ -5,6 +5,9 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include "windows_private_storage.hpp"
+#endif
 #ifndef _WIN32
 #include <sys/stat.h>
 #include <cerrno>
@@ -20,9 +23,8 @@ namespace nil::detail {
 // non-deterministic source so a caller cannot be made to collide on purpose,
 // and the loop is bounded so exhaustion is an error rather than a hang.
 //
-// On POSIX creation is atomically owner-only, matching mkdtemp. Windows
-// inherits the parent's ACL; callers must use trusted output/TEMP directories.
-// A random name and exclusive creation do not imply cross-user isolation.
+// Creation is owner-only: POSIX mode 0700 or a protected Windows owner DACL.
+// Parent ancestry must remain trusted on both platforms.
 inline std::filesystem::path create_private_directory(
     const std::filesystem::path &parent, const std::string &prefix) {
   static const char alphabet[] = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -35,7 +37,10 @@ inline std::filesystem::path create_private_directory(
     for (int i = 0; i < 10; ++i) name += alphabet[pick(source)];
     const auto candidate = parent / name;
 #ifdef _WIN32
-    if (!std::filesystem::create_directory(candidate, error)) continue;
+    if (!create_owner_only_directory(candidate, error)) {
+      if (error.value() == ERROR_ALREADY_EXISTS || error.value() == ERROR_FILE_EXISTS) continue;
+      throw std::system_error(error, "cannot create private directory in " + parent.string());
+    }
 #else
     // chmod after default-permission mkdir leaves a writable race window.
     if (::mkdir(candidate.c_str(), 0700) != 0) {

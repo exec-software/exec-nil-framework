@@ -62,10 +62,15 @@ executes an old artifact after a failed check or compile. When the checked
 inputs, toolchain, settings and existing output match a previous successful
 build, compilation and linking are skipped. Otherwise, compilation writes to a
 fresh, exclusively created staging directory and replaces the output only
-after success. POSIX staging is owner-only (`0700`). Windows staging inherits
-the parent directory's ACL: use output and TEMP directories controlled by your
-user, not locations writable by untrusted users. Random staging names do not
-provide an additional cross-user isolation boundary on Windows.
+after success. Staging is owner-only: POSIX mode `0700`, or a protected Windows
+DACL granting access only to the effective user. Windows verifies the applied
+descriptor before writing sensitive children and rejects filesystems that do
+not preserve it. Copied interpreter stubs are secured before appending program
+data; secured Windows bundle/native outputs retain that protection after
+publication, so sharing them with another user requires an explicit permission
+change. On either platform, use trusted output/TEMP ancestry: private staging
+does not protect against an administrator or an untrusted owner replacing a
+parent directory.
 
 ## Project contract
 
