@@ -2,8 +2,17 @@
 
 ## Status
 
-Implemented and validated on Windows 11 x64 and Linux. The accepted Windows
-development SDK was built from `0d8c6c21b20a16f16433a6f84ffe4ec1bdfb7bf8`.
+Latest checkpoint: clean `45e7b9ad021605cfc81db9dd41749f926fc4876c`
+passes the Windows core SDK, installed consumer, debugger, editor and Unicode
+gates, with a verified development archive. Complete desktop qualification is
+still pending: ten installed GTK language cases passed, but a separate lifecycle
+helper once exited zero without its completion summary. A diagnostic comparison
+subsequently completed all 235 checks; it does not explain or waive that first
+observation. See the final sections below. The previously accepted `71a9338ec3a7`
+SDK and editor artifacts remain unchanged; no candidate was activated.
+
+The sections below retain the chronological evidence, including the earlier
+accepted Windows development SDK from `0d8c6c21b20a16f16433a6f84ffe4ec1bdfb7bf8`.
 This continues the interrupted MSVC port at `3dc9d17`; it is not a Windows
 release or RC declaration.
 The inherited working tree was preserved before synchronization to the VM.
@@ -1348,3 +1357,150 @@ the account resolves to SID `S-1-5-21-1260315539-3167597677-3402283352-1002`.
 The same approved bounded desktop tests will use that limited interactive
 token instead of the earlier `nil` account. SDK staging permissions remain
 unchanged; a fresh sealed extraction will be used for desktop consumption.
+
+### Clean 45e7b9a core SDK and installed-tool validation
+
+Windows configuration now succeeds with the explicit 2022 DIA library, and a
+second configuration without repeating the flag retains the cached selection.
+The full 93-step MSVC rebuild passes. Seven focused CTests pass, followed by
+three separate fresh repetitions of both project-contract and project-edition;
+all pass without retrying failed tests. The Windows fingerprint unit executes
+46 checks and the DIA configure contract executes 23. The earlier failed build
+and supplemental `af38ebd` CTest remain preserved.
+
+The complete, source-frozen Linux run at `45e7b9a` reports **559 registered,
+558 PASS, one optional UI/Xvfb SKIP, zero FAIL** (420.17 seconds). PostgreSQL's
+six routes and cleanup run inside that full invocation. Its JUnit SHA-256 is
+`4af27d7050e66074cb2c26569b46b9904888e5d4e3e4d8e05ca1abac8d842d72`.
+
+The new Windows candidate is
+`C:\src\exec-nil-framework\build\windows-candidates\development-93a282394dcb4d1b8fd8f4aca0522d5a`.
+Its complete SDK pipeline exits zero: **562 registered CTests, 561 PASS, one
+service-session `nil.ui-display` SKIP, zero FAIL**, followed by **1,184 installed
+consumer executions PASS** (74 fixtures, two library layouts, eight routes).
+The temporary consumer directory is removed by the successful harness. The
+candidate contains 11 root executables, 18 strictly checked compiled library
+modules, 66 documentation pages, and 259 sealed payload files plus the manifest.
+No active SDK or Lich/Anomalous deployment is changed.
+
+The independently checked host archive is
+`/home/nathan/vm/nil-win11/artifacts/45e7b9ad0216-parity/nil-framework-windows-development-45e7b9ad0216.zip`
+(28,532,141 bytes, 260 entries), SHA-256
+`b7a096df65caa9000c74ce1bf5249e8fc0ec221dcb9f082fd89e7948d69817f7`.
+Manifest SHA-256 is
+`19f15d4dd447ad5db76fec32d7e7d7185bf4c8957aa9ae8987364398e5236876`;
+CTest JUnit SHA-256 is
+`81769f849bf81adb6119f9ff44e87fdbfc2a44f8ea83dfd1aa49cba34aab9c0f`;
+consumer report SHA-256 is
+`d94b26442ae3ac6697f7597063e949810ccf5b7eac7d74b48073cb03a431964d`.
+Host verification checks every archived payload, exact root layout, build/tool
+identities, all registered CTest names, the sole documented skip, and the complete
+consumer result. Dependency inventory remains evidence, not bare-host certification.
+
+Additional installed-tool gates against this exact manifest pass:
+
+- Debugger: **146 named checks, 20 commands**, with 13 frozen source identities.
+- Strict Unicode byte-file paths: **16 routes, 34 commands**, both library
+  layouts, unchanged before/after origins and owned temporary-directory cleanup.
+- VS Code: **88 real extension-host checks, zero exclusions**, 31 actual tasks
+  covering eight task kinds, seven SDK tools and two debugger sessions. Windows
+  unit tests report **161 PASS, one POSIX-FIFO-only SKIP, zero FAIL**.
+
+The editor bundle remains SHA-256
+`844aaee30df62134efa971c9bf1d3e9a1e71ca39f3665f1a3ee3d0f9e13fd500`.
+The `0628f6a` and `45e7b9a` editor Git trees are identical; the handoff VSIX is
+an explicitly recorded byte-identical copy, not a newly rebuilt package:
+`editor-complete/nil-framework-editor-45e7b9a.vsix`, SHA-256
+`4e6ad286ec6707131f869ea6ebd1fa4df18ae1bf40be551d6a03f4b5ad2ef3e1`.
+The final Windows editor gate hash is
+`680fc03b571f1c1c9657097a7a7671e428295c5b18e66644ca75adaa73525bd3`.
+Complete copied settings, host report, exact lightweight harnesses, frozen input
+anchor and the independently reconciled 17 VSIX assets remain in `editor-complete`.
+
+`independent-core-delivery-45e7b9ad0216.json` joins the actual archive, debugger
+and Unicode evidence without rewriting earlier pending-only reports. Its hash is
+`70d37478cc49b0310d5926a40d5c89fd86aed1535df0fed517a0954c83a20ec2`.
+This is core development delivery evidence, not complete desktop or release
+qualification. The old `af38ebd` candidate now has an additive `FAILED.txt`
+delivery-rejection marker outside its sealed SDK because of its later project
+guard failure. Its SDK, passing consumer/editor reports and failure evidence
+are all retained; it cannot be archived by the delivery helper.
+
+### Nathan desktop run: language cases pass, lifecycle completion remains open
+
+The approved one-off task used Nathan's verified SID ending `1002`, an
+Interactive/Limited principal, a private evidence directory and bounded owned
+Jobs. It verified the final archive hash, extracted all 259 payload files into
+a fresh desktop-owned SDK, and validated the SDK before and after. No password,
+autologon setting, staging ACL, global input or unrelated window was used.
+The scheduled task was removed and owned-process cleanup was verified.
+
+All **ten installed GTK VM/native language cases passed**, including targeted
+keyboard and close events through verified Job-owned HWNDs. The supplementary
+build-tree provider helper reported **4,471 checks**. That number is not a fixed
+test inventory: `wait_event()` increments the assertion counter on each poll,
+so the private verifier's expectation of exactly 4,470 was incorrect. This does
+not justify reducing the source assertion set or ignoring completion output.
+
+The separate build-tree lifecycle helper exited zero but produced **zero bytes
+on both stdout and stderr**, instead of its final `UI lifecycle: 235 checks
+passed` summary. The outer display harness accepted exit zero; the independent
+desktop reconciliation did not. Full desktop acceptance therefore remains
+**pending**, despite successful installed language cases and cleanup. Neither
+the core CTest report's skip nor this first incomplete lifecycle result is
+relabelled as full desktop coverage.
+
+Original evidence remains in `desktop-complete`, including the entire fresh SDK.
+The nested UI report hash is
+`1e8953f51305dc0900acfe309eda1ec4b49a2676a6ce9ab0e768e3b2c90ccc14`.
+The first reconciliation failure is preserved separately as
+`desktop-reconciliation-first-failure.json`, SHA-256
+`fb32325e587c612124f8fc8cc4f73983be2b140ba61cafeb58e7a7c829c937df`.
+Independent before/after provider binary anchors are identical. The 45 synthetic
+desktop-verifier controls test evidence rejection, not actual GTK acceptance.
+
+A separate, bounded diagnostic task then ran the **unchanged original helper
+once** and a private instrumented copy once. The original emitted the expected
+32-byte lifecycle summary. The instrumented copy retained every original
+assertion and recorded flushed, exclusive-file checkpoints through text/binary
+VM lifecycles, native lifecycles, all **235 checks**, and return zero. C++ stream
+state stayed good; the explicit final flush and direct Win32 stdout write also
+succeeded. Both Jobs cleaned up and the diagnostic task was removed. These
+observations do **not** establish why the first original run emitted nothing;
+the extra flush/instrumentation is not a production fix or replacement proof.
+
+The complete private build/source/logs are retained in
+`lifecycle-diagnostic-complete`. Diagnostic progress SHA-256 is
+`4361752f91a8fdde0bf7705b76d4259527b7d82ad4cc2c49b45d2ddafc6df8e6`.
+The committed display harness now requires each provider/lifecycle helper's
+complete summary after successful exit and owned cleanup, before starting the
+language cases. Provider counts are canonical positive ASCII decimals bounded
+by the C++ signed-int counter and recorded as observations, not a fixed coverage
+total. The current lifecycle fixture must report exactly 235 checks. Empty,
+truncated, duplicate, wrong-mode and incorrect-count output is rejected. No
+C++ fixture, runtime assertion, input method, timeout or cleanup rule changed.
+Two main-path regressions demonstrably failed before this guard because the old
+harness accepted empty output with exit zero. All **50 portable tests pass on
+Linux and Windows**, with independent review; Windows ran an exact private copy
+of the two edited files plus the unchanged owned-process helper, leaving the
+source-frozen guest checkout untouched during evidence collection. Logs and
+tested files are retained in `ui-completion-guard` and the red/green logs beside
+it. This closes the acceptance hole, not the underlying intermittent output
+question. No full desktop run with the new guard is claimed here.
+
+Next: investigate the initial missing summary under the original developer
+environment, comparing an explicit nonsecret environment/launch whitelist with
+the diagnostic baseline, then rerun the complete strict desktop gate with fresh
+evidence. Do not silently retry, waive the first result or weaken completion.
+
+Private gate/diagnostic tools and tests are archived in
+`parity-gate-tools-45e7b9a.tar.gz`, SHA-256
+`1c1ab50b01c7e1d98d7ca975f8fe10eb718664fc69f2db9acbe8e062dc0eb79f`.
+All frozen-SDK evidence collection finished with clean VM source `45e7b9a`;
+this subsequent notebook/harness checkpoint does not relabel the archive.
+Visual Studio's optional telemetry opt-out remains zero
+and the exact optional uploader remains reversibly disabled. Saved PowerShell
+policies remain unchanged. No local model/GPU workload, development server,
+forced VM reset, active SDK replacement, Lich upload or Anomalous modification
+was performed. Windows remains a development target with the previously listed
+bare-host, provider, publication and shared-language limitations.

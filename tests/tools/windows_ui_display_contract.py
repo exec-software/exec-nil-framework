@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -400,6 +401,27 @@ def checked(command, env, root, record, *, timeout=120, input_api=None, output_l
     return (root / record['stdout']).read_text(encoding='utf-8')
 
 
+def validate_probe_summary(output, name):
+    summaries = {
+        'provider-display': ('UI runtime: ', ' checks passed (--display)'),
+        'lifecycle-display': ('UI lifecycle: ', ' checks passed'),
+    }
+    prefix, suffix = summaries[name]
+    match = re.fullmatch(re.escape(prefix) + r'([1-9][0-9]{0,9})' + re.escape(suffix) + r'\r?\n', output)
+    # Both C++ fixtures count in a signed Windows int. Provider event polling
+    # increments that counter, so timing can change its final value: require a
+    # complete positive, representable summary, not an observed magic total.
+    if match is None or int(match[1]) > 2147483647:
+        raise AssertionError(f'{name} did not emit one complete bounded completion summary')
+    count = int(match[1])
+    # Unlike provider polling, the current lifecycle fixture executes a fixed
+    # text/binary VM and native assertion sequence. Review this with any change
+    # to tests/ui_lifecycle_tests.cpp; exit zero alone is never completion proof.
+    if name == 'lifecycle-display' and count != 235:
+        raise AssertionError('lifecycle-display completion summary must report 235 checks')
+    return count
+
+
 def validate_report(output, names, routes):
     report = json.loads(output)
     tests = report.get('tests')
@@ -480,7 +502,10 @@ def main():
         def run(name, command, drive=False):
             record = {'name': name}
             evidence['cases'].append(record)
-            return checked(command, env, root, record, input_api=api if drive else None)
+            output = checked(command, env, root, record, input_api=api if drive else None)
+            if name in ('provider-display', 'lifecycle-display'):
+                record['completionChecks'] = validate_probe_summary(output, name)
+            return output
         run('provider-display', [paths['provider_test'], '--display'])
         run('lifecycle-display', [paths['lifecycle_test'], '--display'])
         base = [paths['tester'], 'run', '--compiler', paths['compiler'], '--interpreter', paths['interpreter'],

@@ -186,6 +186,91 @@ class MainPreflightTests(unittest.TestCase):
         self.assertEqual(report['status'], 'FAIL')
         self.assertEqual(len(report['cases']), 1)
 
+    def successful_processes(self, provider='UI runtime: 4470 checks passed (--display)\n',
+                             lifecycle='UI lifecycle: 235 checks passed\n'):
+        self.api.desktop.side_effect = None
+        self.api.desktop.return_value = {'sessionId': 3, 'desktop': 'Default'}
+        launched = []
+        def checked(command, env, root, record, **options):
+            name = record['name']
+            launched.append(name)
+            record.update(exit=0, cleanupVerified=True)
+            if name == 'provider-display':
+                return provider
+            if name == 'lifecycle-display':
+                return lifecycle
+            names = contract.DESKTOP_NAMES if name == 'desktop' else contract.INTERACTION_NAMES
+            return json.dumps({'errors': [], 'tests': [
+                {'name': case, 'route': 'vm', 'status': 'passed'} for case in sorted(names)]})
+        return checked, launched
+
+    def test_empty_provider_stdout_with_exit_zero_fails_before_lifecycle_or_language(self):
+        checked, launched = self.successful_processes(provider='')
+        with self.assertRaisesRegex(AssertionError, 'provider-display.*completion summary'):
+            self.invoke(checked)
+        self.assertEqual(launched, ['provider-display'])
+        report = self.report()
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertEqual(report['cases'][0]['exit'], 0)
+        self.assertTrue(report['cases'][0]['cleanupVerified'])
+
+    def test_empty_lifecycle_stdout_with_exit_zero_fails_before_language(self):
+        checked, launched = self.successful_processes(lifecycle='')
+        with self.assertRaisesRegex(AssertionError, 'lifecycle-display.*completion summary'):
+            self.invoke(checked)
+        self.assertEqual(launched, ['provider-display', 'lifecycle-display'])
+        report = self.report()
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertEqual(report['cases'][1]['exit'], 0)
+        self.assertTrue(report['cases'][1]['cleanupVerified'])
+
+    def test_wrong_lifecycle_count_fails_before_language(self):
+        checked, launched = self.successful_processes(lifecycle='UI lifecycle: 234 checks passed\n')
+        with self.assertRaisesRegex(AssertionError, 'lifecycle-display.*235'):
+            self.invoke(checked)
+        self.assertEqual(launched, ['provider-display', 'lifecycle-display'])
+        self.assertEqual(self.report()['status'], 'FAIL')
+
+    def test_valid_probe_summaries_record_counts_before_language(self):
+        checked, launched = self.successful_processes(provider='UI runtime: 4471 checks passed (--display)\n')
+        self.assertEqual(self.invoke(checked), 0)
+        self.assertEqual(launched, ['provider-display', 'lifecycle-display', 'desktop', 'interaction-vm'])
+        report = self.report()
+        self.assertEqual(report['status'], 'PASS')
+        self.assertEqual(report['cases'][0]['completionChecks'], 4471)
+        self.assertEqual(report['cases'][1]['completionChecks'], 235)
+
+
+class ProbeSummaryTests(unittest.TestCase):
+    def test_provider_polling_counts_are_observed_not_fixed(self):
+        for count in (4470, 4471, 2147483647):
+            for newline in ('\n', '\r\n'):
+                with self.subTest(count=count, newline=newline):
+                    self.assertEqual(contract.validate_probe_summary(
+                        f'UI runtime: {count} checks passed (--display){newline}', 'provider-display'), count)
+
+    def test_lifecycle_requires_current_complete_fixture_count(self):
+        self.assertEqual(contract.validate_probe_summary(
+            'UI lifecycle: 235 checks passed\n', 'lifecycle-display'), 235)
+        for count in (1, 234, 236):
+            with self.subTest(count=count), self.assertRaisesRegex(AssertionError, '235'):
+                contract.validate_probe_summary(f'UI lifecycle: {count} checks passed\n', 'lifecycle-display')
+
+    def test_counts_are_bounded_canonical_positive_ascii_decimals(self):
+        for count in ('0', '-1', '+1', '04470', '4470.0', '４４７０', '2147483648', '9' * 100):
+            with self.subTest(count=count), self.assertRaises(AssertionError):
+                contract.validate_probe_summary(f'UI runtime: {count} checks passed (--display)\n', 'provider-display')
+
+    def test_empty_truncated_extra_or_wrong_probe_output_is_rejected(self):
+        valid = {'provider-display': 'UI runtime: 4470 checks passed (--display)\n',
+                 'lifecycle-display': 'UI lifecycle: 235 checks passed\n'}
+        for name, text in valid.items():
+            other = next(value for key, value in valid.items() if key != name)
+            for output in ('', text[:-1], text[:-8], text + '\n', text + text,
+                           'extra\n' + text, text + 'extra\n', other, text + '\0'):
+                with self.subTest(name=name, output=output), self.assertRaises(AssertionError):
+                    contract.validate_probe_summary(output, name)
+
 
 class FakeApi:
     def __init__(self):
