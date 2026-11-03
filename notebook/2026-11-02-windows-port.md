@@ -2036,3 +2036,84 @@ release. SDK repackaging and installed acceptance remain next. Checkpoints still
 require the documented deterministic same-process profile; external-resource
 rollback, code hot reload and native `environment.list` remain unsupported.
 No previous SDK/VSIX activation, Lich publication or Anomalous change occurred.
+
+#### Fresh Linux and Windows installed SDK acceptance at `d5e8758`
+
+Built isolated development SDK candidates from clean
+`d5e875879b05cfee5c1a44cb5f94da22db5e1fba` (the verified shared implementation
+plus the preceding notebook checkpoint). Both pipelines captured fresh build
+qualification before fresh CTest, then installed, compiled documentation,
+packaged/strictly checked the STL, sealed/validated the SDK and ran installed
+consumers. The Linux staging helper deliberately did not invoke the activating
+`build-sdk.sh`/`publish-sdk.py` path. Windows used `build-sdk.ps1` with a new
+candidate parent, four build workers and the already-approved process-scoped
+RemoteSigned environment. No implementation change was needed in this slice.
+
+| Fresh SDK gate | Linux | Windows |
+| --- | ---: | ---: |
+| Registered CTest cases | 567 | 570 |
+| Passed / failed / skipped | 565 / 0 / 2 | 569 / 0 / 1 |
+| Installed consumer executions | 1,184 | 1,184 |
+| Ordinary-I/O executions, source + binary STL | 16 | 16 |
+| Unicode byte-file executions, source + binary STL | 16 | 16 |
+| Installed debugger checks | 146 | 146 |
+| Installed interpreter live checkpoint contract | PASS | PASS |
+
+The CTest skips remain Linux display/live PostgreSQL and Windows display only;
+Windows live PostgreSQL passed. Linux CTest took 112.80 seconds; Windows JUnit
+records 427 seconds. The whole owned Windows SDK pipeline took 1,523.29 seconds.
+Each SDK contains 11 root executables, 18 strictly checked logical STL modules,
+source under `nilstd`, compiled packages/native runtime under `nillib`, and 66
+HTML documentation pages. Each seal contains 259 payload files plus its manifest.
+
+The dedicated installed ordinary-I/O gate checks all eight routes against both
+STL layouts, with 36 exact command records, two intentional invalid-ABI
+rejections, retained native artifacts and independent raw-byte/Unicode namespace
+oracles. Checkpoint acceptance runs once against the installed interpreter with
+raw NIL fixtures; it is not an STL-layout test. It covers capture, mutation,
+reusable restore, continuation, rejection and explicit-exit cleanup. Both SDKs
+also passed debugger JSONL/DAP consumer validation (146 checks, 20 commands) and
+the separate strict byte-file Unicode contract (16 executions, 34 commands).
+Windows tooling evidence was independently reconciled again after transfer.
+
+Durable evidence and delivery files are under
+`/home/nathan/vm/nil-win11/artifacts/d5e875879b05-parity/`:
+
+- `linux-delivery/nil-framework-linux-development-d5e875879b05.tar.gz`
+  (38,094,488 bytes), SHA-256
+  `7448194160221a1328f5b153880c8672a9b0de7556aff0cb9b2866cb6c660201`.
+- `windows-delivery/nil-framework-windows-development-d5e875879b05.zip`
+  (28,782,854 bytes), SHA-256
+  `947368825c6ec7b439b4815bf9311c00c35af26bf6c745ae5e34b3cb39aa292d`.
+- Linux manifest SHA-256:
+  `cfd9b9bd30cc3575787f22c21a13cb87dfabd81d6c923838ec40705b6144407c`.
+- Windows manifest SHA-256:
+  `5eb104a0d2cb665e857a5f9e1dfca3654cdfc1bb7e94ed1fd2c180795d897efb`.
+
+The Linux archive was reopened and checked against every sealed file and its
+observed Unix file permissions. The transferred Windows archive passed the
+independent delivery verifier against external archive/manifest hashes and a
+fresh 570-name CTest registration capture. It reconciles 888 detailed consumer
+execution records / 1,628 command records, plus 296 aggregate-only standalone
+object executions. Successful consumer artifacts deleted by the stock harness
+are not replayed. Unicode's successful temporary files are likewise deleted by
+its harness; the retained namespace/command reports are reconciled, not those
+deleted bytes. Checkpoint temporary fixtures are not retained. Debugger work,
+ordinary-I/O artifacts, raw logs, ownership reports and private helpers are saved.
+The six private-helper synthetic suites passed 217 controls with verified cleanup
+and unchanged input hashes; their logs are in `helper-controls`.
+
+All owned SDK/acceptance processes completed with verified cleanup and unchanged
+source/helper/SDK seals. Post-run Windows inspection found no remaining framework
+compiler/interpreter/assembler/linker/debugger, CMake, CTest or uploader process;
+all PowerShell policy scopes were still Undefined. The optional MSVC uploader
+remains absent and its reversible disabled copy remains present. The previous
+`d567e7ed869f` Windows ZIP and `45e7b9a` VSIX were rehashed unchanged.
+
+These are development SDK candidates, not a v1 release or unrestricted parity
+declaration. No active SDK or VSIX was replaced, no desktop GTK/editor acceptance
+was repeated, and no Lich publication, Anomalous change, local-model/GPU workload
+or development server occurred. External runtime/toolchain prerequisites remain
+required; PE import inventory is not bare-host qualification. Checkpoints retain
+the documented deterministic same-process restrictions; arbitrary external-state
+rollback, code hot reload and native `environment.list` remain unsupported.
