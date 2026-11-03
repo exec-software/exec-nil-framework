@@ -1,7 +1,8 @@
 #pragma once
 // Experimental local-only client for nilinterpreter --ai. Both transports use
 // a connected handshake and newline-delimited id/method JSON, NOT legacy cmd.
-// Reload and snapshot are not implemented by the current server protocol.
+// Checkpoints are capability-negotiated, same-process VM execution state.
+// Code hot reload is distinct and is not implemented by this protocol.
 #include "../common/strict_json.hpp"
 #include <algorithm>
 #include <chrono>
@@ -151,7 +152,7 @@ public:
         if (fd_ >= 0) close(fd_);
         fd_ = -1;
 #endif
-        connected_ = false; connected_pid_ = 0; incoming_.clear(); next_id_ = 0;
+        connected_ = false; connected_pid_ = 0; incoming_.clear(); next_id_ = 0; checkpoints_ = false;
     }
     bool is_connected() const { return connected_; }
     const std::string& last_error() const { return error_; }
@@ -159,7 +160,55 @@ public:
         return "{\"ok\":false,\"error\":\"reload is not supported by the AI server protocol\"}";
     }
     std::string send_snapshot() {
-        return "{\"ok\":false,\"error\":\"snapshot is not supported by the AI server protocol\"}";
+        if (!checkpoints_) return "{\"ok\":false,\"error\":\"checkpoint capability has not been negotiated; request status first\"}";
+        return send_control("vm.snapshot");
+    }
+    std::string send_restore(const std::string& checkpoint) {
+        if (!checkpoints_) return "{\"ok\":false,\"error\":\"checkpoint capability has not been negotiated; request status first\"}";
+        return send_control("vm.restore", checkpoint);
+    }
+    std::string send_control(const std::string& method, const std::string& checkpoint = {}) {
+        if (method != "vm.pause" && method != "vm.resume" && method != "vm.step" &&
+            method != "vm.inspect" && method != "vm.snapshot" && method != "vm.restore") {
+            error_ = "unsupported control request"; return {};
+        }
+        if ((method == "vm.snapshot" || method == "vm.restore") && !checkpoints_) {
+            error_ = "checkpoint capability has not been negotiated"; return {};
+        }
+        if (!connected_) { error_ = "not connected"; return {}; }
+        const std::string id = std::to_string(++next_id_);
+        auto request = json::map(); request.object["id"] = json::str(id); request.object["method"] = json::str(method);
+        if (method == "vm.restore") {
+            if (checkpoint.empty() || checkpoint.size() > 20 ||
+                !std::all_of(checkpoint.begin(), checkpoint.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+                error_ = "invalid checkpoint ID"; return {};
+            }
+            request.object["checkpoint"] = json::str(checkpoint);
+        }
+        const auto deadline = clock::now() + timeout_;
+        std::string line;
+        if (!write_all(nil::detail::dump(request) + "\n", deadline) || !read_line(line, deadline)) { disconnect(); return {}; }
+        try {
+            const auto reply = nil::detail::json_parser(line).parse();
+            if (reply.at("id").type != json::kind::string || reply.at("id").text != id)
+                throw std::runtime_error("mismatched response ID");
+            if (reply.at("error").type != json::kind::null) {
+                if (reply.at("error").type != json::kind::string || reply.at("result").type != json::kind::null)
+                    throw std::runtime_error("invalid error response");
+                error_ = reply.at("error").text; return "{\"ok\":false,\"error\":" + nil::detail::quote(error_) + "}";
+            }
+            const auto& result = reply.at("result");
+            if (result.type != json::kind::object) throw std::runtime_error("invalid control result");
+            if (method != "vm.inspect" && (result.at("ok").type != json::kind::boolean || !result.at("ok").boolean))
+                throw std::runtime_error("invalid control acknowledgement");
+            if (method == "vm.snapshot" || method == "vm.restore") {
+                if (result.at("checkpoint").type != json::kind::string || result.at("checkpoint").text.empty())
+                    throw std::runtime_error("missing checkpoint identity");
+                if (method == "vm.restore" && result.at("checkpoint").text != checkpoint)
+                    throw std::runtime_error("mismatched checkpoint identity");
+            }
+            error_.clear(); return nil::detail::dump(result);
+        } catch (const std::exception&) { fail("invalid AI control response"); return {}; }
     }
     std::string send_status() {
         if (!connected_) { error_ = "not connected"; return {}; }
@@ -183,6 +232,16 @@ public:
                 result.at("ai_version").type != json::kind::number || result.at("ai_version").text != "1" ||
                 result.at("nil_version").type != json::kind::string)
                 throw std::runtime_error("invalid status result");
+            checkpoints_ = false;
+            const auto capabilities = result.object.find("capabilities");
+            if (capabilities != result.object.end()) {
+                if (capabilities->second.type != json::kind::array || capabilities->second.array.size() > 32)
+                    throw std::runtime_error("invalid capabilities");
+                for (const auto& capability : capabilities->second.array) {
+                    if (capability.type != json::kind::string) throw std::runtime_error("invalid capability");
+                    if (capability.text == "checkpoint.same-process.v1") checkpoints_ = true;
+                }
+            }
             error_.clear(); return nil::detail::dump(result);
         } catch (const std::exception&) { fail("invalid AI server response"); return {}; }
     }
@@ -193,6 +252,7 @@ private:
     static constexpr std::size_t frame_limit = 64 * 1024;
     std::chrono::milliseconds timeout_;
     bool connected_ = false;
+    bool checkpoints_ = false;
     int connected_pid_ = 0;
     std::string incoming_, error_;
     unsigned long long next_id_ = 0;

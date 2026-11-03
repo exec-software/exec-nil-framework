@@ -22,7 +22,7 @@ find_package(Threads REQUIRED)
 target_link_libraries(nilinterpreter PRIVATE nilcompiler_core Threads::Threads)
 
 if(WIN32)
-    target_link_libraries(nilinterpreter PRIVATE Psapi)
+    target_link_libraries(nilinterpreter PRIVATE Psapi Advapi32)
 endif()
 
 install(TARGETS nilinterpreter RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")

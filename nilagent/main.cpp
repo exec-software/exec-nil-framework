@@ -591,12 +591,15 @@ public:
 
             bool success = false;
             size_t size_bytes = 0;
+            std::string checkpoint;
             std::string error_msg;
 
             if (pid == 0 || !connect_to_vm(pid)) {
                 error_msg = "Not connected to a NIL interpreter";
             } else {
-                std::string response = ipc_client->send_snapshot();
+                std::string response;
+                if (ipc_client->send_status().empty()) error_msg = ipc_client->last_error();
+                else response = ipc_client->send_snapshot();
                 if (response.empty()) {
                     error_msg = "No response from NIL interpreter";
                 } else {
@@ -604,6 +607,7 @@ public:
                     success = (ok_str == "true");
                     if (success) {
                         size_bytes = ny::ipc::json_extract_int(response, "size");
+                        checkpoint = ny::ipc::json_extract_string(response, "checkpoint");
                     } else {
                         error_msg = ny::ipc::json_extract_string(response, "error");
                     }
@@ -612,7 +616,8 @@ public:
 
             std::ostringstream result_json;
             result_json << "{\"success\":" << (success ? "true" : "false")
-                       << ",\"size_bytes\":" << size_bytes;
+                       << ",\"size_bytes\":" << size_bytes
+                       << ",\"checkpoint\":" << nil::detail::quote(checkpoint);
             if (!error_msg.empty()) {
                 result_json << ",\"error\":" << nil::detail::quote(error_msg);
             }
@@ -620,9 +625,27 @@ public:
             resp.result = result_json.str();
             std::cout << "[nilagent] State snapshot: " << size_bytes << " bytes" << std::endl;
         }
-        else if (cmd.method == "app.state.restore") {
-            resp.result = "{\"success\":false,\"error\":\"Not implemented via IPC yet\"}";
-            std::cout << "[nilagent] State restore not implemented" << std::endl;
+        else if (cmd.method == "app.state.restore" || cmd.method == "app.state.inspect" ||
+                 cmd.method == "app.pause" || cmd.method == "app.resume" || cmd.method == "app.step") {
+            const std::string pid_str = extract_value(json_str, "pid");
+            const int pid = pid_str.empty() ? connected_pid : ny::ipc::positive_pid(pid_str);
+            std::string response;
+            if (pid <= 0 || !connect_to_vm(pid)) {
+                resp.result = "{\"success\":false,\"error\":\"Not connected to a NIL interpreter\"}";
+            } else if (ipc_client->send_status().empty()) {
+                resp.result = "{\"success\":false,\"error\":" + nil::detail::quote(ipc_client->last_error()) + "}";
+            } else {
+                if (cmd.method == "app.state.restore")
+                    response = ipc_client->send_restore(extract_value(json_str, "checkpoint"));
+                else response = ipc_client->send_control(cmd.method == "app.state.inspect" ? "vm.inspect" :
+                    cmd.method == "app.pause" ? "vm.pause" : cmd.method == "app.resume" ? "vm.resume" : "vm.step");
+                const bool success = !response.empty() && (cmd.method == "app.state.inspect" ?
+                    ny::ipc::json_extract_string(response, "error").empty() :
+                    ny::ipc::json_extract_string(response, "ok") == "true");
+                resp.result = "{\"success\":" + std::string(success ? "true" : "false") +
+                    ",\"state\":" + (response.empty() ? "null" : response) +
+                    ",\"error\":" + nil::detail::quote(ipc_client->last_error()) + "}";
+            }
         }
         else if (cmd.method == "app.list") {
             auto pids = find_running_vms();

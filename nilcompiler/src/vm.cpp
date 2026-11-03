@@ -34,6 +34,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <type_traits>
 #ifndef _WIN32
 #include <pwd.h>
 #include <unistd.h>
@@ -782,6 +783,9 @@ void VM::loadProgram(const std::vector<Instruction> &program,
   validate_nil_owned_contract(program);
   validate_nil_fault_contract(program);
   validate_nil_class_contract(program);
+  if (checkpoint_generation_ == std::numeric_limits<std::uint64_t>::max())
+    throw std::runtime_error("VM program generation exhausted");
+  ++checkpoint_generation_;
   program_ = program;
   class_metadata_ = program.empty() ? nullptr : program.front().module_metadata;
   constants_ = constants;
@@ -837,6 +841,8 @@ void VM::resetExecution(const std::string &entry_point) {
 }
 
 bool VM::stepInstruction() try {
+  if (control_callback_)
+    control_callback_(*this);
   validateInstructionLocation();
   if (pc_ >= program_.size())
     return false;
@@ -863,6 +869,506 @@ std::vector<VM::DebugFrameSnapshot> VM::getDebugFrames() const {
         DebugFrameSnapshot{frame.fn_name, frame.return_pc, frame.locals});
   }
   return frames;
+}
+
+std::vector<VM::DebugFrameSnapshot> VM::getDebugFrames(
+    size_t max_frames, size_t max_total_locals) const {
+  std::vector<DebugFrameSnapshot> frames;
+  visitDebugFrames(max_frames, max_total_locals,
+      [&](const std::string &name, size_t return_pc, const auto &locals) {
+        frames.push_back(DebugFrameSnapshot{name, return_pc, locals});
+      });
+  return frames;
+}
+
+void VM::visitDebugFrames(size_t max_frames, size_t max_total_locals,
+                          const DebugFrameVisitor &visitor) const {
+  if (call_stack_.size() > max_frames)
+    throw std::runtime_error("VM inspection frame limit exceeded");
+  size_t total_locals = 0;
+  for (const auto &frame : call_stack_) {
+    if (frame.locals.size() > max_total_locals - total_locals)
+      throw std::runtime_error("VM inspection local limit exceeded");
+    total_locals += frame.locals.size();
+  }
+  for (const auto &frame : call_stack_)
+    visitor(frame.fn_name, frame.return_pc, frame.locals);
+}
+
+namespace {
+
+// Checkpoint accounting bounds logical retained storage and traversal, not an
+// allocator-specific RSS measurement. Count container entries conservatively,
+// before reserve/copy, and reject graph cycles before linking copied objects.
+class CheckpointCloner {
+public:
+  explicit CheckpointCloner(size_t limit) : limit_(limit) {
+    if (limit == 0 || limit > 16 * 1024 * 1024)
+      throw std::runtime_error("VM checkpoint byte limit must be 1..16777216");
+  }
+
+  void charge(size_t bytes) {
+    if (bytes > limit_ - bytes_)
+      throw std::runtime_error("VM checkpoint byte limit exceeded");
+    bytes_ += bytes;
+  }
+  void items(size_t count, size_t width) {
+    if (width && count > (limit_ - bytes_) / width)
+      throw std::runtime_error("VM checkpoint byte limit exceeded");
+    charge(count * width);
+  }
+  size_t bytes() const { return bytes_; }
+  std::string text(const std::string &source) {
+    charge(sizeof(std::string));
+    charge(source.size());
+    return source;
+  }
+  Value value(const Value &source, size_t depth = 0) {
+    return std::visit([&](const auto &item) -> Value {
+      return typed(item, depth);
+    }, source);
+  }
+  StructValue structure(const StructValue &source, size_t depth = 0) {
+    node(depth);
+    if (!source.data)
+      throw std::runtime_error("VM checkpoint contains an invalid struct");
+    if (active_structs_.count(source.data.get()))
+      throw std::runtime_error("VM checkpoint cyclic aggregates are unsupported");
+    charge(sizeof(StructValue));
+    StructValue result;
+    result.type_name = text(source.type_name);
+    result.static_class_view = text(source.static_class_view);
+    if (const auto found = structs_.find(source.data.get()); found != structs_.end()) {
+      markDepth(depth + found->second.height);
+      result.data = found->second.data;
+      return result;
+    }
+    charge(sizeof(StructData));
+    active_structs_.insert(source.data.get());
+    DepthScope scope{depth, depth};
+    depth_scopes_.push_back(&scope);
+    const auto fields = [&](const auto &input, auto &output) {
+      using Entry = typename std::decay_t<decltype(input)>::value_type;
+      items(input.size(), sizeof(Entry) + 3 * sizeof(void *));
+      output.reserve(input.size());
+      for (const auto &[name, item] : input)
+        output.emplace(text(name), typed(item, depth + 1));
+    };
+    fields(source.fields(), result.fields());
+    fields(source.array_fields(), result.array_fields());
+    fields(source.string_fields(), result.string_fields());
+    fields(source.double_fields(), result.double_fields());
+    fields(source.struct_fields(), result.struct_fields());
+    fields(source.enum_fields(), result.enum_fields());
+    fields(source.anything_fields(), result.anything_fields());
+    depth_scopes_.pop_back();
+    active_structs_.erase(source.data.get());
+    structs_.emplace(source.data.get(), CopiedStruct{result.data, scope.maximum - scope.start});
+    return result;
+  }
+
+private:
+  size_t limit_, bytes_ = 0, nodes_ = 0;
+  struct CopiedStruct { std::shared_ptr<StructData> data; size_t height; };
+  struct CopiedEnum { std::shared_ptr<EnumValue> data; size_t height; };
+  struct DepthScope { size_t start, maximum; };
+  std::vector<DepthScope *> depth_scopes_;
+  std::unordered_map<const StructData *, CopiedStruct> structs_;
+  std::unordered_map<const EnumValue *, CopiedEnum> enums_;
+  std::unordered_set<const StructData *> active_structs_;
+  std::unordered_set<const EnumValue *> active_enums_;
+
+  void markDepth(size_t depth) {
+    if (depth > 64)
+      throw std::runtime_error("VM checkpoint value depth/node limit exceeded");
+    for (auto *scope : depth_scopes_)
+      scope->maximum = std::max(scope->maximum, depth);
+  }
+  void node(size_t depth) {
+    markDepth(depth);
+    if (nodes_ == 65536)
+      throw std::runtime_error("VM checkpoint value depth/node limit exceeded");
+    ++nodes_;
+  }
+  EnumValue enumeration(const EnumValue &source, size_t depth) {
+    node(depth);
+    charge(sizeof(EnumValue));
+    EnumValue result;
+    result.variant_name = text(source.variant_name);
+    result.type_name = text(source.type_name);
+    items(source.payloads.size(), sizeof(EnumPayload));
+    result.payloads.reserve(source.payloads.size());
+    for (const auto &payload : source.payloads)
+      result.payloads.push_back(std::visit([&](const auto &item) -> EnumPayload {
+        return typed(item, depth + 1);
+      }, payload));
+    return result;
+  }
+  template <typename T> T typed(const T &source, size_t depth) {
+    node(depth);
+    if constexpr (std::is_same_v<T, std::string>) {
+      return text(source);
+    } else if constexpr (std::is_same_v<T, StructValue>) {
+      return structure(source, depth);
+    } else if constexpr (std::is_same_v<T, EnumValue>) {
+      return enumeration(source, depth);
+    } else if constexpr (std::is_same_v<T, ArrayValue>) {
+      charge(sizeof(ArrayValue));
+      ArrayValue result;
+      using Element = typename decltype(result.elements)::value_type;
+      items(source.elements.size(), sizeof(Element));
+      result.elements.reserve(source.elements.size());
+      for (const auto &element : source.elements)
+        result.elements.push_back(std::visit([&](const auto &item) -> Element {
+          return typed(item, depth + 1);
+        }, element));
+      return result;
+    } else if constexpr (std::is_same_v<T, std::shared_ptr<StructValue>>) {
+      if (!source) return {};
+      charge(sizeof(StructValue));
+      return std::make_shared<StructValue>(structure(*source, depth + 1));
+    } else if constexpr (std::is_same_v<T, std::shared_ptr<EnumValue>>) {
+      if (!source) return {};
+      if (active_enums_.count(source.get()))
+        throw std::runtime_error("VM checkpoint cyclic aggregates are unsupported");
+      if (const auto found = enums_.find(source.get()); found != enums_.end()) {
+        markDepth(depth + found->second.height);
+        return found->second.data;
+      }
+      active_enums_.insert(source.get());
+      DepthScope scope{depth, depth};
+      depth_scopes_.push_back(&scope);
+      auto result = std::make_shared<EnumValue>(enumeration(*source, depth + 1));
+      depth_scopes_.pop_back();
+      active_enums_.erase(source.get());
+      enums_.emplace(source.get(), CopiedEnum{result, scope.maximum - scope.start});
+      return result;
+    } else if constexpr (std::is_same_v<T, BoxedValue>) {
+      throw std::runtime_error("VM checkpoint boxed values are unsupported");
+    } else if constexpr (std::is_same_v<T, ny::NyForeignFunc>) {
+      throw std::runtime_error("VM checkpoint foreign functions are unsupported");
+    } else {
+      charge(sizeof(T));
+      return source;
+    }
+  }
+};
+
+} // namespace
+
+struct VM::CheckpointState {
+  std::shared_ptr<const int> checkpoint_identity_;
+  std::uint64_t checkpoint_generation_ = 0;
+  size_t bytes = 0, max_bytes = 0;
+  MemoryMode memory_mode_ = MemoryMode::UNSAFE_MANUAL;
+  bool strict_bounds_ = false;
+  std::vector<std::string> args_;
+  DebugState debug_state_ = DebugState::PAUSED;
+  std::optional<int> requested_exit_code_;
+  std::unordered_map<std::string, Value> constants_, globals_;
+  std::vector<CallFrame> call_stack_;
+  std::vector<OwnedScope> owned_scopes_;
+  std::optional<FaultValue> pending_fault_;
+  std::vector<SavedFault> saved_faults_;
+  std::vector<FaultRegion> fault_regions_;
+  std::unordered_map<int64_t, HeapBlock> heap_;
+  int64_t next_ptr_ = 0, next_file_handle_ = 1;
+  size_t gc_threshold_ = 0, alloc_count_ = 0;
+  std::uint64_t total_collections_ = 0, total_allocated_bytes_ = 0,
+                gc_critical_depth_ = 0;
+  std::vector<Value> stack_;
+  size_t pc_ = 0;
+};
+
+size_t VM::Checkpoint::retainedBytes() const noexcept {
+  return state_ ? state_->bytes : 0;
+}
+
+void VM::validateCheckpointAdmission() const {
+  const char *profile = std::getenv("NIL_MEMORY_PROFILE");
+  if (memory_profile_.enabled() ||
+      (memory_profile_allowed_ && profile && *profile))
+    throw std::runtime_error("VM checkpoints do not support memory profiling");
+  if (!file_handles_.empty())
+    throw std::runtime_error("VM checkpoints do not support open file handles");
+  for (const auto &instruction : program_) {
+    switch (instruction.op) {
+    case Opcode::INTEROP_CALL:
+    case Opcode::CONSOLE_WRITE:
+    case Opcode::CONSOLE_WRITELN:
+    case Opcode::TIME_NOW:
+    case Opcode::TIME_SLEEP:
+    case Opcode::INLINE_ASM:
+    case Opcode::PARALLEL_MAP:
+      throw std::runtime_error(
+          "VM checkpoint profile excludes interop, console, time, native and parallel instructions");
+    case Opcode::CALL:
+      if (instruction.args.empty() || !hasFunction(instruction.args.front()))
+        throw std::runtime_error(
+            "VM checkpoint profile excludes builtin and dynamic CALL targets");
+      break;
+    case Opcode::PUSH_CONST_STR:
+    case Opcode::PUSH_CONST:
+    case Opcode::PUSH_FN_PTR:
+    case Opcode::POP:
+    case Opcode::LOAD_LOCAL:
+    case Opcode::STORE_LOCAL:
+    case Opcode::REF_LOCAL:
+    case Opcode::LOAD_GLOBAL:
+    case Opcode::STORE_GLOBAL:
+    case Opcode::RET:
+    case Opcode::NOP:
+    case Opcode::JMP_IF_NOT:
+    case Opcode::JMP:
+    case Opcode::JMP_IF:
+    case Opcode::LABEL:
+    case Opcode::CMP_EQ:
+    case Opcode::CMP_NE:
+    case Opcode::CMP_LT:
+    case Opcode::CMP_LE:
+    case Opcode::CMP_GT:
+    case Opcode::CMP_GE:
+    case Opcode::NOT:
+    case Opcode::ADD:
+    case Opcode::SUB:
+    case Opcode::MUL:
+    case Opcode::DIV:
+    case Opcode::MOD:
+    case Opcode::NEG:
+    case Opcode::BIT_AND:
+    case Opcode::BIT_OR:
+    case Opcode::BIT_XOR:
+    case Opcode::SHL:
+    case Opcode::SHR:
+    case Opcode::ALLOC:
+    case Opcode::FREE:
+    case Opcode::READ_PTR:
+    case Opcode::WRITE_PTR:
+    case Opcode::NEW_STRUCT:
+    case Opcode::GET_FIELD:
+    case Opcode::SET_FIELD:
+    case Opcode::SET_FIELD_PTR:
+    case Opcode::NEW_ARRAY:
+    case Opcode::GET_INDEX:
+    case Opcode::SET_INDEX:
+    case Opcode::LEN:
+    case Opcode::NEW_VARIANT:
+    case Opcode::IS_VARIANT:
+    case Opcode::UNWRAP_VARIANT:
+    case Opcode::NEW_ARRAY_LITERAL:
+    case Opcode::STR_CONCAT:
+    case Opcode::TO_STRING:
+    case Opcode::CAST:
+    case Opcode::STRLEN:
+    case Opcode::MATH_SIN:
+    case Opcode::MATH_COS:
+    case Opcode::MATH_TAN:
+    case Opcode::MATH_ASIN:
+    case Opcode::MATH_ACOS:
+    case Opcode::MATH_ATAN:
+    case Opcode::MATH_ATAN2:
+    case Opcode::MATH_SQRT:
+    case Opcode::MATH_POW:
+    case Opcode::MATH_EXP:
+    case Opcode::MATH_LOG:
+    case Opcode::MATH_LOG10:
+    case Opcode::MATH_ABS:
+    case Opcode::MATH_FLOOR:
+    case Opcode::MATH_CEIL:
+    case Opcode::MATH_ROUND:
+    case Opcode::MATH_TRUNC:
+    case Opcode::MATH_CBRT:
+    case Opcode::MATH_MIN:
+    case Opcode::MATH_MAX:
+    case Opcode::PTR_ADD:
+    case Opcode::PTR_SUB:
+    case Opcode::FAULT_ENTER:
+    case Opcode::FAULT_LEAVE:
+    case Opcode::FAULT_RAISE:
+    case Opcode::FAULT_SAVE:
+    case Opcode::FAULT_MATCH:
+    case Opcode::FAULT_BIND:
+    case Opcode::FAULT_DROP:
+    case Opcode::FAULT_RESUME:
+    case Opcode::FAULT_RETHROW:
+    case Opcode::CLASS_UPCAST:
+    case Opcode::CALL_METHOD:
+    case Opcode::OWN_ENTER:
+    case Opcode::OWN_LEAVE:
+    case Opcode::OWN_BIND:
+    case Opcode::OWN_MOVE:
+    case Opcode::OWN_ALLOC:
+    case Opcode::BOX_ANY:
+    case Opcode::UNBOX_ANY:
+    case Opcode::IS_ANY_TYPE:
+      break;
+    default:
+      // New opcodes need an explicit effect review before checkpoints admit
+      // them; adding a host-effecting instruction must not silently opt it in.
+      throw std::runtime_error("VM checkpoint profile excludes unknown instructions");
+    }
+  }
+}
+
+template <typename State>
+std::shared_ptr<VM::CheckpointState> VM::cloneCheckpointState(
+    const State &source, size_t max_bytes) {
+  CheckpointCloner clone(max_bytes);
+  clone.charge(sizeof(CheckpointState));
+  auto result = std::make_shared<CheckpointState>();
+  result->checkpoint_identity_ = source.checkpoint_identity_;
+  result->checkpoint_generation_ = source.checkpoint_generation_;
+  result->max_bytes = max_bytes;
+  result->memory_mode_ = source.memory_mode_;
+  result->strict_bounds_ = source.strict_bounds_;
+  result->debug_state_ = source.debug_state_;
+  result->requested_exit_code_ = source.requested_exit_code_;
+  result->pc_ = source.pc_;
+  result->next_ptr_ = source.next_ptr_;
+  result->next_file_handle_ = source.next_file_handle_;
+  result->gc_threshold_ = source.gc_threshold_;
+  result->alloc_count_ = source.alloc_count_;
+  result->total_collections_ = source.total_collections_;
+  result->total_allocated_bytes_ = source.total_allocated_bytes_;
+  result->gc_critical_depth_ = source.gc_critical_depth_;
+  clone.items(source.args_.size(), sizeof(std::string));
+  for (const auto &argument : source.args_)
+    result->args_.push_back(clone.text(argument));
+  const auto values = [&](const auto &input, auto &output) {
+    using Entry = typename std::decay_t<decltype(input)>::value_type;
+    clone.items(input.size(), sizeof(Entry) + 3 * sizeof(void *));
+    output.reserve(input.size());
+    for (const auto &[name, value] : input)
+      output.emplace(clone.text(name), clone.value(value));
+  };
+  values(source.constants_, result->constants_);
+  values(source.globals_, result->globals_);
+  clone.items(source.stack_.size(), sizeof(Value));
+  result->stack_.reserve(source.stack_.size());
+  for (const auto &value : source.stack_)
+    result->stack_.push_back(clone.value(value));
+  clone.items(source.call_stack_.size(), sizeof(CallFrame));
+  result->call_stack_.reserve(source.call_stack_.size());
+  for (const auto &frame : source.call_stack_) {
+    CallFrame copied;
+    copied.return_pc = frame.return_pc;
+    copied.stack_base = frame.stack_base;
+    copied.return_type = clone.text(frame.return_type);
+    copied.entry_pc = frame.entry_pc;
+    copied.end_pc = frame.end_pc;
+    copied.returned = frame.returned;
+    copied.owned_depth = frame.owned_depth;
+    copied.fn_name = clone.text(frame.fn_name);
+    values(frame.locals, copied.locals);
+    result->call_stack_.push_back(std::move(copied));
+  }
+  clone.items(source.owned_scopes_.size(), sizeof(OwnedScope));
+  result->owned_scopes_.reserve(source.owned_scopes_.size());
+  for (const auto &scope : source.owned_scopes_) {
+    OwnedScope copied;
+    copied.frame_depth = scope.frame_depth;
+    clone.items(scope.slots.size(), sizeof(typename decltype(scope.slots)::value_type) + 3 * sizeof(void *));
+    copied.slots.reserve(scope.slots.size());
+    for (const auto &[name, pointer] : scope.slots)
+      copied.slots.emplace(clone.text(name), pointer);
+    result->owned_scopes_.push_back(std::move(copied));
+  }
+  const auto fault = [&](const FaultValue &source_fault) {
+    FaultValue copied;
+    copied.type_name = clone.text(source_fault.type_name);
+    copied.payload = clone.structure(source_fault.payload);
+    copied.source_line = source_fault.source_line;
+    return copied;
+  };
+  if (source.pending_fault_)
+    result->pending_fault_ = fault(*source.pending_fault_);
+  clone.items(source.saved_faults_.size(), sizeof(SavedFault));
+  result->saved_faults_.reserve(source.saved_faults_.size());
+  for (const auto &saved : source.saved_faults_)
+    result->saved_faults_.push_back(
+        {saved.frame_depth, clone.text(saved.slot), fault(saved.fault)});
+  clone.items(source.fault_regions_.size(), sizeof(FaultRegion));
+  result->fault_regions_.reserve(source.fault_regions_.size());
+  for (const auto &region : source.fault_regions_) {
+    FaultRegion copied;
+    copied.frame_depth = region.frame_depth;
+    copied.stack_height = region.stack_height;
+    copied.id = clone.text(region.id);
+    copied.dispatch_pc = region.dispatch_pc;
+    copied.owned_depth = region.owned_depth;
+    clone.items(region.saved_slots.size(), sizeof(std::string));
+    for (const auto &slot : region.saved_slots)
+      copied.saved_slots.push_back(clone.text(slot));
+    result->fault_regions_.push_back(std::move(copied));
+  }
+  clone.items(source.heap_.size(), sizeof(typename decltype(source.heap_)::value_type) + 3 * sizeof(void *));
+  result->heap_.reserve(source.heap_.size());
+  for (const auto &[pointer, block] : source.heap_) {
+    HeapBlock copied;
+    copied.type_name = clone.text(block.type_name);
+    copied.element_type = clone.text(block.element_type);
+    copied.element_count = block.element_count;
+    copied.marked = block.marked;
+    clone.items(block.data.size(), sizeof(Value));
+    copied.data.reserve(block.data.size());
+    for (const auto &value : block.data)
+      copied.data.push_back(clone.value(value));
+    clone.charge(block.byte_data.size());
+    copied.byte_data = block.byte_data;
+    result->heap_.emplace(pointer, std::move(copied));
+  }
+  result->bytes = clone.bytes();
+  return result;
+}
+
+VM::Checkpoint VM::createCheckpoint(size_t max_bytes) const {
+  validateCheckpointAdmission();
+  return Checkpoint(cloneCheckpointState(*this, max_bytes));
+}
+
+void VM::restoreCheckpoint(const Checkpoint &checkpoint) {
+  static_assert(std::is_nothrow_swappable_v<decltype(pending_fault_)>,
+                "checkpoint publication requires a nonthrowing optional fault swap");
+  static_assert(std::is_nothrow_swappable_v<decltype(globals_)> &&
+                std::is_nothrow_swappable_v<decltype(heap_)>,
+                "checkpoint publication requires nonthrowing container swaps");
+  if (!checkpoint.state_)
+    throw std::runtime_error("VM checkpoint is empty");
+  if (checkpoint.state_->checkpoint_identity_ != checkpoint_identity_)
+    throw std::runtime_error("VM checkpoint belongs to a different VM");
+  if (checkpoint.state_->checkpoint_generation_ != checkpoint_generation_)
+    throw std::runtime_error("VM checkpoint belongs to a different loaded program");
+  validateCheckpointAdmission();
+  // No mutation occurs until every allocation, graph clone and budget check
+  // succeeds. Every swap/assignment below is nonthrowing. The immutable saved
+  // copy is never installed directly, so subsequent execution cannot edit it.
+  auto restored = cloneCheckpointState(*checkpoint.state_, checkpoint.state_->max_bytes);
+  memory_mode_ = restored->memory_mode_;
+  strict_bounds_ = restored->strict_bounds_;
+  args_.swap(restored->args_);
+  debug_state_ = restored->debug_state_;
+  requested_exit_code_ = restored->requested_exit_code_;
+  constants_.swap(restored->constants_);
+  globals_.swap(restored->globals_);
+  call_stack_.swap(restored->call_stack_);
+  owned_scopes_.swap(restored->owned_scopes_);
+  pending_fault_.swap(restored->pending_fault_);
+  saved_faults_.swap(restored->saved_faults_);
+  fault_regions_.swap(restored->fault_regions_);
+  heap_.swap(restored->heap_);
+  stack_.swap(restored->stack_);
+  pc_ = restored->pc_;
+  next_ptr_ = restored->next_ptr_;
+  next_file_handle_ = restored->next_file_handle_;
+  gc_threshold_ = restored->gc_threshold_;
+  alloc_count_ = restored->alloc_count_;
+  total_collections_ = restored->total_collections_;
+  total_allocated_bytes_ = restored->total_allocated_bytes_;
+  gc_critical_depth_ = restored->gc_critical_depth_;
+  // These are traversal scratch sets, rebuilt by each collection. Pointer
+  // identities from the abandoned graph must never survive a restoration.
+  gc_marked_structs_.clear();
+  gc_marked_boxes_.clear();
 }
 
 void VM::execute(bool reset) try {
@@ -893,7 +1399,13 @@ void VM::execute(bool reset) try {
   }
 
   while (pc_ < program_.size()) {
+    if (control_callback_)
+      control_callback_(*this);
     validateInstructionLocation();
+    // A control request may replace/reset the program, including replacing it
+    // with an empty program. Do not retain an instruction across that callback.
+    if (pc_ >= program_.size())
+      break;
     // 1. Check Breakpoints
     // If we are RUNNING and hit a breakpoint, pause.
     // Logic for "continue" from a breakpoint must be handled by caller (step
@@ -930,6 +1442,15 @@ void VM::execute(bool reset) try {
       if (!should_continue)
         return;
       debug_state_ = DebugState::RUNNING;
+      // The historical stepping callback can request immediate continuation.
+      // That executes the following instruction in this same loop iteration,
+      // so service host control at this second boundary as well. Do not add an
+      // extra breakpoint check or otherwise change debugger stepping policy.
+      if (control_callback_)
+        control_callback_(*this);
+      validateInstructionLocation();
+      if (pc_ >= program_.size())
+        break;
     }
 
     executeInstruction(program_[pc_]);

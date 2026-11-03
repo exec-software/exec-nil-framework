@@ -754,6 +754,110 @@ void check_file_contract(bool &ok) {
   }
 }
 
+void check_ordinary_io_contract(bool &ok) {
+  nyrt_context_begin(0, nullptr);
+  try {
+    temporary_directory temporary;
+    const auto path = (temporary.path() / std::filesystem::u8path(u8"café-日本語-🦊.bin")).u8string();
+    const auto word = [](const void *pointer) { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer)); };
+    std::uint64_t value = 0;
+    const char *error = nullptr;
+    const auto call = [&](const char *name, std::uint64_t a = 0, std::uint64_t b = 0, std::uint64_t c = 0) {
+      return nyrt_io_v1(name, a, b, c, &value, &error);
+    };
+    for (const auto &item : std::initializer_list<std::pair<const char *, const char *>>{
+             {"path.basename", "file.ny"}, {"path.dirname", "alpha/beta"},
+             {"path.stem", "file"}, {"path.extension", ".ny"}, {"path.extension_no_dot", "ny"},
+             {"path.normalize", "alpha/beta/file.ny"}}) {
+      ok &= expect(call(item.first, word("alpha\\beta\\file.ny")) == 1 && error == nullptr &&
+                       std::string(reinterpret_cast<const char *>(value)) == item.second,
+                   "ordinary path operation changed portable separators");
+    }
+    ok &= expect(call("path.ends_with", word("a\\file.ny"), word("/file.ny")) == 1 && value == 0,
+                 "path.ends_with folded separators instead of comparing bytes");
+    ok &= expect(call("path.relative", word("alpha\\one"), word("alpha\\two\\file.ny")) == 1 &&
+                     std::string(reinterpret_cast<const char *>(value)) == "../two/file.ny",
+                 "ordinary relative path differs from the interpreter");
+    ok &= expect(call("file.write_text", word(path.c_str()), word(u8"café\r\n")) == 1 && value == 1 && !error,
+                 "ordinary UTF-8 text write failed");
+    ok &= expect(call("file.append_text", word(path.c_str()), word("tail\n")) == 1 && value == 1,
+                 "ordinary text append failed");
+    ok &= expect(call("file.read_text", word(path.c_str())) == 1 &&
+                     std::string(reinterpret_cast<const char *>(value)) == u8"café\r\ntail\n",
+                 "ordinary text read translated or damaged bytes");
+    void *bytes = make_bytes({0, 10, 13, 128, 255});
+    ok &= expect(call("file.write_bytes", word(path.c_str()), word(bytes)) == 1,
+                 "ordinary byte write failed");
+    ok &= expect(call("file.read_bytes", word(path.c_str())) == 1 &&
+                     expect_bytes(reinterpret_cast<void *>(value), {0, 10, 13, 128, 255}, "ordinary bytes changed"),
+                 "ordinary byte read failed");
+    ok &= expect(call("file.read_text", word(path.c_str())) == 0 && value == 0 && error &&
+                     std::string(error).find("embedded NUL") != std::string::npos,
+                 "ordinary text read silently truncated embedded NUL");
+    const auto before_size = std::filesystem::file_size(std::filesystem::u8path(path));
+    auto *wrong = nyrt_array_new(NYRT_ARRAY_I32, 1);
+    ok &= expect(call("file.write_bytes", word(path.c_str()), word(wrong)) == 0 &&
+                     std::filesystem::file_size(std::filesystem::u8path(path)) == before_size,
+                 "invalid byte array opened/truncated the destination");
+    ok &= expect(call("file.write_text", word("bad\xff"), word("bad")) == 0,
+                 "ordinary file write accepted malformed UTF-8 path");
+    ok &= expect(call("file.handle_open", word(path.c_str()), 0) == 1 && static_cast<std::int64_t>(value) > 0,
+                 "ordinary stream open failed");
+    const auto handle = value;
+    auto *buffer = nyrt_buffer_new(NYRT_ARRAY_U8, 5);
+    ok &= expect(call("file.handle_read", handle, word(buffer), 6) == 1 && static_cast<std::int64_t>(value) == -1,
+                 "stream accepted oversized buffer span");
+    ok &= expect(call("file.handle_read", handle, 1, 1) == 1 && static_cast<std::int64_t>(value) == -1,
+                 "stream dereferenced forged byte buffer");
+    ok &= expect(call("file.handle_write", handle, word(buffer), 1) == 1 && static_cast<std::int64_t>(value) == -1,
+                 "read-only stream permitted writing");
+    ok &= expect(call("file.handle_read", handle, word(buffer), 5) == 1 && value == 5 &&
+                     nyrt_buffer_get(buffer, NYRT_ARRAY_U8, 4) == 255,
+                 "ordinary stream read failed");
+    ok &= expect(call("file.handle_read", handle, word(buffer), 1) == 1 && value == 0,
+                 "ordinary stream EOF is not zero length");
+    ok &= expect(call("file.handle_seek", handle, static_cast<std::uint64_t>(-1), 2) == 1 && value == 4,
+                 "ordinary stream seek after EOF failed");
+    ok &= expect(call("file.handle_seek", handle, static_cast<std::uint64_t>(INT64_MIN), 1) == 1 &&
+                     static_cast<std::int64_t>(value) == -1,
+                 "ordinary stream seek overflow accepted");
+    ok &= expect(call("file.handle_close", handle) == 1 && value == 0 &&
+                     call("file.handle_close", handle) == 1 && static_cast<std::int64_t>(value) == -1,
+                 "ordinary stream close did not invalidate token");
+    ok &= expect(call("file.handle_open", word(path.c_str()), 3) == 1 && value != handle,
+                 "ordinary stream reused a stale token");
+    const auto teardown_handle = value;
+    nyrt_context_end();
+    nyrt_context_begin(0, nullptr);
+    ok &= expect(call("file.handle_close", teardown_handle) == 1 && static_cast<std::int64_t>(value) == -1,
+                 "ordinary stream survived context teardown");
+    // A per-test name avoids touching an ambient user variable.
+    const auto variable = "NIL_ORDINARY_IO_" + temporary.path().filename().string();
+    ok &= expect(call("environment.get", word(variable.c_str())) == 1 && value == 0,
+                 "absent environment variable was not Option.None");
+    ok &= expect(call("environment.set", word(variable.c_str()), word(u8"café日🦊")) == 1 && value == 1,
+                 "Unicode environment set failed");
+    ok &= expect(call("environment.get", word(variable.c_str())) == 2 &&
+                     std::string(reinterpret_cast<const char *>(value)) == u8"café日🦊",
+                 "Unicode environment value changed");
+    ok &= expect(call("environment.set", word(variable.c_str()), word("")) == 1 &&
+                     call("environment.get", word(variable.c_str())) == 2 &&
+                     std::string(reinterpret_cast<const char *>(value)).empty(),
+                 "empty environment value was conflated with absence");
+    ok &= expect(call("environment.unset", word(variable.c_str())) == 1 &&
+                     call("environment.get", word(variable.c_str())) == 1 && value == 0,
+                 "environment unset failed");
+    ok &= expect(call("environment.set", word("bad=name"), word("x")) == 0 && error,
+                 "environment invalid name succeeded");
+    ok &= expect(call("environment.list") == 0 && error,
+                 "unimplemented aggregate environment list reported success");
+  } catch (const std::exception &exception) {
+    std::cerr << "ordinary I/O test setup failed: " << exception.what() << '\n';
+    ok = false;
+  }
+  nyrt_context_end();
+}
+
 } // namespace
 
 int main() {
@@ -846,5 +950,6 @@ int main() {
   nyrt_context_end();
 
   check_console_input_contract(ok);
+  check_ordinary_io_contract(ok);
   return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

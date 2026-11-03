@@ -184,11 +184,14 @@ result. Raw NIL `NEW_ARRAY` now creates a zero-initialized heap-backed `array<i6
 matching native NIL. Embedded legacy by-value `ArrayValue` writes fail explicitly;
 hosts must use a heap-array handle for mutation.
 
-`--ai` is an opt-in NIL-0006 prototype. On Windows it starts a per-process named
-pipe and dispatches `vm.status`, `vm.pause`, `vm.resume`, and WebView-specific
-`vm.send_msg` requests. Stack, local, global, and expression introspection return
-placeholders. The Unix socket server is not implemented. See
-[NIL-0006](../design/NIL-0006-ai-module.md).
+`--ai` enables opt-in local control over a Windows named pipe or Unix socket.
+`--ai-wait` pauses before `main`. Pause/resume, single stepping, bounded real
+state inspection and restricted same-process execution capture/restore run on
+the VM execution thread. Checkpoints initially admit deterministic internal VM
+programs only; external/native I/O, boxed/cyclic values and other explicitly
+listed resource cases are rejected. This is not code hot reload or arbitrary
+process rollback. See [NIL-0006](../design/NIL-0006-ai-module.md) for capabilities,
+limits, commands and the exact checkpoint profile.
 
 ## `nildebugger`
 
@@ -407,6 +410,13 @@ JSON-shaped commands from stdin and writes responses to stdout; it does not
 open a network port or implement authentication. Window control, screenshots,
 hot reload, and interpreter-control connection paths vary by platform and
 several paths are stubs.
+
+Local interpreter control now includes explicit `app.pause`, `app.resume`,
+`app.step`, `app.state.inspect`, `app.state.snapshot` and `app.state.restore`.
+Snapshots/restores require a paused interpreter and the negotiated restricted
+same-process checkpoint profile; restore takes the returned string `checkpoint`
+ID. Code hot reload remains unsupported. See
+[NIL-0006](../design/NIL-0006-ai-module.md) for the exact boundary.
 
 ## Components without shipped commands
 

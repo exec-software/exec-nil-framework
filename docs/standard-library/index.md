@@ -145,9 +145,20 @@ These two secure whole-file APIs now have a native provider in the versioned
 `nilruntime` ABI. `native.runtime-abi` tests the C boundary directly, and
 `ny.routes.native_cli_secure_byte_io` exercises the public Ny wrappers through
 LLVM JIT and AOT with exact bytes, an explicit read ceiling, no-clobber
-preservation, replacement, and invalid-path rejection. This is not a native
-claim for stream handles, the compatibility whole-file APIs, or the remaining
-path helpers.
+preservation, replacement, and invalid-path rejection.
+
+The development native runtime also implements ordinary whole-file text/byte
+read/write/append, copy/move/delete/size/exists, lexical path helpers, checked
+byte streams, and scalar environment get/set/unset, working-directory and host
+identity operations. These use exact compiler-checked intrinsic signatures and
+context-owned stream tokens; they do not expose host file descriptors. Ordinary
+file operations retain their follow-link/overwrite semantics and are **not**
+substitutes for the stricter secure byte APIs. Native text is NUL-free:
+`read_text` rejects NUL-bearing content and directs callers to `read_bytes`.
+Native paths require valid UTF-8. `environment.list` still requires unsupported
+native named-struct-array lowering; do not infer enumeration support from the
+scalar environment operations. New source-tree verification is recorded in the
+Windows-port notebook; an older installed SDK does not acquire these additions.
 
 The supported native release boundary is currently Linux. Windows remains a
 development target; macOS has not received equivalent route verification.

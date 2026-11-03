@@ -214,6 +214,27 @@ if(BUILD_TESTING)
     add_test(NAME nilagent.ipc COMMAND $<TARGET_FILE:nilagent_ipc_tests>)
     set_tests_properties(nilagent.ipc PROPERTIES LABELS "tools;ipc" TIMEOUT 30)
 
+    add_executable(nil_ai_transport_tests tests/ai_transport_tests.cpp)
+    target_link_libraries(nil_ai_transport_tests PRIVATE Threads::Threads)
+    target_compile_features(nil_ai_transport_tests PRIVATE cxx_std_17)
+    if(WIN32)
+        target_link_libraries(nil_ai_transport_tests PRIVATE Advapi32)
+    endif()
+    add_test(NAME nil.ai-transport COMMAND $<TARGET_FILE:nil_ai_transport_tests>)
+    set_tests_properties(nil.ai-transport PROPERTIES LABELS "tools;ipc" TIMEOUT 30)
+
+    add_executable(nil_vm_control_checkpoint_tests tests/vm_control_checkpoint_tests.cpp)
+    target_link_libraries(nil_vm_control_checkpoint_tests PRIVATE nilcompiler_core Threads::Threads)
+    target_compile_features(nil_vm_control_checkpoint_tests PRIVATE cxx_std_17)
+    add_test(NAME nil.vm-control-checkpoints COMMAND $<TARGET_FILE:nil_vm_control_checkpoint_tests>)
+    set_tests_properties(nil.vm-control-checkpoints PROPERTIES LABELS "tools;ipc;vm" TIMEOUT 30)
+
+    add_executable(nil_ai_control_tests tests/ai_control_tests.cpp)
+    target_link_libraries(nil_ai_control_tests PRIVATE nilcompiler_core Threads::Threads)
+    target_compile_features(nil_ai_control_tests PRIVATE cxx_std_17)
+    add_test(NAME nil.ai-control COMMAND $<TARGET_FILE:nil_ai_control_tests>)
+    set_tests_properties(nil.ai-control PROPERTIES LABELS "tools;ipc;vm" TIMEOUT 30)
+
     add_executable(nil_etp_codec_tests tests/etp_codec_tests.cpp)
     target_compile_features(nil_etp_codec_tests PRIVATE cxx_std_17)
     add_test(NAME nil.etp-codec COMMAND $<TARGET_FILE:nil_etp_codec_tests>)
@@ -559,6 +580,21 @@ if(BUILD_TESTING)
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
                 --nilstd "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src")
         set_tests_properties(nil.ordinary-io-interpreter PROPERTIES LABELS "storage;stl;routes" TIMEOUT 330)
+
+        add_test(NAME nil.ordinary-io-native
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/ordinary_io_native_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --assembler $<TARGET_FILE:nilassembler> --linker $<TARGET_FILE:nillinker>
+                --runtime $<TARGET_FILE:nilruntime> --nilstd "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.ordinary-io-native PROPERTIES LABELS "storage;io;unicode;parity" TIMEOUT 660)
+        add_test(NAME nil.ordinary-io-native-controls
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_ordinary_io_native_contract.py")
+        set_tests_properties(nil.ordinary-io-native-controls PROPERTIES LABELS "storage;io" TIMEOUT 30)
+        add_test(NAME nilinterpreter.ai-checkpoint-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/interpreter/ai_checkpoint_contract.py"
+                --interpreter $<TARGET_FILE:nilinterpreter>)
+        set_tests_properties(nilinterpreter.ai-checkpoint-contract PROPERTIES LABELS "tools;ipc;vm" TIMEOUT 60)
         add_test(NAME nildebugger.consumer-harness
             COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/validation/ny-3d/scripts/test_debugger_consumer.py")
@@ -2990,7 +3026,7 @@ if(BUILD_TESTING)
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/file-stream-runtime.ny"
             --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/file-stream-runtime.stdout"
             --expected-exit 0
-            --routes text-interpreter,binary-interpreter
+            --routes all
             --compiler-arg=--sdk-path
             --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
         )
@@ -3000,7 +3036,7 @@ if(BUILD_TESTING)
             --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/io-path-file-runtime.stdout"
             --expected-stderr "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/io-path-file-runtime.stderr"
             --expected-exit 0
-            --routes text-interpreter,binary-interpreter
+            --routes all
             --compiler-arg=--sdk-path
             --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
         )

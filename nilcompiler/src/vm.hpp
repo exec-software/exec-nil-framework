@@ -309,6 +309,7 @@ class VM;
 Value callNyForeignFunc(const ny::NyForeignFunc &ff, const std::vector<Value> &args, VM *vm);
 
 class VM {
+  struct CheckpointState;
 public:
   VM();
   void loadProgram(const std::vector<Instruction> &program,
@@ -367,6 +368,39 @@ public:
       std::function<bool(VM& vm, const Instruction& instr, size_t pc)>;
   void setDebugCallback(DebugCallback cb) { debug_callback_ = std::move(cb); }
 
+  // Optional host control is serviced on the execution owner thread, at an
+  // instruction boundary with no instruction reference retained. The callback
+  // may inspect/reset the VM or wait for a host-owned pause/resume queue. It must
+  // not recursively execute the VM. Installing/changing it, like other VM
+  // configuration, requires ownership of the VM; this is not a cross-thread
+  // mutation API. Blocking native calls are not interrupted by this hook.
+  // Host configuration survives loadProgram() and resetExecution().
+  using ControlCallback = std::function<void(VM &)>;
+  void setControlCallback(ControlCallback cb) {
+    control_callback_ = std::move(cb);
+  }
+
+  // Same-process deterministic execution checkpoints. These are immutable,
+  // reusable deep copies, bound to this VM and this loaded program. They are
+  // not portable files or snapshots of OS resources. The initial profile
+  // rejects interop, console/time, parallel/native instructions, unresolved
+  // builtin/dynamic CALLs, boxed/foreign values, cyclic aggregate graphs and
+  // memory profiling. Repeated acyclic object aliases remain shared.
+  // Capture/restore require the execution owner thread at a safe boundary.
+  class Checkpoint {
+  public:
+    Checkpoint() = default;
+    bool valid() const noexcept { return static_cast<bool>(state_); }
+    size_t retainedBytes() const noexcept;
+  private:
+    friend class VM;
+    explicit Checkpoint(std::shared_ptr<const CheckpointState> state)
+        : state_(std::move(state)) {}
+    std::shared_ptr<const CheckpointState> state_;
+  };
+  Checkpoint createCheckpoint(size_t max_bytes = 16 * 1024 * 1024) const;
+  void restoreCheckpoint(const Checkpoint &checkpoint);
+
   const std::vector<Instruction>& getProgram() const { return program_; }
   size_t getPC() const { return pc_; }
 
@@ -386,6 +420,21 @@ public:
   // Stable, read-only debugger snapshots over the VM's real call stack.
   const std::vector<Value>& getStack() const { return stack_; }
   std::vector<DebugFrameSnapshot> getDebugFrames() const;
+  // Check both bounds before copying any frame/local state. Values can contain
+  // shared object identities; consume/serialize snapshots on the owner thread
+  // before execution resumes, rather than handing them to another thread.
+  std::vector<DebugFrameSnapshot> getDebugFrames(
+      size_t max_frames, size_t max_total_locals) const;
+  using DebugFrameVisitor = std::function<void(
+      const std::string &, size_t,
+      const std::unordered_map<std::string, Value> &)>;
+  // Noncopying inspection for bounded summaries. The visitor must not mutate
+  // the VM or retain references past the owner-thread inspection boundary.
+  void visitDebugFrames(size_t max_frames, size_t max_total_locals,
+                        const DebugFrameVisitor &visitor) const;
+  const std::unordered_map<std::string, Value> &getGlobals() const {
+    return globals_;
+  }
   size_t getCallDepth() const { return call_stack_.size(); }
 
   // Hosts that multiplex VM output with a control protocol can redirect normal
@@ -430,6 +479,13 @@ private:
   std::unordered_set<size_t> breakpoints_;
   DebugState debug_state_ = DebugState::RUNNING;
   DebugCallback debug_callback_;
+  ControlCallback control_callback_;
+  std::shared_ptr<const int> checkpoint_identity_ = std::make_shared<const int>(0);
+  std::uint64_t checkpoint_generation_ = 0;
+  void validateCheckpointAdmission() const;
+  template <typename State>
+  static std::shared_ptr<CheckpointState> cloneCheckpointState(
+      const State &source, size_t max_bytes);
   bool trap_process_exit_ = false;
   std::optional<int> requested_exit_code_;
 

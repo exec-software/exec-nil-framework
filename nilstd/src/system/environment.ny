@@ -1,7 +1,7 @@
 @pragma once
 # ny.lang.system - Environment variable and process environment access
-# Interpreter-backed process environment access. Native-route lowering is not
-# yet available and is tracked separately from this executable contract.
+# Process environment access in the interpreter and native scalar/text routes.
+# Enumeration still needs native named-struct-array lowering; it is interpreter-only.
 
 module nil.std.system
 

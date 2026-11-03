@@ -197,6 +197,40 @@ void invalid_handshake(const std::string& line) {
     require(!client.connect(server.path) && !client.is_connected(), "bad handshake accepted");
     server.finish();
 }
+void checkpoint_commands() {
+    fixture server([](fixture& peer) {
+        require(peer.send(greeting()), "checkpoint greeting"); expect_request(peer);
+        require(peer.send(response(1, "{\"running\":false,\"ai_version\":1,\"nil_version\":\"fixture\",\"pid\":" +
+            std::to_string(pid()) + ",\"capabilities\":[\"checkpoint.same-process.v1\"]}")), "checkpoint status");
+        const auto request = [&](unsigned id, const std::string& method) {
+            const auto parsed = nil::detail::json_parser(peer.request()).parse();
+            require(parsed.at("id").text == std::to_string(id) && parsed.at("method").text == method,
+                    "checkpoint command or correlation mismatch");
+            return parsed;
+        };
+        request(2, "vm.pause"); require(peer.send(response(2, "{\"ok\":true}")), "pause reply");
+        request(3, "vm.snapshot");
+        require(peer.send(response(3, "{\"ok\":true,\"checkpoint\":\"1\",\"size\":1024}")), "snapshot reply");
+        require(request(4, "vm.restore").at("checkpoint").text == "1", "restore lost checkpoint identity");
+        require(peer.send(response(4, "{\"ok\":true,\"checkpoint\":\"1\"}")), "restore reply");
+        request(5, "vm.restore");
+        require(peer.send("{\"id\":\"5\",\"result\":null,\"error\":\"unknown checkpoint\"}\n"), "restore rejection reply");
+        request(6, "vm.resume"); require(peer.send(response(6, "{\"ok\":true}")), "resume reply");
+    });
+    ny::ipc::IpcClient client;
+    require(client.connect(server.path), "checkpoint connect");
+    require(!client.send_status().empty(), "capability negotiation failed");
+    require(ny::ipc::json_extract_string(client.send_control("vm.pause"), "ok") == "true", "pause failed");
+    const auto snapshot = client.send_snapshot();
+    require(ny::ipc::json_extract_string(snapshot, "checkpoint") == "1" &&
+            ny::ipc::json_extract_int(snapshot, "size") == 1024, "snapshot lost real identity/size");
+    require(ny::ipc::json_extract_string(client.send_restore("1"), "ok") == "true", "restore failed");
+    require(ny::ipc::json_extract_string(client.send_restore("2"), "ok") == "false" &&
+            client.is_connected() && client.last_error() == "unknown checkpoint", "restore rejection not preserved");
+    require(ny::ipc::json_extract_string(client.send_control("vm.resume"), "ok") == "true", "resume after rejection failed");
+    client.disconnect(); server.finish();
+    require(ny::ipc::json_extract_string(client.send_snapshot(), "ok") == "false", "disconnection retained capability");
+}
 void invalid_response(const std::string& line) {
     fixture server([&](fixture& peer) { require(peer.send(greeting()), "greeting"); expect_request(peer); (void)peer.send(line, 1024); });
     ny::ipc::IpcClient client(150ms);
@@ -279,6 +313,7 @@ int main() {
             require(ny::ipc::pid_from_endpoint_name(name) == 0, "ambiguous endpoint parsed");
         require(ny::ipc::get_socket_path_for_pid(0).empty(), "invalid PID created endpoint");
         success();
+        checkpoint_commands();
         invalid_handshake(greeting(pid() + 1));
         invalid_handshake("{\"event\":\"connected\",\"pid\":1,\"pid\":2,\"ai_version\":1}\n");
         invalid_handshake(std::string(65537, 'x') + "\n");

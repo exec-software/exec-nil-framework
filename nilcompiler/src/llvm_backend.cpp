@@ -9,6 +9,7 @@
 #include "ui_intrinsic.hpp"
 #include "executable_context.hpp"
 #include "native_runtime.hpp"
+#include "ordinary_io_intrinsic.hpp"
 #include "owned_runtime.hpp"
 #include "nil_contract.hpp"
 #include "numeric_literal.hpp"
@@ -2768,7 +2769,110 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           ann.find("@intrinsic(io.console.error)") != std::string::npos ||
           ann.find("@intrinsic(\"console.error\")") != std::string::npos ||
           ann.find("@intrinsic(console.error)") != std::string::npos;
-      if (dispatch_name == "@intrinsic" && dispatch_provider.rfind("ui.v1.", 0) == 0) {
+      const auto ordinary_contract = ordinary_io::intrinsic(dispatch_provider);
+      if (dispatch_name == "@intrinsic" && ordinary_contract) {
+        const auto &contract = *ordinary_contract;
+        const bool result = contract.output == ordinary_io::Output::result;
+        const bool option = contract.output == ordinary_io::Output::option;
+        const bool pointer_payload = contract.payload == "text" || contract.payload == "array<u8>";
+        const std::string expected_return = result ? "nil::std::core::Result<" + contract.payload + ",text>" :
+            option ? "nil::std::core::Option<" + contract.payload + ">" : contract.payload;
+        bool valid = fn.params.size() == contract.parameters.size() &&
+            impl_->current_function->arg_size() == contract.parameters.size() &&
+            ui::abi_type(fn.return_type) == expected_return;
+        for (std::size_t index = 0; valid && index < contract.parameters.size(); ++index) {
+          const auto &expected = contract.parameters[index];
+          auto *actual = impl_->current_function->getArg(index)->getType();
+          valid = ui::abi_type(nil_parameter_type(fn.params[index])) == expected &&
+              (expected == "text" || expected == "array<u8>" || expected == "ptr<u8>"
+                   ? actual->isPointerTy() : actual->isIntegerTy());
+        }
+        auto *return_type = impl_->current_function->getReturnType();
+        valid = valid && ((result || option) ? return_type->isIntegerTy(64) :
+                          pointer_payload ? return_type->isPointerTy() : return_type->isIntegerTy());
+        if (result || option) {
+          const auto *schema = find_nil_enum_definition(mod, fn.return_type);
+          valid = valid && schema && ui::abi_type(schema->name) == expected_return && schema->variants.size() == 2;
+          if (schema) {
+            std::size_t checked = 0;
+            for (const auto &variant : schema->variants) {
+              const auto types = native_enum_variant_payload_types(variant);
+              if (variant.name == (result ? "Ok" : "Some") && types && types->size() == 1 &&
+                  normalize_nil_type(types->front()) == contract.payload) ++checked;
+              if (result && variant.name == "Error" && types && types->size() == 1 &&
+                  normalize_nil_type(types->front()) == "text") ++checked;
+              if (option && variant.name == "None" && types && types->empty()) ++checked;
+            }
+            valid = valid && checked == 2;
+          }
+        }
+        if (!valid) {
+          std::cerr << "[NativeCodegen] " << dispatch_provider
+                    << " requires its exact ordinary-I/O ABI and enum schema\n";
+          return false;
+        }
+        auto *word = llvm::Type::getInt64Ty(ctx);
+        auto *pointer = llvm::PointerType::getUnqual(ctx);
+        std::vector<llvm::Value *> arguments{impl_->builder->CreateGlobalString(dispatch_provider)};
+        for (auto &argument : impl_->current_function->args()) {
+          arguments.push_back(argument.getType()->isPointerTy()
+              ? impl_->builder->CreatePtrToInt(&argument, word)
+              : impl_->builder->CreateIntCast(&argument, word, true));
+        }
+        while (arguments.size() < 4) arguments.push_back(llvm::ConstantInt::get(word, 0));
+        auto *value_out = impl_->builder->CreateAlloca(word);
+        auto *error_out = impl_->builder->CreateAlloca(pointer);
+        arguments.push_back(value_out);
+        arguments.push_back(error_out);
+        auto *runtime_type = llvm::FunctionType::get(llvm::Type::getInt32Ty(ctx),
+            {pointer, word, word, word, pointer, pointer}, false);
+        auto runtime = impl_->module->getOrInsertFunction("nyrt_io_v1", runtime_type);
+        auto *status = impl_->builder->CreateCall(runtime_type, runtime.getCallee(), arguments);
+        auto *success = llvm::BasicBlock::Create(ctx, "io.success", impl_->current_function);
+        auto *failure = llvm::BasicBlock::Create(ctx, "io.failure", impl_->current_function);
+        impl_->builder->CreateCondBr(impl_->builder->CreateICmpNE(status,
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0)), success, failure);
+        impl_->builder->SetInsertPoint(failure);
+        auto *error = impl_->builder->CreateLoad(pointer, error_out);
+        if (result) {
+          auto *failed = emit_single_payload_variant("Result::Error", error, fn.return_type, "text");
+          if (!failed) return false;
+          impl_->builder->CreateRet(failed);
+        } else {
+          impl_->builder->CreateCall(get_runtime_failure_function(), {error});
+          impl_->builder->CreateUnreachable();
+        }
+        impl_->builder->SetInsertPoint(success);
+        if (option) {
+          auto *present = llvm::BasicBlock::Create(ctx, "io.present", impl_->current_function);
+          auto *absent = llvm::BasicBlock::Create(ctx, "io.absent", impl_->current_function);
+          impl_->builder->CreateCondBr(impl_->builder->CreateICmpEQ(status,
+              llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 2)), present, absent);
+          impl_->builder->SetInsertPoint(absent);
+          auto *none = emit_single_payload_variant("Option::None", llvm::ConstantInt::get(word, 0),
+                                                   fn.return_type, "i64");
+          if (!none) return false;
+          // Empty variants have a zero payload count; the reserved spare word
+          // remains initialized and is harmless to conservative root tracing.
+          auto *count = impl_->builder->CreateIntToPtr(impl_->builder->CreateAdd(none,
+              llvm::ConstantInt::get(word, 8)), pointer);
+          impl_->builder->CreateStore(llvm::ConstantInt::get(word, 0), count);
+          impl_->builder->CreateRet(none);
+          impl_->builder->SetInsertPoint(present);
+        }
+        llvm::Value *value = impl_->builder->CreateLoad(word, value_out);
+        if (pointer_payload) value = impl_->builder->CreateIntToPtr(value, pointer);
+        if (result || option) {
+          auto *wrapped = emit_single_payload_variant(result ? "Result::Ok" : "Option::Some", value,
+                                                       fn.return_type, contract.payload);
+          if (!wrapped) return false;
+          impl_->builder->CreateRet(wrapped);
+        } else {
+          if (!pointer_payload) value = impl_->builder->CreateIntCast(value, return_type, true);
+          impl_->builder->CreateRet(value);
+        }
+        annotation_handled = true;
+      } else if (dispatch_name == "@intrinsic" && dispatch_provider.rfind("ui.v1.", 0) == 0) {
         const auto contract = ui::intrinsic(dispatch_provider);
         if (!contract) {
           std::cerr << "[NativeCodegen] unknown UI intrinsic '" << dispatch_provider << "'\n";
@@ -9001,6 +9105,7 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_buffer_set", &nyrt_buffer_set);
   expose_runtime_symbol("nyrt_read_regular_bytes", &nyrt_read_regular_bytes);
   expose_runtime_symbol("nyrt_write_bytes_atomic", &nyrt_write_bytes_atomic);
+  expose_runtime_symbol("nyrt_io_v1", &nyrt_io_v1);
   expose_runtime_symbol("nyrt_try_i32", &nyrt_try_i32);
   expose_runtime_symbol("nyrt_try_i64", &nyrt_try_i64);
   expose_runtime_symbol("nyrt_i32_to_text", &nyrt_i32_to_text);

@@ -1876,3 +1876,77 @@ unrestricted parity or bare-host portability declaration. Bare-host/toolchain
 qualification, the original GTK anomaly, and the previously recorded shared
 language/provider limitations remain open. Native ordinary I/O is still a
 shared unsupported route, not made supported by these interpreter checks.
+
+### 2026-11-03 — shared native ordinary I/O and real execution checkpoints
+
+The follow-up audit confirmed two shared implementation gaps, not merely
+Windows omissions: ordinary I/O worked in the interpreter but lacked native
+lowering, and the AI client's reload/snapshot commands returned unsupported.
+The existing AI pause path also changed unsynchronized debug state without
+actually stopping ordinary execution. Historical command names and separate
+FFI DLL reload experiments were not evidence of execution save/restore.
+
+Added exact-ABI native lowering/runtime support for ordinary file text/bytes,
+copy/move/delete/size/exists, lexical paths, checked byte streams and scalar
+environment/working-directory/host-identity operations. Native stream tokens
+are context-owned, bounds-checked and never host descriptors. The Unicode
+consumer exercises both NIL encodings, both bundles, both standalone
+assembler/linker routes, JIT and AOT, with independent exact namespace and raw
+byte checks including NFC/NFD distinctions. Incorrect intrinsic declarations
+are rejected before producing an executable. The existing stream and path/file
+route fixtures now include native execution.
+
+Native `environment.list` remains unsupported because named-struct-array
+lowering is a separate gap. Native text remains NUL-free; `read_text` rejects
+NUL-bearing content explicitly and directs callers to the byte API. Ordinary
+file operations retain their normal link-following/overwrite behavior and do
+not acquire the secure-byte API's stricter filesystem guarantees.
+
+The user selected full execution capture/restore, and explicitly approved
+same-process restoration as the first implementation. The shared VM now has
+owner-thread instruction-boundary callbacks, noncopying bounded inspection,
+and opaque reusable checkpoints of PC, real frames/locals/globals, operand
+stack, constants, heap/alias identities, ownership/fault/GC state, arguments
+and execution settings. Restore validates and clones before publishing any
+state. Checkpoints are bound to one VM and loaded-program generation, with
+16 MiB logical storage, 65,536 value-visit and depth-64 limits. Independent
+review caught and fixed traversal-order-dependent shared-subtree depth checking.
+
+This initial checkpoint profile is deliberately restricted: whole programs
+containing interop, console/time/native/parallel work or builtin/dynamic calls
+are rejected, as are boxed/foreign values, cyclic aggregate graphs, open file
+handles and memory profiling. Host callbacks, external resources and emitted
+diagnostics are not rewound. It is not general application rollback, disk
+persistence, native/JIT process rewind or code hot reload. `vm.reload` still
+reports unsupported. The exact contract is in `docs/design/NIL-0006-ai-module.md`.
+
+The local AI endpoint now uses strict bounded JSON, owner-only Unix sockets /
+Windows named pipes and joined nonblocking transport. Commands execute on the
+VM owner thread, including real pause/resume, step, inspection, capture and
+restore. `--ai-wait` starts paused before main. Capability-negotiated nilagent
+commands expose the same semantics. Timeout/rejection never becomes a success
+placeholder. Review also addressed oversized error diagnostics, invalid
+inspection metadata, unnecessary large-value copies and final-reply delivery
+during fast program shutdown. No ETP migration is implied by these JSON-v1
+changes; that remains a separately versioned integration.
+
+Initial full Linux regression: 567 registered, 565 passed, zero failures,
+with only optional display/live-PostgreSQL skips (104.07 seconds). VM checkpoint
+tests passed 210 checks and control tests 237 checks. The final transport adds
+a delayed-reader shutdown regression (57 Linux checks). The private evidence
+root is `/tmp/nil-control-io-20261103.VGX6d6`; the repeat full Linux run after that
+last transport change again passed 565/567 with the same two skips and zero
+failures (101.62 seconds), retained as `linux-ctest-v2.xml`. Windows source-tree
+verification is the next gate; Linux results are not Windows qualification.
+
+Retained ordinary-I/O development evidence includes
+`/tmp/nil-ordinary-io-parity-ps6kqy9c/report.json` (eight routes) and the subsequent
+full-suite rerun with the updated STL comment. Earlier fixture/harness failures
+remain retained, rather than overwritten. The GTK backend is unchanged: it
+already uses GTK's Win32 backend on Windows. The old missing helper output does
+not establish a rendering defect, and its original cause remains unresolved.
+
+No previous SDK/VSIX was replaced or activated, no Lich publication or Anomalous
+change occurred, and no local-model/GPU workload or development server was run.
+This is shared implementation progress with explicit limits, not a v1 release
+or an unrestricted checkpoint/parity declaration.

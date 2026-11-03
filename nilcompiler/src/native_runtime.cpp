@@ -1,5 +1,8 @@
 #include "native_runtime.hpp"
 #include "../../common/standard_streams.hpp"
+#include "../../common/strict_json.hpp"
+#include "../../common/windows_environment.hpp"
+#include "ordinary_io_intrinsic.hpp"
 #include "dynamic_type.hpp"
 #include "database_runtime.hpp"
 #include "ui_runtime.hpp"
@@ -15,6 +18,7 @@
 #include "owned_runtime.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <charconv>
 #include <cctype>
@@ -22,16 +26,24 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#ifndef _WIN32
+#include <pwd.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -83,6 +95,12 @@ struct runtime_context {
   ny::memory_profile::Session profile;
   ny::database::Context databases;
   ny::ui::Context ui;
+  struct file {
+    std::unique_ptr<std::fstream> stream;
+    bool readable = false;
+    bool writable = false;
+  };
+  std::map<std::int64_t, file> files;
   struct allocation {
     void *data;
     std::size_t size;
@@ -118,6 +136,8 @@ struct runtime_context {
 
 thread_local runtime_context context;
 thread_local const char *parallel_failure = nullptr;
+std::atomic<std::uint64_t> next_file_token{1};
+std::mutex ordinary_environment_mutex;
 
 [[noreturn]] void invalid_fault_protocol() noexcept {
   nyrt_fail("NIL native runtime error: invalid fault protocol state\n");
@@ -847,6 +867,7 @@ void nyrt_context_end() noexcept {
     nyrt_fail("NIL native runtime error: memory capture failed\n");
   context.databases.clear();
   context.ui.clear();
+  context.files.clear();
   nyrt_owned_v1_unwind(0);
   context.pending_fault.reset();
   std::vector<runtime_context::fault_frame>().swap(context.fault_frames);
@@ -1570,6 +1591,342 @@ std::int32_t nyrt_buffer_set(void *value, std::uint32_t expected_kind,
   store_value(view, resolved, item);
   view.data = nullptr;
   return 1;
+}
+
+std::int32_t nyrt_io_v1(const char *operation, std::uint64_t first,
+                       std::uint64_t second, std::uint64_t third,
+                       std::uint64_t *value, const char **error) noexcept {
+  if (value) *value = 0;
+  if (error) *error = nullptr;
+  if (!operation || !value || !error) return 0;
+  try {
+    const std::string name(operation);
+    if (!ny::ordinary_io::intrinsic(name)) {
+      set_error(error, "ordinary I/O: unknown operation");
+      return 0;
+    }
+    auto fail = [&](const std::string &message) {
+      set_error(error, name + ": " + message);
+      return std::int32_t{0};
+    };
+    auto text = [](std::uint64_t word) -> const char * {
+      if (!word) throw std::invalid_argument("ordinary I/O: null text argument");
+      return reinterpret_cast<const char *>(static_cast<std::uintptr_t>(word));
+    };
+    auto output_text = [&](std::string_view result) {
+      const char *owned = own_string(result);
+      if (!owned) return fail("allocation failed");
+      *value = reinterpret_cast<std::uintptr_t>(owned);
+      return std::int32_t{1};
+    };
+    auto host_path = [&](std::uint64_t word, bool fold_separators = false) {
+      std::string path(text(word));
+      nil::detail::valid_utf8(path);
+      if (fold_separators) std::replace(path.begin(), path.end(), '\\', '/');
+      return std::filesystem::u8path(path);
+    };
+
+    if (name.rfind("path.", 0) == 0) {
+      if (name == "path.separator") return output_text("/");
+      if (name == "path.ends_with") {
+        const std::string_view path(text(first)), suffix(text(second));
+        *value = suffix.size() <= path.size() &&
+                 path.substr(path.size() - suffix.size()) == suffix;
+        return 1;
+      }
+      auto path = host_path(first, true);
+      if (name == "path.is_absolute") { *value = path.is_absolute(); return 1; }
+      if (name == "path.combine") path /= host_path(second, true);
+      else if (name == "path.basename") path = path.filename();
+      else if (name == "path.dirname") path = path.parent_path();
+      else if (name == "path.stem") path = path.stem();
+      else if (name == "path.extension") path = path.extension();
+      else if (name == "path.extension_no_dot") {
+        auto extension = path.extension().generic_u8string();
+        if (!extension.empty() && extension.front() == '.') extension.erase(0, 1);
+        return output_text(extension);
+      } else if (name == "path.normalize") path = path.lexically_normal();
+      else if (name == "path.relative") path = host_path(second, true).lexically_relative(path);
+      else if (name == "path.with_extension") path.replace_extension(host_path(second, true));
+      else if (name == "path.absolute") {
+        std::error_code code;
+        path = std::filesystem::absolute(path, code);
+        if (code) return output_text(""); // Interpreter's compatibility contract.
+      }
+      return output_text(path.generic_u8string());
+    }
+
+    if (name.rfind("environment.", 0) == 0) {
+      // Serializes native language accesses to the process-global environment.
+      // Foreign code must provide its own synchronization when changing it.
+      std::lock_guard<std::mutex> lock(ordinary_environment_mutex);
+      constexpr std::size_t limit = 1024U * 1024U;
+      if (name == "environment.get" || name == "environment.set" || name == "environment.unset") {
+        const std::string key(text(first));
+        if (key.empty() || key.size() > 32767 || key.find('=') != std::string::npos)
+          return fail("invalid variable name");
+        if (name == "environment.get") {
+#ifdef _WIN32
+          const auto found = nil::detail::windows_environment_get(key);
+          const char *entry = found ? found->c_str() : nullptr;
+#else
+          const char *entry = std::getenv(key.c_str());
+#endif
+          if (!entry) return 1;
+          if (std::strlen(entry) > limit) return fail("value exceeds the 1 MiB safety limit");
+          if (!output_text(entry)) return 0;
+          return 2;
+        }
+        std::optional<std::string> entry;
+        if (name == "environment.set") {
+          entry = text(second);
+          if (entry->size() > limit) return fail("value exceeds the 1 MiB safety limit");
+        }
+#ifdef _WIN32
+        const bool changed = nil::detail::windows_environment_set(key, entry);
+#else
+        const bool changed = (entry ? setenv(key.c_str(), entry->c_str(), 1) : unsetenv(key.c_str())) == 0;
+#endif
+        if (!changed) return fail("host rejected the update");
+        *value = 1;
+        return 1;
+      }
+      if (name == "environment.current_directory") {
+        std::error_code code;
+        const auto path = std::filesystem::current_path(code);
+        if (code) return fail("host directory is unavailable");
+        return output_text(path.u8string());
+      }
+      if (name == "environment.set_current_directory") {
+        std::error_code code;
+        std::filesystem::current_path(host_path(first), code);
+        if (code) return fail("host rejected the directory");
+        *value = 1;
+        return 1;
+      }
+      if (name == "environment.newline") {
+#ifdef _WIN32
+        return output_text("\r\n");
+#else
+        return output_text("\n");
+#endif
+      }
+      if (name == "environment.machine_name") {
+#ifdef _WIN32
+        wchar_t buffer[MAX_COMPUTERNAME_LENGTH + 1] = {};
+        DWORD size = static_cast<DWORD>(sizeof(buffer) / sizeof(*buffer));
+        if (!GetComputerNameW(buffer, &size)) return fail("host name is unavailable");
+        return output_text(nil::detail::environment_utf8(buffer, size));
+#else
+        char buffer[256] = {};
+        if (gethostname(buffer, sizeof(buffer) - 1) != 0) return fail("host name is unavailable");
+        return output_text(buffer);
+#endif
+      }
+      if (name == "environment.user_name") {
+#ifdef _WIN32
+        wchar_t buffer[1024] = {};
+        DWORD size = static_cast<DWORD>(sizeof(buffer) / sizeof(*buffer));
+        // The SDK runtime does not otherwise require an advapi32 import
+        // library. Resolve only the OS copy, never a working-directory DLL.
+        const HMODULE library = LoadLibraryExW(L"advapi32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (!library) return fail("user name is unavailable");
+        const auto get_user_name = reinterpret_cast<BOOL (WINAPI *)(LPWSTR, LPDWORD)>(
+            GetProcAddress(library, "GetUserNameW"));
+        const bool found = get_user_name && get_user_name(buffer, &size) && size > 1;
+        FreeLibrary(library);
+        if (!found) return fail("user name is unavailable");
+        return output_text(nil::detail::environment_utf8(buffer, size - 1));
+#else
+        long size = sysconf(_SC_GETPW_R_SIZE_MAX);
+        if (size < 1024 || size > 1024 * 1024) size = 16384;
+        std::vector<char> buffer(static_cast<std::size_t>(size));
+        struct passwd record {};
+        struct passwd *resolved = nullptr;
+        if (getpwuid_r(geteuid(), &record, buffer.data(), buffer.size(), &resolved) != 0 ||
+            !resolved || !resolved->pw_name || !*resolved->pw_name)
+          return fail("user name is unavailable");
+        return output_text(resolved->pw_name);
+#endif
+      }
+    }
+
+    if (name.rfind("file.handle_", 0) == 0) {
+      *value = static_cast<std::uint64_t>(-1);
+      if (name == "file.handle_open") {
+        const auto mode = static_cast<std::int64_t>(second);
+        if (mode < 0 || mode > 3 || context.files.size() >= 4096) return 1;
+        runtime_context::file owned;
+        owned.readable = mode == 0 || mode == 3;
+        owned.writable = mode != 0;
+        std::ios::openmode flags = std::ios::binary;
+        if (owned.readable) flags |= std::ios::in;
+        if (owned.writable) flags |= std::ios::out;
+        if (mode == 1) flags |= std::ios::trunc;
+        if (mode == 2) flags |= std::ios::app;
+        const auto path = host_path(first);
+        owned.stream = std::make_unique<std::fstream>(path, flags);
+        if (!*owned.stream && mode == 3) {
+          owned.stream->clear();
+          std::ofstream create(path, std::ios::binary | std::ios::app);
+          if (create) { create.close(); owned.stream->open(path, flags); }
+        }
+        if (!*owned.stream) return 1;
+        // Saturate rather than wrap: old tokens cannot become valid again.
+        auto token = next_file_token.load(std::memory_order_relaxed);
+        do {
+          if (token > static_cast<std::uint64_t>(INT64_MAX)) return 1;
+        } while (!next_file_token.compare_exchange_weak(token, token + 1, std::memory_order_relaxed));
+        context.files.emplace(static_cast<std::int64_t>(token), std::move(owned));
+        *value = token;
+        return 1;
+      }
+      auto found = context.files.find(static_cast<std::int64_t>(first));
+      if (found == context.files.end()) return 1;
+      auto &file = found->second;
+      auto &stream = *file.stream;
+      if (name == "file.handle_close") {
+        stream.clear();
+        stream.close();
+        const bool closed = !stream.fail();
+        context.files.erase(found);
+        if (closed) *value = 0;
+        return 1;
+      }
+      if (name == "file.handle_flush") {
+        if (!file.writable) return 1;
+        stream.flush();
+        if (stream) *value = 0;
+        return 1;
+      }
+      if (name == "file.handle_read" || name == "file.handle_write") {
+        const bool writing = name == "file.handle_write";
+        const auto length = static_cast<std::int64_t>(third);
+        if (length < 0 || static_cast<std::uint64_t>(length) > maximum_file_bytes ||
+            (writing ? !file.writable : !file.readable)) return 1;
+        auto *pointer = reinterpret_cast<void *>(static_cast<std::uintptr_t>(second));
+        std::uint64_t offset = 0;
+        const auto *buffer = checked_buffer(pointer, NYRT_ARRAY_U8, &offset);
+        if (!buffer || static_cast<std::uint64_t>(length) > buffer->length - offset) return 1;
+        if (!length) { *value = 0; return 1; }
+        if (writing) {
+          stream.write(static_cast<const char *>(pointer), static_cast<std::streamsize>(length));
+          if (stream) *value = static_cast<std::uint64_t>(length);
+        } else {
+          stream.read(static_cast<char *>(pointer), static_cast<std::streamsize>(length));
+          const auto count = stream.gcount();
+          if (!stream.bad() && (stream || stream.eof())) *value = static_cast<std::uint64_t>(count);
+        }
+        return 1;
+      }
+      if (name == "file.handle_seek") {
+        const auto offset = static_cast<std::int64_t>(second);
+        const auto origin = static_cast<std::int64_t>(third);
+        if (origin < 0 || origin > 2) return 1;
+        auto tell = [&]() {
+          auto position = file.readable ? stream.tellg() : std::streampos(-1);
+          if (position == std::streampos(-1) && file.writable) position = stream.tellp();
+          return position;
+        };
+        auto seek = [&](std::int64_t position) {
+          stream.clear();
+          if (file.readable) stream.seekg(position, std::ios::beg);
+          if (file.writable) stream.seekp(position, std::ios::beg);
+          return static_cast<bool>(stream);
+        };
+        stream.clear();
+        const auto saved = tell();
+        std::int64_t base = 0;
+        if (origin == 1) {
+          if (saved == std::streampos(-1)) return 1;
+          base = static_cast<std::streamoff>(saved);
+        } else if (origin == 2) {
+          if (file.readable) stream.seekg(0, std::ios::end);
+          else stream.seekp(0, std::ios::end);
+          const auto end = tell();
+          if (end == std::streampos(-1)) return 1;
+          base = static_cast<std::streamoff>(end);
+          if (saved != std::streampos(-1) && !seek(static_cast<std::streamoff>(saved))) return 1;
+        }
+        if ((offset > 0 && base > INT64_MAX - offset) ||
+            (offset < 0 && (offset == INT64_MIN || base < -offset))) return 1;
+        const auto target = base + offset;
+        if (target < 0 || !seek(target)) return 1;
+        *value = static_cast<std::uint64_t>(target);
+        return 1;
+      }
+    }
+
+    const auto path = host_path(first);
+    std::error_code code;
+    if (name == "file.exists") {
+      *value = std::filesystem::is_regular_file(path, code) && !code;
+      return 1;
+    }
+    if (name == "file.size") {
+      const auto count = std::filesystem::file_size(path, code);
+      if (code || count > static_cast<std::uint64_t>(INT64_MAX)) return fail("cannot obtain file size");
+      *value = count;
+      return 1;
+    }
+    if (name == "file.delete" || name == "file.copy" || name == "file.move") {
+      bool result = true;
+      if (name == "file.delete") result = std::filesystem::remove(path, code);
+      else if (name == "file.copy")
+        result = std::filesystem::copy_file(path, host_path(second), std::filesystem::copy_options::overwrite_existing, code);
+      else std::filesystem::rename(path, host_path(second), code);
+      if (code) return fail("host operation failed");
+      *value = result;
+      return 1;
+    }
+    if (name == "file.read_text" || name == "file.read_bytes") {
+      std::ifstream input(path, std::ios::binary | std::ios::ate);
+      if (!input) return fail("file not found or unreadable");
+      const auto end = input.tellg();
+      if (end < 0 || static_cast<std::uint64_t>(end) > maximum_file_bytes)
+        return fail("file exceeds the 512 MiB safety limit");
+      const auto count = static_cast<std::size_t>(end);
+      input.seekg(0, std::ios::beg);
+      if (name == "file.read_text") {
+        std::string contents(count, '\0');
+        if (count && !input.read(contents.data(), static_cast<std::streamsize>(count))) return fail("short read");
+        if (contents.find('\0') != std::string::npos)
+          return fail("embedded NUL is unsupported by native text; use read_bytes");
+        return output_text(contents);
+      }
+      auto *array = make_array(NYRT_ARRAY_U8, count);
+      if (!array) return fail("allocation failed");
+      if (count && !input.read(static_cast<char *>(array->data), static_cast<std::streamsize>(count))) return fail("short read");
+      *value = reinterpret_cast<std::uintptr_t>(array);
+      return 1;
+    }
+    if (name == "file.write_text" || name == "file.append_text" || name == "file.write_bytes") {
+      const char *data = nullptr;
+      std::uint64_t size = 0;
+      if (name == "file.write_bytes") {
+        const auto *array = checked_array(reinterpret_cast<const void *>(static_cast<std::uintptr_t>(second)), NYRT_ARRAY_U8);
+        if (!array) return fail("invalid byte array");
+        data = static_cast<const char *>(array->data);
+        size = array->length;
+      } else { data = text(second); size = std::strlen(data); }
+      if (size > maximum_file_bytes) return fail("content exceeds the 512 MiB safety limit");
+      std::ofstream output(path, std::ios::binary | (name == "file.append_text" ? std::ios::app : std::ios::trunc));
+      if (!output) return fail("cannot open output file");
+      if (size) output.write(data, static_cast<std::streamsize>(size));
+      output.close();
+      if (!output) return fail("write failed");
+      *value = 1;
+      return 1;
+    }
+    return fail("unsupported operation");
+  } catch (...) {
+    if (std::strncmp(operation, "file.handle_", 12) == 0) {
+      *value = static_cast<std::uint64_t>(-1);
+      return 1;
+    }
+    set_error(error, "ordinary I/O: invalid text/path or host operation failed");
+    return 0;
+  }
 }
 
 std::int32_t nyrt_read_regular_bytes(const char *path,

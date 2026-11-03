@@ -43,7 +43,7 @@
 
 // NIL-0006: AI Module — Embedded Agent Command & Control Server
 // When launched with --ai, the interpreter starts a named pipe server before
-// executing main(). Agents connect and send JSON-RPC commands to inspect
+// executing main(). Agents connect and send JSON Lines commands to inspect
 // and control the running program.
 
 // ── WebView injection (dynamic) ───────────────────────────────────────────────
@@ -82,312 +82,8 @@ static webview_inject_fn resolve_webview_inject() {
 
 // ── AI Server State ───────────────────────────────────────────────────────────
 
-namespace ny_ai {
-
-static std::atomic<bool>  g_running{false};
-static ny::VM*            g_vm     = nullptr;
-
-// ── Minimal JSON helpers ──────────────────────────────────────────────────────
-
-static std::string json_extract(const std::string& json, const std::string& key) {
-    // Extract "key":"value"
-    std::string q = "\"" + key + "\":\"";
-    auto pos = json.find(q);
-    if (pos == std::string::npos) return "";
-    pos += q.size();
-    std::string out;
-    while (pos < json.size()) {
-        char c = json[pos];
-        if (c == '"') break;
-        if (c == '\\' && pos + 1 < json.size()) {
-            char nc = json[++pos];
-            if (nc == '"')  { out += '"';  }
-            else if (nc == 'n')  { out += '\n'; }
-            else if (nc == 'r')  { out += '\r'; }
-            else if (nc == 't')  { out += '\t'; }
-            else if (nc == '\\') { out += '\\'; }
-            else                 { out += nc;   }
-        } else {
-            out += c;
-        }
-        ++pos;
-    }
-    return out;
-}
-
-static std::string json_response(const std::string& id,
-                                 const std::string& result,
-                                 const std::string& error = "") {
-    std::ostringstream s;
-    s << "{\"id\":\"" << id << "\","
-      << "\"result\":" << result << ","
-      << "\"error\":" << (error.empty() ? "null" : ("\"" + error + "\""))
-      << "}";
-    return s.str();
-}
-
-// ── Command dispatch ──────────────────────────────────────────────────────────
-
-static std::string handle_command(const std::string& line) {
-    std::string id     = json_extract(line, "id");
-    std::string method = json_extract(line, "method");
-
-    if (method == "vm.status") {
-        uint32_t pid = 0;
-#ifdef _WIN32
-        pid = (uint32_t)GetCurrentProcessId();
-#else
-        pid = (uint32_t)getpid();
-#endif
-        std::ostringstream r;
-        r << "{\"running\":true,\"ai_version\":1"
-          << ",\"pid\":" << pid
-          << ",\"nil_version\":\"" << NIL_VERSION << "\"}";
-        return json_response(id, r.str());
-    }
-
-    if (method == "vm.pause") {
-        if (g_vm) {
-            g_vm->setDebugState(ny::VM::DebugState::PAUSED);
-            return json_response(id, "{\"ok\":true}");
-        }
-        return json_response(id, "null", "vm not ready");
-    }
-
-    if (method == "vm.resume") {
-        if (g_vm) {
-            g_vm->setDebugState(ny::VM::DebugState::RUNNING);
-            return json_response(id, "{\"ok\":true}");
-        }
-        return json_response(id, "null", "vm not ready");
-    }
-
-    // vm.send_msg — inject a JSON message into the WebView message queue.
-    // Works transparently with Nyrd: poll_message returns AI messages alongside
-    // WebView2 messages so handle_message processes them normally.
-    if (method == "vm.send_msg") {
-        std::string msg = json_extract(line, "json");
-        if (msg.empty()) {
-            return json_response(id, "null", "missing json param");
-        }
-        // Inject into webview handle 1 (Nyrd always uses the first handle).
-        // NIL-0006: for multi-window programs, a "handle" param can be added.
-        webview_inject_fn inject = resolve_webview_inject();
-        if (!inject) {
-            return json_response(id, "null", "webview not loaded");
-        }
-        try {
-            inject(1, msg.c_str());
-            return json_response(id, "{\"ok\":true}");
-        } catch (...) {
-            return json_response(id, "null", "inject failed");
-        }
-    }
-
-    // vm.stack / vm.locals / vm.globals / vm.eval — Phase 2 introspection
-    if (method == "vm.stack" || method == "vm.locals" ||
-        method == "vm.globals" || method == "vm.eval") {
-        return json_response(id,
-            "{\"note\":\"Interpreter introspection is planned for Phase 2 (NIL-0006)\","
-            "\"frames\":[]}");
-    }
-
-    return json_response(id, "null", "unknown method: " + method);
-}
-
-// ── Windows Named Pipe server ─────────────────────────────────────────────────
-
-#ifdef _WIN32
-static void server_thread(const std::string& pipe_name) {
-    g_running = true;
-    std::cerr << "[ny_ai] Server on " << pipe_name << std::endl;
-
-    while (g_running) {
-        HANDLE pipe = CreateNamedPipeA(
-            pipe_name.c_str(),
-            PIPE_ACCESS_DUPLEX,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-            PIPE_UNLIMITED_INSTANCES,
-            8192, 8192,
-            5000,     // 5s default timeout
-            nullptr
-        );
-        if (pipe == INVALID_HANDLE_VALUE) {
-            std::cerr << "[ny_ai] CreateNamedPipe failed: " << GetLastError() << std::endl;
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            continue;
-        }
-
-        BOOL connected = ConnectNamedPipe(pipe, nullptr)
-            ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
-
-        if (!connected) {
-            CloseHandle(pipe);
-            continue;
-        }
-
-        // Handshake
-        DWORD pid = GetCurrentProcessId();
-        std::ostringstream hs;
-        hs << "{\"event\":\"connected\",\"pid\":" << pid
-           << ",\"ai_version\":1,\"program\":\"ny\"}\n";
-        std::string hs_str = hs.str();
-        DWORD written = 0;
-        WriteFile(pipe, hs_str.c_str(), (DWORD)hs_str.size(), &written, nullptr);
-
-        // Read-dispatch loop
-        std::string line_buf;
-        char buf[4096];
-        DWORD nread = 0;
-        while (g_running) {
-            BOOL ok = ReadFile(pipe, buf, sizeof(buf) - 1, &nread, nullptr);
-            if (!ok || nread == 0) break;
-            buf[nread] = '\0';
-            line_buf += std::string(buf, nread);
-
-            // Process complete lines
-            size_t nl;
-            while ((nl = line_buf.find('\n')) != std::string::npos) {
-                std::string line = line_buf.substr(0, nl);
-                line_buf = line_buf.substr(nl + 1);
-                // Strip \r
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-                if (!line.empty()) {
-                    std::string resp = handle_command(line) + "\n";
-                    WriteFile(pipe, resp.c_str(), (DWORD)resp.size(), &written, nullptr);
-                }
-            }
-        }
-
-        FlushFileBuffers(pipe);
-        DisconnectNamedPipe(pipe);
-        CloseHandle(pipe);
-    }
-    std::cerr << "[ny_ai] Server stopped" << std::endl;
-}
-#else
-// NIL-0006 Phase 1: Unix domain socket server.
-//
-// Mirrors the Windows named-pipe server above: same newline-delimited JSON,
-// same `connected` handshake, same one-client-at-a-time accept loop, so a
-// client speaks one protocol on both platforms.
-//
-// Until now this was a stub that printed "not yet implemented" -- but it
-// printed it *after* main() had already announced "Listening on <path>", so an
-// agent that trusted the first line waited forever on a socket that was never
-// created. On Linux, which is where the agents actually run, the whole of
-// NIL-0006 was therefore unreachable.
-//
-// The socket is created with permissions for its owner only: this channel can
-// pause the VM and inject application messages, so it must not be reachable by
-// other users on the machine.
-static void server_thread(const std::string& socket_path) {
-    g_running = true;
-
-    const int listener = ::socket(AF_UNIX, SOCK_STREAM, 0);
-    if (listener < 0) {
-        std::cerr << "[ny_ai] socket() failed: " << std::strerror(errno) << std::endl;
-        g_running = false;
-        return;
-    }
-
-    sockaddr_un addr{};
-    addr.sun_family = AF_UNIX;
-    if (socket_path.size() >= sizeof(addr.sun_path)) {
-        std::cerr << "[ny_ai] socket path too long: " << socket_path << std::endl;
-        ::close(listener);
-        g_running = false;
-        return;
-    }
-    std::strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
-
-    // A path left by a crashed run would otherwise make every later run fail
-    // to bind. Removing it is safe because the path carries our own pid.
-    ::unlink(socket_path.c_str());
-
-    // Create owner-only, without a window where the socket exists world-
-    // accessible: set the mask before bind rather than chmod after.
-    const mode_t previous_mask = ::umask(0177);
-    const int bound = ::bind(listener, reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
-    ::umask(previous_mask);
-    if (bound < 0) {
-        std::cerr << "[ny_ai] bind(" << socket_path << ") failed: " << std::strerror(errno) << std::endl;
-        ::close(listener);
-        g_running = false;
-        return;
-    }
-    if (::listen(listener, 1) < 0) {
-        std::cerr << "[ny_ai] listen() failed: " << std::strerror(errno) << std::endl;
-        ::close(listener);
-        ::unlink(socket_path.c_str());
-        g_running = false;
-        return;
-    }
-
-    std::cerr << "[ny_ai] Server on " << socket_path << std::endl;
-
-    while (g_running) {
-        // A one-second accept timeout, so shutdown does not have to wait for a
-        // client that never arrives. The Windows side gets this from its pipe
-        // timeout; here it has to be asked for.
-        timeval timeout{1, 0};
-        fd_set readable;
-        FD_ZERO(&readable);
-        FD_SET(listener, &readable);
-        const int ready = ::select(listener + 1, &readable, nullptr, nullptr, &timeout);
-        if (ready < 0) {
-            if (errno == EINTR) continue;
-            break;
-        }
-        if (ready == 0) continue;
-
-        const int client = ::accept(listener, nullptr, nullptr);
-        if (client < 0) {
-            if (errno == EINTR) continue;
-            continue;
-        }
-
-        std::ostringstream handshake;
-        handshake << "{\"event\":\"connected\",\"pid\":" << static_cast<long>(::getpid())
-                  << ",\"ai_version\":1,\"program\":\"ny\"}\n";
-        const std::string hs = handshake.str();
-        if (::write(client, hs.c_str(), hs.size()) < 0) {
-            ::close(client);
-            continue;
-        }
-
-        std::string line_buf;
-        char buf[4096];
-        while (g_running) {
-            const ssize_t nread = ::read(client, buf, sizeof(buf) - 1);
-            if (nread <= 0) {
-                if (nread < 0 && errno == EINTR) continue;
-                break;
-            }
-            line_buf.append(buf, static_cast<std::size_t>(nread));
-
-            // A client may send several commands in one write, or split one
-            // across writes; dispatch only whole lines.
-            std::size_t nl;
-            while ((nl = line_buf.find('\n')) != std::string::npos) {
-                std::string line = line_buf.substr(0, nl);
-                line_buf = line_buf.substr(nl + 1);
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-                if (line.empty()) continue;
-                const std::string resp = handle_command(line) + "\n";
-                if (::write(client, resp.c_str(), resp.size()) < 0) break;
-            }
-        }
-        ::close(client);
-    }
-
-    ::close(listener);
-    ::unlink(socket_path.c_str());
-    std::cerr << "[ny_ai] Server stopped" << std::endl;
-}
-#endif
-
-} // namespace ny_ai
+#include "ai_control.hpp"
+#include "ai_transport.hpp"
 
 static bool has_nil_binary_magic(const char magic[4]) {
   return std::memcmp(magic, "NIL\0", 4) == 0 ||
@@ -659,6 +355,7 @@ static void print_usage(std::ostream &out) {
       << "\nOptions:\n"
       << "  --memory-mode=safe|unsafe  Select managed or manual memory mode\n"
       << "  --ai                       Enable the experimental AI control server\n"
+      << "  --ai-wait                  Enable AI control and pause before main\n"
       << "  --strict-bounds            Fault on out-of-bounds array access (NIL-0026)\n"
       << "  --no-ai                    Disable the AI control server\n"
       << "  --version                  Show the nilinterpreter version\n"
@@ -675,6 +372,7 @@ int main(int argc, char *argv[]) {
   std::string input_file;
   ny::MemoryMode memory_mode = ny::MemoryMode::UNSAFE_MANUAL;  // Default to unsafe (manual)
   bool ai_mode = false;
+  bool ai_wait = false;
   bool strict_bounds = false;   // NIL-0006: --ai flag enables the embedded AI server
 
   std::vector<std::string> vm_args;
@@ -701,8 +399,12 @@ int main(int argc, char *argv[]) {
 
     if (arg == "--ai") {
       ai_mode = true;
+    } else if (arg == "--ai-wait") {
+      ai_mode = true;
+      ai_wait = true;
     } else if (arg == "--no-ai") {
       ai_mode = false;
+      ai_wait = false;
     } else if (arg == "--strict-bounds") {
       strict_bounds = true;
     } else if (arg.find("--memory-mode=") == 0) {
@@ -819,22 +521,43 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  // NIL-0006: Start AI server before executing main() so agents can connect
-  // and inject commands (e.g. vm.send_msg) from the very beginning.
-  std::thread ai_thread;
+  // Start only after endpoint creation/security succeeds. No server thread may
+  // touch vm: all requests execute through the VM-owner safepoint callback.
+  std::unique_ptr<ny_ai::Control> control;
+  std::unique_ptr<ny_ai::Transport> transport;
   if (ai_mode) {
+    try {
 #ifdef _WIN32
-    DWORD pid = GetCurrentProcessId();
-    std::string pipe_name = "\\\\.\\pipe\\ny_ai_" + std::to_string(pid);
-    ny_ai::g_vm = &vm;
-    ai_thread = std::thread(ny_ai::server_thread, pipe_name);
-    std::cerr << "[ny_ai] Listening on " << pipe_name << std::endl;
+      const unsigned pid = GetCurrentProcessId();
 #else
-    std::string sock_path = "/tmp/ny_ai_" + std::to_string(getpid()) + ".sock";
-    ny_ai::g_vm = &vm;
-    ai_thread = std::thread(ny_ai::server_thread, sock_path);
-    std::cerr << "[ny_ai] Listening on " << sock_path << std::endl;
+      const unsigned pid = static_cast<unsigned>(getpid());
 #endif
+      control = std::make_unique<ny_ai::Control>(pid, NIL_VERSION, ai_wait,
+          [](const std::string&, const nil::detail::json& request) {
+            const auto& msg = request.at("json");
+            if (msg.type != nil::detail::json::kind::string || msg.text.empty() ||
+                msg.text.find('\0') != std::string::npos)
+              throw std::runtime_error("missing json message");
+            auto inject = resolve_webview_inject();
+            if (!inject) throw std::runtime_error("webview not loaded");
+            inject(1, msg.text.c_str());
+            auto result = nil::detail::json::map();
+            result.object["ok"] = nil::detail::json::flag(true);
+            return result;
+          });
+      const std::string handshake = "{\"event\":\"connected\",\"pid\":" +
+          std::to_string(pid) + ",\"ai_version\":1,\"program\":\"ny\"}";
+      transport = std::make_unique<ny_ai::Transport>(handshake,
+          [&](const std::string& line) { return control->request(line); });
+      transport->start();
+      vm.setControlCallback([&](ny::VM& current) { control->safepoint(current); });
+      std::cerr << "[ny_ai] Listening on " << transport->endpoint() << std::endl;
+    } catch (const std::exception& e) {
+      if (control) control->stop();
+      if (transport) transport->stop();
+      std::cerr << "nilinterpreter: AI control startup failed: " << e.what() << std::endl;
+      return 1;
+    }
   }
 
   if (strict_bounds) vm.setStrictBounds(true);
@@ -855,18 +578,9 @@ int main(int argc, char *argv[]) {
     write_crash_report(input_file, "NIL interpreter runtime error", e.what(), 0, exit_code);
   }
 
-  // Shutdown AI server
-  if (ai_mode) {
-    ny_ai::g_running = false;
-    // Briefly connect to own pipe to unblock ConnectNamedPipe
-#ifdef _WIN32
-    HANDLE dummy = CreateFileA(
-        ("\\\\.\\pipe\\ny_ai_" + std::to_string(GetCurrentProcessId())).c_str(),
-        GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (dummy != INVALID_HANDLE_VALUE) CloseHandle(dummy);
-#endif
-    if (ai_thread.joinable()) ai_thread.join();
-  }
+  if (control) control->stop();
+  if (transport) transport->stop();
+  vm.setControlCallback({});
 
   return exit_code;
 }

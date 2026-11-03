@@ -207,6 +207,15 @@ std::int32_t nyrt_write_bytes_atomic(const char *path, const void *bytes,
                                      std::int32_t replace,
                                      const char **error_out) noexcept;
 
+// Concrete ordinary-I/O ABI. Arguments and payloads are scalar words or
+// pointer bit patterns, with exact types checked by the compiler against
+// ordinary_io_intrinsic.hpp. Status 0 is failure, 1 success (or absent Option),
+// and 2 present Option. Text/array outputs are context-owned. Stream tokens
+// are context-owned, never reused, and are closed at context teardown.
+std::int32_t nyrt_io_v1(const char *operation, std::uint64_t first,
+                       std::uint64_t second, std::uint64_t third,
+                       std::uint64_t *value, const char **error) noexcept;
+
 std::int32_t nyrt_try_i32(const char *text, std::int32_t *value_out,
                           const char **error_out) noexcept;
 // Additive conversion ABI. Native text is NUL-free; failures clear value_out
