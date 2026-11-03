@@ -1186,3 +1186,34 @@ the original passing CTest report bound into the SDK manifest. The diagnostic
 editor rerun uses fresh evidence `C:\provision\vscode-installed-sdk-uKCveZ`.
 No test budget or accepted check set was changed, and these resumed runs are
 not yet claimed complete.
+
+### Editor import-cache regression and separate editor revision
+
+The post-upgrade diagnostic extension-host run completed all **88 named checks**
+with zero exclusions against the unchanged `af38ebd` SDK and editor source.
+Before/after SDK seals and extension/configuration identities matched. Its
+passing trace shows `first.ny` remained an eligible preview tab; the clean,
+tabless dependency cache lagged the external disk edit by about 50 ms, and
+Problems refreshed after about 8.67 seconds behind queued project analyses.
+The observation budget dropped 53 later events. This does **not** establish the
+cause of the original untraced failure; that failure remains preserved.
+
+A separate deterministic unit regression then exposed a real publisher bug:
+`workspaceInput` excludes clean closed-tab caches, but `publish` could reject a
+matching current disk/compiler snapshot because that nonauthoritative cache
+still contained old text. The test pins an eligible entry and uses the actual
+production publisher, overlay builder and byte mapper with a real private
+Unicode/CRLF file. It failed before the fix (zero located findings instead of
+one). The minimal guard now consults cached text only for an open tab; dirty
+buffers and mismatched disk contents still suppress unsafe locations. It does
+not edit/save the cached document or broaden source-map trust.
+
+All **eight focused regressions** and **162 editor unit tests** pass on Linux,
+including absent/current caches, dirty/open-tab mismatches, changed disk, and
+buffers becoming dirty/open during analysis. No host-suite assertion, deadline,
+88-check inventory or compiler/SDK payload was changed. This editor-only fix
+will be qualified as a **separate clean editor source revision** against the
+frozen `af38ebd` language SDK, with both identities explicit in its evidence;
+the SDK must not be relabeled as a newer revision. Nineteen private gate tests
+verify this split provenance while retaining the original acceptance checks.
+Windows validation of the newer editor remains pending at this checkpoint.

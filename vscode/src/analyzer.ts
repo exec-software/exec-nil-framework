@@ -444,7 +444,11 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
           if (count !== expectedSize) continue;
           disk = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, count));
         } finally { await handle.close(); }
-        if (disk !== snapshot.text || (editor && (editor.isDirty || editor.getText() !== snapshot.text))) continue;
+        // Match workspaceInput's editor authority: a clean cached document
+        // without an open tab is not an overlay and may retain old disk text.
+        // Still reject dirty buffers and open-tab changes during this read.
+        if (disk !== snapshot.text || (editor && (editor.isDirty ||
+          (this.tabSources.has(editor.uri.toString()) && editor.getText() !== snapshot.text)))) continue;
         imported.set(normalized, { uris: [vscode.Uri.file(snapshot.path)], text: snapshot.text, mapRange: createByteRangeMapper(snapshot.text) });
       } catch { /* Removed, changed, or unreadable dependencies have no safe location. */ }
     }
