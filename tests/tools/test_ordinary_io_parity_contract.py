@@ -169,7 +169,9 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual((self.root / row['stderr']).read_bytes(), b'err')
 
     def test_timeout_is_bounded_and_retains_partial_output(self):
-        row = self.run_python('import os,time;os.write(1,b"started");time.sleep(60)', .1)
+        # Windows starts both the ownership gate and the child interpreter.
+        # Allow their startup before testing timeout/partial-output handling.
+        row = self.run_python('import os,time;os.write(1,b"started");time.sleep(60)', 2)
         self.assertTrue(row['timed_out'])
         self.assertTrue(row['cleanup_verified'])
         self.assertLess(row['elapsed_seconds'], 8)
