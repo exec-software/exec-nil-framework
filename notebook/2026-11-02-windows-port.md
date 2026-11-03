@@ -1988,3 +1988,51 @@ skips and zero failures (109.00 seconds), retained as `linux-ctest-v3.xml` with
 SHA-256 `df82425a1ce9f2269e60b463d6f13172df0a621c0336768be2fb6386c613bf73`.
 The Windows follow-up must pass focused and full regression before being
 considered verified. No SDK has been rebuilt/activated or published in this slice.
+
+#### Verified shared-source checkpoint at `5307098`
+
+Committed/pushed the follow-up as `5307098fc7f1cafe07c5903931ea9ffe0360238c`.
+Windows was cleanly fast-forwarded from `5fcb685`; the focused rerun passed all
+four previously failing tests, including the 65,536-byte transport echo and
+delayed-reader final reply after server shutdown. The complete final runs were:
+
+| Host | Registered | Passed | Failed | Skipped | CTest wall time |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Linux | 567 | 565 | 0 | 2 | 105.72 s |
+| Windows | 570 | 569 | 0 | 1 | 496.95 s |
+
+Linux skips were the optional display and live PostgreSQL tests. Windows only
+skipped the interactive display test; its isolated live PostgreSQL check passed
+all six routes and verified graceful shutdown/owned-process cleanup. No desktop
+GTK acceptance was repeated here, and its earlier recorded limitation remains.
+
+Both hosts passed the full eight-route ordinary-I/O oracle using source STL,
+with exact output namespaces/bytes and unchanged tools, fixtures and libraries.
+Both also passed 210 VM checkpoint checks, 237 owner-control checks and the
+live capture/mutate/repeated-restore/continuation/rejection/explicit-exit contract.
+Transport passed 57 Linux checks and 48 Windows checks (platform-specific counts).
+The isolated tuple-array contract retained all 126 checks. Separate linker
+publication/preservation checks passed; the original transient lock owner remains
+unproven rather than being attributed to a scanner or hidden Ny process.
+
+Final durable evidence is under
+`/home/nathan/vm/nil-win11/artifacts/control-io-20261103-VGX6d6/`:
+`linux-ctest-v4.xml`, `linux-native-io-v4/`, `windows-focused-v2/` and
+`windows-v2/` (including the complete Windows eight-route oracle). Earlier
+failure reports and helpers remain preserved. Final JUnit SHA-256 values:
+
+- Linux: `dccacd9bf11c5fc2d7a85d41d9af07acbe7169dfdb8ae32740926dd0b9f5f79f`
+- Windows: `30db91e40762f79cbd5e96329915c4ade48a39c8204fd805e861d1a2fd88da25`
+
+The Windows wrapper reconciled all registered test names against JUnit, rejected
+unexpected failures/skips and verified owned-process cleanup plus immutable
+source/helper inputs. Post-run inspection found no remaining compiler,
+interpreter, assembler, linker, CMake or CTest processes. All saved PowerShell
+policy scopes remain Undefined; the optional MSVC uploader remains absent with
+its reversible disabled copy present.
+
+This verifies the shared source implementation, not a new installed SDK or v1
+release. SDK repackaging and installed acceptance remain next. Checkpoints still
+require the documented deterministic same-process profile; external-resource
+rollback, code hot reload and native `environment.list` remain unsupported.
+No previous SDK/VSIX activation, Lich publication or Anomalous change occurred.
