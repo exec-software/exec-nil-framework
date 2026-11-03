@@ -2,14 +2,16 @@
 
 ## Status
 
-Latest checkpoint: clean `45e7b9ad021605cfc81db9dd41749f926fc4876c`
-passes the Windows core SDK, installed consumer, debugger, editor and Unicode
-gates, with a verified development archive. Complete desktop qualification is
-still pending: ten installed GTK language cases passed, but a separate lifecycle
-helper once exited zero without its completion summary. A diagnostic comparison
-subsequently completed all 235 checks; it does not explain or waive that first
-observation. See the final sections below. The previously accepted `71a9338ec3a7`
-SDK and editor artifacts remain unchanged; no candidate was activated.
+Latest checkpoint: the unchanged, clean-source `45e7b9a` development SDK passes
+the Windows core SDK, installed consumer, debugger, editor and Unicode gates.
+A fresh complete desktop run with the separately pinned `58352fc` harness also
+passes: ten installed GTK VM/native cases, both required helper summaries and
+verified targeted input/cleanup. The earlier lifecycle helper's zero-exit,
+empty-output observation remains preserved and unexplained; subsequent bounded
+comparisons and this strict run do not establish a root-cause fix. See the final
+sections below. This is development evidence, not full Windows parity or v1/RC
+qualification. The previously accepted `71a9338ec3a7` SDK and editor artifacts
+remain unchanged; no candidate was activated.
 
 The sections below retain the chronological evidence, including the earlier
 accepted Windows development SDK from `0d8c6c21b20a16f16433a6f84ffe4ec1bdfb7bf8`.
@@ -1504,3 +1506,107 @@ policies remain unchanged. No local model/GPU workload, development server,
 forced VM reset, active SDK replacement, Lich upload or Anomalous modification
 was performed. Windows remains a development target with the previously listed
 bare-host, provider, publication and shared-language limitations.
+
+### Follow-up: controlled lifecycle environment and output-handle observations
+
+The next investigation preserved the SDK and original failing evidence. A
+private native child recorded its Win32/CRT standard handles, exact binary
+input, raw/CRT/C++ output and exit code in exclusive flushed sidecars. The
+committed Job ownership/start path with private diagnostic legacy and
+explicit-forwarding gate variants preserved all 11 input bytes, 25 stdout bytes
+and eight stderr bytes in the normal launch mode. A deliberately detached
+legacy launch lost its streams; explicitly
+forwarding them preserved them. A deliberately closed child stdout was also
+detected. All five children returned the intended nonzero code 19 with verified
+Job cleanup. Neither detached mode nor deliberate handle closure is used by
+the GTK launcher, so these controls do **not** establish the initial failure's
+cause or justify changing production process ownership/stream inheritance.
+
+Complete raw evidence is in `stdio-diagnostic-complete`. Independent raw-log,
+sidecar and executable/source reconciliation is
+`stdio-diagnostic-reconciliation.json`, SHA-256
+`63b6d965e37e720a7925f19c627b10f251d5cf8f6780746080da3ac6432e57fb`.
+The actual guest Python version is 3.15.2; its installed subprocess source was
+inspected rather than assuming Linux implementation details apply. Six portable
+probe-controller tests pass. This is diagnostic evidence, not SDK acceptance.
+
+A separate Interactive/Limited task then compared two fixed profiles: the
+scheduled-task baseline and the original `vcvars64` + LLVM PATH-prefix +
+process-scoped RemoteSigned environment. Both used the same CMD/Python/owned
+child topology, GTK settings and fresh per-profile working-directory structure
+(not identical absolute CWDs). Only an explicit nonsecret environment whitelist
+was recorded. Each profile ran one unchanged provider, exactly three unchanged
+lifecycle observations and one private instrumented lifecycle, with no retries
+or changed inputs. The 60-second child, 310-second wrapper and 600-second shared
+limits remained below the existing bounded task/controller limits.
+
+All ten planned observations passed: six original lifecycle summaries reported
+exactly 235 checks, both instrumented runs reached their final 235-check
+checkpoint, and provider counters were 4,471 and 4,472. The different provider
+counts reinforce why polling assertions are observations rather than a fixed
+coverage total. Before/after executable and scoped source-helper hashes were
+identical, all owned cleanup was verified, and the one-off task was removed.
+Eighteen portable comparison-controller tests pass. The copied comparison is
+`lifecycle-environment-complete/evidence-230a88433bcb4084b47dd400242d277f/environment-comparison.json`,
+SHA-256 `1468fb31e1aa91e8621030ee1e1892e52a3ceeafe270432f6ef515a9cdc9d473`.
+
+These bounded observations did not reproduce or explain the first blank
+summary. They do not repair or relabel that failed acceptance evidence. The
+next full desktop validation must use a fresh sealed SDK extraction, explicitly
+distinguish the unchanged `45e7b9a` SDK from the stricter `58352fc` harness, and
+require complete helper summaries plus all installed VM/native UI cases.
+
+### Fresh strict desktop run: complete development evidence, prior cause open
+
+One new full run used a fresh extraction of the unchanged SDK archive
+`b7a096df65caa9000c74ce1bf5249e8fc0ec221dcb9f082fd89e7948d69817f7`.
+The SDK and supplementary build-tree binaries remain from `45e7b9a`; the
+execution harness is explicitly `58352fc`, including its required-summary
+guard. Five source helper/fixture identities and both C++ executable hashes
+were pinned before and after. Both SDK structural validations passed, and the
+host independently checked all 259 extracted payload files against the sealed
+manifest. No tools, libraries, fixtures or archive bytes were rebuilt or changed.
+
+The run passed **all ten installed GTK VM/native language cases**. The unchanged
+provider emitted its complete summary with 4,472 observed checks; the unchanged
+lifecycle binary emitted the exact 32-byte, 235-check summary. The two
+interaction routes each recorded 27 messages addressed only to verified
+Job-owned fixture HWNDs, with the actual Ny keyboard/close assertions passing.
+All owned processes were cleaned up and the Interactive/Limited Nathan task
+was removed. No global input, password, desktop switch or login change was used.
+
+Complete copied evidence, including the fresh SDK and actual guest helpers, is
+under `desktop-strict-complete/evidence-6a6c78bdf6284fca839a3443766be066`.
+The nested UI report SHA-256 is
+`8e12104f8cee9ed8e64ad430f8ec19c0245060cc31d977c526b8412cad44d9af`.
+The independent host reconciliation also rechecked the frozen archive, original
+562-test/1,184-consumer delivery authority, exact source/tool identities and the
+original failed run's unchanged raw logs. Its additive report is
+`desktop-strict-reconciliation.json`, SHA-256
+`2c1847bf1f23ff2a9f1481a0c1c75f29baf5eea11497a1a9368f84f4fe48ff6d`.
+The verifier is separately retained in `desktop-strict-host-verifier`, with
+58 reconciliation and 16 extraction/origin controls passing and independent
+review. Canonical variable provider counts are checked against captured output
+and integer metadata; empty/duplicate summaries and non-235 lifecycle counts
+remain failures. This is a new passing observation, not a rewrite of the first
+run or proof that its missing-output cause has been repaired.
+
+The environment comparison's independent reconciliation is also retained as
+`lifecycle-environment-reconciliation.json`, SHA-256
+`7c0f4e7e548926bca7d7fe63b035932d0b27e1b5c4a67c51551697d6ebd7bb41`,
+with 19 positive/negative controls passing. All follow-up private tools, tests
+and the inspected guest subprocess source are archived in
+`parity-followup-tools-58352fc.tar.gz`, SHA-256
+`f188d8c0ab08e796dec954df453549ab69f0762c0d08e7859aefc6fee19260cc`.
+These artifacts are additive siblings under the existing
+`/home/nathan/vm/nil-win11/artifacts/45e7b9ad0216-parity` evidence root.
+
+The original missing-output cause remains an explicit release risk. The next
+feature-parity slice is the ordinary file/path/environment Unicode and separator
+consumer described above; bare-host/toolchain qualification and the other
+listed provider/publication/shared-language limits are not closed by GTK.
+Saved PowerShell policy remains unchanged, and the optional MSVC uploader stays
+reversibly disabled with telemetry OptIn zero. No active SDK replacement,
+Lich publication, Anomalous change, model/GPU workload or long-lived server was
+performed. The code was left unchanged rather than applying a speculative
+stdout/runtime fix; this checkpoint adds reviewed evidence to the notebook.
