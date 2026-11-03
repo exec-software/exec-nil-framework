@@ -7,10 +7,9 @@ import nil.std.collections
 
 # The separator every function in this module produces: always "/".
 #
-# Windows accepts "/" in every file API, so a path built here works there
-# unchanged, and identical Ny source produces identical output on every host.
-# These functions also accept "\\" on input, so a native Windows path handed
-# in comes back portable.
+# Path-producing functions accept "\\" as a separator on every host, including
+# in a single-component join. Drive and root interpretation follows the host;
+# this does not turn Windows drive paths into absolute POSIX paths.
 #
 # This is not the host's own spelling. Use it to split or rebuild a path, not
 # to decide how one should look to a user or to cmd.exe.
@@ -30,11 +29,7 @@ pub fn join(parts: vec<text>) -> text
             Option.None -> return result
             Option.Some(part) ->
                 let part_text = part as text
-                if i == 0 then
-                    result = part_text
-                else
-                    result = combine(result, part_text)
-                end if
+                result = combine(result, part_text)
         end match
         i = i + 1
     end while
@@ -90,6 +85,7 @@ pub fn has_extension(path: text) -> bool
     return ext.len() > 0
 end fn
 
+# Exact byte suffix comparison, not component matching or separator folding.
 @intrinsic("path.ends_with")
 pub fn ends_with(path: text, suffix: text) -> bool
 end fn

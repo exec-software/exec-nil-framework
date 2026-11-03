@@ -53,8 +53,9 @@ can see the choice was made.
 
 ## Path separators
 
-Every function in `ny.lang.io`'s path module produces `/`, on every host, and
-accepts either separator on input. `separator()` returns `"/"`.
+Path-producing functions in `nil.std.io`'s path module produce `/`, on every
+host, and accept either separator on input. `separator()` returns `"/"`.
+This includes `join` with only one component; an empty join returns `""`.
 
 ```ny
 combine("/tmp", "file.ny")           # "/tmp/file.ny" on every host
@@ -62,8 +63,12 @@ normalize("alpha/./beta/../gamma")   # "alpha/gamma" on every host
 dirname("C:\\users\\sample\\a.ny")   # "C:/users/sample" on Windows
 ```
 
-Windows accepts `/` in every file API, so nothing is lost at the syscall
-boundary, and a path built by these functions opens on either host unchanged.
+This is a separator contract, not emulation of another host's filesystem.
+Drive letters, UNC roots, absolute-path classification and the current
+directory retain their host meaning. A Windows drive path is not made into
+an absolute POSIX path. Ordinary file APIs receive the filename as supplied;
+they do not fold a literal backslash in a POSIX filename. `ends_with` remains
+an exact byte-suffix comparison, without separator folding or case conversion.
 
 The alternative — returning the host separator, as Go's `filepath` does — was
 rejected deliberately. It makes identical source produce different output per
@@ -74,6 +79,15 @@ This is not the host's own spelling. If you need to show a path to a Windows
 user or paste one into `cmd.exe`, substitute the separator yourself; the value
 `separator()` returns is for splitting and rebuilding paths, not for
 presentation.
+
+`nil.ordinary-io-interpreter` checks these operations with the public Ny APIs
+in both text-NIL and binary-NIL interpretation. Its independent host oracle
+also checks ordinary whole-file and stream operations, Unicode environment
+names/values, and Unicode working-directory round trips. UTF-8 filenames
+include non-ASCII parents, supplementary characters, and distinct composed
+and decomposed spellings, with exact bytes and untouched sentinels checked
+after execution. These checks do not qualify native lowering of the ordinary
+I/O surface or an arbitrary Windows host/code-page configuration.
 
 ## Whole-file byte API filenames
 

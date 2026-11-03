@@ -551,6 +551,14 @@ if(BUILD_TESTING)
                 --runtime $<TARGET_FILE:nilruntime> --nilstd "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
                 --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(nil.byte-file-unicode-routes PROPERTIES LABELS "storage;stl;routes;rc" TIMEOUT 480)
+        add_test(NAME nil.ordinary-io-oracle
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_ordinary_io_parity_contract.py")
+        set_tests_properties(nil.ordinary-io-oracle PROPERTIES LABELS "storage;tools;stl" TIMEOUT 45)
+        add_test(NAME nil.ordinary-io-interpreter
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/ordinary_io_parity_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --nilstd "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src")
+        set_tests_properties(nil.ordinary-io-interpreter PROPERTIES LABELS "storage;stl;routes" TIMEOUT 330)
         add_test(NAME nildebugger.consumer-harness
             COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/validation/ny-3d/scripts/test_debugger_consumer.py")

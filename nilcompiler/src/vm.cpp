@@ -72,6 +72,13 @@ constexpr std::size_t max_environment_entry_bytes = 1024 * 1024;
 constexpr std::size_t max_environment_total_bytes = 8 * 1024 * 1024;
 constexpr std::uint64_t heap_allocation_guard_bytes = 8;
 
+// Public path operations accept either separator on every host. Do not use
+// this for ordinary file opens: a backslash can be a literal POSIX filename.
+std::filesystem::path portable_path(std::string value) {
+  std::replace(value.begin(), value.end(), '\\', '/');
+  return std::filesystem::path(value);
+}
+
 bool is_byte_heap_type(const std::string &type_name) {
   return type_name == "bytes" || type_name == "u8";
 }
@@ -3213,8 +3220,8 @@ void VM::executeInstruction(const Instruction &instr) {
     // --- Path Intrinsics ---
     if (fn_name == "path.combine") {
       if (args.size() == 2) {
-        fs::path p1 = get_str(args[0]);
-        fs::path p2 = get_str(args[1]);
+        fs::path p1 = portable_path(get_str(args[0]));
+        fs::path p2 = portable_path(get_str(args[1]));
         pushStack((p1 / p2).generic_string());
       } else {
         pushStack(std::string(""));
@@ -3223,21 +3230,21 @@ void VM::executeInstruction(const Instruction &instr) {
     }
     if (fn_name == "path.basename") {
       if (args.size() == 1)
-        pushStack(fs::path(get_str(args[0])).filename().generic_string());
+        pushStack(portable_path(get_str(args[0])).filename().generic_string());
       else
         pushStack(std::string(""));
       return;
     }
     if (fn_name == "path.dirname") {
       if (args.size() == 1)
-        pushStack(fs::path(get_str(args[0])).parent_path().generic_string());
+        pushStack(portable_path(get_str(args[0])).parent_path().generic_string());
       else
         pushStack(std::string(""));
       return;
     }
     if (fn_name == "path.extension") {
       if (args.size() == 1)
-        pushStack(fs::path(get_str(args[0])).extension().generic_string());
+        pushStack(portable_path(get_str(args[0])).extension().generic_string());
       else
         pushStack(std::string(""));
       return;
@@ -3246,7 +3253,7 @@ void VM::executeInstruction(const Instruction &instr) {
       if (args.size() == 1 &&
           std::holds_alternative<std::string>(args[0])) {
         std::string extension =
-            fs::path(std::get<std::string>(args[0])).extension().generic_string();
+            portable_path(std::get<std::string>(args[0])).extension().generic_string();
         if (!extension.empty() && extension.front() == '.')
           extension.erase(extension.begin());
         pushStack(std::move(extension));
@@ -3257,7 +3264,7 @@ void VM::executeInstruction(const Instruction &instr) {
     }
     if (fn_name == "path.stem") {
       if (args.size() == 1)
-        pushStack(fs::path(get_str(args[0])).stem().generic_string());
+        pushStack(portable_path(get_str(args[0])).stem().generic_string());
       else
         pushStack(std::string(""));
       return;
@@ -3265,7 +3272,7 @@ void VM::executeInstruction(const Instruction &instr) {
     if (fn_name == "path.absolute") {
       if (args.size() == 1) {
         try {
-          pushStack(fs::absolute(get_str(args[0])).generic_string());
+          pushStack(fs::absolute(portable_path(get_str(args[0]))).generic_string());
         } catch (...) {
           pushStack(std::string(""));
         }
@@ -3275,7 +3282,7 @@ void VM::executeInstruction(const Instruction &instr) {
     }
     if (fn_name == "path.is_absolute") {
       if (args.size() == 1) {
-        pushStack((int64_t)(fs::path(get_str(args[0])).is_absolute() ? 1 : 0));
+        pushStack((int64_t)(portable_path(get_str(args[0])).is_absolute() ? 1 : 0));
       } else
         pushStack((int64_t)0);
       return;
@@ -3335,23 +3342,9 @@ void VM::executeInstruction(const Instruction &instr) {
 
     // --- Additional Path Intrinsics ---
     //
-    // Every path intrinsic reports '/' as the separator, on every host, and
-    // accepts either on input -- std::filesystem parses '\' on Windows, so a
-    // caller may hand us a native path and still get a portable one back.
-    //
-    // The alternative is to return the host separator, which is what Go's
-    // filepath does. It was rejected deliberately: it makes identical Ny
-    // source produce different output per platform, which is the one thing
-    // this port exists to eliminate, and it produces mixed spellings like
-    // "/tmp\file.ny" the moment a POSIX-looking literal meets combine().
-    // '/' is accepted by every Windows file API, so nothing is lost at the
-    // syscall boundary. A program that genuinely needs the host's own
-    // spelling -- to paste into cmd.exe, say -- can ask for the separator and
-    // substitute it.
-    //
-    // This is why the implementations below say generic_string() rather than
-    // string(). On POSIX the two are identical, so the intent is stated once
-    // instead of being conditional.
+    // Path-producing operations fold both separator spellings and emit '/'.
+    // Root/drive semantics remain host-specific. Ordinary file APIs preserve
+    // their input spelling, and path.ends_with stays an exact byte predicate.
     if (fn_name == "path.separator") {
       pushStack(std::string("/"));
       return;
@@ -3359,7 +3352,7 @@ void VM::executeInstruction(const Instruction &instr) {
     if (fn_name == "path.normalize") {
       if (args.size() == 1 &&
           std::holds_alternative<std::string>(args[0])) {
-        pushStack(fs::path(std::get<std::string>(args[0]))
+        pushStack(portable_path(std::get<std::string>(args[0]))
                       .lexically_normal()
                       .generic_string());
       } else {
@@ -3371,8 +3364,8 @@ void VM::executeInstruction(const Instruction &instr) {
       if (args.size() == 2 &&
           std::holds_alternative<std::string>(args[0]) &&
           std::holds_alternative<std::string>(args[1])) {
-        pushStack(fs::path(std::get<std::string>(args[1]))
-                      .lexically_relative(std::get<std::string>(args[0]))
+        pushStack(portable_path(std::get<std::string>(args[1]))
+                      .lexically_relative(portable_path(std::get<std::string>(args[0])))
                       .generic_string());
       } else {
         pushStack(std::string(""));
@@ -3398,8 +3391,8 @@ void VM::executeInstruction(const Instruction &instr) {
       if (args.size() == 2 &&
           std::holds_alternative<std::string>(args[0]) &&
           std::holds_alternative<std::string>(args[1])) {
-        fs::path path(std::get<std::string>(args[0]));
-        path.replace_extension(std::get<std::string>(args[1]));
+        fs::path path = portable_path(std::get<std::string>(args[0]));
+        path.replace_extension(portable_path(std::get<std::string>(args[1])));
         pushStack(path.generic_string());
       } else {
         pushStack(std::string(""));
