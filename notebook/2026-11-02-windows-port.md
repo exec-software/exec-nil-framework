@@ -1755,3 +1755,124 @@ machine-policy change, model/GPU workload or long-lived server was performed.
 Installed qualification of the new bytes, the earlier unexplained GTK helper
 observation, bare-host/toolchain closure and the previously listed shared
 language/provider limitations remain open; this is not a v1/RC declaration.
+
+### 2026-11-03 — fresh d567 Windows development SDK and installed acceptance
+
+Built a new, isolated Release/LLVM Windows SDK from clean, pushed source
+`d567e7ed869f7853469ef9225940e1c27a6046a8`. No implementation changes were needed
+for this refresh. The SDK includes the ordinary-path fixes and newly rebuilt
+binary STL packages; the older SDK was neither modified nor activated over.
+The subsequent notebook checkpoint does not change the SDK's source revision.
+
+Durable delivery and evidence:
+`/home/nathan/vm/nil-win11/artifacts/d567e7ed869f-parity`.
+The archive is `nil-framework-windows-development-d567e7ed869f.zip`,
+28,533,819 bytes, SHA-256
+`18bb2aec41bae90016bb35f391dfd08ccede594285aec352b956b100c9d2ce9d`.
+Its manifest SHA-256 is
+`abd3f45b2863179772946f84a9b479ad80346977f324aa16f1b5fe048fc963db`.
+There are 260 archive entries: the manifest plus 259 sealed payload files.
+The canonical layout remains 11 root executables, `nillib` binary libraries
+(18 logical modules), `nilstd` sources, and `docs` (66 HTML pages), with no
+nested `bin` directory. MSVC/runtime prerequisites remain external.
+
+The fresh guest candidate is
+`C:\provision\sdk-d567e7e-20261103-9MNlNv\candidates\development-2462cd3a77654671a50f76cb8524079b\sdk`.
+The whole build/test/package/consumer workflow completed in 1,556.799 seconds
+inside its reviewed 7,200-second owned-process boundary. Raw output, exact
+helper hashes, unchanged inputs and successful child cleanup are retained in
+`pipeline-v1`; the archive/dependency step is retained separately in `archive-v1`.
+
+| Fresh check | Result |
+| --- | --- |
+| Full Windows CTest | 564 registered; 563 passed; zero failures/errors; only noninteractive `nil.ui-display` skipped; live PostgreSQL passed |
+| Installed consumer matrix | 1,184 executions passed: 74 fixtures, both library layouts, eight routes |
+| Installed ordinary I/O with source STL | Six interpreter observations passed: lexical paths, Unicode files and environment handling in both NIL encodings |
+| Installed binary-package path regression | Two lexical interpreter executions passed, one per NIL encoding |
+| Installed debugger | 146 checks across 20 commands passed |
+| Installed strict byte-file Unicode gate | 16 executions across 34 commands passed, using both installed library layouts |
+| Fresh archive GTK desktop | All 10 installed-SDK VM/native language cases passed; lifecycle checks 235; provider assertions observed 4,471 |
+| Installed-SDK VS Code integration | 88 checks, zero exclusions, 31 tasks, seven SDK tools and two debugger sessions passed |
+
+The CTest run took 460.71 seconds. Its JUnit SHA-256 is
+`21936d23923a0e26b9831ca2d7b4293860b630467759c878616ea7bc4165d4b5`.
+A separate, raw read-only CTest registration capture has SHA-256
+`e0144e80fa9b1afa8450c4fbb178a5ceb5874a012b8431237cb6b6fedbd79626`;
+its exact 564 names match the prior independently retained inventory.
+The delivery verifier checks that inventory, actual JUnit statuses, archive
+and manifest anchors, canonical layout, complete committed source-STL
+inventory, sealed tool/runtime bytes and the nested consumer command graphs.
+Its 65 positive/negative controls and independent peer review passed.
+
+The stock consumer report contains 148 nested six-route reports, covering 888
+executions and 1,628 command records. The remaining 296 standalone
+assembler/linker pipeline executions have aggregate PASS evidence only, not
+retained per-command stdout/argv. Successful temporary route artifacts were
+deleted by the stock runner. Offline reconciliation verifies the retained
+semantic records and seals; it does not claim to replay those deleted bytes
+or reconstruct original nested JSON serialization hashes.
+
+Installed ordinary-I/O evidence is retained as `installed-source-io-v1` and
+`installed-binary-lexical-v1`; report SHA-256 values are respectively
+`ca1b0461fd1393acc909320acd0d4fb8372f9aa61fea1ad90686528b4845f976`
+and `5d59defbb39e72a36b66e6044de2f20763d55e1dcdabd4fec03702099ad4a105`.
+The latter binds the former's installed input identities and raw outputs to
+the independently anchored SDK seal. That binding is not an independent
+namespace-oracle replay. Both source and binary library selection are
+explicit, with no implicit STL fallback. Binary NIL packages contain embedded
+Ny source; this is binary-package delivery evidence, not source-free
+compilation or native ordinary-I/O support.
+
+The strict desktop run extracted the new archive into a fresh directory and
+used a one-off Limited/Interactive task for the already signed-in Nathan SID
+ending in `1002`. Both interaction routes retain their complete 27-event,
+verified Job-owned HWND traces; no global input or focus change was used.
+The provider count is timing-dependent polling evidence, not a fixed test
+inventory. The 235 lifecycle checks are exact. Before/after build-provider
+captures are identical, all extracted SDK payloads remain sealed, the task
+was removed, and controller and inner-process cleanup were separately verified.
+Its UI report SHA-256 is
+`a72ebf2ddbaf839184006096ffe5e76f1a329e3260743f18fe18ee6942510051`.
+The old zero-exit/empty-output GTK observation is still preserved and its
+cause remains unresolved; this distinct passing run does not erase or explain it.
+
+VS Code used the unchanged frozen extension bundle/VSIX and isolated profile,
+with the new SDK and current editor-source inventory independently bound.
+All 17 shipped VSIX assets still match the corresponding current sources.
+The whole owned editor workflow completed in 145.018 seconds within its
+800-second boundary. Preflight records, including both build-helper EXEs,
+match exactly before and after. No new VSIX was packaged and no user editor
+configuration was activated. The previously recorded packaging dependency
+and release limitations are not declared resolved by this run.
+
+Independent host reconciliations, with raw evidence and reviewed private
+helpers retained alongside them:
+
+| Report | SHA-256 |
+| --- | --- |
+| `delivery-reconciliation.json` | `6cefe2d379a261af05580c81fd869c6f0fa42a283f7ab167a7043880fbd411c7` |
+| `tooling-reconciliation.json` | `9e2af8fe7908c050ced117921409584a2c660cf8ad7d587839e4e6f3309235a2` |
+| `desktop-reconciliation.json` | `c825b83481aca8520a3d2ebbdc21ccb13af5e9dc41433172fb1880605d6b610a` |
+| `editor-reconciliation.json` | `58378ee1334cfdd934ed70595fcb122f6e86d332b45bba7a851262b9bb6e774b` |
+
+The retained-copy delivery verifier also reproduces the primary reconciliation
+byte-for-byte. Debugger/Unicode, desktop and editor replays bind to this same
+manifest/archive; their individual narrower scopes remain explicit.
+The frozen previous SDK archive and VSIX were rechecked unchanged at
+`b7a096df65caa9000c74ce1bf5249e8fc0ec221dcb9f082fd89e7948d69817f7`
+and `4e6ad286ec6707131f869ea6ebd1fa4df18ae1bf40be551d6a03f4b5ad2ef3e1`.
+Source remained clean at d567 throughout acceptance. Post-run checks found no
+remaining task from this desktop run; saved PowerShell policies remain
+Undefined and the optional telemetry uploader remains disabled with its
+disabled copy retained. The read-only guest receipt is
+`final-state-before-notebook-sync.json`, SHA-256
+`f9cf160df69210eb6d0f6c5be331a1656ee61a8d12829f83259573fd6d09cfeb`.
+Process-scoped RemoteSigned was used only where
+already approved. No SDK activation, Lich publication, Anomalous changes,
+local-model/GPU workload or long-lived development server was performed.
+
+This is a fresh, verified Windows **development** SDK checkpoint, not a v1/RC,
+unrestricted parity or bare-host portability declaration. Bare-host/toolchain
+qualification, the original GTK anomaly, and the previously recorded shared
+language/provider limitations remain open. Native ordinary I/O is still a
+shared unsupported route, not made supported by these interpreter checks.
