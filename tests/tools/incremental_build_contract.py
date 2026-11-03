@@ -114,6 +114,13 @@ output.write_text(data + ('native' if '--native' in sys.argv else 'vm'))
 if '--native' in sys.argv: output.chmod(0o755)
 next_modules=entry.parent/'compiler-modules-after.json'
 if next_modules.is_file(): os.replace(next_modules, entry.parent/'compiler-modules.json')
+next_contents=entry.parent/'apphelp-content-after'
+if next_contents.is_file():
+ module=entry.parent/'apphelp.dll'
+ previous=module.stat()
+ module.write_bytes(next_contents.read_bytes())
+ os.utime(module, ns=(previous.st_atime_ns,previous.st_mtime_ns))
+ next_contents.unlink()
 event('finish')
 ''', newline='\n')
         script.chmod(0o755)
@@ -336,6 +343,33 @@ event('finish')
         run('build','--project',module_project)
         assert module_artifact.read_bytes()!=original_module_artifact
         assert 'up to date:' in run('build','--project',module_project).stderr
+
+        # Stabilizing one optional system module's load presence must not
+        # exempt even that basename from content verification. Only private
+        # fixture files change; no installed/system DLL is opened for writing.
+        content_project=create(root/'module-content','module-content')
+        content_dir=content_project.parent
+        component=content_dir/'apphelp.dll'
+        component.write_bytes(b'module version 1')
+        (content_dir/'compiler-modules.json').write_text(json.dumps([str(component)]))
+        run('build','--project',content_project)
+        content_artifact=content_dir/'build/module-content.nil'
+        content_state=content_dir/'build/.nilbuild/module-content.nil.nildata'
+        old_artifact,old_state=content_artifact.read_bytes(),content_state.read_bytes()
+        old_component=component.stat()
+        (content_dir/'main.matrix').write_text('version two\n', newline='\n')
+        (content_dir/'apphelp-content-after').write_bytes(b'module version 2')
+        changed=run('build','--project',content_project,'--rebuild',status=2)
+        assert 'build input changed during the build' in changed.stderr, changed.stderr
+        assert str(component) in changed.stderr, changed.stderr
+        assert component.stat().st_size==old_component.st_size
+        assert component.stat().st_mtime_ns==old_component.st_mtime_ns
+        assert component.read_bytes()==b'module version 2'
+        assert content_artifact.read_bytes()==old_artifact
+        assert content_state.read_bytes()==old_state
+        run('build','--project',content_project)
+        assert content_artifact.read_bytes()!=old_artifact
+        assert 'up to date:' in run('build','--project',content_project).stderr
 
         # Real compiler smoke: unchanged imports skip compilation for both routes.
         actual=root/'real';actual.mkdir()

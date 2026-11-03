@@ -1217,3 +1217,95 @@ frozen `af38ebd` language SDK, with both identities explicit in its evidence;
 the SDK must not be relabeled as a newer revision. Nineteen private gate tests
 verify this split provenance while retaining the original acceptance checks.
 Windows validation of the newer editor remains pending at this checkpoint.
+
+### Post-servicing rerun: installed routes pass, project guard finds DLL variation
+
+The clean `af38ebd` SDK completed the restarted installed consumer matrix:
+**74 fixtures × two library layouts × eight execution routes = 1,184 PASS**.
+The final before/after validation retained manifest SHA-256
+`3041e65b9e4286b307b9e8c009f141e4be53f6a09525a35fbd95cdc0f641d4bb`,
+all 259 payload files, 11 root tools, 18 compiled library modules and 66 HTML
+documentation pages. The original interrupted reports remain preserved; the
+completed `consumer-routes.json` is copied into the host `af38ebd2920d-parity`
+evidence directory. This is installed consumer evidence, not release acceptance.
+
+The separate post-servicing full CTest run instead reports **560 registered,
+558 PASS, one service-session UI skip, one FAIL**. The failing test is
+`nilbuild.project-contract`: its first compiler process listed
+`C:\\WINDOWS\\SYSTEM32\\apphelp.dll`, while its post-build analysis did not.
+`nilbuild` correctly refused publication with `compiler module graph changed`.
+The report is preserved as `parity-ctest-post-upgrade-af38ebd.xml`, SHA-256
+`f163e0fdbaaff768d0b523ff6067b29d6518f75f5a1688093bf51f96478f3a10`.
+The SDK's original passing pre-servicing CTest report is not overwritten and
+does not supersede this later failure.
+
+The Windows collector snapshots every loaded DLL from each independent
+compiler process. This failure establishes different observed module sets,
+not deletion or mutation of the DLL on disk and not causation by Windows
+servicing. A generic module-set inconsistency had also appeared earlier, but
+that older evidence does not identify this DLL. The bounded correction under
+review always fingerprints the actual system-directory `apphelp.dll` when
+present, retains all other observed modules, and collapses aliases only after
+verified same-file identity. No `nilbuild` module-set or byte-digest guard is
+to be weakened, and any compiler change requires a new SDK candidate rather
+than relabeling or modifying this frozen one.
+
+### Updated editor passes Windows integration against the frozen SDK
+
+Clean editor revision `0628f6a4c6ecb2e121647c2158a478645469d71e` was
+fast-forwarded into the VM only after the original full CTest finished. Its
+three changed files (notebook, analyzer, publisher unit tests) do not change
+the in-flight installed-route harness, source fixtures or SDK payloads.
+Windows editor units report **161 PASS, one POSIX-FIFO-only skip, zero FAIL**;
+all eight new publisher regressions pass. The production extension build then
+completed the unchanged **88-check Windows extension-host suite with zero
+exclusions**, seven SDK tools, 31 actual tasks covering all eight task kinds,
+and two debugger sessions. Source and SDK identities stayed unchanged before
+and after; no Code processes remained after the bounded runner completed.
+
+The split-revision gate used the original lightweight observation wrapper,
+not the heavier diagnostic instrumentation. Complete host evidence is in
+`/home/nathan/vm/nil-win11/artifacts/af38ebd2920d-parity/editor-source-0628f6a-complete/`.
+An independent host reconciliation verified the frozen 78-file editor Git
+inventory, exact harnesses, SDK seals/configuration, all named checks and all
+17 VSIX assets against the Windows-tested production bundle. Its 46 synthetic
+negative/positive boundary tests also pass; these are verifier tests, not
+additional Windows integration checks.
+
+- Editor gate SHA-256: `29c1a44429bd8958d4c29b753c560cbfdd03300dfa9d6178df57900b75f5a4d2`.
+- Tested extension bundle SHA-256: `844aaee30df62134efa971c9bf1d3e9a1e71ca39f3665f1a3ee3d0f9e13fd500`.
+- `nil-framework-editor-0628f6a.vsix` SHA-256: `4e6ad286ec6707131f869ea6ebd1fa4df18ae1bf40be551d6a03f4b5ad2ef3e1`.
+- Independent input anchor SHA-256: `3811aae20dfa40cd638b7e54ad87e675faf798ad317f42c17bb4e822e5c5b6e9`.
+
+This proves editor integration with the frozen `af38ebd` SDK, not qualification
+of a future compiler build or full SDK delivery. The new candidate remains
+unaccepted due to the separate compiler-module inconsistency; the previously
+accepted `71a9338` SDK ZIP and VSIX remain byte-identical. Installed GTK desktop
+validation still requires the user to sign `nil` back in after Windows
+servicing; no credentials, global input or autologon settings were used.
+
+### Bounded compiler-module fingerprint correction
+
+The Windows collector now adds `GetSystemDirectoryW()/apphelp.dll` when it is
+a regular file, without loading it or consulting environment/search paths.
+Only verified same-file aliases collapse to that anchor; different app-local
+files with the same name or contents remain tracked. Genuine optional leaf
+absence is distinct from invalid parents, permission errors or I/O errors.
+Identity failures leave the original set intact and make discovery incomplete.
+The Toolhelp terminal error is captured before any subsequent filesystem/API
+call. This stabilizes the identified optional component, not every possible
+loaded-module variation.
+
+`nilbuild` itself is unchanged: exact module-set comparison and content digests
+still guard publication. A new regression mutates a private fixture named
+`apphelp.dll` during compilation while retaining its size and timestamp, and
+requires rejection plus byte-identical previous artifact and state. The
+existing arbitrary-module-change preservation test remains in place. No system
+DLL is modified by any test.
+
+Six focused Linux CTests pass on the stable rebuilt compiler, including the
+project, incremental, dependency, toolchain and project-edition contracts. The
+new portable unit supplies 23 checks; independent ASan/UBSan execution and
+strict MinGW syntax validation also pass, and peer review found no remaining
+issues. Windows runtime/API validation, stability repeats and a newly sealed
+SDK candidate remain pending at this source checkpoint.

@@ -9,6 +9,7 @@
 #include "../../common/windows_private_storage.hpp"
 #ifdef _WIN32
 #include "../../nillinker/process_runner.hpp"
+#include "compiler_module_fingerprint.hpp"
 #endif
 #include "codegen.hpp"
 #include "analysis.hpp"
@@ -62,7 +63,6 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include <tlhelp32.h>
 #else
 #include <sys/stat.h>
 #endif
@@ -597,39 +597,6 @@ static std::optional<windows_native_toolchain> select_windows_native_toolchain()
                           std::move(ucrt_libraries)}};
 }
 
-static bool collect_windows_compiler_modules(std::set<std::string> &files) {
-  HANDLE snapshot = INVALID_HANDLE_VALUE;
-  // The loader can change its module list while a snapshot is being made.
-  // Retry that documented transient condition, but keep analysis bounded.
-  for (int attempt = 0; attempt < 8; ++attempt) {
-    snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32,
-                                       GetCurrentProcessId());
-    if (snapshot != INVALID_HANDLE_VALUE || GetLastError() != ERROR_BAD_LENGTH)
-      break;
-  }
-  if (snapshot == INVALID_HANDLE_VALUE)
-    return false;
-  struct snapshot_cleanup {
-    HANDLE handle;
-    ~snapshot_cleanup() { CloseHandle(handle); }
-  } cleanup{snapshot};
-  MODULEENTRY32W module{};
-  module.dwSize = sizeof(module);
-  if (!Module32FirstW(snapshot, &module))
-    return false;
-  try {
-    do {
-      const std::filesystem::path path(module.szExePath);
-      std::error_code error;
-      if (!path.is_absolute() || !std::filesystem::is_regular_file(path, error) || error)
-        return false;
-      files.insert(path.u8string());
-    } while (Module32NextW(snapshot, &module));
-    return GetLastError() == ERROR_NO_MORE_FILES;
-  } catch (...) {
-    return false;
-  }
-}
 #endif
 
 static std::string find_module_name(const std::shared_ptr<ny::ast_program> &p,
@@ -1685,7 +1652,10 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     // Compiler DLLs (including LLVM and the CRT) are executable inputs just
     // as loaded .so files are on Linux. Incomplete discovery must disable
     // incremental reuse rather than silently fingerprint only nilcompiler.
-    if (!collect_windows_compiler_modules(analysis->compiler_files))
+    // Include the known optional system apphelp component even when it was
+    // not loaded in this process. Keep its bytes fingerprinted while avoiding
+    // a false graph change between separate analysis processes.
+    if (!nil::detail::compiler_modules::collect_windows(analysis->compiler_files))
       analysis->dependencies_consistent = false;
 #endif
 #if defined(NY_HAS_LLVM)

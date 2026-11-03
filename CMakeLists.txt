@@ -58,6 +58,14 @@ install(
 install(FILES LICENSE DESTINATION ".")
 
 if(BUILD_TESTING)
+    add_executable(nil_compiler_module_fingerprint_tests tests/compiler_module_fingerprint_tests.cpp)
+    target_compile_features(nil_compiler_module_fingerprint_tests PRIVATE cxx_std_17)
+    if(WIN32)
+        target_link_libraries(nil_compiler_module_fingerprint_tests PRIVATE advapi32)
+    endif()
+    add_test(NAME nilbuild.compiler-module-fingerprints COMMAND $<TARGET_FILE:nil_compiler_module_fingerprint_tests>)
+    set_tests_properties(nilbuild.compiler-module-fingerprints PROPERTIES LABELS "tools;project;rc" TIMEOUT 30)
+
     # Test-only launcher for isolated editor integration runs. Reuse the
     # toolchain's bounded process/Job cleanup; never ship it in the SDK.
     add_executable(nil_vscode_host_runner
