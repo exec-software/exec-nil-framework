@@ -105,6 +105,44 @@ private:
     }
     void pause() const { std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
 
+#ifndef _WIN32
+    static bool configure_unix_socket(int socket) noexcept {
+        // Some Unix hosts lack socket/accept4's atomic flag arguments. This
+        // fallback preserves descriptor flags and fails before any protocol I/O
+        // if nonblocking setup or per-socket SIGPIPE suppression is unavailable.
+        const int status = ::fcntl(socket, F_GETFL, 0);
+        if (status < 0 || ::fcntl(socket, F_SETFL, status | O_NONBLOCK) < 0) return false;
+        const int descriptor = ::fcntl(socket, F_GETFD, 0);
+        if (descriptor < 0 || ::fcntl(socket, F_SETFD, descriptor | FD_CLOEXEC) < 0) return false;
+#ifndef MSG_NOSIGNAL
+#ifdef SO_NOSIGPIPE
+        const int enabled = 1;
+        if (::setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled)) != 0) return false;
+#else
+        return false;
+#endif
+#endif
+        return true;
+    }
+
+    static bool same_unix_owner(int socket) noexcept {
+#if defined(__linux__)
+        struct PeerCredentials { pid_t pid; uid_t uid; gid_t gid; } identity{};
+        socklen_t length = sizeof(identity);
+        return ::getsockopt(socket, SOL_SOCKET, SO_PEERCRED, &identity, &length) == 0 &&
+            length == sizeof(identity) && identity.uid == geteuid();
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || \
+      defined(__NetBSD__) || defined(__DragonFly__)
+        uid_t user = 0;
+        gid_t group = 0;
+        return ::getpeereid(socket, &user, &group) == 0 && user == geteuid();
+#else
+        (void)socket;
+        return false; // No unauthenticated fallback on other Unix hosts.
+#endif
+    }
+#endif
+
     void open_listener() {
 #ifdef _WIN32
         nil::detail::owner_security security;
@@ -129,8 +167,23 @@ private:
                 throw std::runtime_error("AI transport pipe listen failed: " + std::to_string(code));
         }
 #else
+#if !defined(__linux__) && !defined(__APPLE__) && !defined(__FreeBSD__) && \
+    !defined(__OpenBSD__) && !defined(__NetBSD__) && !defined(__DragonFly__)
+        throw std::runtime_error("AI transport peer authentication is unavailable on this Unix host");
+#endif
+#if !defined(MSG_NOSIGNAL) && !defined(SO_NOSIGPIPE)
+        throw std::runtime_error("AI transport socket SIGPIPE protection is unavailable on this Unix host");
+#endif
+#if defined(__linux__)
         listener_ = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+#else
+        listener_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
+#endif
         if (listener_ < 0) throw std::runtime_error("AI transport socket creation failed");
+#if !defined(__linux__)
+        if (!configure_unix_socket(listener_))
+            throw std::runtime_error("AI transport socket flag configuration failed");
+#endif
         sockaddr_un address{};
         address.sun_family = AF_UNIX;
         if (endpoint_.size() >= sizeof(address.sun_path))
@@ -209,14 +262,18 @@ private:
             if (code == ERROR_NO_DATA) DisconnectNamedPipe(listener_);
             else if (code != ERROR_PIPE_LISTENING) return false;
 #else
+#if defined(__linux__)
             peer_ = ::accept4(listener_, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+#else
+            peer_ = ::accept(listener_, nullptr, nullptr);
+#endif
             if (peer_ >= 0) {
+#if !defined(__linux__)
+                if (!configure_unix_socket(peer_)) { close_peer(); continue; }
+#endif
                 // Filesystem permissions alone do not authenticate a peer that
                 // connected before ownership changes or through a passed fd.
-                struct PeerCredentials { pid_t pid; uid_t uid; gid_t gid; } identity{};
-                socklen_t length = sizeof(identity);
-                if (::getsockopt(peer_, SOL_SOCKET, SO_PEERCRED, &identity, &length) == 0 &&
-                    length == sizeof(identity) && identity.uid == geteuid()) return true;
+                if (same_unix_owner(peer_)) return true;
                 close_peer();
                 continue;
             }
@@ -247,10 +304,18 @@ private:
         while ((!stopping_ || finish_inflight) && offset < bytes.size() && Clock::now() < deadline) {
 #ifdef _WIN32
             DWORD count = 0;
+            // Keep each nonblocking write below the pipe's buffer quota. A
+            // maximum-sized frame must make incremental progress as its peer
+            // drains the pipe, not depend on one frame fitting in the buffer.
+            const auto length = std::min<std::size_t>(4096, bytes.size() - offset);
             if (!WriteFile(listener_, bytes.data() + offset,
-                           static_cast<DWORD>(bytes.size() - offset), &count, nullptr)) return false;
+                           static_cast<DWORD>(length), &count, nullptr)) return false;
 #else
-            const auto count = ::send(peer_, bytes.data() + offset, bytes.size() - offset, MSG_NOSIGNAL);
+            int flags = 0;
+#ifdef MSG_NOSIGNAL
+            flags = MSG_NOSIGNAL;
+#endif
+            const auto count = ::send(peer_, bytes.data() + offset, bytes.size() - offset, flags);
             if (count < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) { pause(); continue; }
                 return false;

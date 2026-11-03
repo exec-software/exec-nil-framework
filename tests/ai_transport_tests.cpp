@@ -7,6 +7,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
 int checks = 0;
+const char* stage = "constructor validation";
 void require(bool value, const char* message) {
     ++checks;
     if (!value) throw std::runtime_error(message);
@@ -35,8 +36,29 @@ public:
                 return;
             }
 #else
+#if defined(__linux__)
             handle_ = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+#else
+            handle_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
+#endif
             if (handle_ < 0) throw std::runtime_error("client socket");
+#if !defined(__linux__)
+            const int status = ::fcntl(handle_, F_GETFL, 0);
+            const int descriptor = ::fcntl(handle_, F_GETFD, 0);
+            bool configured = status >= 0 && descriptor >= 0 &&
+                ::fcntl(handle_, F_SETFL, status | O_NONBLOCK) == 0 &&
+                ::fcntl(handle_, F_SETFD, descriptor | FD_CLOEXEC) == 0;
+#ifndef MSG_NOSIGNAL
+#ifdef SO_NOSIGPIPE
+            const int enabled = 1;
+            configured = configured &&
+                ::setsockopt(handle_, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled)) == 0;
+#else
+            configured = false;
+#endif
+#endif
+            if (!configured) { close(); throw std::runtime_error("client socket flag configuration"); }
+#endif
             sockaddr_un address{};
             address.sun_family = AF_UNIX;
             std::memcpy(address.sun_path, endpoint.c_str(), endpoint.size() + 1);
@@ -68,7 +90,11 @@ public:
             DWORD count = 0;
             if (!WriteFile(handle_, bytes.data() + offset, static_cast<DWORD>(length), &count, nullptr)) return false;
 #else
-            const auto count = ::send(handle_, bytes.data() + offset, length, MSG_NOSIGNAL);
+            int flags = 0;
+#ifdef MSG_NOSIGNAL
+            flags = MSG_NOSIGNAL;
+#endif
+            const auto count = ::send(handle_, bytes.data() + offset, length, flags);
             if (count < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) { pause(); continue; }
                 return false;
@@ -158,6 +184,7 @@ private:
 };
 
 void protocol_and_lifecycle() {
+    stage = "protocol startup";
     std::atomic<unsigned> calls{0};
     ny_ai::Transport server("{\"event\":\"connected\"}\n", [&](const std::string& input) {
         ++calls;
@@ -175,22 +202,29 @@ void protocol_and_lifecycle() {
             (info.st_mode & 0777) == 0600 && info.st_uid == geteuid(), "socket owner-only before client connection");
 #endif
     {
+        stage = "initial handshake and security";
         Client client(server.endpoint());
 #ifdef _WIN32
         client.check_security();
 #endif
         require(client.line() == "{\"event\":\"connected\"}", "startup readiness and exact handshake");
+        stage = "fragmented request";
         require(client.send("fragmented command\r\n", 1), "fragmented request write");
         require(client.line() == "fragmented command", "fragmented request and CRLF framing");
+        stage = "coalesced requests";
         require(client.send("first\n\nsecond\nthird\n"), "coalesced requests write");
         require(client.line() == "first" && client.line() == "second" && client.line() == "third",
                 "coalesced requests stay ordered and blank lines ignored");
+        stage = "already-terminated response";
         require(client.send("terminated-response\n"), "terminated response request");
         require(client.line() == "already terminated", "already terminated response has one newline");
         const std::string maximum(ny_ai::Transport::max_line_bytes, 'z');
+        stage = "maximum request write";
         require(client.send(maximum + "\n", 997), "maximum bounded request write");
+        stage = "maximum response read";
         require(client.line() == maximum, "maximum response survives partial writes without truncation");
         require(calls == 6, "exact callback count for first connection");
+        stage = "exclusive endpoint contender";
         ny_ai::Transport contender("other", [](const std::string& request) { return request; });
         rejects([&] { contender.start(); }, "second server must not replace live endpoint");
         contender.stop();
@@ -198,6 +232,7 @@ void protocol_and_lifecycle() {
                 "failed contender leaves original listener and peer unchanged");
     }
     {
+        stage = "oversized request reconnect";
         Client client(server.endpoint());
         require(client.line() == "{\"event\":\"connected\"}", "reconnect handshake");
         const auto before = calls.load();
@@ -208,12 +243,14 @@ void protocol_and_lifecycle() {
         require(calls == before, "oversized request never dispatched");
     }
     for (const auto* command : {"throw\n", "oversize-response\n", "multiline-response\n"}) {
+        stage = "invalid handler response";
         Client client(server.endpoint());
         (void)client.line();
         require(client.send(command), "invalid-response fixture request");
         require(client.closed(), "handler failure or invalid response closes connection");
     }
     {
+        stage = "partial request shutdown";
         Client client(server.endpoint());
         (void)client.line();
         require(client.send("partial"), "partial frame fixture");
@@ -224,6 +261,7 @@ void protocol_and_lifecycle() {
         require(calls == before, "partial request never dispatched");
         require(client.closed(), "stop closes accepted client");
     }
+    stage = "empty listener restart and destructor cleanup";
     server.stop(); // Idempotent cleanup.
 #ifndef _WIN32
     require(::lstat(server.endpoint().c_str(), &info) != 0 && errno == ENOENT, "owned socket removed after join");
@@ -243,6 +281,7 @@ void protocol_and_lifecycle() {
 }
 
 void idle_and_slow_peer() {
+    stage = "idle peer expiry";
     std::atomic<unsigned> calls{0};
     ny_ai::Transport server("ready", [&](const std::string&) {
         ++calls;
@@ -257,6 +296,7 @@ void idle_and_slow_peer() {
         require(Clock::now() - start >= 4s && calls == 0, "idle timeout does not fabricate commands");
     }
     {
+        stage = "stalled reader shutdown";
         Client stalled(server.endpoint());
         require(stalled.line() == "ready", "stalled peer reconnect handshake");
         require(stalled.send(std::string(256, '\n') + "large\nlarge\nlarge\nlarge\nlarge\nlarge\n"),
@@ -271,6 +311,7 @@ void idle_and_slow_peer() {
 }
 
 void shutdown_retains_inflight_reply() {
+    stage = "in-flight reply shutdown handshake";
     std::mutex mutex;
     std::condition_variable changed;
     bool entered = false;
@@ -297,10 +338,12 @@ void shutdown_retains_inflight_reply() {
         observed = changed.wait_for(lock, 1s, [&] { return entered; });
     }
     const auto start = Clock::now();
+    stage = "in-flight reply shutdown";
     server.stop();
     require(observed && Clock::now() - start < 2s, "in-flight shutdown deadline");
     // Intentionally do not read until stop has returned and the server handle
     // has closed. On Windows DisconnectNamedPipe would discard this response.
+    stage = "completed reply read after server handle closure";
     require(client.line() == "final response before process exit", "stop discarded completed command response");
     require(client.closed(), "final response is followed by orderly closure");
     require(calls == 1, "stop dispatched another buffered command");
@@ -308,6 +351,7 @@ void shutdown_retains_inflight_reply() {
 
 #ifndef _WIN32
 void existing_paths_and_replacement() {
+    stage = "preexisting and replacement endpoint preservation";
     ny_ai::Transport server("ready", [](const std::string& request) { return request; });
     const auto& path = server.endpoint();
     const int file = ::open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0600);
@@ -350,7 +394,8 @@ int main() {
         std::cout << "AI transport: " << checks << " checks passed\n";
         return 0;
     } catch (const std::exception& error) {
-        std::cerr << "AI transport test failure: " << error.what() << '\n';
+        std::cerr << "AI transport test failure at " << stage << " (" << checks
+                  << " checks completed): " << error.what() << '\n';
         return 1;
     }
 }

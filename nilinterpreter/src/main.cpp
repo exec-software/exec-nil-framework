@@ -526,6 +526,9 @@ int main(int argc, char *argv[]) {
   std::unique_ptr<ny_ai::Control> control;
   std::unique_ptr<ny_ai::Transport> transport;
   if (ai_mode) {
+    // Let explicit Ny exits return through the owner so the control worker is
+    // joined and its endpoint removed, preserving the requested process code.
+    vm.setProcessExitTrapping(true);
     try {
 #ifdef _WIN32
       const unsigned pid = GetCurrentProcessId();
@@ -565,7 +568,8 @@ int main(int argc, char *argv[]) {
   int exit_code = 0;
   try {
     vm.execute();
-    exit_code = static_cast<int>(vm.getProgramExitCode());
+    exit_code = vm.getRequestedExitCode().value_or(
+        static_cast<int>(vm.getProgramExitCode()));
   } catch (const ny::UncaughtFault &e) {
     // Language faults share the same deterministic diagnostic as native entry.
     // Fatal VM safety errors below remain a separate, non-recoverable category.

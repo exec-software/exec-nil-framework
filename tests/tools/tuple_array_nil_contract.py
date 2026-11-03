@@ -227,9 +227,12 @@ def main():
             path.write_bytes(encode(body, schemas, binary, extra_functions))
             return path
 
-        def native(path, name, output):
+        # Schema/bounds coverage does not test replacing previously executed
+        # programs. Give every case and NIL encoding its own native artifacts.
+        def native(path, name, output, binary):
             nonlocal checks
-            obj, executable = root / (name + ".o"), linked_executable_path(root / name)
+            stem = name + ("-binary" if binary else "-text")
+            obj, executable = root / (stem + ".o"), linked_executable_path(root / stem)
             success(run([paths["assembler"], "-o", obj, path]))
             success(run([paths["linker"], "--runtime", paths["runtime"],
                          "-o", executable, obj]))
@@ -260,17 +263,17 @@ def main():
                     assert "expected a fully initialized value of exact type 'Result<i32,text>'" in result.stderr, result
                 checks += 1
             if args.llvm == "ON":
-                native(path, "valid", expected)
-                native(gc_path, "initializer-gc", "73\n")
+                native(path, "valid", expected, binary)
+                native(gc_path, "initializer-gc", "73\n", binary)
                 # Native builtins are lowered through annotated wrappers; the
                 # source fixtures cover that route. This raw direct instruction
                 # exercises only the VM's intrinsic result metadata boundary.
                 native(source("generic-enum-values", enum_control,
-                              enum_control_schemas, binary), "enum-values", "91\n1\n")
+                              enum_control_schemas, binary), "enum-values", "91\n1\n", binary)
                 identity = nominal_tuple + instructions(
                     "NEW_ARRAY_LITERAL 1 tuple<Widget>\nCAST array<tuple<Widget>>\n"
                     "PUSH_CONST 0\nGET_INDEX\nGET_FIELD 0\nGET_FIELD value\nCALL println 1")
-                native(source("identity", identity, nominal_schemas, binary), "identity", "73\n")
+                native(source("identity", identity, nominal_schemas, binary), "identity", "73\n", binary)
             for name, body, schemas in invalid:
                 path = source(name, body, schemas, binary)
                 result = run([paths["interpreter"], "--no-ai", path])
@@ -304,7 +307,8 @@ def main():
                 assert result.returncode > 0 and not result.stdout and "tuple array read" in result.stderr, result
                 checks += 1
                 if args.llvm == "ON":
-                    obj, executable = root / "bounds.o", linked_executable_path(root / "bounds")
+                    stem = "bounds-" + name + ("-binary" if binary else "-text")
+                    obj, executable = root / (stem + ".o"), linked_executable_path(root / stem)
                     success(run([paths["assembler"], "-o", obj, path]))
                     success(run([paths["linker"], "--runtime", paths["runtime"], "-o", executable, obj]))
                     result = run([executable])

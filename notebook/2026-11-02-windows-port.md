@@ -1950,3 +1950,41 @@ No previous SDK/VSIX was replaced or activated, no Lich publication or Anomalous
 change occurred, and no local-model/GPU workload or development server was run.
 This is shared implementation progress with explicit limits, not a v1 release
 or an unrestricted checkpoint/parity declaration.
+
+#### Windows source regression and follow-up fixes
+
+Committed/pushed the shared implementation as `5fcb685`. The first full Windows
+source build succeeded; CTest registered 570 tests: 565 passed, four failed and
+the optional interactive display test skipped (523.22 seconds). The private
+owned process wrapper verified cleanup and unchanged pinned source/helper inputs.
+All eight ordinary-I/O routes passed their independent host namespace/byte
+oracle. VM checkpoint tests passed 210 checks and owner-control tests 237 checks.
+
+The four failures are retained in
+`/home/nathan/vm/nil-win11/artifacts/control-io-20261103-VGX6d6/windows-v1/`:
+
+- AI transport: closed during a large response; the live checkpoint client also
+  timed out sending a large invalid-field request. Both used writes larger than
+  the nonblocking pipe buffer. Follow-up bounds Windows write chunks to 4 KiB
+  without increasing frame/operation deadlines, and adds transport stage diagnostics.
+- SDK preflight: the private runner omitted the previously approved inherited
+  process-scoped `RemoteSigned` setting. The retry runner sets it only within
+  its `setlocal` build/test environment; saved machine/user policies stay unchanged.
+- Tuple-array NIL contract: Windows refused replacement of a repeatedly reused
+  `bounds.exe`. Each schema/bounds case and encoding now uses separate native
+  artifacts; assertions and production linker behavior remain unchanged. The
+  exact owner of the original publication lock is unproven. Separate linker
+  publication/preservation tests remain required; this is not a linker fix claim.
+
+Independent review also found that explicit Ny process exit in AI mode could
+bypass control cleanup. AI mode now traps the exit through the existing VM
+mechanism, returns the requested code, finalizes profiling and joins/removes its
+control endpoint. Real-process tests cover connected and immediate exits, plus
+completed memory-profile output. Unix transport compilation no longer assumes
+Linux-only APIs on Apple/BSD; those hosts are not runtime-qualified by this work.
+
+An intermediate full Linux rerun passed 565/567 with the same two optional
+skips and zero failures (109.00 seconds), retained as `linux-ctest-v3.xml` with
+SHA-256 `df82425a1ce9f2269e60b463d6f13172df0a621c0336768be2fb6386c613bf73`.
+The Windows follow-up must pass focused and full regression before being
+considered verified. No SDK has been rebuilt/activated or published in this slice.

@@ -23,6 +23,9 @@ Linux checks the connecting user's UID; its socket is owner-only. Existing
 endpoint paths are never unlinked to make startup succeed. Cleanup removes
 only the socket instance this server created.
 
+An explicit Ny process exit in AI mode retains its requested exit status while
+joining the control worker and cleaning up the endpoint before process shutdown.
+
 This remains the explicit **JSON Lines v1** endpoint, not ETP framing.
 Requests contain string `id` and `method` fields. Responses contain the same
 `id`, and either a `result` or an `error` string (the other field is null).

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Bounded real-interpreter pause/capture/mutate/restore contract on both hosts.
 
-Only private pure-NIL fixtures are launched. Each child is waited or terminated
-in finally; no arbitrary process discovery, desktop input or external resources.
+Only private NIL fixtures are launched. Each child is waited or terminated
+in finally; no arbitrary process discovery or desktop input.
 """
 import argparse
 import ctypes
@@ -35,6 +35,18 @@ function helper(value: i64):
     ADD
     STORE_GLOBAL G
     LOAD_LOCAL value
+    RET
+end function
+'''
+
+EXIT_PROGRAM = '''module control_exit_contract
+function main:
+    PUSH_CONST 71
+    CAST i32
+    INTEROP_CALL std_sys exit 1 void
+    PUSH_CONST 99
+    INTEROP_CALL std_sys sys_write 1 void
+    PUSH_CONST 0
     RET
 end function
 '''
@@ -108,8 +120,11 @@ class Channel:
         deadline, offset = time.monotonic() + 5, 0
         while offset < len(payload) and time.monotonic() < deadline:
             count = w.DWORD()
-            data = ctypes.create_string_buffer(payload[offset:])
-            ok = self.k.WriteFile(self.handle, data, len(payload) - offset, ctypes.byref(count), None)
+            # A NOWAIT pipe can accept zero bytes if a request is larger than
+            # its quota. Bound each write while retaining the frame deadline.
+            chunk = payload[offset:offset + 4096]
+            data = ctypes.create_string_buffer(chunk)
+            ok = self.k.WriteFile(self.handle, data, len(chunk), ctypes.byref(count), None)
             if not ok:
                 require(ctypes.get_last_error() in (232, 535), 'pipe write failed')
             offset += count.value
@@ -225,6 +240,41 @@ def run(interpreter, directory, rejected=False):
         process.communicate(timeout=10)
 
 
+def run_exit(interpreter, directory, wait, profile=False):
+    """Explicit process exit must still join control and clean its endpoint."""
+    source = directory / 'explicit-exit.nil'
+    source.write_text(EXIT_PROGRAM, encoding='utf-8')
+    environment = {key: value for key, value in os.environ.items() if not key.startswith(('NY_', 'NIL_'))}
+    profile_path = directory / 'explicit-exit-profile.json'
+    if profile:
+        environment['NIL_MEMORY_PROFILE'] = str(profile_path)
+    process = subprocess.Popen([str(interpreter), '--ai-wait' if wait else '--ai', str(source)],
+                               cwd=directory, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    channel = None
+    try:
+        if wait:
+            channel = Channel(process)
+            require(channel.call('vm.status')['paused'], 'explicit-exit fixture did not pause')
+            channel.call('vm.resume')  # Must receive the last reply even on immediate exit.
+            channel.close()
+        stdout, stderr = process.communicate(timeout=10)
+        require(process.returncode == 71 and not stdout, repr((process.returncode, stdout, stderr)))
+        require(b'[ny_ai] Listening on ' in stderr and b'runtime error' not in stderr, repr(stderr))
+        if profile:
+            result = json.loads(profile_path.read_text(encoding='utf-8'))
+            require(result['schema'] == 'aperture.memory.v1' and result['route'] == 'vm' and
+                    result['status'] == 'completed' and result['completed'] is True and not result['errors'],
+                    'explicit AI exit did not finalize profiling: ' + repr(result))
+        if os.name != 'nt':
+            require(not Path('/tmp/ny_ai_' + str(process.pid) + '.sock').exists(), 'explicit exit leaked endpoint')
+    finally:
+        if channel is not None:
+            channel.close()
+        if process.poll() is None:
+            process.kill()
+        process.communicate(timeout=10)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--interpreter', type=Path, required=True)
@@ -233,7 +283,10 @@ def main():
         directory = Path(temporary)
         run(args.interpreter.resolve(strict=True), directory)
         run(args.interpreter.resolve(strict=True), directory, rejected=True)
-    print('AI checkpoint contract: capture/mutate/reusable restore/continuation and rejection passed')
+        run_exit(args.interpreter.resolve(strict=True), directory, wait=True)
+        run_exit(args.interpreter.resolve(strict=True), directory, wait=False)
+        run_exit(args.interpreter.resolve(strict=True), directory, wait=False, profile=True)
+    print('AI checkpoint contract: capture/mutate/reusable restore/continuation, rejection and explicit-exit cleanup passed')
 
 
 if __name__ == '__main__':
