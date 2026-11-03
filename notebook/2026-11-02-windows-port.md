@@ -2,6 +2,13 @@
 
 ## Status
 
+The latest runtime checkpoint (`e9d34ef`, with the unit-only startup allowance
+in `2c3e0c7`) fixes demonstrated separator inconsistencies and promotes the
+ordinary file/path/environment consumer into permanent interpreter regression
+tests. The same frozen diagnostic now passes all twelve Linux/Windows runs.
+This source/build-tree work is separate from the unchanged SDK below; installed
+SDK acceptance must be repeated before delivering these new runtime/STL bytes.
+
 Latest checkpoint: the unchanged, clean-source `45e7b9a` development SDK passes
 the Windows core SDK, installed consumer, debugger, editor and Unicode gates.
 A fresh complete desktop run with the separately pinned `58352fc` harness also
@@ -1610,3 +1617,141 @@ reversibly disabled with telemetry OptIn zero. No active SDK replacement,
 Lich publication, Anomalous change, model/GPU workload or long-lived server was
 performed. The code was left unchanged rather than applying a speculative
 stdout/runtime fix; this checkpoint adds reviewed evidence to the notebook.
+
+### Ordinary file/path/environment parity: reproduced separator bugs fixed
+
+The next slice used the same frozen public-API Ny consumer and host oracle on
+Linux and Windows, with three independent modes (lexical paths, ordinary files
+and streams, environment/CWD) in text-NIL and binary-NIL interpretation. It uses
+source STL copies, not binary-library or native-route qualification. Each
+compiler/child has a 60/30-second deadline, a shared 300-second budget and a
+1-MiB output cap. Retained process groups/Windows Jobs own cleanup; an
+unverified constructor/cleanup failure prevents subsequent launches. There are
+no retries to replace failed observations.
+
+Both baselines collected all six observations with verified cleanup and
+unchanged inputs. Linux failed 12 of 25 lexical expectations per encoding;
+Windows failed only the single-component `join` expectation. Linux had treated
+backslashes as literal characters in combine, normalization, basename/dirname,
+stem, relative paths and prefix/suffix/extension transformations. Both hosts
+returned a raw backslash from `join` with one component. These are demonstrated
+violations of the existing portable-separator contract, not speculative Unicode
+bugs. All file and environment modes already passed on both hosts.
+
+Commit `e9d34ef` folds separators before public path parsing and routes even the
+first join component through `combine`. It does not normalize ordinary file
+open arguments, alter literal POSIX backslash filenames, fold `ends_with` byte
+suffixes, or emulate foreign drive/UNC/root rules. The replacement-extension
+argument retains path-fragment semantics rather than becoming a validator:
+separator-bearing fragments can introduce components. More edge coverage for
+empty/dotted/multi-dot/separator-bearing extensions remains useful follow-up.
+
+The independent host oracle seeds Unicode parents and filenames (ASCII,
+accented Latin, Japanese, supplementary characters, NFC and NFD), mixes absolute
+and relative actual file arguments, checks exact binary/text/stream bytes and
+enumerates the final namespace. Distinct seed bytes, wrong-spelling aliases,
+untouched sentinels and orphan-file rejection prevent a successful wrong-path
+round trip from passing. Environment checks cover host-injected Unicode names
+and values, listing, empty-but-present values, explicit removal and Unicode CWD
+set/get/restore. The parent environment is checked unchanged. None of this
+claims arbitrary unmanifested Windows-host/code-page support.
+
+Authoritative paired evidence is retained under
+`/home/nathan/vm/nil-win11/artifacts/ordinary-io-parity-20261102-jO6d2I`:
+
+| Observation | Result | Report SHA-256 |
+| --- | --- | --- |
+| `linux-baseline-v2` | lexical failed twice; files/environment passed | `66b56a992382fc81b71417df9e941f9bd1c14f9fae14e0dfd82db356d83c40a5` |
+| `windows-baseline-v1` | lexical failed twice; files/environment passed | `9493dc6aa56f863a32be6ee52c83f302b2c5bd5ae00d80667dfd076f67a5770c` |
+| `linux-fixed-v1` | all six passed | `6b3e9f2f31b7721c87da501a3d8de517ebdf1996e9dce6c1c01ade0e500d6dfb` |
+| `windows-fixed-v1` | all six passed | `9ee4a7435112f3a3e924bb5dbc6cc4e7e2c9e92dcfa3f42f822f2a7c33d75fe2` |
+
+All four use consumer SHA-256
+`d1328fd7ff9ef425f13bf56034597d2c7231f268f48f54f000ee8177d099f3c4`
+and retained runner
+`79ea4ad5f3efa4ee6a137deed7b0df197f926e111364bdcf55a982a005e180eb`.
+The earlier Linux v1 observation is also preserved, but did not self-copy/pin
+its runner; it is not the authoritative runner-bound baseline. Before/after
+tool, consumer, runner, ownership helper and source-STL hashes remain part of
+each report. Original failures are not rewritten by the passing fixed runs.
+
+The independent four-run reconciliation is `ordinary-io-reconciliation.json`,
+SHA-256 `529891e01cf1e8c58123fb5958da4bd195ad635d8a2e0d95f4d880d4bd674079`.
+Nineteen positive/negative controls and a separate peer review pass. The
+verifier rechecks retained raw logs, compiled NIL, exact consumer arguments,
+copied sources and all final filenames/bytes without opening foreign absolute
+paths. It confirms that the only STL delta is the same `io/path.ny` change on
+both hosts. Historical tool payloads were not copied into this evidence set;
+their identity/integrity and process cleanup remain measurements from the
+pinned runner, not claims of independent offline binary or live-process proof.
+
+The permanent consumer and Python-3.8-compatible harness are registered as
+`nil.ordinary-io-oracle` and `nil.ordinary-io-interpreter`. Evidence directories
+are fresh and retained; explicit output directories cannot be reused. There
+are 23 host controls, including bounded hashing and synthetic reparse rejection.
+Linux passed all 23; Windows passed 22 with the one explicit POSIX-only skip
+(`windows-oracle-v1`, 4.008 seconds, owned cleanup and source identity verified).
+The actual POSIX symlink control is explicitly skipped on Windows, not presented
+as a real Windows junction test. `2c3e0c7` changes only the timeout control's
+startup allowance from 0.1 to 2 seconds for the Windows gate plus child-Python
+launch; real compiler/consumer deadlines are unchanged.
+
+Linux full regression: 561 registered, **559 passed, zero failed**, with the
+optional display and live-PostgreSQL tests skipped (194.70 seconds). After the
+final comment-only rebuild, compiler/interpreter hashes match the fixed
+diagnostic and all seven focused ordinary-I/O, strict byte-file Unicode,
+file-stream/path and system tests pass again. Windows full regression at
+`2c3e0c7` reports **564 registered, 562 passed, zero failed**, with only the
+service-session display and live-PostgreSQL tests skipped (935.80 seconds).
+The bounded wrapper reports successful exact-owned cleanup and unchanged
+source/script inputs. Both new ordinary-I/O CTests pass. These two environment
+skips are explicit build-tree evidence, not substitutes for the earlier strict
+installed GTK run or the live-database gate required by SDK acceptance.
+
+`windows-regression-reconciliation.json` independently checks the exact 564-name
+registration inventory against JUnit, each run/skip status, zero failures,
+reviewed phase scripts and raw log hashes. Its SHA-256 is
+`63f50e0ca179f463416a7267d4567ffae8cf3b4a915264785dd8f3bfe7cea4dc`;
+all 30 verifier controls pass, with independent root and peer review. The
+retained JUnit SHA-256 is
+`b286c38c2a20cfc60f061694652604fd72c79a93e9a55cc5231129d4cc7b86ff`.
+Replaying both final reconcilers from the durable artifact copy succeeds.
+The guest source is clean, build/test child cleanup is verified, saved
+PowerShell policies remain Undefined, and the optional uploader remains absent
+with its disabled copy retained. New SDK construction and installed acceptance
+against this source are the next delivery step, without replacing the frozen
+SDK or erasing its earlier failed GTK observation.
+
+### VS Code dependency maintenance, separate from SDK acceptance
+
+Commit `0b4789a` patches only the lockfile's `qs` 6.16.0 to 6.16.1, within the
+existing transitive packaging dependency range. Linux editor type checking,
+all 162 unit tests, the build, and bounded serialization regression cases pass.
+The bundled extension is byte-identical
+(`844aaee30df62134efa971c9bf1d3e9a1e71ca39f3665f1a3ee3d0f9e13fd500`);
+`qs` and packaging tools are not shipped in the frozen VSIX. GitHub alert 7 is
+confirmed fixed at `2026-11-03T02:27:19Z` by an additive sanitized API checkpoint.
+
+The separate [minimatch advisory](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249)
+remains open as GitHub alert 8. Installed/shipped `minimatch` is 10.2.6; patched
+11.0.1 is outside both current parent ranges, and no patched compatible 10.x
+was available. No major override or suggested language-client downgrade was
+applied. Inspected runtime callers retain optimization level 1 rather than the
+advisory's level-2 prerequisite, including a bounded benign options check.
+That is a scoped reachability observation, not remediation or dismissal.
+The pre-existing default-Node packaging CLI module-loading issue is also not
+claimed fixed; no new VSIX was packaged or activated.
+
+Dependency review and raw command logs are retained in the same artifact root's
+`vscode-dependency-review`, including `review.json`
+(`de09fb0cd97f8bcb62502a3858809383c32bedb1ca4edd43edf87c4deda9b152`)
+and the later `github-alert-checkpoint-20261103.json`
+(`2b3c20610ba41cef01ddd73a2758378842bff194f1c3beb514d306f09f22eebd`).
+The frozen SDK archive and VSIX hashes were independently rechecked unchanged:
+`b7a096df65caa9000c74ce1bf5249e8fc0ec221dcb9f082fd89e7948d69817f7`
+and `4e6ad286ec6707131f869ea6ebd1fa4df18ae1bf40be551d6a03f4b5ad2ef3e1`.
+No SDK activation, Lich publication, Anomalous modification, desktop task,
+machine-policy change, model/GPU workload or long-lived server was performed.
+Installed qualification of the new bytes, the earlier unexplained GTK helper
+observation, bare-host/toolchain closure and the previously listed shared
+language/provider limitations remain open; this is not a v1/RC declaration.
