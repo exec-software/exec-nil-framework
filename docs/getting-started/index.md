@@ -151,9 +151,21 @@ cmake -S . -B build/windows -G Ninja `
   -DNIL_BUILD_EXPERIMENTAL_TOOLS=ON -DBUILD_TESTING=ON `
   -DCMAKE_INSTALL_BINDIR=. `
   -DLLVM_DIR=C:/llvm/clang+llvm-18.1.8-x86_64-pc-windows-msvc/lib/cmake/llvm `
+  "-DNIL_LLVM_DIA_LIBRARY:FILEPATH=C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/DIA SDK/lib/amd64/diaguids.lib" `
   -DNILCOMPILER_SQLITE_INCLUDE_DIR=C:/sqlite/include
 & ./scripts/build-sdk.ps1 -BuildDirectory ./build/windows -Parallel 4
 ```
+
+Some Windows LLVM binary packages export an absolute `diaguids.lib` path from
+the machine that built LLVM. If that file is missing, set
+`NIL_LLVM_DIA_LIBRARY:FILEPATH` to the existing x64 DIA SDK library from your
+selected Visual Studio installation, as above. NIL replaces only the single
+missing literal DIA entry on LLVM's imported `LLVMDebugInfoPDB` target; it leaves
+an existing valid entry and every unrelated link entry unchanged. The explicit
+path stays in the CMake cache for subsequent regeneration. A missing, ambiguous,
+or unsupported reference fails configuration with an actionable error. No LLVM
+package files, global library search paths, or Visual Studio installation are
+modified. Omit this option when your LLVM package already has a valid DIA path.
 
 The PowerShell helper consumes this existing single-configuration build and
 requires clean source by default. `-AllowDirtySource` is an explicit diagnostic

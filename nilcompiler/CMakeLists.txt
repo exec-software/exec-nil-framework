@@ -112,6 +112,11 @@ if(NIL_ENABLE_LLVM)
         message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
         message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 
+        if(WIN32)
+            include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NilLlvmDia.cmake")
+            nil_relocate_llvm_dia()
+        endif()
+
         target_sources(nilcompiler_core PRIVATE src/llvm_backend.cpp)
         target_include_directories(nilcompiler_core SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
 

@@ -531,6 +531,11 @@ if(BUILD_TESTING)
     # test suite when testing was explicitly enabled.
     find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
+        add_test(NAME nilbuild.llvm-dia-configuration
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/llvm_dia_cmake_contract.py"
+                --helper "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NilLlvmDia.cmake"
+                --cmake "${CMAKE_COMMAND}" --generator "${CMAKE_GENERATOR}")
+        set_tests_properties(nilbuild.llvm-dia-configuration PROPERTIES LABELS "build;tools;windows;rc" TIMEOUT 90)
         if(WIN32)
             add_test(NAME nil.windows-sdk-preflight
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/windows_sdk_preflight.py")

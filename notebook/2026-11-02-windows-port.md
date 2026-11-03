@@ -1309,3 +1309,42 @@ new portable unit supplies 23 checks; independent ASan/UBSan execution and
 strict MinGW syntax validation also pass, and peer review found no remaining
 issues. Windows runtime/API validation, stability repeats and a newly sealed
 SDK candidate remain pending at this source checkpoint.
+
+### Fingerprint runtime checks and reproducible LLVM DIA configuration
+
+The `d9f8c31` Windows fingerprint unit builds and passes **46 checks**, including
+the actual system-directory API, loaded-module snapshot and file identities.
+Its JUnit SHA-256 is
+`5ba2c04e57def33f31618339d7ac9024a87762697cb5af9c2408b3e4c9b1d818`.
+Full Linux regression reports **558 registered, 556 PASS, two SKIP, zero FAIL**:
+optional Xvfb and PostgreSQL tools absent from that invocation's environment.
+The latter was then separately configured using existing
+`/usr/lib/postgresql/16/bin` and `/usr/share/postgresql/16`; all six PostgreSQL
+routes passed with graceful shutdown and owned-process cleanup. The original
+full report is not relabeled: SHA-256
+`200da534adaf0f88b5cd5cd77b390dc3374a538cd53937d6c5a9962012a2b64a`;
+supplemental PostgreSQL JUnit SHA-256
+`c591f250228b17d63e3bbf7fc72662eaa8f8e2a771020ddfd0e5bd4a033e53c8`.
+
+The full Windows rebuild stopped before its focused tests because CMake
+regeneration restored LLVM 18.1.8's exported `LLVMDebugInfoPDB` dependency on
+the missing `Visual Studio/2019/Professional/DIA SDK/lib/amd64/diaguids.lib`.
+The installed 2022 Build Tools copy exists. The preserved failure is
+`artifacts/d9f8c311c948-parity/parity-apphelp-build-d9f8c31-failed.log`; no claim
+is made about why earlier generated files did not expose this stale export.
+
+`NIL_LLVM_DIA_LIBRARY:FILEPATH` now provides a scoped, explicit configure-time
+repair for that one missing literal imported link entry. It persists in the
+CMake cache, preserves every unrelated link entry and ordering, and leaves
+an existing valid DIA import unchanged. Missing/relative/invalid replacement
+paths, ambiguous duplicates and unsupported DIA expressions fail configuration.
+No vendor LLVM file, global search path or machine setting is edited. The
+Windows build instructions document the selected x64 DIA library. All 23
+isolated configure tests pass on Linux; Windows configuration and subsequent
+compiler/SDK qualification remain pending.
+
+The user signed into Nathan after Windows servicing. Session 1 is active and
+the account resolves to SID `S-1-5-21-1260315539-3167597677-3402283352-1002`.
+The same approved bounded desktop tests will use that limited interactive
+token instead of the earlier `nil` account. SDK staging permissions remain
+unchanged; a fresh sealed extraction will be used for desktop consumption.
