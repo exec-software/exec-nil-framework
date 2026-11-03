@@ -1015,3 +1015,174 @@ Optional HAG Windows loading remains unqualified. Native debugger attachment,
 general FFI, broad networking/streams and screenshot placeholders are shared
 limitations, not Windows-specific regressions. No Lich publication, SDK
 activation, Anomalous changes, model/GPU workload or long-lived server occurred.
+
+The next ordinary-I/O investigation should use one public-API Ny consumer with
+three modes: lexical paths; whole-file plus File stream round-trips; and
+environment plus cwd. Run text and binary interpretation on each OS (12 bounded
+executions), with independent host checks of exact filenames and bytes. Include
+ASCII controls, Unicode filenames/parents, slash/backslash/mixed separators and
+single-element `join`; keep drive-relative/UNC semantics separate from portable
+expectations. Environment's existing wide Windows implementation and Unicode
+fixture provide a positive control. Narrow ordinary opens, host filesystem path
+parsing and `current_path().string()` are investigation targets, not reproduced
+bugs. General native support for these APIs is a shared limitation, so do not
+turn interpreter-only evidence into a native-parity claim.
+
+### Suspend-overlap regression failure retained
+
+Implementation `af38ebd2920d3c322ca79f6db3827354b8d8af52` was committed and pushed.
+The first final Windows build-tree run registered 560 tests: 558 passed, one
+service-session UI skip, and one failure in `ny.routes.numeric-value-ordering`.
+It is **not** a clean qualification run. The JIT route reported a timeout after
+1,462.74 seconds; the other five routes passed. Host journal evidence records
+suspend at **2026-11-02 23:06:55 UTC** and resume at **23:31:16 UTC** (1,461 seconds).
+The route directory spans 23:06:46–23:31:17. This strongly supports a
+suspend-overlap timeout, not 24 minutes of measured compiler CPU time; it does
+not by itself exclude another defect.
+
+Three subsequent strict repetitions kept the original 10-second per-command
+budget and all six routes: **18 passes, zero failures/skips**. JIT durations were
+0.512007, 0.501341 and 0.500252 seconds. The repetitions ran inside an outer
+bounded owned Job. The failed report and artifacts were not relabeled or
+discarded. The full run lasted 3,531.78 seconds including suspend; its archive
+SHA-256 is `4ee575a584e974c3bb34a141116a6c10c935dcf796f97a3a4f7c0e0b9452bcc3`.
+Evidence is retained in
+`/home/nathan/vm/nil-win11/artifacts/af38ebd2920d-parity`, including the independent
+host suspend log, original route report, all three repetitions, full JUnit/log,
+final PostgreSQL fixture, headless guard and interactive UI evidence. No host
+power policy was changed.
+
+Review also found independent legacy harness debt: `ny_route_matrix.py` kills
+only the direct Windows child and then uses an unbounded final `communicate()`;
+the generic route CTest registration lacks an outer timeout. This is confirmed
+cleanup/deadline debt, not a demonstrated cause of this particular stall.
+Harden it with owned process-tree cleanup, bounded capture/drain and explicit
+outer limits in a separate tested slice; do not silently expand the test budget
+or hide a failure as an infrastructure skip.
+
+Before SDK construction, the guest's 23 overlaid files were compared byte-for-byte
+against the known v4 overlay and pushed commit. All other changed paths had to
+match the old HEAD. A unique backup preserved all 32 targeted files, the new
+index was verified identical to the pushed tree, and `--ff-only` advanced the
+guest to clean `af38ebd` without reset/discard. The helper explicitly refuses
+disabled Python assertions and was invoked with isolated Python. The fresh SDK
+pipeline requires a new full CTest report; the suspend-overlap report cannot
+qualify its package.
+
+### Fresh development SDK acceptance (in progress)
+
+The clean `af38ebd` SDK pipeline completed its new full CTest run in 505.24
+seconds: **560 registered, 559 passed, zero failed, one expected service-session
+`nil.ui-display` skip**. PostgreSQL is now a passing test rather than an allowed
+skip. The archive verifier's exact registration contract was updated to 560
+tests and only that UI skip; 25 synthetic verifier checks pass. These verifier
+tests are not themselves package qualification.
+
+The fresh candidate is
+`C:\src\exec-nil-framework\build\windows-candidates\development-c99de433bcf94b52888fe7bbea2153b8`.
+Its manifest SHA-256 is
+`3041e65b9e4286b307b9e8c009f141e4be53f6a09525a35fbd95cdc0f641d4bb`:
+11 root executables, 18 compiled library modules, 66 HTML documentation pages,
+259 sealed payload files (85,042,444 bytes). Installed debugger **146 checks**
+and Unicode **16 routes** passed with before/after SDK seals. The independent
+archive/consumer reconciliation and 1,184 installed route matrix are still
+pending at this note's checkpoint.
+
+The installed editor run failed at `external import change refreshed Problems`.
+The unchanged 88-check suite, source and extension bundle were retained; no
+timeout, exclusion or retry-as-pass was substituted. The original report and
+profile logs are preserved in `parity-editor-failed-af38ebd.zip`, SHA-256
+`b899fad94085917ba4640496382aa18331094b4a2fc025cac662b45762a0055a`.
+Inspection found two branches needing runtime evidence: preview tabs may leave
+no open entry eligible for analysis; a cached clean closed-tab import can also
+veto disk-snapshot publication. Empty Problems after a save is not proof a fresh
+analysis finished. An additive diagnostic wrapper will observe tab/document,
+watcher and compiler state without modifying the committed suite or budgets.
+
+The first installed desktop task stopped at preflight: the staging SDK's
+`nillib` directory is private to the build account and not readable by desktop
+user `nil`. No GUI fixture started; preflight Job cleanup was verified and task
+`NIL-Parity-Desktop-4acb2b752ffe448bb011efda1e55a8e9` was removed. Do not relax
+staging ACLs. The replacement gate extracts the sealed ZIP as `nil` into a
+fresh private evidence directory, hashes and parses the same bounded archive
+snapshot, verifies exact manifest/payload membership and hashes, and uses
+exclusive writes. Extraction and all acceptance phases share the 690-second
+budget beneath the 790-second controller and 840-second scheduler deadlines.
+Twelve private tests cover these helper boundaries; actual extracted-SDK desktop
+acceptance remains pending.
+
+### VM servicing interruption during installed acceptance
+
+At approximately **2026-11-03 00:15 UTC**, new SSH connections stopped receiving
+the guest banner. The QEMU management endpoint remained responsive and reported
+`running`; the console framebuffer was black. Host kernel logs showed no new
+suspend/OOM event in that interval, and the host had available memory with no
+ongoing swap activity in the sampled interval. These observations do not
+establish a guest-kernel, SSH, resource-pressure, or editor root cause. Once
+SSH returned, the System log established the interruption was Windows servicing:
+`TrustedInstaller.exe` initiated planned `Operating System: Upgrade` restarts,
+with fresh boots at 00:14:56, 00:16:15 and 00:17:12 UTC. The restarts began
+before the approved ACPI shutdown attempt; do not attribute them to that request
+or to an observed compiler/editor crash.
+
+The last pre-interruption consumer progress sample contained 73 per-fixture/library
+reports. There is **no completed 1,184-execution result or delivered ZIP**.
+The diagnostic editor rerun used the unchanged gate driver and full suite,
+with its additive observation wrapper under
+`C:\provision\parity-editor-diagnostic-af38ebd` and evidence directory
+`C:\provision\vscode-installed-sdk-RuhILg`. Its final result is unavailable.
+Do not convert either interrupted/unknown run to PASS. The extracted-SDK
+desktop task has not been started.
+
+The user explicitly approved a graceful VM restart, but not a forced reset.
+At **00:17:26 UTC**, the host delivered QEMU's `system_powerdown` ACPI request
+and received its `POWERDOWN` event. That event is delivery of the request, not
+evidence Windows shut down. The first successful new SSH probe returned at
+00:18:44 UTC. No force-reset, guest-process kill, disk mount, power-policy
+change, or duplicate VM was attempted. After confirming the new boot and no
+remaining test/compiler/editor processes, the two stale task-owned **host SSH
+clients** were closed. Source and all candidate/evidence files remain in place.
+The recovered route directory has 74 reports, not a completed consumer result.
+
+At 00:21:26 UTC the guest reports Windows 11 Pro 26H2, build **26300.9711**,
+with neither the Windows Update nor Component Based Servicing reboot-pending
+marker set. The repository remains clean `af38ebd`. No user is signed in after
+the upgrades; the user was asked to sign `nil` back in for the approved desktop
+tests. No password, autologon setting or update policy was changed. System
+events, state, original CTest/build evidence, incomplete consumer reports and
+retained file inventory are copied in
+`parity-servicing-interruption-af38ebd.zip`, SHA-256
+`b89f68f7a1345f84d4501d7fa0ddbd9794a384c11a0641f5b4dd524bae8f5bd6`.
+
+Independent host reconciliation of the copied debugger evidence passed all
+146 exact named checks, 20 command identities and 13 frozen source hashes;
+27 mutation/positive controls also pass. This remains debugger-only evidence,
+with final ZIP binding pending and no editor acceptance implied. The additive
+editor diagnostic wrapper passed four mock controls for unchanged invocation,
+results and cleanup; these are not actual editor acceptance results.
+
+Private helper sources/tests are preserved in `parity-gate-tools.tar.gz`,
+SHA-256 `6fe9412b0a86e7d49b29539094697a1e3e97843b13340411277279e22ee05f0e`,
+under `/home/nathan/vm/nil-win11/artifacts/af38ebd2920d-parity`.
+The prior accepted `71a9338ec3a7` SDK ZIP and VSIX were rehashed unchanged:
+`872cf43be600e25b09a35c9cc161e341dd8b9887a48afdf253e886705dcd1447` and
+`b146c9c3b708d4e3fa1a093f8500e87b19037e303cfd482987b4c51122379f57`.
+
+After guest access returns, first capture the unfinished consumer/editor logs
+and reports, verify source remains clean `af38ebd`, and inspect owned process
+cleanup. Preserve the first failures. Rerun interrupted acceptance with fresh
+evidence paths and the same original budgets; diagnose the editor's import-tab
+state before any fix or qualification claim. Only after all required consumer
+checks complete should the final ZIP be created, independently verified and
+used for the already approved limited desktop extraction/test task.
+
+Recovery resumed the interrupted last SDK step against the **same sealed SDK**,
+after validation of its unchanged manifest/payloads. The entire consumer matrix
+is rerunning from scratch, not completing only the remaining half. New logs are
+`C:\provision\parity-consumer-post-upgrade-af38ebd*.log`; the original incomplete
+reports remain untouched. An additional full post-upgrade CTest run writes
+`C:\provision\parity-ctest-post-upgrade-af38ebd.xml` and `.log`, without replacing
+the original passing CTest report bound into the SDK manifest. The diagnostic
+editor rerun uses fresh evidence `C:\provision\vscode-installed-sdk-uKCveZ`.
+No test budget or accepted check set was changed, and these resumed runs are
+not yet claimed complete.
