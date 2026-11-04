@@ -2,30 +2,39 @@
 
 ## Status
 
-The latest runtime checkpoint (`e9d34ef`, with the unit-only startup allowance
-in `2c3e0c7`) fixes demonstrated separator inconsistencies and promotes the
-ordinary file/path/environment consumer into permanent interpreter regression
-tests. The same frozen diagnostic now passes all twelve Linux/Windows runs.
-This source/build-tree work is separate from the unchanged SDK below; installed
-SDK acceptance must be repeated before delivering these new runtime/STL bytes.
+The latest Windows development SDK is built from clean, committed and pushed
+source `f4d5d04`. Its complete SDK pipeline and independent archive verification
+passed: 571 registered CTest cases, 570 passed, zero failures and one service
+desktop skip; installed validation and 1,184 aggregate consumer executions also
+passed. It contains 259 sealed payload files, eleven root tools, eighteen binary
+standard-library modules and 66 compiled documentation pages. A separate strict
+GTK run and independent host replay passed ten installed VM/native cases,
+4,459 observed provider assertions and all 235 lifecycle checks, with targeted
+input, scheduled-task removal and owned cleanup verified. The first editor run
+for these exact SDK bytes failed at a compiler-check timeout after 31 completed
+checks and 23 tasks. A private phase-timing diagnostic located repeated import
+searches as the dominant cost. The source fix passes six Linux editor-analysis
+tests; Windows measurement, complete editor acceptance and packaging of that
+new fix remain pending.
 
-Latest checkpoint: the unchanged, clean-source `45e7b9a` development SDK passes
-the Windows core SDK, installed consumer, debugger, editor and Unicode gates.
-A fresh complete desktop run with the separately pinned `58352fc` harness also
-passes: ten installed GTK VM/native cases, both required helper summaries and
-verified targeted input/cleanup. The earlier lifecycle helper's zero-exit,
-empty-output observation remains preserved and unexplained; subsequent bounded
-comparisons and this strict run do not establish a root-cause fix. See the final
-sections below. This is development evidence, not full Windows parity or v1/RC
-qualification. The previously accepted `71a9338ec3a7` SDK and editor artifacts
-remain unchanged; no candidate was activated.
+This SDK includes the `164f179` Aperture long-report-path fix and the `f4d5d04`
+Windows PID-publication/source-scanning harness repairs. The full suite retains
+151 Aperture checks, 39 niltest process invocations and seven repository-policy
+controls. Earlier interrupted/failed pipelines and editor diagnostics remain
+preserved; their evidence has not been relabelled as successful acceptance.
 
-The sections below retain the chronological evidence, including the earlier
-accepted Windows development SDK from `0d8c6c21b20a16f16433a6f84ffe4ec1bdfb7bf8`.
-This continues the interrupted MSVC port at `3dc9d17`; it is not a Windows
-release or RC declaration.
-The inherited working tree was preserved before synchronization to the VM.
-No active SDK, Lich publication, or Anomalous checkout is changed by this work.
+The latest accepted Linux development SDK remains the unchanged `d5e8758`
+reference. Its paired historical Windows SDK passed installed consumer,
+ordinary-I/O, Unicode, debugger and same-process checkpoint gates; those reports
+remain attached to their original bytes. No new Linux SDK or separate fresh
+installed shared-runtime/debugger campaign is claimed by this Windows run.
+
+This is development evidence, not a v1/RC or unrestricted parity declaration.
+The earlier zero-exit, empty lifecycle-output observation remains preserved and
+unexplained. No active SDK/VSIX, Lich publication or Anomalous checkout has been
+changed by these recovery steps. Checkpoints retain the documented deterministic
+same-process restrictions; external-state rollback, code hot reload and native
+`environment.list` remain unsupported.
 
 ## Question
 
@@ -2117,3 +2126,270 @@ or development server occurred. External runtime/toolchain prerequisites remain
 required; PE import inventory is not bare-host qualification. Checkpoints retain
 the documented deterministic same-process restrictions; arbitrary external-state
 rollback, code hot reload and native `environment.list` remain unsupported.
+
+#### `d5e8758` desktop acceptance and editor failures, November 3
+
+The unchanged Windows SDK was extracted into Nathan's desktop-owned evidence
+directory and checked against its independent archive and manifest anchors.
+The strict GTK run passed all ten installed language cases across VM/native
+routes, observed 4,471 provider assertions and passed 235 lifecycle assertions.
+The provider total includes timing-dependent polling assertions, so it is an
+observed count rather than a fixed inventory. Targeted messages went only to
+verified Job-owned HWNDs; scheduled-task removal and owned-process cleanup were
+verified. The separately pinned checkout was `c857e06`, whose difference from
+the packaged `d5e8758` source was the preceding notebook update.
+
+Editor attempt v1 failed while reading the original candidate's
+`nillib/collections.nil`. Retained ACL evidence shows that file belonged to
+Administrators and did not grant the limited Nathan desktop account access.
+The retry used the existing, independently verified Nathan-owned extraction;
+the original SDK's ACLs were not relaxed. Both copies of the library retained
+the same hash. This addressed test provisioning, without changing SDK bytes.
+
+Editor attempt v2 completed 83 checks, then failed because memory profiling
+could not return a saved report URI. A bounded comparison using the same SDK
+confirmed successful short-path output, failure at an ordinary Unicode path of
+270 UTF-16 units, and success using an extended Windows path prefix. The SDK
+seal remained unchanged; these are failure/diagnostic records, not editor PASS.
+Both editor attempts retained verified owned cleanup.
+
+Evidence is under
+`/home/nathan/vm/nil-win11/artifacts/d5e875879b05-desktop-editor/`:
+`desktop-reconciliation.json`, `editor-v1-sdk-access.json`,
+`editor-v1/`, `editor-v2/`, `editor-v2-host-report.json`, and
+`path-diagnostic/evidence-8cf1de96f8314951a9e4b15ebaee6226/`.
+
+#### Aperture long report paths: `164f179`
+
+The fix normalizes Windows report paths locally before using the extended path
+namespace where needed. Creation, profile readback and failed-output removal
+use the same resolved path. Exclusive creation, existing-report preservation,
+bounded reads and failure cleanup remain required; no machine-wide long-path
+setting was changed. Regression cases exercise ordinary Unicode paths beyond
+260 UTF-16 units, rather than requiring callers to supply a Windows prefix.
+
+A focused Windows Aperture rebuild passed `aperture.memory-contract` with
+151 checks. Its owned wrapper verified clean source, unchanged inputs, process
+cleanup and the unchanged older packaged SDK. Durable evidence is in
+`d5e875879b05-desktop-editor/path-validation/evidence-6c65edc6ffb64c598e9e0c7bf8d8d01b/`
+under the artifact root above; JUnit records 22.05 seconds for the contract.
+
+Earlier work also reported a successful Linux translation-unit compile with
+`-Wall -Wextra -Werror` and 139 checks from the updated Aperture contract against
+the unchanged `d5e8758` Linux SDK. Their raw logs were not recovered after the
+host restart. These are prior reported compatibility/compile checks, not a
+rebuilt Linux SDK, a new full Linux suite or retained installed acceptance for
+`164f179`/`f4d5d04`.
+
+#### Full Windows SDK attempts and startup diagnostic, November 3–4
+
+The November 3 `164f179` pipeline was interrupted by the host/VM shutdown. Its
+retained stdout ends after 187 of 570 registered tests; no completed pipeline
+or SDK acceptance can be inferred. The incomplete source/candidate evidence
+was preserved under `164f1797f2d0-parity/interrupted-20261103/`.
+
+The fresh November 4 attempt completed CTest with 567 passed, two failed and
+one skipped out of 570 registered tests (775.66 seconds). Only the interactive
+display test was skipped. Aperture passed its 151-check contract. The two
+failures were:
+
+- `niltest.process-contract`: a Windows `PermissionError` while opening an
+  atomically published cancellation-child identity file.
+- `ny.repository-policy`: the source scanner entered retained generated
+  debugger work and tried to read an inaccessible `fixture-native.exe`.
+
+The pipeline failed before SDK installation and packaging, preserved its candidate, and
+verified owned cleanup plus unchanged pinned inputs. Raw logs and its FAIL
+report are retained in `164f1797f2d0-parity/failed-pipeline-20261104/`.
+
+Some generated native executable launches also appeared much slower than
+compiler/interpreter commands. A separate 300-second/2-MiB owned diagnostic
+compiled a harmless C++ program printing `42` and timed `Popen` separately from
+`communicate`. The first grouped launch spent 8.581 seconds in `Popen` and
+0.005 seconds after startup. Its second grouped launch and both subsequent
+ordinary launches started in roughly 0.002 seconds; the existing compiler
+baseline started in 0.004 seconds. The five observations passed with cleanup
+verified and unchanged inputs. They establish one delayed first startup,
+without attributing it to antivirus, Windows policy or console allocation;
+the launch order also prevents a cold-start comparison between flag choices.
+Evidence is in `164f1797f2d0-parity/spawn-diagnostic/evidence-3e302c9087e241b2b6d89ce9a6e3c57a/`.
+
+#### Harness repairs and focused acceptance: `f4d5d04`
+
+The PID producer already publishes complete identity JSON through a closed
+temporary file and atomic rename. The Windows reader now includes
+`FILE_SHARE_DELETE`, allowing access while a rename handle still exists. The
+original ten-second publication deadline and PID/creation-time checks remain;
+real access errors and malformed published records remain failures. A
+deterministic Windows control holds DELETE access, requires the old CRT read
+to fail, and requires the corrected read to succeed before that handle closes.
+A second control verifies that malformed evidence cannot bypass cleanup of
+already-known children. This reproduces a compatible race mechanism; the owner
+of the original failing handle was not identified.
+
+Repository policy now prunes the four declared generated Ny/Matrix 3D
+`work`/`reports` trees before descending, while preserving existing build-tree
+exclusions. Similarly named source directories and readable untracked sources
+remain in scope. Source traversal, metadata and read failures remain errors.
+Seven controls cover those boundaries; their new CTest registration brings the
+expected Windows inventory to 571.
+
+Local Linux checks passed all 39 niltest process invocations and seven policy
+controls. The process contract used the unchanged `d5e8758` Linux niltest binary;
+this did not rebuild or requalify a Linux SDK. Windows focused validation then
+passed all three selected tests: repository policy, its seven controls and the
+39-invocation process contract. The first private focused wrapper incorrectly
+failed because CTest's 1,024-byte successful-output cap omitted the policy
+summary, although CTest itself passed 3/3. That FAIL report remains preserved;
+the separate v2 run raised only that report-output cap to 16,384 bytes and
+retained complete evidence, unchanged inputs and verified cleanup.
+See `f4d5d045c76e-parity/focused/` and `focused-v2/`.
+
+The committed and pushed `f4d5d04` source remained frozen for the complete SDK
+and GTK runs below. `origin/master` and the local source checkpoint agree.
+The draft stayed outside the repository to preserve exact clean-source pins
+through SDK, desktop and editor acceptance.
+
+#### Fresh Windows development SDK and independent delivery: `f4d5d04`
+
+The complete clean-source Windows pipeline passed all executed CTest cases:
+571 registered, 570 passed, zero failures/errors and one skipped service UI
+case. The live PostgreSQL test passed. Retained JUnit output confirms the
+151-check Aperture memory contract, 39 niltest process invocations, clean
+repository policy and all seven named policy-control successes. CTest's default
+1,024-byte cap truncates only the policy-control summary after those seven
+successes; reconciliation requires the exact observed marker and successful
+CTest status rather than inventing an absent summary.
+
+Installation, standard SDK validation and the installed consumer route gate
+passed. The package seals 259 payload files, including eleven tools at the SDK
+root, eighteen compiled standard-library modules in `nillib`, complete `nilstd`
+sources and 66 HTML documentation pages. The ZIP has 260 entries including its
+manifest. The fresh candidate is
+`C:\provision\sdk-f4d5d04-20261104-icD0Xv\candidates\development-9d2db0d193f744629774794a3fe992e9`.
+
+The consumer gate records 74 fixtures across source/binary STL layouts and eight
+routes, totaling 1,184 executions. Host reconciliation checks 148 nested reports,
+888 detailed execution records and 1,628 retained command records. The remaining
+296 standalone-object executions retain aggregate evidence only; successful
+temporary artifacts were deleted by the existing runner, so their bytes cannot
+be independently replayed. These evidence limits are unchanged.
+
+An independently anchored host verifier accepted the archive, manifest, fresh
+571-name registration, payload layout, STL source inventory, documentation,
+CTest outcomes, consumer records and twelve PE dependency records. The latter
+inventory covers eleven tools and the shared runtime; external MSVC/runtime
+prerequisites remain required. A separate host owner audit reconciled the
+pipeline logs, six archive commands, 77 retained inventory entries, source/helper
+pins and SDK seals. Both owned runs reported bounded success, unchanged inputs
+and verified cleanup. No source or SDK bytes changed during archival.
+
+Evidence is under
+`/home/nathan/vm/nil-win11/artifacts/f4d5d045c76e-parity/`:
+
+| Evidence | Result |
+| --- | --- |
+| `pipeline-v1/report.json` | Full SDK pipeline PASS; raw stdout/stderr retained |
+| `archive-owner-v1/report.json` | Archive creation PASS; retained inputs and raw command logs |
+| `windows-delivery/independent-reconciliation.json` | Independent delivery PASS; digest starts `38ab96217517` |
+| `independent-owner-reconciliation.json` | Owner/input/log reconciliation PASS; digest starts `6fca9c2df362` |
+
+The earlier `164f179` interruption, failed full pipeline, failed focused wrapper,
+and `d5e8758` editor failures remain at their original evidence paths. The fresh
+PASS does not alter those records or explain the original delayed launch or
+empty lifecycle-output observation.
+
+#### Fresh installed GTK acceptance: `f4d5d04`
+
+The strict desktop gate extracted the new archive into a fresh Nathan-owned
+directory and verified all 259 payload files against the same archive/manifest
+anchors accepted above. Its checkout and build-tree provider source were both
+pinned to `f4d5d04`; no notebook-only checkout exception was needed.
+
+All ten installed GTK language cases passed across VM/native routes. The
+separately pinned build-tree provider emitted 4,459 observed assertions, and the
+lifecycle helper emitted its required exact 235-check summary. Provider polling
+counts vary with timing and are not a fixed test inventory. Input used
+`PostMessageW` only for verified Job-owned HWNDs. The limited Nathan scheduled
+task was removed, owned cleanup was verified, and source/provider/helper inputs
+and the extracted SDK remained unchanged. This provides a separate interactive
+gate for the UI test skipped by the noninteractive full suite.
+
+The guest evidence is retained under
+`desktop/evidence-1311b89c24654c478cd764ba9b3103fc/` in the artifact root above.
+`desktop/desktop-owner-v1/report.json` records the owned run;
+`desktop-reconciliation.json` records independent host replay PASS (digest starts
+`34e38378fe1c`). The original unexplained zero-exit/empty-output lifecycle record
+remains preserved and explicitly unresolved by this distinct strict run.
+
+#### Editor acceptance: first fresh attempt failed
+
+The first fresh editor attempt used this exact accepted archive and Nathan-owned
+extraction. It completed 31 checks and recorded 23 tasks, then failed with
+`Timed out: current compiler check` in `vscode/test/project-checks.cjs`. The
+existing whole-run deadline was not exhausted. The editor owner separately
+reported verified Job cleanup and unchanged inputs. Post-run inspection found the
+scheduled task removed and inactive, although an early-return bug in the
+private controller prevented those cleanup facts from reaching its aggregate
+flags after acceptance failed. A separate controller proposal now records cleanup
+facts independently of acceptance and passed its pure controls and peer review;
+the original reports and acceptance FAIL remain preserved.
+
+Evidence is retained in `editor-v1/`, `editor-controller-v1/` and
+`editor-v1-host-report.json` beneath the `f4d5d045c76e-parity` artifact root.
+Complete editor acceptance, including all four Ny/Matrix VM/native profile
+reports at ordinary Unicode paths exceeding 260 UTF-16 units, remains pending.
+The older 83-check partial editor run is also still a failure record, not
+acceptance for the repaired SDK. The independent core SDK and GTK PASS results
+remain valid for their stated scopes. No active SDK or VSIX, Lich release or
+Anomalous checkout has been changed.
+
+#### Editor analysis import-search bottleneck and focused fix, November 4
+
+Bounded raw probes reproduced slow successful full-graph analysis with both
+surfaces. Minimal Matrix analysis completed in 55–78 ms, while overlaying all
+35 SDK dependency sources still left full-graph analysis around eight seconds.
+Removing the optional semantic index did not remove that cost. The production
+editor timeout was unchanged.
+
+A separate compiler copied from the pinned source added 22 aggregate phase
+metrics; it did not replace the SDK or build-tree compiler. Exact source-graph
+comparison confirmed the same 36 analyzed sources, with input hashes and owned
+cleanup verified. The private metrics measured:
+
+| Private Windows analysis | Import resolution | Whole compiler analysis |
+| --- | ---: | ---: |
+| Matrix | 7.423 s | 8.725 s |
+| Ny | 7.036 s | 7.583 s |
+
+Each run made 62 import-resolution calls for 35 distinct targets, probing 11,801
+source candidates with 11,739 workspace-probe misses. Nested phase times must
+not be added together. The first Matrix run's external wall time was 12.047 s,
+including 3.241 s before `execFile` returned; that launch delay is separate from
+the measured compiler phases. These observations do not identify a Windows
+policy or antivirus cause. Retained private build/probe evidence is in
+`f4d5d045c76e-parity/editor-analysis-timing/`, including
+`analysis-evidence/report.json` and raw compiler stdout/stderr.
+
+The focused source fix remembers the first successful source resolution for an
+exact import target within one compilation. Failed probes and binary-library
+loads retain their existing behavior. Source and binary search roots remove
+only identical supplied path spellings, retaining the first occurrence; no
+canonicalization, case folding or `..` collapse changes root precedence.
+Canonical source reads, snapshot consistency and toolchain fingerprints remain
+in place. The cache and root list do not persist between compilations.
+
+Behavior regressions cover a diamond import graph sharing one dirty canonical
+leaf, a changed overlay followed by changed disk contents in fresh requests,
+and repeated search roots preserving the earlier source over a later overlay.
+Existing alias, nonexistent-directory, cyclic-link and source-before-binary
+cases remain. The rebuilt Linux compiler passed all six focused CTests in
+2.54 seconds: analysis, semantic index, completion, member completion,
+signature and analysis dependencies. The new fixtures also passed against the
+unchanged older Linux SDK; that compatibility run is distinct from the rebuilt
+compiler checks and does not constitute a new Linux SDK acceptance.
+
+Windows rebuild/measurement and complete installed editor acceptance are still
+pending for this fix. The accepted `f4d5d04` SDK and GTK evidence remain attached
+to their original bytes. No release/parity declaration, activation or publication
+is implied by these focused results.

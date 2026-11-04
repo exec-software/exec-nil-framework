@@ -414,6 +414,45 @@ end paragraph
         assert data['sources'] == [{'path': str(workspace_dep), 'text': dirty_dependency}], data
         assert any(d['path'] == str(workspace_dep) and d['start'] is not None for d in data['diagnostics'])
         assert not workspace(buffers)['diagnostics']
+
+        # Both branches import the same target. Resolve and check one canonical
+        # dirty snapshot, even though the on-disk leaf is deliberately invalid.
+        left = workspace_root / 'left_branch.ny'
+        right = workspace_root / 'right_branch.ny'
+        shared = workspace_root / 'shared_leaf.ny'
+        shared.write_text('invalid shared leaf on disk', newline='\n')
+        diamond_entry = ('import left_branch.*\nimport right_branch.*\n'
+                         'fn main() -> i32\n return left_value() + right_value()\nend fn\n')
+        branches = [(path, f'module {name}_branch\nimport shared_leaf.*\n'
+                     f'pub fn {name}_value() -> i32\n return shared_value()\nend fn\n')
+                    for path, name in ((left, 'left'), (right, 'right'))]
+        shared_source = 'module shared_leaf\npub fn shared_value() -> i32\n return 42\nend fn\n'
+        diamond = [(workspace_primary, diamond_entry), *branches]
+        data = workspace(diamond + [(shared, shared_source)], extra=('--semantic-index',))
+        assert not data['diagnostics'], data
+        snapshots = data['semantic']['sources']
+        assert len(snapshots) == 4 and {Path(item['path']) for item in snapshots} == {
+            path.resolve() for path in (workspace_primary, left, right, shared)}, data
+        assert next(item['text'] for item in snapshots if Path(item['path']) == shared.resolve()) == shared_source
+        shared_functions = [item for item in data['reflection']['declarations']
+                            if item['kind'] == 'function' and item['name'] == 'shared_value']
+        assert len(shared_functions) == 1 and Path(shared_functions[0]['source_path']) == shared.resolve(), data
+        assert shared.read_text() == 'invalid shared leaf on disk'
+
+        # Each request observes its current buffers and disk. A cached import
+        # target must not retain a previous request's source contents or error.
+        broken_shared = shared_source.replace('return 42', 'return "changed overlay"')
+        data = workspace(diamond + [(shared, broken_shared)], status=1)
+        assert data['sources'] == [{'path': str(shared.resolve()), 'text': broken_shared}], data
+        errors = [item for item in data['diagnostics'] if item['severity'] == 'error']
+        assert len(errors) == 1 and Path(errors[0]['path']) == shared.resolve(), data
+        changed_disk = shared_source.replace('return 42', 'return 73')
+        shared.write_text(changed_disk, newline='\n')
+        data = workspace(diamond, extra=('--semantic-index',))
+        assert not data['diagnostics'], data
+        shared_snapshots = [item for item in data['semantic']['sources'] if Path(item['path']) == shared.resolve()]
+        assert shared_snapshots == [{'path': str(shared.resolve()), 'text': changed_disk}], data
+
         # An unrelated broken buffer is neither parsed nor reflected.
         unused = workspace_root / 'unrelated.ny'
         data = workspace(buffers + [(unused, 'deliberately malformed source')])
@@ -440,8 +479,13 @@ end paragraph
         (earlier / 'ordered.ny').write_text(dependency_source.replace('dependency', 'ordered'), newline='\n')
         data = workspace([(workspace_primary, entry_source.replace('dependency', 'ordered')),
                           (later / 'ordered.ny', 'invalid but later in search order')],
-                         extra=('-I', str(earlier), '-I', str(later)))
+                         extra=('-I', str(earlier), '-I', str(later), '-I', str(earlier),
+                                '-I', str(later), '-I', str(earlier), '--semantic-index'))
         assert not data['diagnostics'], data
+        # Removing duplicate roots must retain their first occurrence: the
+        # earlier disk source still wins over a dirty source in the later root.
+        assert {Path(item['path']) for item in data['semantic']['sources']} == {
+            workspace_primary.resolve(), (earlier / 'ordered.ny').resolve()}, data
         (earlier / 'ordered.ny').unlink()
         (earlier / 'ordered.ny').symlink_to('ordered.ny')
         data = workspace([(workspace_primary, entry_source.replace('dependency', 'ordered')),

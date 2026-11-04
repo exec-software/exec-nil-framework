@@ -1029,10 +1029,27 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
   std::unordered_map<std::string, std::string> embedded_sources;
   std::unordered_set<std::string> loaded_libraries;
   std::unordered_set<std::string> resolved_import_paths;
+  // A compilation keeps the first source selected for each exact import.
+  // Failures and binary-library resolution retain their existing probe/load
+  // behavior; source identities are still checked when read and reported.
+  std::unordered_map<std::string, std::string> resolved_source_imports;
   bool import_resolution_failed = false;
+
+  const auto append_unique_root = [](std::vector<std::filesystem::path> &roots,
+                                     const std::filesystem::path &candidate) {
+    // Compare the supplied spelling only: canonicalizing or folding '..'
+    // here could change symlink traversal and search precedence.
+    const auto found = std::find_if(roots.begin(), roots.end(), [&](const auto &root) {
+      return root.native() == candidate.native();
+    });
+    if (found == roots.end()) roots.push_back(candidate);
+  };
 
   auto resolve_to_path =
       [&](const std::string &import_path) -> std::optional<std::string> {
+    if (const auto cached = resolved_source_imports.find(import_path);
+        cached != resolved_source_imports.end())
+      return cached->second;
     // Standard modules have neutral family directories; legacy namespace is an alias.
     std::string rel_slash = ny::standard_module_relative_path(import_path);
     for (size_t i = 0; i < rel_slash.length();) {
@@ -1103,25 +1120,29 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     std::vector<std::filesystem::path> search_dirs = {
         std::filesystem::current_path()};
     for (const auto &p : sdk_include_paths) {
-      search_dirs.push_back(p);
+      append_unique_root(search_dirs, p);
     }
     if (!sdk_stdlib.empty()) {
-      search_dirs.push_back(sdk_stdlib);
+      append_unique_root(search_dirs, sdk_stdlib);
     }
 
     for (const auto &dir : search_dirs) {
       for (const auto &cand : candidates) {
         std::filesystem::path p = dir / cand;
         if (analysis && analysis->workspace_stdin && analysis->workspace_source_exists(p.string())) {
+          const auto resolved = ny::analysis_source_identity(p.string());
           resolved_import_paths.insert(import_path);
-          return ny::analysis_source_identity(p.string());
+          resolved_source_imports.emplace(import_path, resolved);
+          return resolved;
         }
         std::error_code status_error;
         if (std::filesystem::is_regular_file(p, status_error)) {
           std::error_code ec;
           auto canonical = std::filesystem::canonical(p, ec);
+          const auto resolved = ec ? p.string() : canonical.string();
           resolved_import_paths.insert(import_path);
-          return ec ? p.string() : canonical.string();
+          resolved_source_imports.emplace(import_path, resolved);
+          return resolved;
         }
       }
     }
@@ -1142,11 +1163,11 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
 
     std::vector<std::filesystem::path> binary_search_dirs;
     for (const auto &path : sdk_include_paths) {
-      binary_search_dirs.emplace_back(path);
-      binary_search_dirs.push_back(std::filesystem::path(path) / "nillib");
+      append_unique_root(binary_search_dirs, path);
+      append_unique_root(binary_search_dirs, std::filesystem::path(path) / "nillib");
     }
     if (!sdk_nillib.empty())
-      binary_search_dirs.push_back(sdk_nillib);
+      append_unique_root(binary_search_dirs, sdk_nillib);
 
     for (const auto &directory : binary_search_dirs) {
       for (const auto &candidate : binary_candidates) {
