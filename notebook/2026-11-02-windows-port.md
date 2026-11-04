@@ -3,30 +3,26 @@
 ## Status
 
 The latest Windows development SDK is built from clean, committed and pushed
-source `f4d5d04`. Its complete SDK pipeline and independent archive verification
+source `5630388`. Its complete SDK pipeline and independent archive verification
 passed: 571 registered CTest cases, 570 passed, zero failures and one service
 desktop skip; installed validation and 1,184 aggregate consumer executions also
 passed. It contains 259 sealed payload files, eleven root tools, eighteen binary
-standard-library modules and 66 compiled documentation pages. A separate strict
-GTK run and independent host replay passed ten installed VM/native cases,
-4,459 observed provider assertions and all 235 lifecycle checks, with targeted
-input, scheduled-task removal and owned cleanup verified. The first editor run
-for these exact SDK bytes failed at a compiler-check timeout after 31 completed
-checks and 23 tasks. A private phase-timing diagnostic located repeated import
-searches as the dominant cost. The committed `262ceda` source fix passes all six focused analysis tests on
-both platforms. Raw Windows analysis falls from 8–9 seconds to 1.4–1.5 seconds
-with identical analysis output apart from compiler provenance. Its full Linux
-suite passes 565 tests with three prerequisite skips. The next full Windows
-run exposed a separate atomic-publication reader race in the incremental-build
-test; its shared-reader repair passes deterministic Windows controls and both
-affected Linux contracts. A complete Windows SDK and installed editor
-acceptance for these latest fixes remain pending.
+standard-library modules and 66 compiled documentation pages. Separate installed
+GTK acceptance passed ten VM/native cases and 235 lifecycle checks. Installed
+VS Code acceptance passed all 88 checks with no exclusions, 31 tool tasks and
+two debugger sessions, including four ordinary Unicode profile output paths
+exceeding 260 UTF-16 units. Independent host replay binds both desktop gates to
+the accepted SDK archive; scheduled-task removal, owned process cleanup and
+unchanged inputs are verified.
 
-This SDK includes the `164f179` Aperture long-report-path fix and the `f4d5d04`
-Windows PID-publication/source-scanning harness repairs. The full suite retains
-151 Aperture checks, 39 niltest process invocations and seven repository-policy
-controls. Earlier interrupted/failed pipelines and editor diagnostics remain
-preserved; their evidence has not been relabelled as successful acceptance.
+The SDK includes the `164f179` Aperture long-report-path fix, `f4d5d04` source-scan
+repair, `262ceda` import-search optimization and `5630388` shared immutable test
+record reader. The import fix reduced observed raw Windows analysis from
+8–9 seconds to 1.4–1.5 seconds while preserving analysis output apart from compiler
+provenance. The Linux full suite at `262ceda` passed 565 tests with three
+prerequisite skips, and both contracts changed by `5630388` passed afterward.
+Earlier interrupted/failed pipelines and editor diagnostics remain preserved;
+their evidence has not been relabelled as successful acceptance.
 
 The latest accepted Linux development SDK remains the unchanged `d5e8758`
 reference. Its paired historical Windows SDK passed installed consumer,
@@ -2443,3 +2439,86 @@ unchanged inputs. Their retained report is
 wrapper's missing test-import path failure remains separately preserved in
 `publication-controls-v1/`. These controls do not replace the pending complete
 Windows test/SDK and desktop/editor runs.
+
+#### Complete Windows development SDK and desktop acceptance: `5630388`
+
+The committed and pushed shared-publication repair passed both focused Windows
+contracts: 73 incremental-build checks and 39 niltest process invocations, in
+41 seconds. The fresh full SDK pipeline then passed 570 of 571 registered tests
+with zero failures and the expected noninteractive desktop skip, in 437 seconds.
+The complete owned pipeline took 1,428.11 seconds; input seals and cleanup passed.
+Installation, SDK validation and 1,184 installed consumer executions passed.
+The 74 fixtures cover both source/binary STL layouts and eight routes. As before,
+888 executions have detailed retained records and 296 standalone-object
+executions have aggregate evidence; successful temporary route artifacts were
+removed by the existing runner. No additional byte-level replay is claimed for
+those removed artifacts.
+
+The package contains eleven root tools, eighteen compiled STL modules in
+`nillib`, standard-library sources in `nilstd`, 66 HTML documentation pages and
+259 sealed payload files. Its archive and manifest are:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `nil-framework-windows-development-563038813c7e.zip` (28,785,334 bytes) | `a4ac47169c3e1d5ec5b6e3a2e6099805fb96955dbc0ee5779f37af5bcf3bd946` |
+| `manifest.json` | `cf6978a9461aa6b4b13bb00c0b960404ef0362f588b5429e6c50edb6ad58ba0a` |
+
+The original candidate is
+`C:\provision\sdk-5630388-20261104-icD0Xv\candidates\development-bb16d0944997496f91d6b4ec79dc7dda\sdk`.
+Archive, delivery and owner reconciliation all passed independently on the host,
+including complete payload seals, registered test results, retained consumer
+records, helper/source hashes and raw pipeline/archive logs. External MSVC/runtime
+prerequisites remain required. This is not a bare-host acceptance claim.
+
+Fresh GTK acceptance extracted this archive into a Nathan-owned directory and
+passed all ten installed interpreter/native cases. The separate build-tree
+provider emitted 4,472 observed assertions; this polling-dependent count is not
+a fixed inventory. The lifecycle helper passed exactly 235 checks. Input remained
+limited to verified Job-owned HWNDs. Separate child cleanup, scheduled-task
+removal, source/provider seals and unchanged SDK bytes passed host replay.
+
+The installed editor gate then passed all 88 checks, with zero exclusions,
+31 observed tasks using seven SDK tools and two debugger sessions. All four
+Ny/Matrix interpreter/native memory-profile tasks succeeded at distinct ordinary
+absolute Unicode paths of 267 UTF-16 units. Completion, semantic editing,
+project/compiler checks, debugging and profiling ran through the frozen editor
+bundle; the production compiler-check timeout was not increased. The editor
+owner completed in 112.82 seconds and the separate controller in 117.42 seconds.
+Both Jobs cleaned up, the Limited/Interactive Nathan task was inactive and
+removed, and source/helper/SDK seals remained unchanged.
+
+Independent host replay reconciled the editor reports against 78 source files,
+17 VSIX assets and the complete accepted SDK archive. The unchanged VSIX has
+SHA-256 `4e6ad286ec6707131f869ea6ebd1fa4df18ae1bf40be551d6a03f4b5ad2ef3e1`;
+its tested bundle has SHA-256
+`844aaee30df62134efa971c9bf1d3e9a1e71ca39f3665f1a3ee3d0f9e13fd500`.
+The frozen editor-only verifier's original `PENDING` archive field is retained;
+the separate delivery replay provides the successful archive binding. No new
+VSIX was built or activated.
+
+Evidence is retained under
+`/home/nathan/vm/nil-win11/artifacts/563038813c7e-parity/`:
+
+| Evidence | Result / SHA-256 prefix |
+| --- | --- |
+| `pipeline-v1/report.json` | Complete SDK pipeline PASS |
+| `windows-delivery/independent-reconciliation.json` | Delivery PASS; `860fcd1e1f70` |
+| `independent-owner-reconciliation.json` | SDK/archive owner PASS; `1b19b736ecaf` |
+| `desktop-reconciliation.json` | GTK host replay PASS; `8476e69e3cb7` |
+| `editor-independent-reconciliation.json` | Editor and SDK delivery replay PASS; `dd89e84823a6` |
+| `editor-controller-reconciliation.json` | Controller/task/separate editor cleanup PASS; `31c5fbdda69f` |
+| `editor-export-reconciliation.json` | 310 regular files copied byte-exactly; three junction fixtures recorded |
+
+The initial evidence-copy attempt could not read the Nathan-only generated
+`brief.exe` fixture through the SSH account. A separate bounded Nathan export
+succeeded without changing fixture ACLs. Its one-off task was removed and
+inactive. Original junction targets are retained as metadata and represented by
+relative directory symlinks in the host copy; guest NTFS ACLs are not reproduced
+on Linux. All original guest evidence, earlier failures and diagnostic runs
+remain intact. The profile cache has no asserted disk quota.
+
+This completes the fresh development SDK, GTK and installed-editor campaign for
+`5630388`. It does not replace the documented release qualification or remaining
+feature restrictions in Status. Active SDK/VSIX locations, Lich and Anomalous are
+unchanged. The latest accepted Linux SDK remains `d5e8758`; the newer Linux source
+test results are distinct from installed Linux SDK acceptance.
