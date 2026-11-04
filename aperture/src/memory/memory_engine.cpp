@@ -33,6 +33,45 @@ namespace {
 namespace fs = std::filesystem;
 using Json = nil::detail::json;
 
+// Editor storage directories can place reports beyond Windows' MAX_PATH.
+// Normalize ordinary paths before adding the extended prefix: that namespace
+// does not interpret relative paths, forward slashes or dot components. Keep
+// this conversion local to report I/O and independent of machine-wide policy.
+fs::path report_io_path(const fs::path& requested) {
+#ifdef _WIN32
+    if (requested.empty()) return requested;
+    const auto& spelling = requested.native();
+    if (spelling.rfind(L"\\\\?\\", 0) == 0 || spelling.rfind(L"\\\\.\\", 0) == 0)
+        return requested;
+    const DWORD capacity = GetFullPathNameW(spelling.c_str(), 0, nullptr, nullptr);
+    if (capacity == 0) {
+        const DWORD error = GetLastError();
+        throw std::runtime_error("cannot resolve memory report path: " + requested.string() +
+                                 ": Windows error " + std::to_string(error));
+    }
+    if (capacity > 32768)
+        throw std::runtime_error("memory report path is too long: " + requested.string());
+    std::wstring absolute(capacity, L'\0');
+    const DWORD length = GetFullPathNameW(spelling.c_str(), capacity, absolute.data(), nullptr);
+    if (length == 0) {
+        const DWORD error = GetLastError();
+        throw std::runtime_error("cannot resolve memory report path: " + requested.string() +
+                                 ": Windows error " + std::to_string(error));
+    }
+    if (length >= capacity)
+        throw std::runtime_error("memory report path changed while resolving: " + requested.string());
+    if (spelling.size() < MAX_PATH && length < MAX_PATH) return requested;
+    absolute.resize(length);
+    if (absolute.rfind(L"\\\\?\\", 0) == 0 || absolute.rfind(L"\\\\.\\", 0) == 0)
+        return fs::path(std::move(absolute));
+    if (absolute.rfind(L"\\\\", 0) == 0)
+        return fs::path(L"\\\\?\\UNC\\" + absolute.substr(2));
+    return fs::path(L"\\\\?\\" + absolute);
+#else
+    return requested;
+#endif
+}
+
 std::string string_field(const Json& object, const std::string& field) {
     const auto& item = object.at(field);
     if (item.type != Json::kind::string) throw std::runtime_error("invalid profile string: " + field);
@@ -71,11 +110,12 @@ void validate_counters(const Json& object) {
 struct Profile { std::string raw; Json data; };
 Profile read_profile(const fs::path& file) {
     constexpr std::uintmax_t maximum_bytes = 64 * 1024 * 1024;
+    const auto io_path = report_io_path(file);
     std::error_code error;
-    const auto size = fs::file_size(file, error);
-    if (error || !fs::is_regular_file(file) || size > maximum_bytes)
+    const auto size = fs::file_size(io_path, error);
+    if (error || !fs::is_regular_file(io_path) || size > maximum_bytes)
         throw std::runtime_error("cannot read memory profile (regular file up to 64 MiB required): " + file.string());
-    std::ifstream input(file, std::ios::binary);
+    std::ifstream input(io_path, std::ios::binary);
     if (!input) throw std::runtime_error("cannot open memory profile: " + file.string());
     std::string raw(static_cast<std::size_t>(size), '\0');
     input.read(raw.data(), static_cast<std::streamsize>(raw.size()));
@@ -170,6 +210,7 @@ public:
 // removes only the new file this invocation created; existing files are intact.
 class OutputFile {
     fs::path path;
+    fs::path io_path;
 #ifdef _WIN32
     HANDLE handle = INVALID_HANDLE_VALUE;
 #else
@@ -177,16 +218,20 @@ class OutputFile {
 #endif
     bool published = false;
 public:
-    explicit OutputFile(const std::string& requested) : path(requested) {
+    explicit OutputFile(const std::string& requested)
+        : path(requested), io_path(report_io_path(path)) {
         if (path.empty()) return;
 #ifdef _WIN32
         // CREATE_NEW is O_CREAT|O_EXCL: the destination is reserved only if it
         // did not already exist, so an existing report is never truncated by a
         // run that may yet fail.
-        handle = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+        handle = CreateFileW(io_path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
                              FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (handle == INVALID_HANDLE_VALUE)
-            throw std::runtime_error("cannot create output report: " + path.string());
+        if (handle == INVALID_HANDLE_VALUE) {
+            const DWORD error = GetLastError();
+            throw std::runtime_error("cannot create output report: " + path.string() +
+                                     ": Windows error " + std::to_string(error));
+        }
 #else
         descriptor = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
         if (descriptor < 0) throw std::runtime_error("cannot create output report: " + path.string() + ": " + std::strerror(errno));
@@ -198,7 +243,7 @@ public:
 #else
         if (descriptor >= 0) close(descriptor);
 #endif
-        if (!path.empty() && !published) { std::error_code error; fs::remove(path, error); }
+        if (!path.empty() && !published) { std::error_code error; fs::remove(io_path, error); }
     }
     void publish(const std::string& raw) {
 #ifdef _WIN32

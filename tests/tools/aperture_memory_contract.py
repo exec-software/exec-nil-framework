@@ -128,6 +128,51 @@ end fn
             assert recorded.stdout == direct.stdout, recorded
             validate(output, 'native')
             checks += 1
+
+        # VS Code stores reports below a Unicode workspace/profile hierarchy.
+        # Use explicit extended paths only for fixture access on Windows, so
+        # setup/readback do not depend on its LongPathsEnabled machine policy.
+        # Aperture receives ordinary paths unless the case says "extended".
+        def fixture_path(path):
+            if os.name != 'nt':
+                return path
+            absolute = str(path.absolute())
+            return Path('\\\\?\\UNC\\' + absolute[2:] if absolute.startswith('\\\\')
+                        else '\\\\?\\' + absolute)
+
+        long_directory = root
+        for index in range(3):
+            long_directory /= f'report segment {index} café 中文 ' + 'x' * 64
+        assert len(str(long_directory).encode('utf-16-le')) // 2 > 260
+        fixture_path(long_directory).mkdir(parents=True)
+        spellings = ('absolute', 'relative', 'relative-slashes')
+        if os.name == 'nt':
+            spellings += ('extended',)
+        for route in ('vm', 'native') if args.llvm == 'ON' else ('vm',):
+            target = nil if route == 'vm' else executable
+            for spelling in spellings:
+                output = long_directory / f'{route}-{spelling}.json'
+                stored = fixture_path(output)
+                if spelling == 'absolute':
+                    requested = str(output)
+                elif spelling == 'relative':
+                    requested = str(output.relative_to(root))
+                elif spelling == 'relative-slashes':
+                    relative = output.relative_to(root)
+                    requested = ('./' + relative.parent.as_posix() + '/../' +
+                                 relative.parent.name + '/' + relative.name)
+                else:
+                    requested = str(stored)
+                result = run([aperture, 'memory', '--output', requested, target])
+                assert result.stdout == expected, result
+                profile = validate(stored, route, source if route == 'vm' else None)
+                inspection = run([aperture, 'memory', '--report', requested, '--json'])
+                assert json.loads(inspection.stdout) == profile and not inspection.stderr, inspection
+                saved = stored.read_bytes()
+                collision = run([aperture, 'memory', '--output', requested, target], 1)
+                assert not collision.stdout and 'cannot create output report' in collision.stderr, collision
+                assert requested in collision.stderr and stored.read_bytes() == saved, collision
+                checks += 2
         assert not (root / 'INJECTED').exists(), 'target path was interpreted by a shell'
         checks += 1
 
@@ -344,6 +389,18 @@ end paragraph
         assert result.stdout == 'nonprofiling target ran\n', result
         assert 'cannot read memory profile' in result.stderr, result
         assert not nonprofiling_report.exists(), 'nonprofiling process published a fabricated report'
+        checks += 1
+
+        # A failed capture must remove its reserved destination even when the
+        # ordinary spelling is too long for unprefixed Windows file APIs.
+        long_failed = long_directory / 'failed capture café 中文.json'
+        requested = './' + long_failed.relative_to(root).as_posix()
+        result = run([aperture, 'memory', '--output', requested,
+                      Path(sys.executable).resolve(), '--', '-c',
+                      'import sys; sys.stdout.buffer.write(b"long-path target ran\\n")'], 1)
+        assert result.stdout == 'long-path target ran\n', result
+        assert 'cannot read memory profile' in result.stderr, result
+        assert not fixture_path(long_failed).exists(), 'failed capture left its reserved long report'
         checks += 1
 
         # Report inspection is strict and never executes a file's contents.
