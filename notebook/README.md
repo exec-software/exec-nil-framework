@@ -11,6 +11,9 @@ and explicit about evidence, uncertainty, and implementation status.
 
 ## Contents
 
+- [`2026-11-04-macos-parity-plan.md`](2026-11-04-macos-parity-plan.md) — initial
+  Darwin/Apple Silicon gap audit, hosted and VM testing options, and the
+  Windows-first sequence for establishing macOS parity.
 - [`2026-11-02-windows-port.md`](2026-11-02-windows-port.md) — recovery of the
   native Windows port, cross-platform route evidence, and an isolated
   development-SDK workflow without release promotion.
