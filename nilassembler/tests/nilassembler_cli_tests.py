@@ -598,6 +598,14 @@ def main() -> int:
         sentinel = root / ("sentinel.obj" if os.name == "nt" else "sentinel.o")
         sentinel.write_bytes(b"preserve-existing-object")
 
+        absent_input = root / "absent-input.nil"
+        absent_process = run(
+            [str(assembler), "-o", str(sentinel), str(absent_input)], root
+        )
+        expect_failure(absent_process, "absent input with existing output")
+        if absent_input.exists() or sentinel.read_bytes() != b"preserve-existing-object":
+            raise AssertionError("absent input rejection changed filesystem state")
+
         assert_alias_rejected(assembler, text_nil, text_nil, root, "same input/output")
         assert_alias_rejected(
             assembler, text_nil, Path(text_nil.name), root, "relative input/output alias"
@@ -783,6 +791,16 @@ def main() -> int:
             expect_failure(symlink_process, "symlink output")
             if victim.read_bytes() != b"victim-content" or not symlink_output.is_symlink():
                 raise AssertionError("symlink output rejection changed filesystem state")
+
+            absent_target = root / "absent-symlink-target"
+            dangling_output = root / "dangling-output.o"
+            dangling_output.symlink_to(absent_target)
+            dangling_process = run(
+                [str(assembler), "-o", str(dangling_output), str(text_nil)], root
+            )
+            expect_failure(dangling_process, "dangling symlink output")
+            if absent_target.exists() or not dangling_output.is_symlink():
+                raise AssertionError("dangling output rejection changed filesystem state")
 
             full_process = run(
                 [str(assembler), "-o", "/dev/full", str(text_nil)], root

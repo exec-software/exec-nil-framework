@@ -1506,8 +1506,6 @@ bool Linker::link(const fs::path &requested_output) {
 #endif
 #if defined(__linux__)
   arguments.push_back("-no-pie");
-#elif defined(__APPLE__)
-  arguments.push_back("-Wl,-no_pie");
 #endif
   arguments.push_back("-o");
   arguments.push_back(*staged_output_argument);

@@ -117,7 +117,8 @@ small experimental Windows `nilagent` title-filter discrepancy for focused repai
 
 The new [macOS bring-up workflow](../.github/workflows/macos-bringup.yml) is
 manually dispatched. It contains four native jobs: `macos-15-intel` / x86_64 and
-`macos-15` / arm64, each with LLVM ON and OFF. Jobs run at most two at a time,
+`macos-15` / arm64, each with LLVM ON and OFF. The initial runs used two concurrent jobs; after setup was verified, the
+bounded four-job matrix was enabled together to shorten native iteration. Jobs
 build all framework tools, retain the complete registered CTest inventory even
 after a partial build, and preserve raw diagnostics, JUnit, image/toolchain/source
 identities and build products. The binary archive retains executable modes.
@@ -297,3 +298,50 @@ with Clang 18, then passed all 210 checkpoint checks with empty stderr. Existing
 Linux core/runtime archives were read only and their hashes remained unchanged;
 the full-VM report is `checkpoint-clang-probe/full-vm/report.json`. Native macOS
 link/execution verification remains for the next matrix.
+
+## Third native run: executable tools and missing output identity
+
+[Run 41933429641](https://github.com/exec-software/exec-nil-framework/actions/runs/41933429641)
+at `2a6adcc` built every arm64/LLVM-ON framework target successfully. Actual
+Apple parser/locale controls, VM checkpoint controls, source compiler smoke,
+textual and binary interpreter smoke and Matrix execution passed. The retained
+568-case inventory has 259 passes, 304 failures and five explicit skips, with
+no evidence errors. This establishes native tool builds and real language
+execution, while the remaining failures still prevent macOS parity.
+
+The LLVM capability probe reached the assembler and failed on an absent output
+file: Apple's `std::filesystem::equivalent` reported `operation_not_supported`
+instead of the missing-file error handled by `same_path`. An explicit observed
+`not_found` check is needed while preserving equivalent-file checks and errors
+for existing, inaccessible or unknown identities. A blanket suppression of
+`operation_not_supported` would weaken the existing input/output alias contract.
+
+The older second matrix was cancelled once the checkpoint link failure had
+been fixed and its completed arm64 evidence preserved. Intel-ON's retained
+diagnostic inventory also has 568 cases (67 pass, 475 fail, 26 skip); Intel-OFF
+was incomplete and arm64-OFF never ran. Cancelled profiles are not acceptance
+results. Available logs and partial artifacts remain under `run-41932302013/`.
+
+With runner setup established, the four native profiles now run concurrently
+(up from two), keeping the same fixed matrix, job deadlines and full test
+inventory. This reduces iteration latency without excluding a route or test.
+
+The assembler fix now probes both paths and accepts absence only when status is
+explicitly `not_found` with no error or `no_such_file_or_directory`. Other lookup
+errors remain fatal, existing pairs still use filesystem equivalence, and the
+pre-lowering/pre-publication identity checks plus no-follow atomic publication
+remain intact. A private Clang assembler build passed the full CLI contract and
+the actual native-object capability probe. Added controls preserve an existing
+output on missing input and reject a dangling output symlink without creating
+its target. Evidence: `assembler-identity-probe/report.json`.
+
+Darwin's obsolete `-Wl,-no_pie` argument was also removed; Linux `-no-pie` remains.
+LLVM 18's [x86 target policy](https://github.com/llvm/llvm-project/blob/llvmorg-18.1.8/llvm/lib/Target/X86/X86TargetMachine.cpp#L159-L192)
+and [ARM target policy](https://github.com/llvm/llvm-project/blob/llvmorg-18.1.8/llvm/lib/Target/AArch64/AArch64TargetMachine.cpp#L267-L277)
+select PIC for these Darwin targets, and [Apple's linker](https://github.com/apple-oss-distributions/ld64/blob/main/src/ld/Options.cpp#L5507-L5535)
+defaults to PIE for the supported hosts. Both previous native link tests had
+succeeded but emitted the retained deprecation warnings; arm64 explicitly
+ignored the flag. Independent review and the unchanged Linux host-object and
+process-deadline tests passed (2/2). Evidence and primary-source response hashes
+are in `linker-pie-focused/`. Actual native macOS verification follows in the
+next matrix; no test diagnostic or assertion was weakened.

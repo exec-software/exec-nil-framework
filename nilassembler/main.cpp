@@ -160,6 +160,24 @@ bool same_path(const std::filesystem::path &left,
   // directory symlinks (and can misinterpret a symlink followed by "..").
   // Compare filesystem identities without changing the no-follow policy of
   // the actual input reader and output publisher.
+  // libc++ can report ENOTSUP from equivalent() when either path is absent.
+  // Establish absence explicitly; unrelated lookup errors must still fail.
+  const auto missing = [&](const std::filesystem::path &path) {
+    std::error_code status_error;
+    const auto status = std::filesystem::status(path, status_error);
+    if (status.type() == std::filesystem::file_type::not_found &&
+        (!status_error || status_error == std::errc::no_such_file_or_directory))
+      return true;
+    if (status_error)
+      throw std::filesystem::filesystem_error(
+          "cannot compare input and output file identities", left, right,
+          status_error);
+    return false;
+  };
+  const bool left_missing = missing(left);
+  const bool right_missing = missing(right);
+  if (left_missing || right_missing)
+    return false;
   std::error_code error;
   const bool equivalent = std::filesystem::equivalent(left, right, error);
   if (error && error != std::errc::no_such_file_or_directory) {
