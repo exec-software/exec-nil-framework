@@ -2617,3 +2617,38 @@ its focused follow-up is separate from these sealed SDK bytes. Shared code hot
 reload, external-state rollback and native `environment.list` remain unsupported.
 Windows release dependency/bare-host qualification and stable v1 publication
 remain separate work. The active SDKs, Lich and Anomalous are unchanged.
+
+## Focused nilagent window-filter follow-up
+
+Windows window discovery now applies the same case-sensitive substring filter
+as the Linux X11 implementation. Empty filters retain visible-window discovery;
+hidden windows remain excluded. A shared predicate and the actual Win32
+enumerator are covered by a focused regression fixture.
+
+Verification after the accepted `5630388` SDK closeout:
+
+- Linux: the actual `nilagent` tool built; both focused CTests passed, including
+  eleven predicate checks, and `--version` passed.
+- Windows: strict `/W4 /WX` fixture builds passed. Nathan's desktop run passed
+  34 checks against three owned, nonactivating windows. Removing the production
+  filter deliberately caused the expected assertion failure. Production
+  `nilagent --version` also passed.
+- The initial SSH service-station fixture failed because both requested-visible
+  owned windows were actually invisible. An independent probe established that
+  all three owned HWNDs were enumerable while the station lacked `WSF_VISIBLE`.
+  The final test returns CTest skip code 77 only for that measured prerequisite
+  condition, after destroying its windows. Desktop filtering assertions remain
+  mandatory; the final service check confirmed the precise skip.
+- One private build wrapper expected CRLF from `--version`; production correctly
+  emitted LF under its binary-stream configuration. The original wrapper failure
+  is retained, with raw-output reconciliation and corrected later expectations.
+
+The final task was removed and inactive, owned child processes were cleaned up,
+and the guest checkout plus accepted SDK/input hashes remained unchanged.
+Evidence is under `/home/nathan/vm/nil-win11/artifacts/nilagent-window-filter-20261104/`;
+`focused-reconciliation.json` SHA-256 is
+`abf7b04e7d70cef520d514251b35739a3e1413944fe7d4a83cae55cb4f78ef1d`.
+This is focused verification of the new source and private tool builds. The
+sealed SDKs still identify `5630388`; their earlier test counts and bytes are
+unchanged. A future full Windows service-suite run will register this additional
+desktop-dependent test and report its prerequisite skip explicitly.

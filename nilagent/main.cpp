@@ -29,6 +29,7 @@
 #endif
 
 #include "ipc_hot_reload.hpp"
+#include "window_discovery.hpp"
 #include "nil_version.hpp"
 #include "../common/standard_streams.hpp"
 
@@ -59,34 +60,7 @@ public:
     }
 
     std::vector<std::map<std::string, std::string>> findWindows(const std::string& title) {
-        std::vector<std::map<std::string, std::string>> windows;
-
-        // Use Windows API to enumerate windows
-        EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
-            auto* windows = reinterpret_cast<std::vector<std::map<std::string, std::string>>*>(lParam);
-
-            if (!IsWindowVisible(hwnd)) return TRUE;
-
-            char title[256];
-            GetWindowTextA(hwnd, title, sizeof(title));
-
-            RECT rect;
-            GetWindowRect(hwnd, &rect);
-
-            std::map<std::string, std::string> info;
-            info["id"] = std::to_string((uintptr_t)hwnd);
-            info["title"] = title;
-            info["x"] = std::to_string(rect.left);
-            info["y"] = std::to_string(rect.top);
-            info["width"] = std::to_string(rect.right - rect.left);
-            info["height"] = std::to_string(rect.bottom - rect.top);
-            info["visible"] = "true";
-
-            windows->push_back(info);
-            return TRUE;
-        }, reinterpret_cast<LPARAM>(&windows));
-
-        return windows;
+        return ny::agent::discover_windows(title);
     }
 
     bool clickAt(uintptr_t window_id, int x, int y) {
@@ -191,7 +165,7 @@ public:
                     std::string name = window_name ? window_name : "";
                     if (window_name) XFree(window_name);
 
-                    if (title.empty() || name.find(title) != std::string::npos) {
+                    if (ny::agent::window_title_matches(name, title)) {
                         XWindowAttributes attr;
                         if (XGetWindowAttributes(display, children[i], &attr)) {
                             std::map<std::string, std::string> info;
