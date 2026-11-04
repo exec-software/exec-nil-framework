@@ -271,3 +271,29 @@ The second native macOS matrix is
 [run 41932302013](https://github.com/exec-software/exec-nil-framework/actions/runs/41932302013)
 at `c4a9f02`; its source identity is preserved separately from this subsequent
 non-Apple-only adjustment.
+
+## Second native run: checkpoint template linkage
+
+The corrected arm64/LLVM-ON run compiled the source translation units. The
+actual Apple parser suite passed, including the private-locale, subnormal and
+floating-environment controls; `nillinker.process-deadline` also passed. The
+collector reported 568 registrations/observations with no inventory errors:
+67 passed, 475 failed and 26 skipped.
+
+Linking the interpreter and its consumers then exposed undefined
+`CheckpointCloner::typed<T>` specializations. Clang diagnosed the later-defined
+private member template as used but undefined through earlier `std::visit`
+callers. A private extraction of the exact class reproduced the issue with
+local Clang 18 and libstdc++, so it is not specific to Apple's libc++.
+
+The fix moves the complete `typed()` definition ahead of its callers. Independent
+review confirmed its 2,222-byte body is identical, private access is retained,
+and class data layout, accounting, depth/alias/cycle behavior and unsupported
+value rejection are unchanged. The same Clang probe now compiles and runs,
+cloning seven supported variant alternatives and rejecting boxed/foreign values.
+Evidence is in `checkpoint-clang-probe/report.json` under the macOS evidence root.
+The complete current `vm.cpp` and checkpoint fixture also compiled and linked
+with Clang 18, then passed all 210 checkpoint checks with empty stderr. Existing
+Linux core/runtime archives were read only and their hashes remained unchanged;
+the full-VM report is `checkpoint-clang-probe/full-vm/report.json`. Native macOS
+link/execution verification remains for the next matrix.

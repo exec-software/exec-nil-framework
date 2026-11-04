@@ -2652,3 +2652,11 @@ This is focused verification of the new source and private tool builds. The
 sealed SDKs still identify `5630388`; their earlier test counts and bytes are
 unchanged. A future full Windows service-suite run will register this additional
 desktop-dependent test and report its prerequisite skip explicitly.
+
+The subsequent macOS bring-up added numeric rounding/range controls and found
+that rejected MSVC conversions could modify the output value. Commit `a7a05e5`
+normalizes assignment-on-success. The exact private Windows probe then passed
+all 190 checks under strict MSVC compilation, with SDK/checkout seals and cleanup
+verified. Details and preserved failure evidence are in the
+[macOS notebook](2026-11-04-macos-parity-plan.md#cross-platform-rejected-conversion-output).
+This focused source verification does not relabel the accepted `5630388` SDK.

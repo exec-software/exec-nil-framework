@@ -901,6 +901,55 @@ namespace {
 // allocator-specific RSS measurement. Count container entries conservatively,
 // before reserve/copy, and reject graph cycles before linking copied objects.
 class CheckpointCloner {
+  // Define the template before std::visit instantiates its callers below.
+  template <typename T> T typed(const T &source, size_t depth) {
+    node(depth);
+    if constexpr (std::is_same_v<T, std::string>) {
+      return text(source);
+    } else if constexpr (std::is_same_v<T, StructValue>) {
+      return structure(source, depth);
+    } else if constexpr (std::is_same_v<T, EnumValue>) {
+      return enumeration(source, depth);
+    } else if constexpr (std::is_same_v<T, ArrayValue>) {
+      charge(sizeof(ArrayValue));
+      ArrayValue result;
+      using Element = typename decltype(result.elements)::value_type;
+      items(source.elements.size(), sizeof(Element));
+      result.elements.reserve(source.elements.size());
+      for (const auto &element : source.elements)
+        result.elements.push_back(std::visit([&](const auto &item) -> Element {
+          return typed(item, depth + 1);
+        }, element));
+      return result;
+    } else if constexpr (std::is_same_v<T, std::shared_ptr<StructValue>>) {
+      if (!source) return {};
+      charge(sizeof(StructValue));
+      return std::make_shared<StructValue>(structure(*source, depth + 1));
+    } else if constexpr (std::is_same_v<T, std::shared_ptr<EnumValue>>) {
+      if (!source) return {};
+      if (active_enums_.count(source.get()))
+        throw std::runtime_error("VM checkpoint cyclic aggregates are unsupported");
+      if (const auto found = enums_.find(source.get()); found != enums_.end()) {
+        markDepth(depth + found->second.height);
+        return found->second.data;
+      }
+      active_enums_.insert(source.get());
+      DepthScope scope{depth, depth};
+      depth_scopes_.push_back(&scope);
+      auto result = std::make_shared<EnumValue>(enumeration(*source, depth + 1));
+      depth_scopes_.pop_back();
+      active_enums_.erase(source.get());
+      enums_.emplace(source.get(), CopiedEnum{result, scope.maximum - scope.start});
+      return result;
+    } else if constexpr (std::is_same_v<T, BoxedValue>) {
+      throw std::runtime_error("VM checkpoint boxed values are unsupported");
+    } else if constexpr (std::is_same_v<T, ny::NyForeignFunc>) {
+      throw std::runtime_error("VM checkpoint foreign functions are unsupported");
+    } else {
+      charge(sizeof(T));
+      return source;
+    }
+  }
 public:
   explicit CheckpointCloner(size_t limit) : limit_(limit) {
     if (limit == 0 || limit > 16 * 1024 * 1024)
@@ -1004,54 +1053,7 @@ private:
       }, payload));
     return result;
   }
-  template <typename T> T typed(const T &source, size_t depth) {
-    node(depth);
-    if constexpr (std::is_same_v<T, std::string>) {
-      return text(source);
-    } else if constexpr (std::is_same_v<T, StructValue>) {
-      return structure(source, depth);
-    } else if constexpr (std::is_same_v<T, EnumValue>) {
-      return enumeration(source, depth);
-    } else if constexpr (std::is_same_v<T, ArrayValue>) {
-      charge(sizeof(ArrayValue));
-      ArrayValue result;
-      using Element = typename decltype(result.elements)::value_type;
-      items(source.elements.size(), sizeof(Element));
-      result.elements.reserve(source.elements.size());
-      for (const auto &element : source.elements)
-        result.elements.push_back(std::visit([&](const auto &item) -> Element {
-          return typed(item, depth + 1);
-        }, element));
-      return result;
-    } else if constexpr (std::is_same_v<T, std::shared_ptr<StructValue>>) {
-      if (!source) return {};
-      charge(sizeof(StructValue));
-      return std::make_shared<StructValue>(structure(*source, depth + 1));
-    } else if constexpr (std::is_same_v<T, std::shared_ptr<EnumValue>>) {
-      if (!source) return {};
-      if (active_enums_.count(source.get()))
-        throw std::runtime_error("VM checkpoint cyclic aggregates are unsupported");
-      if (const auto found = enums_.find(source.get()); found != enums_.end()) {
-        markDepth(depth + found->second.height);
-        return found->second.data;
-      }
-      active_enums_.insert(source.get());
-      DepthScope scope{depth, depth};
-      depth_scopes_.push_back(&scope);
-      auto result = std::make_shared<EnumValue>(enumeration(*source, depth + 1));
-      depth_scopes_.pop_back();
-      active_enums_.erase(source.get());
-      enums_.emplace(source.get(), CopiedEnum{result, scope.maximum - scope.start});
-      return result;
-    } else if constexpr (std::is_same_v<T, BoxedValue>) {
-      throw std::runtime_error("VM checkpoint boxed values are unsupported");
-    } else if constexpr (std::is_same_v<T, ny::NyForeignFunc>) {
-      throw std::runtime_error("VM checkpoint foreign functions are unsupported");
-    } else {
-      charge(sizeof(T));
-      return source;
-    }
-  }
+
 };
 
 } // namespace
