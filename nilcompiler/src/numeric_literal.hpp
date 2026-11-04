@@ -174,15 +174,17 @@ inline const char *parse_floating_literal(std::string_view spelling,
     return "invalid floating-point literal";
   value = parsed;
 #else
+  double parsed = 0.0;
   const auto converted = std::from_chars(spelling.data(),
-      spelling.data() + spelling.size(), value, std::chars_format::general);
+      spelling.data() + spelling.size(), parsed, std::chars_format::general);
   if (converted.ec == std::errc::result_out_of_range ||
-      (converted.ec == std::errc{} && (!std::isfinite(value) || value == 0.0)))
+      (converted.ec == std::errc{} && (!std::isfinite(parsed) || parsed == 0.0)))
     return "floating-point literal is outside the representable f64 range "
            "(overflow or underflow to zero)";
   if (converted.ec != std::errc{} ||
       converted.ptr != spelling.data() + spelling.size())
     return "invalid floating-point literal";
+  value = parsed;
 #endif
   return nullptr;
 }

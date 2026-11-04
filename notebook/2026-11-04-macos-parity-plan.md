@@ -247,3 +247,27 @@ with the same two build-error classes as LLVM ON. All four source identities
 remained unchanged. `first-run-summary.json` records the original inventories'
 hashes; no failed initial result has been overwritten or relabeled. The immediate
 source and collector fixes passed independent review before the next dispatch.
+
+## Cross-platform rejected-conversion output
+
+A bounded Windows probe of the exact `c4a9f02` header and committed numeric test
+function passed all numeric-bit, grammar, errno and rounding checks, but exposed
+twenty unchanged-output failures: MSVC's conversion wrote a value for each of
+five out-of-range inputs under all four rounding modes. The original failure
+report remains in `windows-numeric-c4a9f02/evidence/` under the macOS evidence root.
+
+The non-Apple path now converts into a local `double` and assigns the caller's
+output only after every success check. No test was relaxed, and the Apple path
+was unchanged. The same 190 controls passed on Linux and in a fresh strict
+MSVC `/W4 /WX /O2` Windows run. The guest checkout and accepted SDK were unchanged,
+and owned cleanup was verified. Final Windows report:
+`windows-numeric-output-normalization/evidence/report.json`, SHA-256
+`cea23b8ebfcb29c5e7779fa9edfd7479fced8452ea9514534648b0eef4c96fa0`.
+The independently replayed source/binary/log record is
+`windows-numeric-output-normalization/reconciliation.json`, SHA-256
+`441a3c609e0eb25976f187ed37fbbbfce80faab98c18e5335857571e454c1fd4`.
+
+The second native macOS matrix is
+[run 41932302013](https://github.com/exec-software/exec-nil-framework/actions/runs/41932302013)
+at `c4a9f02`; its source identity is preserved separately from this subsequent
+non-Apple-only adjustment.
