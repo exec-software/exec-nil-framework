@@ -16,7 +16,120 @@ import time
 from incremental_build_contract import windows_launcher
 from process_contract_support import (assert_stopped, cancel_process,
                                       cleanup_process, console_options,
-                                      process_alive)
+                                      process_alive, process_identity,
+                                      record_processes)
+
+
+def windows_identity_handle(path: Path, access: int):
+    import ctypes as c
+    from ctypes import wintypes as w
+    kernel = c.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, w.LPVOID,
+                                   w.DWORD, w.DWORD, w.HANDLE]
+    kernel.CreateFileW.restype = w.HANDLE
+    kernel.CloseHandle.argtypes = [w.HANDLE]
+    kernel.CloseHandle.restype = w.BOOL
+    # Atomic rename publishes the name before releasing its DELETE handle.
+    # CRT opens omit FILE_SHARE_DELETE and can fail during that interval.
+    handle = kernel.CreateFileW(str(path), access, 0x7, None, 3, 0x80, None)
+    if handle == w.HANDLE(-1).value:
+        error = c.WinError(c.get_last_error())
+        error.filename = str(path)
+        raise error
+    return kernel, handle
+
+
+def read_identity(path: Path) -> dict[str, int]:
+    if os.name == "nt":
+        import msvcrt
+        kernel, handle = windows_identity_handle(path, 0x80000000)  # GENERIC_READ
+        try:
+            descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY | os.O_NOINHERIT)
+        except BaseException:
+            kernel.CloseHandle(handle)
+            raise
+    else:
+        descriptor = os.open(path, os.O_RDONLY)
+    try:
+        with open(descriptor, "r", encoding="utf-8", closefd=False) as stream:
+            raw = stream.read(4097)
+    finally:
+        os.close(descriptor)  # Also closes the transferred Windows handle.
+    assert len(raw) <= 4096, f"oversized identity file: {path}"
+    records = json.loads(raw)
+    assert isinstance(records, list) and len(records) == 1, records
+    identity = records[0]
+    assert isinstance(identity, dict) and set(identity) == {"pid", "created"}, identity
+    assert all(type(identity[key]) is int and identity[key] > 0 for key in ("pid", "created")), identity
+    return identity
+
+
+def cleanup_identities(root: Path, identities: list[dict[str, int]]) -> None:
+    errors = []
+    for path in root.glob("*.pid"):
+        try:
+            identities.append(read_identity(path))
+        except Exception as error:
+            errors.append(error)
+    for identity in identities:
+        try:
+            cleanup_process(identity)
+        except Exception as error:
+            errors.append(error)
+    if errors:
+        raise AssertionError("identity cleanup failed: " + "; ".join(map(str, errors))) from errors[0]
+
+
+def check_identity_publication(root: Path) -> None:
+    path = root / "publication-check.json"
+    identity = process_identity(os.getpid())
+    record_processes(path, os.getpid())
+    assert read_identity(path) == identity
+    if os.name == "nt":
+        # Keep the rename's access mode alive deterministically. The old CRT
+        # reader fails here; the shared reader must work before handle close.
+        kernel, handle = windows_identity_handle(path, 0x10000)  # DELETE
+        try:
+            try:
+                path.read_text(encoding="utf-8")
+            except PermissionError:
+                pass
+            else:
+                raise AssertionError("fixture did not reproduce the rename/open conflict")
+            assert read_identity(path) == identity
+        finally:
+            assert kernel.CloseHandle(handle)
+    # A published file is complete: malformed data is never a polling signal.
+    for raw in ("[", "[]", '[{"pid":1}]', '[{"pid":true,"created":1}]'):
+        path.write_text(raw, encoding="utf-8")
+        try:
+            read_identity(path)
+        except (ValueError, AssertionError):
+            pass
+        else:
+            raise AssertionError("invalid published identity was accepted")
+    path.unlink()
+    # Bad evidence must fail visibly after cleanup of already known children.
+    malformed = root / "malformed-publication.pid"
+    malformed.write_text('[{"pid":1}]', encoding="utf-8")
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+    try:
+        identity = process_identity(child.pid)
+        try:
+            cleanup_identities(root, [identity])
+        except AssertionError as error:
+            assert isinstance(error.__cause__, AssertionError), error
+        else:
+            raise AssertionError("malformed cleanup evidence was ignored")
+        assert_stopped(identity)
+        child.wait(timeout=5)
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=5)
+        malformed.unlink()
 
 
 def main() -> None:
@@ -29,6 +142,7 @@ def main() -> None:
     child_processes: list[dict[str, int]] = []
     with tempfile.TemporaryDirectory(prefix="niltest-process-") as temporary:
         root = Path(temporary)
+        check_identity_publication(root)
         shutil.copyfile(Path(__file__).with_name('process_contract_support.py'),
                         root / 'process_contract_support.py')
         source = root / "example.ny"
@@ -128,13 +242,13 @@ sys.exit(case.get("exit", 77))
             path = root / filename
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
-                if path.exists():
-                    try:
-                        identity = json.loads(path.read_text())[0]
-                        child_processes.append(identity)
-                        return identity
-                    except ValueError:
-                        pass  # Writer can be between open and write.
+                try:
+                    identity = read_identity(path)
+                except FileNotFoundError:
+                    pass  # The producer has not atomically published it yet.
+                else:
+                    child_processes.append(identity)
+                    return identity
                 if runner is not None and runner.poll() is not None:
                     raise AssertionError(f"runner stopped before {filename}: {runner.returncode}")
                 time.sleep(.02)
@@ -252,13 +366,7 @@ sys.exit(case.get("exit", 77))
         finally:
             # Collect even when an assertion failed before wait_pid reached
             # the fixture, so failure reporting cannot leave children behind.
-            for path in root.glob("*.pid"):
-                try:
-                    child_processes.extend(json.loads(path.read_text()))
-                except ValueError:
-                    pass
-            for identity in child_processes:
-                cleanup_process(identity)
+            cleanup_identities(root, child_processes)
     print(f"niltest process contracts passed ({checks} runner invocations)")
 
 

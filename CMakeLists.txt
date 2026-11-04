@@ -753,6 +753,12 @@ if(BUILD_TESTING)
                     --root "${CMAKE_CURRENT_SOURCE_DIR}"
         )
         add_test(
+            NAME ny.repository-policy-controls
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/repository_policy_tests.py"
+        )
+        set_tests_properties(ny.repository-policy-controls PROPERTIES LABELS "policy" TIMEOUT 30)
+        add_test(
             NAME ny.sdk-qualification
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/sdk_qualification_tests.py"
         )
