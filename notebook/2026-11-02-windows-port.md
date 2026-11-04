@@ -24,11 +24,14 @@ prerequisite skips, and both contracts changed by `5630388` passed afterward.
 Earlier interrupted/failed pipelines and editor diagnostics remain preserved;
 their evidence has not been relabelled as successful acceptance.
 
-The latest accepted Linux development SDK remains the unchanged `d5e8758`
-reference. Its paired historical Windows SDK passed installed consumer,
-ordinary-I/O, Unicode, debugger and same-process checkpoint gates; those reports
-remain attached to their original bytes. No new Linux SDK or separate fresh
-installed shared-runtime/debugger campaign is claimed by this Windows run.
+The Linux reference has now been refreshed at the same `5630388` source:
+568/568 CTests passed without skips, including PostgreSQL and isolated GTK;
+SDK validation and 1,184 installed consumer executions passed. Both platforms
+passed fresh installed ordinary-I/O, Unicode, debugger and same-process
+checkpoint checks. The inventory comparison matches 566 common CTests,
+74 consumer fixtures, 80 standard-library source files and eighteen compiled
+module identities. Fresh installed Linux GTK also passed ten VM/native cases.
+The historical `d5e8758` evidence remains attached to its original SDKs.
 
 This is development evidence, not a v1/RC or unrestricted parity declaration.
 The earlier zero-exit, empty lifecycle-output observation remains preserved and
@@ -2522,3 +2525,95 @@ This completes the fresh development SDK, GTK and installed-editor campaign for
 feature restrictions in Status. Active SDK/VSIX locations, Lich and Anomalous are
 unchanged. The latest accepted Linux SDK remains `d5e8758`; the newer Linux source
 test results are distinct from installed Linux SDK acceptance.
+
+#### Same-source Linux reference and Windows closeout, November 4
+
+The development SDK comparison now uses `5630388` on both hosts. The main
+checkout was temporarily detached at that already-pushed revision during
+acceptance, then restored to `master`; no commits or working changes were
+discarded. The intervening commits contained notebook changes only.
+
+The first Linux refresh intentionally enabled its existing PostgreSQL server
+fixture, exposing that the previous build lacked libpq development headers and
+therefore had no PostgreSQL provider. That run failed the live database test and
+skipped the client and display checks. The failure is preserved in
+`563038813c7e-closeout/linux-candidate/`; it produced no SDK. Matching Ubuntu
+`libpq-dev` 16.15 headers and Xvfb were downloaded and extracted into a private
+dependency directory with recorded package hashes. No system package or service
+was installed. The fresh v2 build records those inputs, uses the existing
+bounded disposable database cluster and authenticated private X11 display, and
+requires zero skipped CTests.
+
+V2 passed all 568 CTests in 205.90 seconds, SDK installation/validation and all
+1,184 installed consumer executions. Its validator also exercises the installed
+shared-runtime ABI. The SDK contains eleven root tools, eighteen compiled STL
+modules, eighty STL source files, 66 documentation pages and 259 sealed payload
+files. The fresh archive was reopened and reconciled against every payload byte,
+Unix mode and manifest record; the adapted archive verifier passed 39 controls
+and independent review.
+
+| Linux artifact | SHA-256 |
+| --- | --- |
+| `linux-candidate-v2/sdk/manifest.json` | `cb2eef4cda97ed6d508d16c27675bc75a4a141f3cb5d9387509969297180eb4d` |
+| `linux-delivery-v2/nil-framework-linux-development-563038813c7e.tar.gz` | `6f2ed516ace2164919082a23e820af4ead19d4c3eaef9f18f7af0536d323e805` |
+| `linux-delivery-v2/delivery.json` | `7611ee41747e9eebf291610f3879717fbdd839f4f216ed31533aef7ac7b37a58` |
+
+Fresh installed checks passed on both platforms:
+
+- Ordinary I/O: sixteen executions across both STL layouts and eight routes,
+  with 36 command records, two invalid-ABI rejections, and independently replayed
+  Unicode namespaces and raw file bytes.
+- Interpreter checkpoints: capture, mutation, repeated restoration,
+  continuation, rejection and explicit-exit cleanup against the installed
+  interpreter. These raw NIL fixtures do not make an STL-layout claim.
+- Debugger: 146 checks, twenty commands and fifteen sessions, with matching
+  source-fixture and command-output identities across hosts.
+- Unicode byte files: sixteen executions and 34 commands, independently checked
+  against the frozen fixture and exact installed tools.
+- Linux installed GTK: ten VM/native cases using the installed compiler,
+  interpreter, tester and source STL on the private display. The harness retains
+  its ten-case positive summary; it discards provider/lifecycle stdout, so this
+  run does not claim an independently retained provider assertion count.
+
+All runs preserved SDK/source input hashes and verified owned cleanup. The
+Windows debugger copy additionally reconciles forty raw command logs, eleven
+artifacts and fifteen session records. The prior Windows installed GTK and
+88-check editor campaign remains bound to the exact same accepted Windows SDK.
+
+The test-inventory comparison has 566 common registrations. Five Windows-only
+checks cover its memory limiter, GTK loader, unmanifested UTF-8 path behavior,
+UTF-8 console and SDK preflight. Two Linux-only checks cover POSIX process
+semantics and ELF toolchain inputs. These match explicit CMake platform guards;
+Windows has corresponding common process and MSVC toolchain contracts. Its
+service-desktop skip remains a skip in the full-suite record, supplemented by
+the separately accepted installed GTK gate.
+
+`paired-sdk-comparison.json` also verifies matching identities for all 74
+consumer fixtures, both STL layouts and eight routes, all eighty STL sources,
+eighteen module/source/alias inventories, eleven tool names and 66 documentation
+pages. This compares behavior and source inventories, not native binary bytes
+or host ABI dependencies. Consumer evidence retains the previously documented
+aggregate-only standalone-object and deleted temporary artifact limits.
+
+All evidence below is under
+`/home/nathan/vm/nil-win11/artifacts/563038813c7e-closeout/`:
+
+| Evidence | Scope |
+| --- | --- |
+| `linux-candidate-v2/report.json` | Full Linux SDK pipeline, raw logs and input records |
+| `paired-sdk-comparison.json` | Same-source SDK/test/consumer inventory comparison |
+| `windows-shared-copy-reconciliation-v2.json` / `linux-shared-copy-reconciliation.json` | Installed ordinary-I/O and checkpoint evidence replay |
+| `windows-tooling-reconciliation.json` / `linux-tooling-v1/report.json` | Installed debugger and Unicode gates |
+| `windows-debugger-work-reconciliation.json` | Copied debugger raw artifacts and transcripts |
+| `linux-installed-gtk-v1/report.json` | Fresh installed GTK10 and cleanup/input seals |
+| `installed-platform-contract-comparison.json` | Normalized installed-contract comparison |
+| `windows-platform-closeout-audit.txt` | Platform guard review and remaining scope limits |
+
+Core development-profile closeout is supported by these results. Optional HAG
+interop remains unqualified on Windows, and secure byte publication retains its
+documented Win32 security and parent-path semantics rather than POSIX-specific
+guarantees. The audit also found an experimental `nilagent` title-filter bug;
+its focused follow-up is separate from these sealed SDK bytes. Shared code hot
+reload, external-state rollback and native `environment.list` remain unsupported.
+Windows release dependency/bare-host qualification and stable v1 publication
+remain separate work. The active SDKs, Lich and Anomalous are unchanged.
