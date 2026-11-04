@@ -2349,14 +2349,12 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
           }
         }
 #else
-        // The current LLVM emitter produces a non-PIC object. Link it as a
-        // non-PIE executable where the host linker supports that mode.
+        // The Linux LLVM target currently emits non-PIC objects and requires
+        // non-PIE linking. Darwin emits PIC and uses the linker's PIE default.
         const std::string linker_driver = NIL_NATIVE_LINKER_DRIVER;
         cmd = quote_posix_shell_argument(linker_driver) + " -pthread ";
 #if defined(__linux__)
         cmd += "-no-pie ";
-#elif defined(__APPLE__)
-        cmd += "-Wl,-no_pie ";
 #endif
         cmd += "-o " + quote_posix_shell_argument(link_output_path_text) + " " +
                quote_posix_shell_argument(obj_path_text) + " " +

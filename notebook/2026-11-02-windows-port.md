@@ -2660,3 +2660,9 @@ all 190 checks under strict MSVC compilation, with SDK/checkout seals and cleanu
 verified. Details and preserved failure evidence are in the
 [macOS notebook](2026-11-04-macos-parity-plan.md#cross-platform-rejected-conversion-output).
 This focused source verification does not relabel the accepted `5630388` SDK.
+
+The assembler missing-output identity repair from macOS bring-up was also
+checked on Windows at `0b2b884`: a private rebuild passed fresh x64 COFF output,
+same-file rejection, hardlink rejection and absent-input output preservation
+(4/4), reusing unchanged reference libraries. Checkout/SDK/input seals and owned
+cleanup passed; the report is linked from the macOS notebook.

@@ -345,3 +345,65 @@ ignored the flag. Independent review and the unchanged Linux host-object and
 process-deadline tests passed (2/2). Evidence and primary-source response hashes
 are in `linker-pie-focused/`. Actual native macOS verification follows in the
 next matrix; no test diagnostic or assertion was weakened.
+
+A bounded private Windows assembler rebuild against unchanged reference build
+libraries also passed all four targeted cases: fresh x64 COFF output, same-file
+rejection, hardlink rejection and absent-input output preservation. The copied
+`main.cpp` exactly matched `0b2b884`; 75 reused library/object inputs, headers,
+checkout and accepted SDK hashes were unchanged. No staging or process orphans
+remained. Evidence: `windows-assembler-path-status/reconciliation.json`, SHA-256
+`220b1438ec879b778c19164e55074fd439825dcb925ec8a82e241e5cd36f6755`.
+This is focused cross-platform tool verification, not a replacement Windows SDK.
+
+The fourth matrix at `0b2b884` is
+[run 41935062099](https://github.com/exec-software/exec-nil-framework/actions/runs/41935062099).
+The superseded third run's completed arm64 results were preserved before
+cancelling remaining jobs to advance the repaired source. Its available Intel
+logs and partial artifacts are retained separately; cancelled profiles are not
+acceptance results.
+
+## Fourth matrix: build baseline and remaining test contracts
+
+All four `0b2b884` profiles passed the full build and backend-selection checks.
+LLVM-ON selection executes real host-object emission; LLVM OFF must explicitly
+report the unavailable backend. The first completed profile, arm64/LLVM OFF,
+recorded 564 registrations and observations: 391 passes, 27 failures and 146
+skips, with unchanged source and zero collector errors. Skips include disabled
+native routes and provider/platform gates; they are not passing feature coverage.
+Compiler smoke, textual/binary interpreter smoke, Matrix execution, parser
+controls, VM/AI checkpoints and host-object linking passed.
+
+The 27 failures in that LLVM-OFF profile were read-only triaged as follows:
+
+| Count | First observed failure boundary |
+| --- | --- |
+| 14 | Temporary-path or metadata assertions, including project/pipeline, switch, niltest, analysis/editor metadata, Matrix function values, reflection/query and DAP. `/var` versus `/private/var` is explicit in several records; the similarly shaped remaining assertions still need focused confirmation. Their downstream coverage is not established. |
+| 3 | Unicode namespace fixtures assuming distinct NFC/NFD filenames. |
+| 1 | Ordinary-I/O oracle with mixed namespace, path and ownership assumptions. |
+| 6 | Route/harness cleanup reports `EPERM`, including byte/I-O, debugger, UI-harness and PostgreSQL-fixture controls. |
+| 2 | Process-identity controls assume `/proc/PID/stat`. |
+| 1 | Concurrent SDK publication reader reports `EINVAL`. |
+
+No additional compiler/build/backend blocker was identified from those 27
+failures. They remain failed tests pending fixes and new native evidence.
+
+Arm64/LLVM ON completed with 335 passes, 228 failures and five skips across all
+568 registrations; source was unchanged and the collector found no evidence
+errors. All 27 LLVM-OFF failures recur. The additional native failures are
+dominated by successful AOT links rejected for unexpected stderr: the compiler's
+direct executable route and an assembler test helper still supplied Darwin
+`-no_pie`, independently of the corrected standalone linker. Both remaining
+branches are now removed, Linux flags and output assertions remain unchanged,
+and the compiler comment now distinguishes Linux non-PIC from Darwin PIC.
+Complete compiler-source syntax, Python syntax and independent review passed;
+evidence is in `darwin-pie-followup/`. No active `no_pie` use remains in code.
+
+Other distinct LLVM-ON observations include the known ARM assembly profile gap
+and an AI checkpoint TCP `sendall` timeout at
+`tests/interpreter/ai_checkpoint_contract.py:194`. The same AI checkpoint
+contract passed in the LLVM-OFF profile. This remains timing/transport evidence
+requiring follow-up, not a compiler build failure or a silently waived test.
+
+Intel/LLVM OFF also completed with the same 391-pass, 27-failure, 146-skip counts
+and passing compiler/interpreter/Matrix/parser/checkpoint controls. Its payload
+inventory is recorded separately under the fourth-run evidence root.

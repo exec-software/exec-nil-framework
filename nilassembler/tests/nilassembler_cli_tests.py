@@ -121,8 +121,6 @@ def link_and_run(
     command = [linker_driver]
     if sys.platform.startswith("linux"):
         command.append("-no-pie")
-    elif sys.platform == "darwin":
-        command.append("-Wl,-no_pie")
     command.extend(["-o", str(executable), str(object_path), str(runtime)])
     linked = run(command, cwd)
     if linked.returncode != 0:

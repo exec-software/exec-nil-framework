@@ -237,8 +237,14 @@ records the reproduction.
 
 ## Project status
 
-The current version is **1.0.0-rc.1**. Linux x86_64 is the validated development
-platform; Windows and macOS support is experimental. The
+The current version is **1.0.0-rc.1**. Linux x86_64 is the reference development
+platform. The Windows x86_64 development SDK has
+[paired Linux acceptance and installed tooling coverage](notebook/2026-11-02-windows-port.md).
+Intel and Apple Silicon macOS have native
+[GitHub build/test bring-up jobs](.github/workflows/macos-bringup.yml);
+[remaining parity work](notebook/2026-11-04-macos-parity-plan.md) includes test
+portability, native context embedding, architecture-specific assembly and UI.
+Windows and macOS release qualification remains pending. The
 [release profile](docs/release/v1-profile.md) defines supported configurations
 and release requirements. Known limitations and planned improvements are
 tracked in the [development findings](matrix/docs/next-version-findings.md).
