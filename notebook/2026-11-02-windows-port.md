@@ -13,9 +13,14 @@ GTK run and independent host replay passed ten installed VM/native cases,
 input, scheduled-task removal and owned cleanup verified. The first editor run
 for these exact SDK bytes failed at a compiler-check timeout after 31 completed
 checks and 23 tasks. A private phase-timing diagnostic located repeated import
-searches as the dominant cost. The source fix passes six Linux editor-analysis
-tests; Windows measurement, complete editor acceptance and packaging of that
-new fix remain pending.
+searches as the dominant cost. The committed `262ceda` source fix passes all six focused analysis tests on
+both platforms. Raw Windows analysis falls from 8–9 seconds to 1.4–1.5 seconds
+with identical analysis output apart from compiler provenance. Its full Linux
+suite passes 565 tests with three prerequisite skips. The next full Windows
+run exposed a separate atomic-publication reader race in the incremental-build
+test; its shared-reader repair passes deterministic Windows controls and both
+affected Linux contracts. A complete Windows SDK and installed editor
+acceptance for these latest fixes remain pending.
 
 This SDK includes the `164f179` Aperture long-report-path fix and the `f4d5d04`
 Windows PID-publication/source-scanning harness repairs. The full suite retains
@@ -2393,3 +2398,48 @@ Windows rebuild/measurement and complete installed editor acceptance are still
 pending for this fix. The accepted `f4d5d04` SDK and GTK evidence remain attached
 to their original bytes. No release/parity declaration, activation or publication
 is implied by these focused results.
+
+
+#### Import reuse validation and another publication race, November 4
+
+Commit `262ceda` was pushed before the Windows rebuild. All six focused Windows
+analysis tests passed (10 seconds total), with owned cleanup and unchanged
+inputs. The repeated raw Windows requests completed in 1.352–1.520 seconds,
+compared with 8.372–9.333 seconds before the fix. Each returned success, empty
+stderr and identical analysis JSON except `compilerFiles` and `nativeRuntime`,
+which reflect the build-tree compiler location. The original SDK stayed sealed.
+The Linux counterparts took 0.229 seconds for Ny and 0.208 seconds for Matrix,
+previously 0.703 and 0.753 seconds. These are retained single-run comparisons,
+not statistical benchmarks or installed-editor acceptance.
+
+The complete Linux build/test run registered 568 tests: 565 passed, zero failed
+and three skipped (two PostgreSQL prerequisites and interactive display), in
+388.31 seconds. Evidence is under
+`/home/nathan/vm/nil-win11/artifacts/import-resolution-20261104/`, including
+`linux-ctest-262ceda.xml` and `linux-analysis-timing/report.json`. Windows focused
+and comparison evidence is under `262ceda02cc5d-parity/focused/` and
+`262ceda02cc5d-parity/analysis/comparison.json` beneath the same artifact root.
+
+The fresh Windows SDK pipeline then failed `nilbuild.incremental-contract`
+while polling an atomically renamed event record. Python's ordinary text open
+raised `PermissionError` at `recorded_events()` during the concurrent-driver
+case. This is the same Windows sharing constraint previously addressed for
+PID publications: the new name can become visible while the rename's DELETE
+handle remains open. The running pipeline and its checkout were left intact
+to preserve the complete failure evidence.
+
+A shared test helper now opens published records with read/write/delete sharing
+on Windows, retains bounded strict UTF-8 reads, and closes transferred handles
+on every path. Both the event and PID readers use it; malformed JSON/schema,
+oversized data and missing records still fail visibly. The event regression
+holds a DELETE-access handle, proves the old CRT reader fails, and requires
+the new reader to succeed before that handle closes. It also checks invalid
+bytes/schema and missing records. No retry hides a corrupt publication.
+
+Both updated Linux contracts pass (25.79 seconds). Copied Windows event and PID
+publication controls pass under the existing owned-process boundary with
+unchanged inputs. Their retained report is
+`262ceda02cc5d-parity/publication-controls-v2/report.json`; the first private
+wrapper's missing test-import path failure remains separately preserved in
+`publication-controls-v1/`. These controls do not replace the pending complete
+Windows test/SDK and desktop/editor runs.

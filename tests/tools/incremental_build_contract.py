@@ -11,12 +11,61 @@ import sys
 import tempfile
 import time
 
+from published_record import read_published_text, windows_shared_handle
+
 # Where the native backend actually writes an executable.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from native_output_staging import native_output_path
 
 
 LAUNCHER_SOURCE = Path(__file__).resolve().parent / 'fixtures/windows_launcher.c'
+
+
+def read_event(path):
+    event = json.loads(read_published_text(path))
+    assert isinstance(event, list) and len(event) == 3, event
+    assert event[0] in ('start', 'finish', 'fail'), event
+    assert isinstance(event[1], str) and event[1], event
+    assert type(event[2]) is int and event[2] > 0, event
+    return event
+
+
+def check_event_publication(root):
+    path = root / 'publication-check.json'
+    expected = ['start', str(root / 'source é.ny'), time.monotonic_ns()]
+    pending = path.with_suffix('.pending')
+    pending.write_text(json.dumps(expected), encoding='utf-8')
+    os.replace(pending, path)
+    assert read_event(path) == expected
+    if os.name == 'nt':
+        kernel, handle = windows_shared_handle(path, 0x10000)  # DELETE
+        try:
+            try:
+                path.read_text(encoding='utf-8')
+            except PermissionError:
+                pass
+            else:
+                raise AssertionError('fixture did not reproduce the rename/open conflict')
+            assert read_event(path) == expected
+        finally:
+            assert kernel.CloseHandle(handle)
+    # Publication is complete. Bad bytes/schema remain failures, not retries.
+    for raw in (b'[', b'[]', b'["start","source",true]', b'["other","source",1]',
+                b'["start","",1]', b'\xff', b' ' * 4097):
+        path.write_bytes(raw)
+        try:
+            read_event(path)
+        except (ValueError, AssertionError):
+            pass
+        else:
+            raise AssertionError('invalid published event was accepted')
+    path.unlink()
+    try:
+        read_event(path)
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError('missing published event was ignored')
 
 
 def c_string(value):
@@ -67,6 +116,7 @@ def main():
     checks = 0
     with tempfile.TemporaryDirectory(prefix='nil incremental ; ') as temporary:
         root = Path(temporary)
+        check_event_publication(root)
         events = root / 'events'
         events.mkdir()
         # The stand-in compiler declares every '*.input*' sibling of the entry
@@ -143,7 +193,7 @@ event('finish')
             # monotonic_ns uses one clock across processes on the supported
             # hosts. Publication order is not event order: a writer can be
             # descheduled between recording its timestamp and the rename.
-            return sorted((json.loads(path.read_text(encoding='utf-8'))
+            return sorted((read_event(path)
                            for path in events.glob('event-*/record.json')),
                           key=lambda event: (event[2], event[1], event[0]))
 

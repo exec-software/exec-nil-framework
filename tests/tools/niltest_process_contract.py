@@ -18,44 +18,11 @@ from process_contract_support import (assert_stopped, cancel_process,
                                       cleanup_process, console_options,
                                       process_alive, process_identity,
                                       record_processes)
-
-
-def windows_identity_handle(path: Path, access: int):
-    import ctypes as c
-    from ctypes import wintypes as w
-    kernel = c.WinDLL("kernel32", use_last_error=True)
-    kernel.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, w.LPVOID,
-                                   w.DWORD, w.DWORD, w.HANDLE]
-    kernel.CreateFileW.restype = w.HANDLE
-    kernel.CloseHandle.argtypes = [w.HANDLE]
-    kernel.CloseHandle.restype = w.BOOL
-    # Atomic rename publishes the name before releasing its DELETE handle.
-    # CRT opens omit FILE_SHARE_DELETE and can fail during that interval.
-    handle = kernel.CreateFileW(str(path), access, 0x7, None, 3, 0x80, None)
-    if handle == w.HANDLE(-1).value:
-        error = c.WinError(c.get_last_error())
-        error.filename = str(path)
-        raise error
-    return kernel, handle
+from published_record import read_published_text, windows_shared_handle as windows_identity_handle
 
 
 def read_identity(path: Path) -> dict[str, int]:
-    if os.name == "nt":
-        import msvcrt
-        kernel, handle = windows_identity_handle(path, 0x80000000)  # GENERIC_READ
-        try:
-            descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY | os.O_NOINHERIT)
-        except BaseException:
-            kernel.CloseHandle(handle)
-            raise
-    else:
-        descriptor = os.open(path, os.O_RDONLY)
-    try:
-        with open(descriptor, "r", encoding="utf-8", closefd=False) as stream:
-            raw = stream.read(4097)
-    finally:
-        os.close(descriptor)  # Also closes the transferred Windows handle.
-    assert len(raw) <= 4096, f"oversized identity file: {path}"
+    raw = read_published_text(path)
     records = json.loads(raw)
     assert isinstance(records, list) and len(records) == 1, records
     identity = records[0]
