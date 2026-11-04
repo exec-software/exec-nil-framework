@@ -7,6 +7,10 @@
 #include "numeric_literal.hpp"
 
 #include <cmath>
+#include <cerrno>
+#include <cfenv>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -512,6 +516,117 @@ void test_scientific_numeric_literals() {
   }
 }
 
+void test_floating_literal_environment() {
+  struct restore_environment {
+    int saved_errno = errno;
+    std::fenv_t saved;
+    bool captured = std::feholdexcept(&saved) == 0;
+    ~restore_environment() {
+      if (captured) std::fesetenv(&saved);
+      errno = saved_errno;
+    }
+  } restore;
+  check(restore.captured, "capture floating-point environment for literal controls");
+  if (!restore.captured) return;
+  const auto bits = [](double value) {
+    std::uint64_t result = 0;
+    static_assert(sizeof(value) == sizeof(result));
+    std::memcpy(&result, &value, sizeof(value));
+    return result;
+  };
+  const std::pair<const char *, std::uint64_t> cases[] = {
+      {"0.1", 0x3fb999999999999aULL},
+      {"-0.1", 0xbfb999999999999aULL},
+      {"1.00000000000000011102230246251565404236316680908203125", 0x3ff0000000000000ULL},
+      {"1.00000000000000033306690738754696212708950042724609375", 0x3ff0000000000002ULL},
+      {"1.7976931348623157e308", 0x7fefffffffffffffULL},
+      {"2.2250738585072014e-308", 0x0010000000000000ULL},
+      {"5e-324", 0x0000000000000001ULL},
+      {"-5e-324", 0x8000000000000001ULL},
+      {"2.4703282292062328e-324", 0x0000000000000001ULL},
+      {"+0e999999999999999999999", 0x0000000000000000ULL},
+      {"-0e-999999999999999999999", 0x8000000000000000ULL}};
+  for (const int rounding : {FE_TONEAREST, FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO}) {
+    const bool selected = std::fesetround(rounding) == 0;
+    check(selected, "select caller rounding mode for literal controls");
+    if (!selected) continue;
+    for (const auto &[spelling, expected] : cases) {
+      std::feclearexcept(FE_ALL_EXCEPT);
+      std::feraiseexcept(FE_INVALID);
+      const int flags = std::fetestexcept(FE_ALL_EXCEPT);
+      errno = EDOM;
+      double value = 123.0;
+      const auto *error = ny::parse_floating_literal(spelling, value);
+      const int observed_errno = errno;
+      const int observed_flags = std::fetestexcept(FE_ALL_EXCEPT);
+      const int observed_rounding = std::fegetround();
+      check(!error && bits(value) == expected,
+            "literal has nearest-even f64 bits in every caller rounding mode: " + std::string(spelling));
+      check(observed_errno == EDOM && observed_rounding == rounding,
+            "literal preserves caller errno and rounding mode: " + std::string(spelling));
+#if defined(__APPLE__)
+      check(observed_flags == flags,
+            "Apple literal fallback preserves exception flags: " + std::string(spelling));
+#else
+      (void)flags;
+      (void)observed_flags;
+#endif
+    }
+    for (const std::string spelling : {"1.7976931348623159e308", "1e999999999999999999999",
+         "2e-324", "2.4703282292062327e-324", "1e-999999999999999999999",
+         " 1.5", "1.5 ", "1,5", "nan", "inf", "0x1p0", "1e++2"}) {
+      std::feclearexcept(FE_ALL_EXCEPT);
+      std::feraiseexcept(FE_INVALID);
+      const int flags = std::fetestexcept(FE_ALL_EXCEPT);
+      errno = EDOM;
+      double value = 123.0;
+      const auto *error = ny::parse_floating_literal(spelling, value);
+      const int observed_errno = errno;
+      const int observed_flags = std::fetestexcept(FE_ALL_EXCEPT);
+      check(error != nullptr && value == 123.0,
+            "strict floating spelling/range rejection leaves output unchanged: " + spelling);
+      check(observed_errno == EDOM && std::fegetround() == rounding,
+            "failed literal preserves caller errno and rounding mode: " + spelling);
+#if defined(__APPLE__)
+      check(observed_flags == flags,
+            "failed Apple literal fallback preserves exception flags: " + spelling);
+#else
+      (void)flags;
+      (void)observed_flags;
+#endif
+    }
+  }
+  double value = 123.0;
+  check(ny::parse_floating_literal(std::string("1.5\0tail", 8), value) != nullptr,
+        "embedded NUL does not truncate a floating literal");
+#if defined(__APPLE__)
+  // This changes only this test thread's locale. The product must explicitly
+  // select its own C locale, even when the caller uses a decimal comma.
+  const locale_t alternate = newlocale(LC_ALL_MASK, "fr_FR.UTF-8", nullptr);
+  check(alternate != nullptr, "create decimal-comma locale for Apple literal control");
+  if (!alternate) return;
+  const locale_t previous = uselocale(alternate);
+  if (!previous) {
+    freelocale(alternate);
+    check(false, "select thread locale for Apple literal control");
+    return;
+  }
+  struct restore_locale {
+    locale_t previous, alternate;
+    ~restore_locale() { uselocale(previous); freelocale(alternate); }
+  } locale_scope{previous, alternate};
+  char *end = nullptr;
+  const char comma[] = "1,5";
+  check(strtod_l(comma, &end, alternate) == 1.5 && end == comma + 3,
+        "Apple locale control actually uses decimal comma");
+  check(!ny::parse_floating_literal("1.5", value) && value == 1.5,
+        "Apple literal fallback ignores caller decimal-comma locale");
+  check(ny::parse_floating_literal("1,5", value) != nullptr,
+        "Apple literal fallback does not accept caller decimal separator");
+  check(uselocale(nullptr) == alternate, "Apple literal fallback preserves caller thread locale");
+#endif
+}
+
 void test_integer_literal_ranges_and_unchecked_arrays() {
   for (const auto &entry : std::vector<std::pair<std::string, std::string>>{
            {"2147483647", "i32"}, {"-2147483648", "i32"},
@@ -664,6 +779,7 @@ int main() {
   test_checker_sessions_do_not_share_impl_visitation();
   test_enum_variant_mismatch_terminates();
   test_scientific_numeric_literals();
+  test_floating_literal_environment();
   test_integer_literal_ranges_and_unchecked_arrays();
   if (failures != 0)
     return 1;

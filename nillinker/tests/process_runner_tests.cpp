@@ -144,7 +144,7 @@ int child_mode(int argc, char **argv) {
   if (mode == "--child-ignore-term") {
     struct sigaction ignored{};
     ignored.sa_handler = SIG_IGN;
-    ::sigemptyset(&ignored.sa_mask);
+    sigemptyset(&ignored.sa_mask);
     if (::sigaction(SIGTERM, &ignored, nullptr) != 0)
       return 94;
     std::this_thread::sleep_for(5s);
@@ -153,7 +153,7 @@ int child_mode(int argc, char **argv) {
   if (mode == "--grandchild-check-leader" && argc == 5) {
     struct sigaction action{};
     action.sa_handler = note_termination;
-    ::sigemptyset(&action.sa_mask);
+    sigemptyset(&action.sa_mask);
     if (::sigaction(SIGTERM, &action, nullptr) != 0)
       return 94;
     std::ofstream ready(argv[2]);
@@ -471,7 +471,7 @@ void test_rejects_auto_reaping(const fs::path &self) {
          "cannot read SIGCHLD for auto-reaping regression");
   struct sigaction ignored{};
   ignored.sa_handler = SIG_IGN;
-  ::sigemptyset(&ignored.sa_mask);
+  sigemptyset(&ignored.sa_mask);
   expect(::sigaction(SIGCHLD, &ignored, nullptr) == 0,
          "cannot configure ignored SIGCHLD for regression");
   const auto ignored_result = ny::linker_detail::run_process(

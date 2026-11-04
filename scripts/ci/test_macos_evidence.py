@@ -28,6 +28,16 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(result["missing"], ["b"])
         self.assertEqual(result["duplicates"], ["a"])
 
+    def test_ctest_fail_status_is_a_failure(self):
+        # CTest 4 on the hosted macOS image uses status="fail"; retain that
+        # failure even if a producer omits the optional diagnostic child.
+        for child in ("<failure>nonzero exit</failure>", ""):
+            with self.subTest(child=child):
+                suite = ET.fromstring('<testsuite><testcase name="a" status="fail">' + child + '</testcase></testsuite>')
+                inventory = module.summarize(self.registration("a"), suite)
+                self.assertEqual(inventory["counts"], {"failed": 1})
+                self.assertEqual(module.inventory_errors(inventory), [])
+
     def test_partial_build_not_run_and_unknown_remain_visible(self):
         suite = ET.fromstring('<testsuite><testcase name="a" status="notrun"/><testcase name="b"/></testsuite>')
         inventory = module.summarize(self.registration("a", "b"), suite)

@@ -8,6 +8,12 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#if defined(__APPLE__)
+#include <cerrno>
+#include <cfenv>
+#include <cstdlib>
+#include <xlocale.h>
+#endif
 
 namespace ny {
 
@@ -133,6 +139,41 @@ inline const char *parse_floating_literal(std::string_view spelling,
     return nullptr;
   }
   if (spelling.front() == '+') spelling.remove_prefix(1);
+#if defined(__APPLE__)
+  // Apple's libc++ does not provide floating-point from_chars in every SDK.
+  // The spelling has already been checked above: strtod_l must not broaden it
+  // to whitespace, hexadecimal, infinity, NaN or a locale-specific separator.
+  // Use an immutable private C locale, never the process/thread current locale.
+  struct restore_state {
+    int saved_errno = errno;
+    std::fenv_t environment;
+    bool captured = std::feholdexcept(&environment) == 0;
+    ~restore_state() {
+      if (captured) std::fesetenv(&environment);
+      errno = saved_errno;
+    }
+  } restore;
+  if (!restore.captured || std::fesetround(FE_TONEAREST) != 0)
+    return "floating-point literal conversion cannot preserve the floating-point environment";
+  struct c_locale {
+    locale_t value = newlocale(LC_ALL_MASK, "C", nullptr);
+    ~c_locale() { if (value) freelocale(value); }
+  };
+  static const c_locale locale;
+  if (!locale.value)
+    return "floating-point literal conversion cannot create a C locale";
+  const std::string terminated(spelling);
+  char *end = nullptr;
+  const double parsed = strtod_l(terminated.c_str(), &end, locale.value);
+  // ERANGE also describes representable subnormals on some C libraries.
+  // Reject only an unrepresentable result, as the from_chars path does.
+  if (!std::isfinite(parsed) || parsed == 0.0)
+    return "floating-point literal is outside the representable f64 range "
+           "(overflow or underflow to zero)";
+  if (end != terminated.c_str() + terminated.size())
+    return "invalid floating-point literal";
+  value = parsed;
+#else
   const auto converted = std::from_chars(spelling.data(),
       spelling.data() + spelling.size(), value, std::chars_format::general);
   if (converted.ec == std::errc::result_out_of_range ||
@@ -142,6 +183,7 @@ inline const char *parse_floating_literal(std::string_view spelling,
   if (converted.ec != std::errc{} ||
       converted.ptr != spelling.data() + spelling.size())
     return "invalid floating-point literal";
+#endif
   return nullptr;
 }
 

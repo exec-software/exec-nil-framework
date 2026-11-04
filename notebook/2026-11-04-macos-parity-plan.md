@@ -4,7 +4,8 @@
 
 Initial source audit was at `3848e9c`. Same-source Windows/Linux development
 SDK closeout is now recorded at `60e6bb9`; the first Intel and Apple Silicon
-macOS workflow is prepared, with native execution pending. The user wants both
+macOS workflow has been dispatched; the first native build exposed concrete
+Apple SDK portability issues now being repaired. The user wants both
 macOS architectures built on GitHub after Windows closeout. This entry tracks
 bring-up evidence and remaining work, not a macOS support or release claim.
 
@@ -138,7 +139,7 @@ and Homebrew metadata for [LLVM 18](https://formulae.brew.sh/api/formula/llvm@18
 
 The [evidence collector](../scripts/ci/macos-evidence.py) distinguishes failures,
 skips, missing and unexpected registrations, duplicate names and unknown status.
-Its nine [inventory controls](../scripts/ci/test_macos_evidence.py) run before
+Its ten [inventory controls](../scripts/ci/test_macos_evidence.py) run before
 configuration. A partial or absent JUnit file cannot establish successful
 coverage. Actual macOS execution results must be recorded after dispatch;
 host-side workflow checks alone establish no macOS execution support.
@@ -158,3 +159,91 @@ compatibility. Future IA-32 work should keep its target declaration explicit and
 provide focused regressions for the actual legacy consumer. Existing x86_64
 assembly must continue rejecting mismatched native targets; arm64 needs its own
 instruction and operand contract.
+
+## First native GitHub execution and immediate repairs
+
+Workflow commit `89f7e62` was pushed and dispatched as
+[run 41930293586](https://github.com/exec-software/exec-nil-framework/actions/runs/41930293586).
+The Windows title-filter follow-up was subsequently committed as `0556fce`, with
+34 desktop assertions and the concrete noninteractive prerequisite check recorded
+in the Windows notebook. The first macOS run remains bound to `89f7e62`.
+
+Both architectures passed exact source/architecture checks, the initial nine
+collector controls, provider observation and native CMake configuration. The
+first completed arm64/LLVM-ON job used macOS 15.8.2, image `20261028.0489.1`,
+Xcode 16.4 / SDK 15.5, and LLVM 18.1.8. Its complete build failed at two actual
+source portability points:
+
+- This Apple libc++ has no floating-point `std::from_chars` overload. The common
+  numeric-literal header therefore prevented the compiler and dependent tools
+  from completing.
+- Darwin exposes `sigemptyset` as a macro; three globally qualified calls in the
+  process-runner regression fixture failed to compile. Removing only the `::`
+  prefixes leaves the signal behavior intact. The Linux process-runner
+  regressions passed after that adjustment.
+
+The original arm64 record has 567 registrations and observations: 32 passed,
+488 failed and 47 skipped. Many failures and skips follow from absent compiler
+products; these counts do not establish 488 independent language defects. Raw
+logs, JUnit, source/image identity and partial build products are retained under
+`/home/nathan/vm/nil-win11/artifacts/macos-bringup-20261104/run-41930293586/`.
+
+CTest 4 also emits the valid JUnit status `fail`, which the initial collector
+flagged as unknown despite classifying the failure child correctly. The
+collector now recognizes that status as a failure even without a diagnostic
+child. All ten controls pass, and replay of the original arm64 JUnit retains
+exactly the same result counts with no inventory errors. The original artifact
+is preserved; the corrected replay is a separate diagnostic sidecar.
+
+Read-only triage of that partial-build inventory found thirteen independent
+failing CTests across six areas. The other 475 failures depend on missing build
+products; 42 of the 47 skips follow missing executables or fixture dependencies.
+The five explicit gates concern PostgreSQL, GTK and host-specific lifetime
+checks. These are initial observations, not completed macOS qualification:
+
+| Observed area | Follow-up and scope |
+| --- | --- |
+| Unicode filenames | Fixtures assume NFC and NFD names can coexist distinctly; this filesystem aliases them. Correct the host/fixture contract before inferring an encoding defect. See `tests/tools/byte_file_unicode_paths_contract.py`, `ordinary_io_parity_contract.py` and `tests/utf8_file_paths_tests.cpp`. |
+| Temporary path spelling | `/var` versus canonical `/private/var` breaks ordinary-I/O, project discovery and pipeline-artifact expectations. Resolve test path identity explicitly. |
+| Process identity | `tests/tools/process_contract_support.py` assumes `/proc/PID/stat` on every POSIX host. Add a Darwin identity implementation while preserving stale-PID checks. |
+| Owned-process cleanup | `validation/ny-3d/scripts/debugger_process.py` receives `EPERM` from `killpg`, including after child completion. Obtain a focused Darwin probe before changing ownership or cleanup guarantees. |
+| Concurrent SDK publication | The reader in `tests/publish_sdk_concurrency.py` observed `EINVAL` through a concurrently replaced SDK symlink. Underlying cause remains unresolved. |
+| Native linker arguments | Darwin arm64 linking succeeded but warned that `-no_pie` is deprecated/ignored; strict stderr acceptance stopped before execution. Review the architecture-specific linker policy. |
+
+These follow-ups are separate from the established Mach-O context, ARM assembly,
+UI provider, installed SDK and distribution gaps in the original audit.
+
+The Intel/LLVM-ON job completed with the same two compiler-error classes and
+the same 567-case counts. It used macOS 15.7.9, image `20260824.0482.1` and
+Xcode 16.4. Architecture and image identities remain separately recorded.
+
+The Apple numeric-parser compatibility path uses `strtod_l` with an immutable
+private C locale after the existing strict decimal grammar checks. A scoped
+floating-point environment enforces nearest-even conversion and restores caller
+rounding, exception flags and errno. Finite nonzero subnormals remain accepted
+even when the C library sets `ERANGE`; overflow and underflow to zero are still
+rejected. Exact zero retains its original exponent-independent fast path.
+Linux and Windows continue using `std::from_chars`.
+
+Focused host probes passed 190 controls on the existing Linux path and 282 on a
+private copy of the Apple algorithm adapted only for the host locale header and
+branch selection. Those checks cover exact bits at halfway and range boundaries,
+subnormals, signed zero, four rounding modes and caller-state restoration. They
+are algorithm controls, not Apple API qualification. The next native jobs must
+exercise the actual Apple branch, including the decimal-comma thread-locale
+control in the parser suite.
+
+Final probe evidence is in
+`/home/nathan/vm/nil-win11/artifacts/macos-bringup-20261104/numeric-fallback-probe-v2/report.json`,
+including exact source hashes and strict C++17 build commands. API contracts
+were checked against Apple's [`strtod_l`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/strtod_l.3.html)
+and [`newlocale`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/newlocale.3.html)
+documentation. The scope includes preserving output and caller state on rejected
+conversions as well as successful ones.
+
+All four first-run jobs completed and retained artifacts. Both LLVM-OFF jobs
+reported 563 registrations/observations: 32 passed, 483 failed and 48 skipped,
+with the same two build-error classes as LLVM ON. All four source identities
+remained unchanged. `first-run-summary.json` records the original inventories'
+hashes; no failed initial result has been overwritten or relabeled. The immediate
+source and collector fixes passed independent review before the next dispatch.

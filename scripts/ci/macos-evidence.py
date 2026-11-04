@@ -31,7 +31,8 @@ def summarize(registration: dict | None, suite: ET.Element | None) -> dict:
     names = [test["name"] for test in registration["tests"]] if registration else []
     cases = []
     for case in suite.iter("testcase") if suite is not None else []:
-        if case.find("failure") is not None or case.find("error") is not None:
+        if (case.get("status") == "fail" or case.find("failure") is not None
+                or case.find("error") is not None):
             result = "failed"
         elif case.find("skipped") is not None:
             result = "skipped"
@@ -57,7 +58,7 @@ def summarize(registration: dict | None, suite: ET.Element | None) -> dict:
             "unexpected": sorted(set(observed) - set(names)), "duplicates": duplicate_names,
             "registration_duplicates": duplicate_registration,
             "unknown_statuses": [{"name": case["name"], "status": case["status"]}
-                                 for case in cases if case["status"] not in ("run", "notrun")],
+                                 for case in cases if case["status"] not in ("run", "fail", "notrun")],
             "cases": cases}
 
 
