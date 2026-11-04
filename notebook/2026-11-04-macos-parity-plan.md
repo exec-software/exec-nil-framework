@@ -2,17 +2,17 @@
 
 ## Status
 
-Observed source audit at `3848e9c`; implementation and macOS execution are pending.
-The user wants Windows brought into a good state and pushed before macOS joins
-Linux as a fully tested development platform. They do not own a Mac and are
-interested in a macOS VM experiment. This entry records a starting plan, not a
-macOS support or release claim.
+Initial source audit was at `3848e9c`. Same-source Windows/Linux development
+SDK closeout is now recorded at `60e6bb9`; the first Intel and Apple Silicon
+macOS workflow is prepared, with native execution pending. The user wants both
+macOS architectures built on GitHub after Windows closeout. This entry tracks
+bring-up evidence and remaining work, not a macOS support or release claim.
 
 The Windows SDK at `5630388` has accepted full-suite, installed-consumer, GTK and
 VS Code evidence, recorded in [the Windows notebook](2026-11-02-windows-port.md).
-Its documentation checkpoint `3848e9c` is pushed. The latest installed Linux SDK
-acceptance still belongs to `d5e8758`; newer Linux source tests do not replace a
-same-revision installed SDK comparison.
+The matching Linux SDK at `5630388` now has full-suite and installed-consumer
+acceptance, plus fresh paired debugger, Unicode, ordinary-I/O and same-process
+checkpoint checks. Earlier `d5e8758` evidence remains historical.
 
 ## Question
 
@@ -71,7 +71,8 @@ guest version, checking host prerequisites and reviewing the proposed VM setup
 before installation. Successful x86 VM tests would establish only that guest's
 behavior; native Apple Silicon and desktop-provider acceptance remain separate.
 
-No macOS VM, cloud host or new CI workflow was provisioned by this audit.
+No macOS VM or persistent cloud host was provisioned. The initial audit did not
+create CI jobs; the subsequent manual workflow is described below.
 
 ## Decision and follow-up
 
@@ -101,3 +102,59 @@ No macOS VM, cloud host or new CI workflow was provisioned by this audit.
 The immediate implementation task after Windows closeout is the first bounded
 macOS build matrix and retained failure inventory. Buying hardware is not a
 prerequisite for that step.
+
+## Windows closeout and macOS build workflow
+
+The same-source Windows/Linux SDK and installed-contract comparison is now
+recorded in [the Windows notebook](2026-11-02-windows-port.md). The refreshed
+Linux SDK at `5630388` passed all 568 CTests without skips and 1,184 installed
+consumer executions. Windows passed 570 tests with its service-display skip
+supplemented by separate installed GTK acceptance. Both hosts passed fresh
+installed debugger, Unicode, ordinary-I/O and same-process checkpoint gates.
+Checkpoint `60e6bb9` records this evidence. The final audit also identified a
+small experimental Windows `nilagent` title-filter discrepancy for focused repair.
+
+The new [macOS bring-up workflow](../.github/workflows/macos-bringup.yml) is
+manually dispatched. It contains four native jobs: `macos-15-intel` / x86_64 and
+`macos-15` / arm64, each with LLVM ON and OFF. Jobs run at most two at a time,
+build all framework tools, retain the complete registered CTest inventory even
+after a partial build, and preserve raw diagnostics, JUnit, image/toolchain/source
+identities and build products. The binary archive retains executable modes.
+Failures remain failures; this workflow does not publish or qualify an SDK.
+
+Both selected runner images document preinstalled LLVM 18.1.8, CMake, Ninja and
+Python. The job checks the actual architecture and LLVM major version, records
+the image and Xcode versions, and uses Apple SDK SQLite headers. A coherent
+existing PostgreSQL 16 distribution is discovered from its own `pg_config`, or
+the provider is explicitly unavailable and its tests retain their actual results.
+No Homebrew upgrade or source dependency build is started: current formula
+metadata lacks Intel macOS bottles for several relevant dependencies. GTK's
+missing macOS backend and any missing documentation tool are recorded explicitly.
+The primary image and formula references are
+[runner images](https://github.com/actions/runner-images/tree/main/images/macos)
+and Homebrew metadata for [LLVM 18](https://formulae.brew.sh/api/formula/llvm@18.json),
+[PostgreSQL 16](https://formulae.brew.sh/api/formula/postgresql@16.json) and
+[SQLite](https://formulae.brew.sh/api/formula/sqlite.json).
+
+The [evidence collector](../scripts/ci/macos-evidence.py) distinguishes failures,
+skips, missing and unexpected registrations, duplicate names and unknown status.
+Its nine [inventory controls](../scripts/ci/test_macos_evidence.py) run before
+configuration. A partial or absent JUnit file cannot establish successful
+coverage. Actual macOS execution results must be recorded after dispatch;
+host-side workflow checks alone establish no macOS execution support.
+
+## IA-32 target decision
+
+The user clarified that “x86 assembly” meant 32-bit IA-32, distinct from the
+existing x86_64 profile. The recommendation for this work is to preserve
+x86_64, bring up native arm64, and defer IA-32 until there is a concrete consumer
+and target environment. The current qualified SDK profile is x86_64; no
+qualified IA-32 SDK is being removed.
+
+IA-32 support would require an explicit native target, a compatible runtime and
+calling convention, pointer/layout and linker/object validation, SDK packaging,
+and route/ABI tests. Adding an assembly spelling alone would not establish that
+compatibility. Future IA-32 work should keep its target declaration explicit and
+provide focused regressions for the actual legacy consumer. Existing x86_64
+assembly must continue rejecting mismatched native targets; arm64 needs its own
+instruction and operand contract.

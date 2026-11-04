@@ -1,0 +1,189 @@
+name: macOS bring-up
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-bringup-${{ github.ref }}
+  cancel-in-progress: false
+
+# Source/build diagnosis only. No SDK qualification, installation, signing,
+# release upload, or claim of macOS feature parity is made by these jobs.
+jobs:
+  framework:
+    name: macOS ${{ matrix.host.arch }} / LLVM ${{ matrix.llvm }}
+    runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        llvm: ["ON", "OFF"]
+        host:
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: macos-15
+            arch: arm64
+    defaults:
+      run:
+        shell: bash
+    env:
+      NIL_CI_LLVM: ${{ matrix.llvm }}
+      NIL_CI_ARCH: ${{ matrix.host.arch }}
+      NIL_CI_RUNNER: ${{ matrix.host.runner }}
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      # Official v4 tag commits verified through GitHub's git/refs API.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Record source and runner identity
+        timeout-minutes: 3
+        run: |
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = "$NIL_CI_ARCH"
+          python3 -B scripts/ci/macos-evidence.py identity
+      - name: Check evidence collector contracts
+        timeout-minutes: 2
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/test_macos_evidence.py -v 2>&1 | tee build/macos-evidence/collector-controls.log
+      - name: Observe image toolchain and optional providers
+        timeout-minutes: 3
+        run: |
+          # Both selected images document CMake, Ninja, Python and LLVM 18.
+          # Current Homebrew formulae have no Intel macOS bottles for several
+          # database dependencies. Do not upgrade the image or build packages
+          # from source just to begin source/build diagnosis.
+          command -v cmake
+          command -v ninja
+          nil_macos_sdk="$(xcrun --sdk macosx --show-sdk-path)"
+          test -f "$nil_macos_sdk/usr/include/sqlite3.h"
+          {
+            echo "NIL_CI_SQLITE_INCLUDE=$nil_macos_sdk/usr/include"
+            echo "DYLD_FALLBACK_LIBRARY_PATH=/usr/local/lib:/usr/lib"
+          } >> "$GITHUB_ENV"
+          printf 'SQLite: Apple SDK headers at %s; system dylib provider\n' "$nil_macos_sdk/usr/include" > build/macos-evidence/providers.txt
+          # Use one installed PostgreSQL distribution for headers, client
+          # library, binaries and shared data; never mix independent versions.
+          if nil_pg_prefix="$(brew --prefix postgresql@16 2>/dev/null)" &&
+             test -x "$nil_pg_prefix/bin/pg_config" &&
+             test -x "$nil_pg_prefix/bin/initdb"; then
+            nil_pg_include="$("$nil_pg_prefix/bin/pg_config" --includedir)"
+            nil_pg_library="$("$nil_pg_prefix/bin/pg_config" --libdir)"
+            nil_pg_share="$("$nil_pg_prefix/bin/pg_config" --sharedir)"
+            test -f "$nil_pg_include/libpq-fe.h"
+            test -f "$nil_pg_library/libpq.dylib"
+            test -f "$nil_pg_share/postgres.bki"
+            {
+              echo "NIL_TEST_POSTGRES_BIN=$nil_pg_prefix/bin"
+              echo "NIL_TEST_POSTGRES_SHARE=$nil_pg_share"
+              echo "NIL_CI_PQ_INCLUDE=$nil_pg_include"
+              echo "DYLD_FALLBACK_LIBRARY_PATH=$nil_pg_library:/usr/local/lib:/usr/lib"
+            } >> "$GITHUB_ENV"
+            "$nil_pg_prefix/bin/pg_config" --version --includedir --libdir --sharedir >> build/macos-evidence/providers.txt
+          else
+            # Explicitly disable an unqualified stray header installation.
+            # PostgreSQL tests remain registered and retain their skip/failure
+            # results; this is not PostgreSQL or macOS parity acceptance.
+            echo "NIL_CI_PQ_INCLUDE=OFF" >> "$GITHUB_ENV"
+            echo "PostgreSQL: coherent postgresql@16 distribution absent; provider unavailable in this image profile" >> build/macos-evidence/providers.txt
+          fi
+          echo "GTK: macOS backend not implemented; complete CTest inventory retains unsupported results" >> build/macos-evidence/providers.txt
+          if command -v pandoc > /dev/null; then
+            pandoc --version >> build/macos-evidence/providers.txt
+          else
+            echo "Pandoc: absent; documentation tests retain their actual failure/skip results" >> build/macos-evidence/providers.txt
+          fi
+          if [ "$NIL_CI_LLVM" = ON ]; then
+            nil_llvm_prefix="$(brew --prefix llvm@18)"
+            test -x "$nil_llvm_prefix/bin/llvm-config"
+            nil_llvm_version="$("$nil_llvm_prefix/bin/llvm-config" --version)"
+            printf '%s\n' "$nil_llvm_version" | tee build/macos-evidence/llvm-version.txt
+            test "${nil_llvm_version%%.*}" = 18
+            echo "LLVM_DIR=$nil_llvm_prefix/lib/cmake/llvm" >> "$GITHUB_ENV"
+          fi
+          {
+            brew list --versions
+            xcode-select -p
+            xcrun --sdk macosx --show-sdk-path
+            xcrun --sdk macosx --show-sdk-version
+            /usr/bin/clang++ --version
+            cmake --version
+            ninja --version
+            python3 --version
+          } > build/macos-evidence/toolchain.txt
+      - name: Configure native Release build
+        id: configure
+        timeout-minutes: 5
+        run: |
+          set -o pipefail
+          nil_cmake_args=()
+          if [ "$NIL_CI_LLVM" = ON ]; then
+            nil_cmake_args+=("-DLLVM_DIR=$LLVM_DIR")
+          fi
+          cmake -S . -B build/ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=/usr/bin/clang \
+            -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
+            -DCMAKE_OSX_ARCHITECTURES="$NIL_CI_ARCH" \
+            -DCMAKE_OSX_SYSROOT="$(xcrun --sdk macosx --show-sdk-path)" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTING=ON \
+            -DNIL_BUILD_EXPERIMENTAL_TOOLS=ON \
+            -DNIL_ENABLE_LLVM="$NIL_CI_LLVM" \
+            -DNILCOMPILER_SQLITE_INCLUDE_DIR="$NIL_CI_SQLITE_INCLUDE" \
+            -DNILCOMPILER_POSTGRESQL_INCLUDE_DIR="$NIL_CI_PQ_INCLUDE" \
+            "${nil_cmake_args[@]}" 2>&1 | tee build/macos-evidence/configure.log
+          ctest --test-dir build/ci --show-only=json-v1 > build/macos-evidence/registration.json
+      - name: Build all framework tools and tests
+        id: build
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          # Finish independent compilation targets to retain every available
+          # diagnostic; Ninja still exits nonzero on any failed target.
+          cmake --build build/ci --parallel 2 -- -k 0 2>&1 | tee build/macos-evidence/build.log
+      - name: Verify LLVM selection
+        if: steps.build.outcome == 'success'
+        timeout-minutes: 2
+        run: |
+          python3 -B - <<'PY'
+          import os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "scripts")
+          from sdk_qualification import native_backend_available
+          expected = os.environ["NIL_CI_LLVM"] == "ON"
+          actual = native_backend_available(Path("build/ci/bin/nilassembler").resolve())
+          assert actual == expected, ("native backend selection", expected, actual)
+          PY
+      - name: Run complete registered CTest inventory
+        # Even a partial build supplies useful NOT_RUN/failed test inventory.
+        # An earlier build failure continues to fail the job.
+        if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
+        timeout-minutes: 20
+        run: |
+          set -o pipefail
+          ctest --test-dir build/ci --output-on-failure --parallel 2 \
+            --no-tests=error --timeout 360 \
+            --test-output-size-passed 16384 --test-output-size-failed 65536 \
+            --output-junit ctest-results.xml 2>&1 | tee build/macos-evidence/ctest.log
+      - name: Preserve exact inventory and build products
+        if: always()
+        timeout-minutes: 5
+        run: python3 -B scripts/ci/macos-evidence.py collect
+      - name: Upload bring-up evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-bringup-${{ matrix.host.arch }}-llvm-${{ matrix.llvm }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: build/macos-evidence/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 1
