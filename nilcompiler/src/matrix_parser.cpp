@@ -2019,7 +2019,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_sleep() {
 
 // 'assembly for x86_64 is "..." [using a, b] [giving out]'
 //
-// The bounded profile is Ny's and unchanged: x86_64, register-only, i64
+// The bounded profiles are Ny's: x86_64/aarch64, register-only, i64
 // operands, at most eight inputs and one output. Interpreted routes reject the
 // INLINE_ASM opcode rather than emulating it, so a VM-only program cannot
 // execute this -- which is a route fact, not a Matrix limitation.
@@ -2028,7 +2028,8 @@ std::shared_ptr<ny::ast_stmt> parser::parse_assembly() {
   advance(); // 'assembly'
   if (!match_word("for"))
     error(peek(), "expected 'for' after 'assembly'",
-          "write 'assembly for x86_64 is \"...\" using v giving out'");
+          "write 'assembly for x86_64 is \"...\" using v giving out' "
+          "or use the aarch64 target");
   std::string target;
   if (peek().is_name()) target = advance().lexeme;
   else error(peek(), "expected an architecture name after 'for'");

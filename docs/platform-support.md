@@ -12,7 +12,7 @@ release boundary. A newer source checkout does not update an installed SDK.
 | Linux x86_64 | Reference host. The clean `5630388` SDK passed the full suite, installed consumer routes, shared runtime, debugger, Unicode/I/O, execution checkpoints and GTK checks. | The reviewed Ubuntu release toolchain is separate from this development SDK. New release binaries still require the release gates. |
 | Windows x86_64 | The same `5630388` source has paired Linux acceptance: interpreter/bundles, LLVM JIT/AOT, object/link routes, installed tooling, checkpoints, GTK and VS Code. | Development acceptance on the provisioned Windows VM; bare-host installation and Windows release qualification remain open. GTK and PostgreSQL require external runtimes. |
 | macOS 15 Intel x86_64 | At `e087964`, native builds with LLVM ON and OFF passed build/backend-selection gates. Compiler, textual/binary interpreter, Matrix, parser and checkpoint execution passed. LLVM ON also passed assembler/linker contracts, representative JIT/AOT routes and embedded Mach-O context, including dead-strip linking and execution. | The full inventory fails only its positive incremental-reuse contract. Installed SDK, debugger/editor desktop acceptance, providers and release qualification remain open. |
-| macOS 15 Apple Silicon arm64 | The same `e087964` build and execution baseline passed, including LLVM-ON native routes and embedded Mach-O context. | The macOS gaps above also apply here; the native inline-assembly profile is currently x86_64-only. |
+| macOS 15 Apple Silicon arm64 | The same `e087964` build and execution baseline passed, including LLVM-ON native routes and embedded Mach-O context. | The macOS gaps above also apply here. A bounded AArch64 inline-assembly profile has since been implemented; native ARM acceptance is pending. |
 
 LLVM-OFF builds exercise frontend/interpreter behavior and rejection of disabled
 native operations. Their successful tests do not establish native execution.
@@ -36,7 +36,9 @@ pass. Failures and skips retain their actual status:
 All four pass the filesystem, Unicode namespace, owned-process, parallel-process
 and SDK-publication contracts. The new compiler-identity checks pass while the
 positive cache-reuse test continues to fail on Darwin. Apple Silicon also fails
-the x86_64 native-assembly fixture; a real ARM assembly profile remains open.
+the x86_64 native-assembly fixture in that baseline. The subsequent bounded
+`aarch64` implementation passes 351 validator checks and Linux regression tests,
+including foreign-target rejection; its actual ARM execution is still pending.
 These source checks do not replace accepted SDK bytes or establish full parity.
 
 A private Windows build at `e087964` also passes four focused compiler-identity,
@@ -85,8 +87,9 @@ the complete admission rules.
   compiler loaded-library identity is also incomplete. Both VM and native builds
   now deliberately rebuild rather than reuse artifacts without complete identity;
   successful compilation does not establish incremental parity.
-- A bounded ARM inline-assembly instruction profile and native route checks are
-  not implemented. Intel x86_64 native assembly passes.
+- The bounded ARM inline-assembly profile and host-selected native route checks
+  are implemented but await native ARM acceptance. Intel x86_64 native assembly
+  passes. See the [assembly contract](advanced/inline-assembly.md) for both profiles.
 - SDK packaging needs Darwin admission in the consumer route gate, root install
   layout, documentation tooling, and staged dependency/relocation validation.
   The current workflow archives build products rather than an installed SDK.

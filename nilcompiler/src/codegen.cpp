@@ -1963,7 +1963,8 @@ public:
           assembly.output ? 1 : 0);
       if (!error.empty()) {
         cg_.reject_codegen_construct(s.line, error,
-            "use asm \"x86_64\", \"template\" (i64 inputs) -> local end asm");
+            "use asm \"x86_64\" or asm \"aarch64\", followed by "
+            "\"template\" (i64 inputs) -> local end asm");
         break;
       }
       if (assembly.output &&

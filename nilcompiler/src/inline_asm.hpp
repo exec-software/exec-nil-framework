@@ -1,6 +1,7 @@
 #ifndef NY_COMPILER_INLINE_ASM_HPP
 #define NY_COMPILER_INLINE_ASM_HPP
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -124,19 +125,98 @@ inline std::string instruction_error(std::string_view instruction,
   return {};
 }
 
+inline bool arm_register(std::string_view operand, std::size_t inputs) {
+  return operand.size() == 2 && operand[0] == '$' &&
+         operand[1] >= '0' && operand[1] <= '8' &&
+         static_cast<std::size_t>(operand[1] - '0') <= inputs;
+}
+
+inline bool arm_shift_immediate(std::string_view operand) {
+  if (operand.size() < 2 || operand[0] != '#')
+    return false;
+  operand.remove_prefix(1);
+  // Keep the spelling unambiguous and the range bounded without delegating
+  // expressions, signs, bases or truncation to the target assembler.
+  if (operand.size() > 2 || (operand.size() > 1 && operand[0] == '0'))
+    return false;
+  unsigned value = 0;
+  for (const char digit : operand) {
+    if (digit < '0' || digit > '9')
+      return false;
+    value = value * 10 + static_cast<unsigned>(digit - '0');
+  }
+  return value <= 63;
+}
+
+inline std::string arm_instruction_error(std::string_view instruction,
+                                         std::size_t inputs,
+                                         std::size_t outputs,
+                                         bool &output_defined) {
+  const auto split = instruction.find_first_of(" \t\r\f\v");
+  const auto opcode = instruction.substr(0, split);
+  const auto operands = split == std::string_view::npos
+                            ? std::string_view{}
+                            : trim(instruction.substr(split));
+  if (opcode == "nop")
+    return operands.empty() ? std::string{}
+                            : "inline assembly nop takes no operands";
+
+  const bool unary = opcode == "mov" || opcode == "rev" || opcode == "mvn" ||
+                     opcode == "neg";
+  const bool binary = opcode == "add" || opcode == "sub" || opcode == "and" ||
+                      opcode == "orr" || opcode == "eor";
+  const bool shift = opcode == "lsl" || opcode == "lsr" || opcode == "asr" ||
+                     opcode == "ror";
+  if (!unary && !binary && !shift)
+    return "inline assembly instruction is outside the bounded register-only "
+           "aarch64 profile (no directives, labels, control flow, or implicit registers)";
+  if (outputs != 1)
+    return "inline assembly register operations require an output";
+
+  const std::size_t count = unary ? 2 : 3;
+  std::array<std::string_view, 3> parts;
+  std::size_t start = 0;
+  for (std::size_t index = 0; index < count; ++index) {
+    const auto comma = operands.find(',', start);
+    if ((index + 1 < count) != (comma != std::string_view::npos))
+      return "inline assembly aarch64 instruction has the wrong operand count";
+    parts[index] = trim(operands.substr(start, comma == std::string_view::npos
+                                                ? std::string_view::npos
+                                                : comma - start));
+    if (comma != std::string_view::npos)
+      start = comma + 1;
+  }
+  if (parts[0] != "$0")
+    return "inline assembly destination must be the output $0; inputs are read-only";
+  for (std::size_t index = 1; index < count; ++index) {
+    if (shift && index == 2) {
+      if (!arm_shift_immediate(parts[index]))
+        return "inline assembly aarch64 shift/rotate immediate must be decimal #0..#63";
+      continue;
+    }
+    if (!arm_register(parts[index], inputs))
+      return "inline assembly aarch64 source must be a register operand placeholder; "
+             "explicit registers, memory, immediates, and expressions are unsupported";
+    if (parts[index] == "$0" && !output_defined)
+      return "inline assembly reads an uninitialized output $0";
+  }
+  output_defined = true;
+  return {};
+}
+
 } // namespace inline_asm_detail
 
-// The first native asm profile is deliberately narrow: integer registers, at
+// The native asm profiles are deliberately narrow: integer registers, at
 // most one early-clobber output, no implicit registers or control-flow edges.
 // Input registers are read-only. Only the enumerated straight-line transforms
-// are accepted; this is not an arbitrary x86 assembler. Validate at both the
+// are accepted; this is not an arbitrary assembler. Validate at both the
 // source and serialized-NIL boundaries before LLVM sees the template.
 inline std::string inline_asm_contract_error(const std::string &target,
                                              const std::string &code,
                                              std::size_t inputs,
                                              std::size_t outputs) {
-  if (target != "x86_64")
-    return "inline assembly requires the explicit target 'x86_64'";
+  if (target != "x86_64" && target != "aarch64")
+    return "inline assembly requires the explicit target 'x86_64' or 'aarch64'";
   if (code.empty() || code.size() > 65536 || code.find('\0') != std::string::npos)
     return "inline assembly template must contain 1..65536 non-NUL bytes";
   if (inputs > 8 || outputs > 1)
@@ -168,8 +248,11 @@ inline std::string inline_asm_contract_error(const std::string &target,
                                                : end - start));
     if (!instruction.empty()) {
       has_instruction = true;
-      const auto error = inline_asm_detail::instruction_error(
-          instruction, inputs, outputs, output_defined);
+      const auto error = target == "aarch64"
+                             ? inline_asm_detail::arm_instruction_error(
+                                   instruction, inputs, outputs, output_defined)
+                             : inline_asm_detail::instruction_error(
+                                   instruction, inputs, outputs, output_defined);
       if (!error.empty())
         return error;
     }

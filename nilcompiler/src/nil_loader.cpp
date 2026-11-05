@@ -415,7 +415,7 @@ void validate_instruction(Opcode opcode, const std::string &name,
   }
 
   if (opcode == Opcode::INLINE_ASM &&
-      (arguments[0] != "x86_64" || arguments[1].empty() ||
+      ((arguments[0] != "x86_64" && arguments[0] != "aarch64") || arguments[1].empty() ||
        !is_nonnegative_count(arguments[2], 8) ||
        (arguments[3] != "0" && arguments[3] != "1"))) {
     throw std::runtime_error("NIL INLINE_ASM has invalid target, template "

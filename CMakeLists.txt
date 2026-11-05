@@ -743,6 +743,16 @@ if(BUILD_TESTING)
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/analysis_dependencies.py"
                 --compiler $<TARGET_FILE:nilcompiler>)
         set_tests_properties(nilbuild.analysis-dependencies PROPERTIES LABELS "tools;analysis;project;rc" TIMEOUT 60)
+        string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" nil_inline_asm_processor)
+        if(nil_inline_asm_processor MATCHES "^(arm64|aarch64)$")
+            set(nil_inline_asm_target "aarch64")
+            set(nil_inline_asm_ny_source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/native-inline-assembly-aarch64.ny")
+            set(nil_inline_asm_matrix_source "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/routes/inline-assembly-called-aarch64.matrix")
+        else()
+            set(nil_inline_asm_target "x86_64")
+            set(nil_inline_asm_ny_source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/native-inline-assembly.ny")
+            set(nil_inline_asm_matrix_source "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/routes/inline-assembly-called.matrix")
+        endif()
         add_test(
             NAME ny.inline-assembly
             COMMAND "${Python3_EXECUTABLE}"
@@ -752,10 +762,12 @@ if(BUILD_TESTING)
                     --assembler $<TARGET_FILE:nilassembler>
                     --linker $<TARGET_FILE:nillinker>
                     --runtime $<TARGET_FILE:nilruntime>
-                    --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/native-inline-assembly.ny"
+                    --source "${nil_inline_asm_ny_source}"
+                    --matrix-source "${nil_inline_asm_matrix_source}"
+                    --target "${nil_inline_asm_target}"
                     --llvm "${NIL_ENABLE_LLVM}"
         )
-        set_tests_properties(ny.inline-assembly PROPERTIES LABELS "routes;native")
+        set_tests_properties(ny.inline-assembly PROPERTIES LABELS "routes;native" TIMEOUT 300)
         add_test(
             NAME ny.variable-scope
             COMMAND "${Python3_EXECUTABLE}"
@@ -1298,7 +1310,7 @@ if(BUILD_TESTING)
         # route, never emulate it; the native routes execute the same page.
         add_ny_route_test(
             matrix.routes.inline-assembly-interpreted
-            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/routes/inline-assembly-called.matrix"
+            --source "${nil_inline_asm_matrix_source}"
             --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/routes/empty.stdout"
             --expected-stderr "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/routes/inline-assembly-interpreted.stderr"
             --expected-exit 1
@@ -1306,7 +1318,7 @@ if(BUILD_TESTING)
         )
         add_ny_route_test(
             matrix.routes.inline-assembly-native
-            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/routes/inline-assembly-called.matrix"
+            --source "${nil_inline_asm_matrix_source}"
             --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/routes/inline-assembly-native.stdout"
             --expected-exit 0
             --routes llvm-jit,llvm-aot

@@ -983,3 +983,32 @@ and [public dyld declarations](https://github.com/apple-oss-distributions/dyld/b
 The public callback storage has process lifetime because those callbacks cannot
 be unregistered. SPI absence, inconsistent snapshots and inaccessible files
 remain explicit; no production dependency on those APIs is introduced here.
+
+
+## Bounded AArch64 assembly implementation
+
+Ny and Matrix now accept the explicit `aarch64` target through source, textual
+and binary NIL. The 14 listed instruction spellings operate on i64 registers,
+with at most eight read-only inputs and one early-clobber output. Shift/rotate
+counts are canonical `#0..#63`; ordinary i64 inputs supply other constants.
+Output reads require a previous initialization. LLVM checks the exact host
+architecture and uses target-specific clobbers. The NIL schema is unchanged.
+Interpreters retain and reject the opcode rather than silently omitting it.
+
+The validator passes 351 checks. LLVM 18 emits all 19 fixture templates as ELF
+and Mach-O objects, and both frontends round-trip the ARM source through text
+and binary NIL with interpreter rejection. Four focused Linux CTests pass,
+including eight native Ny/Matrix executions, Matrix interpreted/native routes,
+and foreign-target or malformed-input rejection with previous output preserved.
+An initial loader failure exposed an old x86-only metadata gate; that failure
+and the subsequent passing run are both retained. These results establish
+source/validation behavior and x86 regression coverage, not ARM execution.
+Native Apple Silicon execution and a Windows regression are the next gates.
+
+Implementation and LLVM constraints received independent review. Evidence is
+under `/home/nathan/vm/nil-win11/artifacts/macos-parity-20261105/aarch64-inline-assembly`;
+`handoff.json` is sealed as
+`c47864d77e7fc42d9f39a2839190a3adaa1888999ef7777cd43a27551967a8e4`.
+The test registration now selects the host's actual instruction profile and
+requires eight native executions when LLVM is enabled; no skip substitutes
+for a native route. Installed SDKs remain at the accepted `5630388` baseline.

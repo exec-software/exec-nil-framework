@@ -4484,7 +4484,10 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           return false;
         }
         const llvm::Triple target(impl_->module->getTargetTriple());
-        if (target.getArch() != llvm::Triple::x86_64) {
+        const bool arm = minstr.args[0] == "aarch64";
+        const auto required_arch = arm ? llvm::Triple::aarch64
+                                       : llvm::Triple::x86_64;
+        if (target.getArch() != required_arch) {
           std::cerr << "[NativeCodegen] INLINE_ASM target '"
                     << minstr.args[0] << "' does not match native target '"
                     << target.str() << "'\n";
@@ -4522,7 +4525,8 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         }
         if (!constraints.empty())
           constraints += ',';
-        constraints += "~{memory},~{dirflag},~{fpsr},~{flags}";
+        constraints += arm ? "~{memory},~{cc}"
+                           : "~{memory},~{dirflag},~{fpsr},~{flags}";
         auto *inline_assembly = llvm::InlineAsm::get(
             signature, *assembly, constraints, true, true,
             llvm::InlineAsm::AD_ATT);

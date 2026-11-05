@@ -1,0 +1,14 @@
+!!! Reached AArch64 assembly: native routes reverse the bytes of 1;
+!!! interpreted routes must reject the retained INLINE_ASM opcode.
+book tour.asm-called-aarch64
+
+swap-bytes receives word as number returns number begin paragraph
+    variable result as number is 0
+    assembly for aarch64 is "mov $0, $1; rev $0, $0" using word giving result
+    give result
+end paragraph
+
+main returns number begin paragraph
+    say swap-bytes with word being 1
+    give 0
+end paragraph
