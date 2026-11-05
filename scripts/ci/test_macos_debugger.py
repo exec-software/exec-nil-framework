@@ -144,7 +144,20 @@ class BindingTests(unittest.TestCase):
     def test_output_cannot_overlap_sdk_origin_or_sources(self):
         for output in (self.sdk/'output', self.origin.parent, gate.PROJECT/'output'):
             with self.subTest(output=output), self.assertRaises(ValueError): gate.paths(self.sdk, self.origin, output)
-        self.assertEqual(gate.paths(self.sdk, self.origin, self.root/'fresh'), (self.sdk, self.origin, self.root/'fresh'))
+        self.assertEqual(gate.paths(self.sdk, self.origin, self.root/'fresh'),
+                         (self.sdk.resolve(), self.origin.resolve(), (self.root/'fresh').resolve()))
+
+    def test_parent_alias_is_canonicalized_without_accepting_sdk_overlap(self):
+        actual = self.root / 'actual-parent'; actual.mkdir()
+        alias = self.root / 'parent-alias'; alias.symlink_to(actual, target_is_directory=True)
+        sdk = alias / 'sdk'; sdk.mkdir()
+        origin = alias / 'origin.json'; origin.write_text('{}')
+        output = alias / 'fresh'
+        self.assertNotEqual(sdk, sdk.resolve())
+        self.assertEqual(gate.paths(sdk, origin, output),
+                         (sdk.resolve(), origin.resolve(), output.resolve()))
+        with self.assertRaisesRegex(ValueError, 'outside SDK/origin'):
+            gate.paths(sdk, origin, sdk / 'output')
 
     def test_inventory_detects_bytes_modes_and_links(self):
         file = self.sdk/'payload'; file.write_bytes(b'before'); file.chmod(0o755)
