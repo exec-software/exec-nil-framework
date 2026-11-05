@@ -1151,3 +1151,60 @@ The workflow now accepts an explicit `both`, `x86_64` or `arm64` native host
 selection, defaulting to both, so an ARM-only retry can preserve the running
 Intel job. The selector's exact runner matrix and all shell bodies are checked.
 This correction changes documentation-tool admission, not language behavior.
+
+
+## Bounded cache-detail diagnostic
+
+A separate manual `macOS cache detail probes` workflow now collects cached
+install-name/UUID correspondence, bounded root/subcache metadata and selected
+segment-range observations, selected driver/linker loader observations, and
+128 MiB prefix hash timings. The original whole-cache probe is preserved.
+Twenty-nine malformed metadata/range/correspondence controls pass; strict C++
+syntax was checked with Linux declaration stubs, which does not prove native
+Darwin availability or execution. Independent review covers the primary Apple
+API declarations, process ownership, finite bounds and result interpretation.
+The local control report is sealed as
+`6f19e5849d4303921a5f44a3fcedd52fcbeeea57d076893ee3fa96ced12c671c`
+under `macos-parity-20261105/cache-identity-probe/detail-local-controls`.
+
+`OBSERVED` means diagnostic collection only. Both `loaded_backing_complete`
+and `identity_complete` remain false. Cached names/UUIDs can also appear in an
+overridden or copied image; matching them does not prove active cache backing.
+Nominal segment ranges leave file-size/zero-fill, slide/fixup and transitive
+loader metadata unresolved. Prefix hashes compare the current scalar SHA with
+CommonCrypto, scalar first and platform second, including I/O and warm-cache
+effects. They do not establish whole-file identity or a normalized benchmark.
+No production compiler/runtime closure or cache eligibility changes are made.
+
+## Remaining native acceptance work
+
+A read-only audit identifies the five existing LLVM-ON macOS skips precisely:
+PostgreSQL client and server acceptance, desktop UI, and the managed/owned
+lifetime stress tests. The last two require a proven enforced memory cap.
+Current XNU sources implement `RLIMIT_AS`, but the exec path's handling means
+a launcher-level limit round trip alone is insufficient. A native probe must
+prove actual post-exec allocation rejection and include a too-small-startup-cap
+control before admitting Darwin. RSS sampling is weaker for these calloc-heavy
+fixtures because reserved pages need not all be touched. Existing skips remain.
+
+Installed debugger acceptance also needs its complete relocated-SDK consumer
+with an explicit origin manifest and the same clean Apple environment. The
+source DAP tests alone do not replace it. PostgreSQL needs a separately recorded
+provider/runtime/server profile; a macOS display backend and isolated desktop
+fixture remain implementation work. Audit evidence is source-pinned at
+`macos-parity-20261105/native-lifetime-next-gaps-4181096`; `report.json` is sealed as
+`9ac11a74e9eeb36225876b5a79d95edb5b0135b4d4bd344ec96753794cec1553`.
+
+The memory-cap review uses Apple's macOS 15 XNU sources for
+[resource limits](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_resource.c),
+[VM mapping enforcement](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/vm/vm_map.c),
+and [exec limit application](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_exec.c).
+Those source observations are not native execution evidence.
+
+
+Full Linux source validation now passes at exact
+`4181096aef65e3ada5a7085005b10a06ca3d2469`: LLVM ON, LLVM OFF and the VS Code
+extension all succeed in
+[run 41957858527](https://github.com/exec-software/exec-nil-framework/actions/runs/41957858527).
+This includes the corrected exact rejection diagnostic. Both failed `8517ad0`
+job logs remain retained; their sole failed CTest was that stale golden.
