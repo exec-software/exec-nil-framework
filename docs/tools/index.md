@@ -83,7 +83,7 @@ depends on the selected backend.
 | `--bundle`, `--bundle=true` | Append NIL to `nilinterpreter`, found beside `nilcompiler` first and then on `PATH`. This is the default for the NIL path. |
 | `--emit-binary-nil` | Emit the binary form of NIL. The old `--emit-binary-mil` spelling remains accepted for compatibility. |
 | `--emit-library` | Emit a NIL library capsule (v2, or v4 when carrying classes). Requires `--emit-binary-nil --no-bundle`, cannot be combined with `--native`, and expects all explicit inputs to declare one logical module. |
-| `--embed-context` | Opt native file output into retaining annotated function context. Requires `--native`, not JIT. x86_64 ELF or PE/COFF. |
+| `--embed-context` | Opt native file output into retaining annotated declaration context. Requires `--native`, not JIT. x86_64 ELF/PE or thin x86_64/arm64 Mach-O; see the container profile and platform evidence below. |
 | `--debug-info` | Retain source paths and lexical variable maps in executable NIL for source debugging. Binary output uses v5. Not available with `--native` or `--emit-library`. |
 
 For a deterministic compiler/interpreter workflow, request a separate NIL file:
@@ -140,10 +140,11 @@ Legacy imports are explicit; `--to-nydata` is retired. See the
 array semantics and migration rules.
 
 `nilcompiler --inspect-context <artifact>` is a separate, read-only operation
-that prints context JSON from executable NIL or a native ELF file containing
-`.ny.context`. It never runs the artifact and cannot be mixed with compilation
-options. See [executable context](../advanced/executable-context.md) for the
-disclosure limits and standalone assembler/linker workflow.
+that prints context JSON from textual/binary NIL or an ELF, PE/COFF or supported
+Mach-O artifact containing embedded metadata. It never runs the artifact and
+cannot be mixed with compilation options. See
+[executable context](../advanced/executable-context.md) for container profiles,
+disclosure limits, platform evidence and the standalone assembler/linker workflow.
 
 The compiler does **not** currently implement the older documented flags
 `--emit-llvm`, `--emit-obj`, `--ast`, `--tokens`, `--target`, `--sysroot`, or

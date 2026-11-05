@@ -607,6 +607,16 @@ evidence root, SHA-256
 Darwin API/layout and actual process behavior still require the hosted run;
 host-side synthetic controls do not establish native success.
 
+The new synthetic Darwin tests also run on Windows, whose Python need not
+define `SIGKILL`. A test-only follow-up supplies Darwin's signal value within
+the simulated fixture and restores the host module afterward. Removing
+`SIGKILL` deliberately reproduced seven errors among fourteen synthetic tests;
+all fourteen passed after the correction. Private Windows copies then passed
+38 tests with two explicit platform-specific skips, with owned cleanup and
+nine input hashes verified. Guest checkout and SDK were unchanged. Reconciled
+evidence: `darwin-owned-process/windows-synthetic-followup/windows-reconciliation.json`,
+SHA-256 `ab2a726a1da5a913522e949fc386a2de8bfed0d0dc9384e184be9f1ccac18a99`.
+
 The standalone linker also now validates the complete Mach-O header, host CPU,
 pointer width and byte order before invoking its driver. Its existing native
 CLI test mutates a real object into five incompatible/truncated variants and
@@ -621,3 +631,38 @@ logic on Linux, not macOS. Evidence is in `macho-linker/` under the newer
 and [machine types](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/mach/machine.h).
 Independent review passed; Linux and Windows object-validation branches are
 unchanged, and native macOS verification remains pending.
+
+## Mach-O executable context implementation
+
+The context reader and LLVM emitter now support thin little-endian Mach-O64
+on x86_64 and arm64, for relocatable objects and linked executables. The
+`ny.context.v2` payload and its disclosure limits are unchanged. Mach-O stores
+it in `__DATA,__nyctx` as regular non-instruction data, retained through
+`llvm.used` and the section's no-dead-strip attribute. This is inert metadata;
+the surrounding linked segment is not claimed to be memory-read-only.
+
+Inspection bounds the header, command and section tables, segment/file ranges,
+relocations and known link-edit metadata ranges before decoding the context.
+It rejects duplicate context sections, metadata/section overlaps, relocatable
+context payloads, unsupported image kinds and encryption commands. Universal/fat,
+32-bit and swapped-endian formats remain outside this profile. Native magic is
+dispatched before textual NIL; unsupported binary inputs produce bounded
+diagnostics. Previously admitted UTF-8 annotation text, including non-NUL
+controls, remains accepted and has a regression control.
+
+Independent review identified and closed additional metadata-range checks and
+the text-control compatibility case before freezing the implementation. Final
+Linux validation passed all three focused CTests: 3,592 context assertions, 54
+CLI checks including four real Linux native executions, and the standalone
+linker host-object contract. LLVM 18 also cross-produced real Intel/arm64 Mach-O
+objects and `ld64.lld -dead_strip` executables; all four inspect to identical
+Unicode context JSON. This validates the containers and retained data, not
+Darwin execution. Actual macOS CLI coverage now includes host-linker dead-strip
+inspection and program execution for both NIL encodings.
+
+The frozen source/help/test evidence is
+`context-macho/final/validation.json` under the original macOS evidence root,
+SHA-256 `ae848f9ee8d1e2daaee815601dbeeb6c4d8a2a7d77134f5d35d431d10b1f16b9`.
+User-facing context, tool and platform docs describe the new implementation
+while keeping native hosted acceptance pending. Existing Linux/Windows SDK
+bytes and their earlier acceptance records are unchanged.

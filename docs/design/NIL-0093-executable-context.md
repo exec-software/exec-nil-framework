@@ -2,6 +2,7 @@
 
 - **Status:** Implemented within the documented inspection profile
 - **Amended:** 2026-11-02 — inspection profile extended to Windows PE/COFF
+- **Amended:** 2026-11-04 — thin Mach-O64 x86_64/arm64 implementation added; native hosted verification pending
 - **Scope:** Shared NIL artifacts produced by Ny and Matrix
 - **Recorded:** 2026-10-16
 
@@ -15,9 +16,11 @@ as instructions or authority.
 The current `ny.context.v2` manifest includes annotated functions and annotated
 struct, class, and enum declarations. Type identity is the emitted kind and
 name together. Textual and binary NIL preserve the same annotations. Native
-embedding is an explicit option, with inspection supported for the bounded
-x86_64 little-endian profile. That profile was Linux ELF64 when this was
-recorded; it now also covers Windows PE/COFF, as an object or a linked image.
+embedding is an explicit option. The bounded little-endian profile was Linux
+ELF64 on x86_64 when this was recorded. It now also covers Windows PE/COFF on
+x86_64 and thin Mach-O64 on x86_64/arm64, as an object or a linked executable.
+The Mach-O implementation is awaiting native hosted verification; it does not
+retroactively change the earlier platform acceptance records.
 Extending the container set does not change what is disclosed or the rule that
 inspection never executes the artifact.
 
@@ -25,7 +28,9 @@ The existing `ny.context.v2` schema and binary format markers retain their
 compatibility spellings, as does the `.ny.context` section name in ELF. PE/COFF
 uses `.nyctx`: a PE image keeps only the eight bytes of a section name that fit
 in the section header, so the longer spelling would not survive linking and
-could not be found again. Renaming this decision
+could not be found again. Mach-O uses `__DATA,__nyctx` with explicit retention
+under dead stripping; universal/fat images and libraries are outside the
+inspection profile. Renaming this decision
 does not change an artifact format or its reader contract.
 
 ## Boundaries

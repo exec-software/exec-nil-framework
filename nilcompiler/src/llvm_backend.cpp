@@ -1440,14 +1440,18 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
     const auto &layout = impl_->module->getDataLayout();
     // The manifest is read back by walking the artifact's own section table,
     // so the container format has to be one inspect_context_artifact knows:
-    // ELF64 or PE/COFF, 64-bit little-endian x86_64 either way.
+    // ELF64/PE x86_64 or thin Mach-O64 x86_64/arm64, all little-endian.
+    const bool macho = target.isOSDarwin() && target.isOSBinFormatMachO();
     const bool supported_container =
         (target.isOSLinux() && target.isOSBinFormatELF()) ||
-        (target.isOSWindows() && target.isOSBinFormatCOFF());
-    if (!supported_container || target.getArch() != llvm::Triple::x86_64 ||
+        (target.isOSWindows() && target.isOSBinFormatCOFF()) || macho;
+    const bool supported_arch = target.getArch() == llvm::Triple::x86_64 ||
+        (macho && target.getArch() == llvm::Triple::aarch64);
+    if (!supported_container || !supported_arch ||
         layout.getPointerSize() != 8 || !layout.isLittleEndian()) {
       std::cerr << "[NativeCodegen] --embed-context requires a 64-bit "
-                   "little-endian x86_64 Linux ELF or Windows PE/COFF target\n";
+                   "little-endian x86_64 Linux ELF/Windows PE/COFF or "
+                   "x86_64/arm64 macOS Mach-O target\n";
       return false;
     }
     try {
@@ -8951,10 +8955,12 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
     // longer names does not survive linking. ".ny.context" would arrive as
     // ".ny.cont", so COFF gets a name that fits as written and means the same
     // in the object and in the image.
-    manifest->setSection(
-        llvm::Triple(impl_->module->getTargetTriple()).isOSBinFormatCOFF()
-            ? ".nyctx"
-            : ".ny.context");
+    const llvm::Triple target(impl_->module->getTargetTriple());
+    // Mach-O has separate 16-byte segment and section names. Retain this
+    // inert record even when the native linker dead-strips unused code.
+    manifest->setSection(target.isOSBinFormatMachO()
+                             ? "__DATA,__nyctx,regular,no_dead_strip"
+                             : target.isOSBinFormatCOFF() ? ".nyctx" : ".ny.context");
     manifest->setAlignment(llvm::Align(1));
     llvm::appendToUsed(*impl_->module, {manifest});
   }

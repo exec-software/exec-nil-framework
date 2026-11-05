@@ -50,8 +50,10 @@ the complete admission rules.
   expose test failures. Path spelling and host lookup identity are different;
   see [platform behavior](platform-behavior.md#filesystem-lookup-identity).
 - Native incremental dependency discovery and reuse remain incomplete.
-- Executable context supports x86_64 ELF and PE/COFF; Mach-O embedding and
-  inspection are not implemented. Unsupported-format diagnostics also need work.
+- Executable context now has a thin Mach-O64 x86_64/arm64 implementation,
+  including bounded inspection and opt-in embedding. Its native verification
+  is pending; the recorded `c123849` baseline predates this addition. See the
+  [container contract](advanced/executable-context.md) for supported forms.
 - The GTK provider currently supports Linux and Windows. macOS UI/provider
   support and live desktop acceptance remain open.
 - Full debugger, editor, standard-library/provider and installed-package

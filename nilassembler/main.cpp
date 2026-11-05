@@ -51,7 +51,7 @@ void print_usage(std::ostream &stream) {
       << "Options:\n"
       << "  -o, --output <path>  Write the host relocatable object to <path>\n"
       << "  --unmanaged          Use manual native memory management\n"
-      << "  --embed-context      Retain explicit AI annotations in x86_64 ELF or PE/COFF objects\n"
+      << "  --embed-context      Retain AI annotations in x86_64 ELF/COFF or x86_64/arm64 Mach-O objects\n"
       << "  --version            Show the nilassembler version\n"
       << "  -h, --help           Show this help\n";
 }

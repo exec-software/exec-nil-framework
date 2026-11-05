@@ -178,6 +178,40 @@ Bytes elf(const Bytes &context, bool duplicate = false) {
   return bytes;
 }
 
+Bytes macho(const Bytes &context, std::uint32_t cpu, bool image, bool duplicate = false) {
+  const std::size_t count = duplicate ? 2 : 1;
+  const std::size_t commands = 72 + count * 80;
+  const std::size_t offset = 32 + commands;
+  Bytes bytes(offset + context.size(), 0);
+  put(bytes, 0, 0xfeedfacf, 4);
+  put(bytes, 4, cpu, 4);
+  put(bytes, 8, cpu == 0x01000007 ? 3 : 0, 4);
+  put(bytes, 12, image ? 2 : 1, 4);
+  put(bytes, 16, 1, 4);
+  put(bytes, 20, commands, 4);
+  put(bytes, 32, 0x19, 4); // LC_SEGMENT_64.
+  put(bytes, 36, commands, 4);
+  const std::string segment = "__DATA", section = "__nyctx";
+  if (image) std::copy(segment.begin(), segment.end(), bytes.begin() + 40);
+  put(bytes, 32 + 32, image ? bytes.size() : context.size(), 8);
+  put(bytes, 32 + 40, image ? 0 : offset, 8);
+  put(bytes, 32 + 48, image ? bytes.size() : context.size(), 8);
+  put(bytes, 32 + 56, image ? 3 : 7, 4);
+  put(bytes, 32 + 60, image ? 3 : 7, 4);
+  put(bytes, 32 + 64, count, 4);
+  for (std::size_t i = 0; i < count; ++i) {
+    const auto header = 32 + 72 + i * 80;
+    std::copy(section.begin(), section.end(), bytes.begin() + header);
+    std::copy(segment.begin(), segment.end(), bytes.begin() + header + 16);
+    put(bytes, header + 32, image ? offset : 0, 8);
+    put(bytes, header + 40, context.size(), 8);
+    put(bytes, header + 48, offset, 4);
+    put(bytes, header + 64, 0x10000000, 4); // S_REGULAR | S_ATTR_NO_DEAD_STRIP.
+  }
+  std::copy(context.begin(), context.end(), bytes.begin() + offset);
+  return bytes;
+}
+
 Bytes pe(const Bytes &context, bool image, bool duplicate = false) {
   const std::size_t signature = 0x100;
   const std::size_t coff = image ? signature + 4 : 0;
@@ -461,6 +495,171 @@ void elf_negatives() {
   rejects([&] { inspect(bad); }, "unterminated section name");
 }
 
+void macho_boundaries() {
+  const auto manifest = ny::encode_context_manifest(fixture());
+  const auto expected = ny::context_manifest_json(fixture());
+  const std::string controls = "module unit\n@ai_context(\"π 😀\b\f\x7f\")\n"
+      "function main() -> i32:\nPUSH_CONST 0\nRET\nend function\n";
+  const auto control_json = ny::inspect_context_artifact(std::vector<char>(controls.begin(), controls.end()));
+  check(control_json.find("π 😀") != std::string::npos &&
+        (control_json.find("\\b") != std::string::npos || control_json.find("\\u0008") != std::string::npos) &&
+        (control_json.find("\\f") != std::string::npos || control_json.find("\\u000c") != std::string::npos) &&
+        control_json.find('\x7f') != std::string::npos,
+        "UTF-8 NIL annotations retain non-NUL control characters");
+  for (const auto cpu : {0x01000007U, 0x0100000cU}) {
+    for (const bool image : {false, true}) {
+      const auto label = std::string(cpu == 0x01000007 ? "x86_64" : "arm64") +
+          (image ? " Mach-O executable" : " Mach-O object");
+      check(inspect(macho(manifest, cpu, image)) == expected, label + " context agrees");
+      const auto valid = macho(wire(), cpu, image);
+      check(inspect(valid) == ny::decode_context_manifest_json(wire()), label + " legacy wire");
+      for (std::size_t size = 0; size < valid.size(); ++size) {
+        const Bytes truncated(valid.begin(), valid.begin() + size);
+        rejects([&] { inspect(truncated); }, label + " truncated at " + std::to_string(size));
+      }
+      const auto mutate = [&](std::size_t offset, std::uint64_t value, unsigned width,
+                              const std::string &reason) {
+        auto bad = valid; put(bad, offset, value, width);
+        rejects([&] { inspect(bad); }, label + ": " + reason);
+      };
+      for (const auto magic : {0xfeedfaceU, 0xcefaedfeU, 0xcffaedfeU,
+                               0xcafebabeU, 0xbebafecaU, 0xcafebabfU, 0xbfbafecaU})
+        mutate(0, magic, 4, "reject 32-bit, swapped and universal containers");
+      mutate(4, 7, 4, "reject CPU without 64-bit ABI");
+      mutate(4, 0x01000012, 4, "reject other CPU");
+      mutate(12, 6, 4, "reject dylib kind");
+      mutate(28, 1, 4, "reserved header must be zero");
+      mutate(16, 0, 4, "missing commands");
+      mutate(16, 4097, 4, "bounded commands");
+      mutate(16, 2, 4, "command count disagrees with extent");
+      mutate(20, 1024 * 1024 + 1, 4, "bounded command bytes");
+      mutate(20, 151, 4, "command extends past table");
+      mutate(20, 160, 4, "unconsumed command bytes");
+      mutate(36, 0, 4, "zero command size");
+      mutate(36, 151, 4, "unaligned command size");
+      mutate(36, 64, 4, "short segment");
+      mutate(32 + 40, std::numeric_limits<std::uint64_t>::max(), 8, "segment offset overflow");
+      mutate(32 + 48, std::numeric_limits<std::uint64_t>::max(), 8, "segment size overflow");
+      mutate(32 + 48, 1, 8, "section exceeds segment");
+      mutate(32 + 64, 4097, 4, "bounded sections");
+      mutate(32 + 64, 2, 4, "section table exceeds command");
+      constexpr std::size_t section = 104;
+      mutate(section, 'x', 1, "missing context");
+      mutate(section + 16, 'x', 1, "wrong section segment");
+      mutate(40, 'x', 1, "wrong enclosing segment");
+      mutate(section + 40, 0, 8, "empty context");
+      mutate(section + 40, 1024 * 1024 + 1, 8, "bounded context size");
+      mutate(section + 48, 32, 4, "context overlaps load commands");
+      mutate(section + 48, valid.size(), 4, "context outside file");
+      mutate(section + 52, 32, 4, "bounded alignment");
+      mutate(section + 56, 184, 4, "context cannot claim relocation offset");
+      mutate(section + 60, 1, 4, "context cannot have relocations");
+      for (const auto flags : {1U, 0xcU, 0x12U, 0x80000000U, 0x400U, 0x200U})
+        mutate(section + 64, flags, 4, "context must be regular noninstruction data");
+      for (const auto reserved : {68U, 72U, 76U})
+        mutate(section + reserved, 1, 4, "context reserved fields must be zero");
+      auto regular = valid; put(regular, section + 64, 0, 4);
+      check(inspect(regular) == ny::decode_context_manifest_json(wire()), label + " regular linked section");
+      auto duplicate = macho(wire(), cpu, image, true);
+      rejects([&] { inspect(duplicate); }, label + " duplicate context");
+      duplicate[184] = 'x'; // A different file-backed section shares the payload.
+      rejects([&] { inspect(duplicate); }, label + " overlapping section");
+      put(duplicate, 184 + 64, 1, 4); // Zero-fill sections do not occupy file bytes.
+      check(inspect(duplicate) == ny::decode_context_manifest_json(wire()), label + " zero-fill has no file range");
+      put(duplicate, 184 + 56, 264, 4);
+      put(duplicate, 184 + 60, 1, 4);
+      rejects([&] { inspect(duplicate); }, label + " context overlaps other relocations");
+      put(duplicate, 184 + 56, 0xffffffffU, 4);
+      rejects([&] { inspect(duplicate); }, label + " relocation table outside artifact");
+      // Add a real-sized LC_SYMTAB whose symbol or string range aliases the record.
+      auto symbols = valid;
+      symbols.insert(symbols.begin() + 184, 24, 0);
+      put(symbols, 16, 2, 4); put(symbols, 20, 176, 4);
+      put(symbols, 32 + 40, image ? 0 : 208, 8);
+      put(symbols, 32 + 48, image ? symbols.size() : wire().size(), 8);
+      put(symbols, section + 48, 208, 4);
+      put(symbols, 184, 2, 4); put(symbols, 188, 24, 4);
+      check(inspect(symbols) == ny::decode_context_manifest_json(wire()), label + " empty symbol table");
+      put(symbols, 192, 208, 4); put(symbols, 196, 1, 4);
+      rejects([&] { inspect(symbols); }, label + " context overlaps symbols");
+      put(symbols, 196, 0, 4); put(symbols, 200, 208, 4); put(symbols, 204, 1, 4);
+      rejects([&] { inspect(symbols); }, label + " context overlaps strings");
+      put(symbols, 200, 0xffffffffU, 4);
+      rejects([&] { inspect(symbols); }, label + " string table outside artifact");
+      const auto with_command = [&](std::uint32_t type, std::size_t command_size) {
+        auto result = valid;
+        result.insert(result.begin() + 184, command_size, 0);
+        put(result, 16, 2, 4); put(result, 20, 152 + command_size, 4);
+        put(result, 32 + 40, image ? 0 : 184 + command_size, 8);
+        put(result, 32 + 48, image ? result.size() : wire().size(), 8);
+        put(result, section + 48, 184 + command_size, 4);
+        put(result, 184, type, 4); put(result, 188, command_size, 4);
+        return result;
+      };
+      for (const auto type : {0x1dU, 0x1eU, 0x26U, 0x29U, 0x2bU, 0x2eU,
+                              0x80000033U, 0x80000034U, 0x36U, 3U, 0x16U}) {
+        auto data = with_command(type, 16);
+        check(inspect(data) == ny::decode_context_manifest_json(wire()), label + " empty link-edit data");
+        put(data, 192, 200, 4); put(data, 196, 1, 4);
+        rejects([&] { inspect(data); }, label + " context overlaps link-edit data");
+        put(data, 192, 0xffffffffU, 4);
+        rejects([&] { inspect(data); }, label + " link-edit data outside artifact");
+        data = with_command(type, 24);
+        rejects([&] { inspect(data); }, label + " wrong link-edit command size");
+      }
+      auto note = with_command(0x31, 40);
+      check(inspect(note) == ny::decode_context_manifest_json(wire()), label + " empty note");
+      put(note, 208, 224, 8); put(note, 216, 1, 8);
+      rejects([&] { inspect(note); }, label + " context overlaps note");
+      put(note, 208, std::numeric_limits<std::uint64_t>::max(), 8);
+      rejects([&] { inspect(note); }, label + " note offset cannot overflow");
+      put(note, 208, 0, 8); put(note, 216, std::numeric_limits<std::uint64_t>::max(), 8);
+      rejects([&] { inspect(note); }, label + " note size cannot overflow");
+      note = with_command(0x31, 32);
+      rejects([&] { inspect(note); }, label + " wrong note command size");
+      for (const auto type : {0x21U, 0x2cU}) {
+        const auto encrypted = with_command(type, 24);
+        rejects([&] { inspect(encrypted); }, label + " encryption commands unsupported");
+      }
+      for (unsigned index = 0; index < 6; ++index) {
+        auto dynamic = with_command(0xb, 80);
+        check(inspect(dynamic) == ny::decode_context_manifest_json(wire()), label + " empty dynamic symbols");
+        put(dynamic, 184 + 32 + index * 8, 264, 4);
+        put(dynamic, 184 + 36 + index * 8, 1, 4);
+        rejects([&] { inspect(dynamic); }, label + " context overlaps dynamic symbol table");
+        put(dynamic, 184 + 36 + index * 8, 0xffffffffU, 4);
+        rejects([&] { inspect(dynamic); }, label + " dynamic symbol count cannot overflow");
+      }
+      for (const auto type : {0x22U, 0x80000022U}) {
+        for (unsigned index = 0; index < 5; ++index) {
+          auto dyld = with_command(type, 48);
+          check(inspect(dyld) == ny::decode_context_manifest_json(wire()), label + " empty dyld info");
+          put(dyld, 184 + 8 + index * 8, 232, 4);
+          put(dyld, 184 + 12 + index * 8, 1, 4);
+          rejects([&] { inspect(dyld); }, label + " context overlaps dyld info");
+          put(dyld, 184 + 8 + index * 8, 0xffffffffU, 4);
+          rejects([&] { inspect(dyld); }, label + " dyld info outside artifact");
+        }
+      }
+      auto trailing = wire(); trailing.push_back(0);
+      const auto bad_payload = macho(trailing, cpu, image);
+      rejects([&] { inspect(bad_payload); }, label + " exact manifest length required");
+    }
+  }
+  for (const auto &bytes : {Bytes{0xff, 0xfe, 0xfd}, Bytes{'x', 0, 'y'},
+                             Bytes{'!', '<', 'a', 'r', 'c', 'h', '>', '\n'}}) {
+    try {
+      (void)inspect(bytes);
+      check(false, "unknown binary rejected");
+    } catch (const std::runtime_error &error) {
+      const std::string diagnostic = error.what();
+      check(diagnostic.find("unrecognized binary artifact") != std::string::npos &&
+            std::all_of(diagnostic.begin(), diagnostic.end(), [](unsigned char c) { return c < 128; }),
+            "unknown binary diagnostic does not leak raw bytes");
+    }
+  }
+}
+
 void pe_boundaries() {
   const auto manifest = ny::encode_context_manifest(fixture());
   const auto expected = ny::context_manifest_json(fixture());
@@ -552,6 +751,7 @@ int main() {
     encode_negatives();
     elf_negatives();
     pe_boundaries();
+    macho_boundaries();
   } catch (const std::exception &error) {
     std::cerr << "Unexpected context manifest failure: " << error.what() << '\n';
     return 1;

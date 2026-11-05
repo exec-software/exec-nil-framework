@@ -117,7 +117,8 @@ library search flags or a frozen general-purpose Ny ABI.
 - Function-level `@ai_context` annotations are retained by the parser; debug
   and test code generation contains metadata-registration hooks.
 - [Executable context](executable-context.md) provides read-only JSON
-  inspection and opt-in native context embedding on x86_64, ELF or PE/COFF.
+  inspection and opt-in native context embedding in x86_64 ELF/PE and thin
+  x86_64/arm64 Mach-O. The new Mach-O profile awaits native hosted acceptance.
 - A richer context extractor exists in `nilcompiler/src`, but is not a
   command-line tool.
 - `nilinterpreter --ai` provides opt-in local control over Windows named pipes

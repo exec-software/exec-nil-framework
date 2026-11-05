@@ -509,6 +509,129 @@ std::string inspect_elf(const std::vector<char> &bytes) {
   if (!found) invalid("native artifact has no embedded context (embedding is opt-in)");
   return json(decode(context));
 }
+// Mach-O context uses one ordinary, relocation-free data section. Universal
+// containers and other Mach-O kinds deliberately remain outside this profile.
+std::string inspect_macho(const std::vector<char> &bytes) {
+  const auto integer = [&](std::uint64_t offset, unsigned width) {
+    if (!range(offset, width, bytes.size())) invalid("truncated Mach-O record");
+    std::uint64_t value = 0;
+    for (unsigned i = 0; i < width; ++i)
+      value |= std::uint64_t(static_cast<unsigned char>(bytes[offset + i])) << (i * 8);
+    return value;
+  };
+  const auto name = [&](std::uint64_t offset) {
+    if (!range(offset, 16, bytes.size())) invalid("truncated Mach-O name");
+    std::string value;
+    for (unsigned i = 0; i < 16 && bytes[offset + i] != '\0'; ++i)
+      value += bytes[offset + i];
+    return value;
+  };
+  if (bytes.size() < 32 || integer(0, 4) != 0xfeedfacf ||
+      (integer(4, 4) != 0x01000007 && integer(4, 4) != 0x0100000c))
+    invalid("native inspection requires thin Mach-O64 little-endian x86_64 or arm64");
+  const auto kind = integer(12, 4);
+  if ((kind != 1 && kind != 2) || integer(28, 4) != 0)
+    invalid("unsupported Mach-O artifact kind or reserved header");
+  const auto count = integer(16, 4), command_bytes = integer(20, 4);
+  if (count == 0 || count > 4096 || command_bytes > max_bytes ||
+      count > command_bytes / 8 || !range(32, command_bytes, bytes.size()))
+    invalid("invalid Mach-O load command table");
+  const auto headers_end = 32 + command_bytes;
+  struct extent { std::uint64_t offset, size; };
+  std::vector<extent> other_data;
+  std::uint64_t context_offset = 0, context_size = 0, sections = 0;
+  bool found = false;
+  const auto retain_range = [&](std::uint64_t offset, std::uint64_t size) {
+    if (!range(offset, size, bytes.size())) invalid("Mach-O data range exceeds artifact");
+    if (size != 0) other_data.push_back({offset, size});
+  };
+  auto command = std::uint64_t(32);
+  for (std::uint64_t i = 0; i < count; ++i) {
+    if (!range(command, 8, headers_end)) invalid("truncated Mach-O load command");
+    const auto type = integer(command, 4), size = integer(command + 4, 4);
+    if (size < 8 || size % 8 != 0 || !range(command, size, headers_end))
+      invalid("invalid Mach-O load command extent");
+    if (type == 0x19) { // LC_SEGMENT_64
+      if (size < 72) invalid("truncated Mach-O segment");
+      const auto file_offset = integer(command + 40, 8);
+      const auto file_size = integer(command + 48, 8);
+      const auto section_count = integer(command + 64, 4);
+      if (section_count > 4096 - sections || size != 72 + section_count * 80 ||
+          !range(file_offset, file_size, bytes.size()))
+        invalid("invalid Mach-O segment or section table");
+      sections += section_count;
+      for (std::uint64_t j = 0; j < section_count; ++j) {
+        const auto section = command + 72 + j * 80;
+        const auto offset = integer(section + 48, 4), length = integer(section + 40, 8);
+        const auto flags = integer(section + 64, 4), section_type = flags & 0xff;
+        const auto relocations = integer(section + 60, 4);
+        const bool zero_fill = section_type == 1 || section_type == 0xc || section_type == 0x12;
+        if (!zero_fill && length != 0 &&
+            (offset < headers_end || offset < file_offset || offset - file_offset > file_size ||
+             length > file_size - (offset - file_offset) || !range(offset, length, bytes.size())))
+          invalid("Mach-O section is outside its segment or artifact");
+        if (relocations != 0) retain_range(integer(section + 56, 4), relocations * 8);
+        if (name(section) != "__nyctx") {
+          if (!zero_fill) retain_range(offset, length);
+          continue;
+        }
+        if (found) invalid("duplicate native context section");
+        found = true;
+        // MH_OBJECT coalesces sections into an unnamed segment. The section
+        // still carries its intended final segment name, which must match.
+        const auto segment_name = name(command + 8);
+        if (name(section + 16) != "__DATA" ||
+            (segment_name != "__DATA" && !(kind == 1 && segment_name.empty())) ||
+            (flags & ~std::uint64_t(0x10000000)) != 0 || // S_REGULAR, optional NO_DEAD_STRIP
+            relocations != 0 || integer(section + 56, 4) != 0 ||
+            integer(section + 68, 4) != 0 || integer(section + 72, 4) != 0 ||
+            integer(section + 76, 4) != 0 || integer(section + 52, 4) > 31 ||
+            length == 0 || length > max_bytes || offset < headers_end ||
+            !range(offset, length, bytes.size()))
+          invalid("invalid native context section range or flags");
+        context_offset = offset;
+        context_size = length;
+      }
+    } else if (type == 2) { // LC_SYMTAB: nlist_64 records and the string table.
+      if (size != 24) invalid("invalid Mach-O symbol table command");
+      retain_range(integer(command + 8, 4), integer(command + 12, 4) * 16);
+      retain_range(integer(command + 16, 4), integer(command + 20, 4));
+    } else if (type == 3 || type == 0x16) { // LC_SYMSEG / LC_TWOLEVEL_HINTS.
+      if (size != 16) invalid("invalid Mach-O legacy table command");
+      retain_range(integer(command + 8, 4), integer(command + 12, 4) * (type == 3 ? 1 : 4));
+    } else if (type == 0x31) { // LC_NOTE has 64-bit offset/size, unlike link-edit data.
+      if (size != 40) invalid("invalid Mach-O note command");
+      retain_range(integer(command + 24, 8), integer(command + 32, 8));
+    } else if (type == 0x21 || type == 0x2c) {
+      invalid("Mach-O encryption commands are unsupported");
+    } else if (type == 0xb) { // LC_DYSYMTAB: its six file-offset/count pairs.
+      if (size != 80) invalid("invalid Mach-O dynamic symbol table command");
+      const unsigned widths[] = {8, 56, 4, 4, 8, 8};
+      for (unsigned j = 0; j < 6; ++j)
+        retain_range(integer(command + 32 + j * 8, 4),
+                     integer(command + 36 + j * 8, 4) * widths[j]);
+    } else if (type == 0x22 || type == 0x80000022) { // LC_DYLD_INFO[_ONLY].
+      if (size != 48) invalid("invalid Mach-O dyld info command");
+      for (unsigned j = 0; j < 5; ++j)
+        retain_range(integer(command + 8 + j * 8, 4), integer(command + 12 + j * 8, 4));
+    } else if (type == 0x1d || type == 0x1e || type == 0x26 || type == 0x29 ||
+               type == 0x2b || type == 0x2e || type == 0x80000033 ||
+               type == 0x80000034 || type == 0x36) {
+      // linkedit_data_command: signatures, split info, function starts,
+      // data-in-code, optimization hints, exports, chained fixups, atom info.
+      if (size != 16) invalid("invalid Mach-O link-edit data command");
+      retain_range(integer(command + 8, 4), integer(command + 12, 4));
+    }
+    command += size;
+  }
+  if (command != headers_end) invalid("Mach-O command count does not match its extent");
+  if (!found) invalid("native artifact has no embedded context (embedding is opt-in)");
+  for (const auto &data : other_data)
+    if (overlaps(context_offset, context_size, data.offset, data.size))
+      invalid("native context overlaps another Mach-O section or table");
+  return json(decode(std::vector<std::uint8_t>(bytes.begin() + context_offset,
+                                              bytes.begin() + context_offset + context_size)));
+}
 } // namespace
 
 std::vector<std::uint8_t> encode_context_manifest(const nil_module &module) {
@@ -526,6 +649,16 @@ std::string inspect_context_artifact(const std::vector<char> &bytes) {
   if (bytes.size() > 512ULL * 1024ULL * 1024ULL) invalid("artifact exceeds 512 MiB limit");
   if (bytes.size() >= 4 && bytes[0] == '\x7f' && bytes[1] == 'E' && bytes[2] == 'L' && bytes[3] == 'F')
     return inspect_elf(bytes);
+  if (bytes.size() >= 4) {
+    std::uint32_t magic = 0;
+    for (unsigned i = 0; i < 4; ++i)
+      magic |= std::uint32_t(static_cast<unsigned char>(bytes[i])) << (i * 8);
+    if (magic == 0xfeedfacf) return inspect_macho(bytes);
+    if (magic == 0xfeedface || magic == 0xcefaedfe || magic == 0xcffaedfe ||
+        magic == 0xcafebabe || magic == 0xbebafeca ||
+        magic == 0xcafebabf || magic == 0xbfbafeca)
+      invalid("native inspection requires thin Mach-O64 little-endian x86_64 or arm64");
+  }
   // "MZ" is a PE image; a bare COFF object has no magic of its own, so it is
   // recognised by its machine type sitting in the first two bytes. A NIL
   // artifact cannot be mistaken for either: the text form begins with
@@ -536,9 +669,15 @@ std::string inspect_context_artifact(const std::vector<char> &bytes) {
         static_cast<unsigned char>(bytes[1]) == 0x86)))
     return inspect_pe(bytes);
   if (bytes.size() > 256ULL * 1024ULL * 1024ULL) invalid("NIL exceeds 256 MiB limit");
-  std::istringstream input(std::string(bytes.begin(), bytes.end()), std::ios::in | std::ios::binary);
   const bool binary = bytes.size() >= 4 && bytes[0] == 'N' && bytes[1] == 'I' &&
       bytes[2] == 'L' && bytes[3] == '\0';
+  const std::string contents(bytes.begin(), bytes.end());
+  // Unknown native containers must not leak arbitrary bytes through the text
+  // parser's diagnostics. Real UTF-8 NIL, including annotations, remains text.
+  if (!binary && (!valid_utf8(contents) || contents.find('\0') != std::string::npos ||
+      contents.compare(0, 8, "!<arch>\n") == 0))
+    invalid("unrecognized binary artifact; expected NIL, ELF, PE/COFF or supported Mach-O");
+  std::istringstream input(contents, std::ios::in | std::ios::binary);
   auto module = binary ? parseBinaryNilModule(input) : parseTextNilModule(input);
   if (module->functions.empty() && module->structs.empty() && module->classes.empty() &&
       module->enums.empty())

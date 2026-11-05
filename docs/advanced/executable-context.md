@@ -17,18 +17,23 @@ pipeline, use `nilassembler --embed-context -o program.o program.nil`, then
 inspected. The compiler rejects `--embed-context` for NIL/bundled output or JIT,
 because those are not native file-output requests.
 
-The native profile is x86_64 little-endian, in either container: Linux ELF64
-or Windows PE/COFF, as an object or a linked executable. The section is named
-`.ny.context` in ELF and `.nyctx` in PE/COFF, because a PE image keeps only
-the eight bytes of a section name that fit in the section header. The
+The native container profiles are little-endian Linux ELF64 and Windows PE/COFF
+on x86_64, and thin macOS Mach-O64 on x86_64 or arm64. Objects and linked
+executables are supported. The section is named `.ny.context` in ELF and
+`.nyctx` in PE/COFF, because a PE image keeps only the eight bytes of a section
+name that fit in the section header. Mach-O uses `__DATA,__nyctx`, with retention
+through the linker's dead stripping. The
 inspector also accepts executable text and binary NIL without LLVM support. It
 does not execute libraries, resolve embedded source capsules, or interpret
 arbitrary native formats. Native files without the section report its
 absence.
-Mach-O embedding and inspection are not implemented. Successful macOS tool and
-native-route builds do not extend this container profile; unsupported Mach-O
-inspection also has an open diagnostic failure recorded in the
-[platform baseline](../platform-support.md#remaining-macos-work).
+The Mach-O implementation is newer than the recorded `c123849` platform baseline;
+native acceptance of this addition is pending the next hosted run. Universal/fat,
+32-bit and big-endian Mach-O, dynamic libraries, other image kinds and images
+with encryption commands are outside this profile. Unsupported binary formats receive a bounded diagnostic rather than
+being interpreted as textual NIL. See the
+[platform baseline](../platform-support.md#remaining-macos-work) for execution
+evidence and qualification boundaries.
 NIL carrying neither functions nor type declarations rejects; NIL bearing
 either can be inspected without a `main` entry point. Inspection checks
 metadata, not program runnability.
@@ -76,13 +81,18 @@ even when native embedding is off.
 
 ## Bounded format and lifetime
 
-The read-only native section carries versioned records, not code or a host
+The native metadata section carries versioned records, not code or a host
 pointer. Context data is limited to 1 MiB, 16 KiB per UTF-8 string, 4096 annotated
 functions, 4096 annotated type declarations, and 256 parameters/annotations
 per record. Malformed records,
 duplicate identities, unsupported versions, invalid ranges and trailing bytes
 reject. Native inspection uses a bounded regular-file snapshot, without invoking
 the artifact or a system binary-analysis command.
+
+Mach-O inspection checks the header, load commands, segment/section bounds,
+metadata table ranges and context overlap. The context section must be regular
+data without instructions or relocations; duplicate sections reject. It keeps
+the existing manifest schema and limits.
 
 Normal Ny assembly/linking retains the section. Deliberately removing metadata
 is permitted; inspection then reports absence. Combining multiple independent

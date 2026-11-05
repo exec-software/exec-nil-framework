@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import sys
@@ -176,6 +177,17 @@ def main() -> int:
         failure(run([tools["compiler"], "--inspect-context", executable_text]), "inspect does not execute")
         if marker.exists():
             raise AssertionError("inspecting an artifact executed it")
+        for index, payload in enumerate((b'\xcf\xfa\xed\xfe', b'\xfe\xed\xfa\xcf',
+                                         b'\xca\xfe\xba\xbe', b'\xca\xfe\xba\xbf',
+                                         b'\xff\xfe\xfd', b'!<arch>\n')):
+            unknown = root / f"native-binary-{index}"
+            unknown.write_bytes(payload)
+            # Strict UTF-8 subprocess decoding also proves that malformed or
+            # unsupported native bytes never reach text-parser diagnostics.
+            result = run([tools["compiler"], "--inspect-context", unknown])
+            failure(result, "bounded native-format rejection", diagnostic="context")
+            if result.stdout or not result.stderr.isascii():
+                raise AssertionError("binary inspection leaked bytes instead of a bounded diagnostic")
         for index, contents in enumerate(("", "# ordinary comment\n", "module empty\n")):
             nonexecutable = root / f"nonexecutable-{index}.nil"
             nonexecutable.write_text(contents, encoding="utf-8", newline='\n')
@@ -269,6 +281,19 @@ def main() -> int:
                 raise AssertionError("linker did not retain context exactly")
             success(run([linked_artifact]), "standalone context execution", EXPECTED)
             native_executions += 1
+            if sys.platform == "darwin":
+                # Exercise the actual Darwin linker's dead stripping, not
+                # only the default nillinker invocation's section retention.
+                driver = shutil.which("clang++")
+                if driver is None:
+                    raise AssertionError("Darwin context retention requires the host clang++ driver")
+                stripped = root / (artifact.stem + "-dead-strip")
+                success(run([driver, "-pthread", "-Wl,-dead_strip", "-o", stripped,
+                             obj, tools["runtime"]]), "Darwin dead-strip linking")
+                if inspect(stripped) != source_manifest:
+                    raise AssertionError("Darwin dead stripping removed or changed context")
+                success(run([stripped]), "dead-stripped context execution", EXPECTED)
+                native_executions += 1
             default_obj = root / (artifact.stem + "-default.o")
             success(run([tools["assembler"], "-o", default_obj, artifact]), "default assembly")
             failure(run([tools["compiler"], "--inspect-context", default_obj]), "assembler context defaults off", diagnostic="context")
