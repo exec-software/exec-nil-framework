@@ -164,8 +164,9 @@ The reviewed native release boundary is currently Linux. Windows has paired
 development acceptance; Intel and Apple Silicon macOS now have native build
 and selected VM/JIT/AOT execution evidence. Both macOS development SDKs
 also pass the full installed standard-library campaign and isolated PostgreSQL
-routes, plus installed debugger/checkpoint acceptance. Desktop UI and remaining source-suite
-gaps still prevent full macOS parity. See the
+routes, plus installed debugger/checkpoint acceptance. AppKit window/event
+prerequisites pass on both hosts, but GTK desktop acceptance, incremental reuse
+and native memory-limit tests still prevent full macOS parity. See the
 [platform support matrix](../platform-support.md) for the recorded scope.
 Windows compiler AOT and standalone linking now launch argument vectors through
 `CreateProcessW` and embed UTF-8 process manifests in generated executables.

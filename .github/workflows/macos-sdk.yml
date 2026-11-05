@@ -203,7 +203,9 @@ jobs:
       - name: Run full registered CTest inventory
         id: ctest
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
-        timeout-minutes: 20
+        # Intel's measured full run used 19m18s; a subsequent host was ~33%
+        # slower. Allow campaign headroom without changing per-test deadlines.
+        timeout-minutes: 35
         run: |
           set -o pipefail
           ctest --test-dir build/ci --output-on-failure --parallel 2 --no-tests=error --timeout 360 \

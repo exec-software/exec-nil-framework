@@ -1892,3 +1892,100 @@ loader accounting, hash bounds and reserved final checks. Local evidence SHA is
 `173f23f81130aec7faed8799fb22811c0ddaea1510d74d5b49b92328a8a1c6db` under
 `macos-parity-20261105/cache-backing-local-controls/report-frozen.json`.
 Actual paired native correspondence and full-file timings remain pending.
+
+
+## Native UI and cache prerequisite results, 2026-11-05
+
+The seventh [UI prerequisite run](https://github.com/exec-software/exec-nil-framework/actions/runs/41973963260)
+at `438980f` passes on both native architectures. Each host passes 23 Python
+controls, 29 native timestamp controls and 43 owned phases. Exactly one genuine
+application dispatch reaches the view during that dispatch, with exact window,
+key, type, modifiers and timestamp equality; there are no unmatched events.
+The whole-second queued/application/view timestamps are `0x1.8ep+7` on ARM and
+`0x1.78p+8` on Intel. Dependency operations, native close, zero-window teardown
+and source/tool/cleanup seals all pass. Independent replay of both 91-file
+namespaces passes. Reconciliation is `ui-probe-run-41973963260/reconciliation.json`,
+SHA `c508eb67985651447f251249fb2294eac04e7c6fd1b3cdf1dcf0ffbd6e14bc90`.
+This establishes own-process AppKit feasibility, not external input or GTK.
+
+The [cache backing run](https://github.com/exec-software/exec-nil-framework/actions/runs/41974313781)
+at `fe21319` reports OBSERVED on both hosts. Each accounts for 308 actual loaded
+headers: 307 in exact shared-cache mappings and one ordinary file, including the
+explicit loader. ARM parses 3,257 disk image records; Intel parses 3,258. Thirty
+controls and twelve owned phases pass per host, and independent reconciliation
+checks all 58 retained files and source/input/cache/cleanup seals.
+
+Two actual complete hash passes read 4,915,642,368 bytes each on ARM, taking
+15.057 and 14.0562 seconds. Intel reads 4,979,867,648 bytes each in 104.462 and
+15.3506 seconds. These are measured passes, not claims about cold or warm cache
+state. Intel's first pass already exceeds the current sixty-second incremental
+contract deadline. Production reuse remains disabled: adding multi-gigabyte
+hash inputs alone is not a practical fix, and native toolchain closure is still
+independently incomplete. Reconciliation is
+`cache-backing-run-41974313781/reconciliation.json`, SHA
+`03ee3bae1c9a7815c421242449582f8e98742c731de42dcc2c067365e80837e3`.
+The full Source validation run `41974286187` at the same source also passes.
+
+## Corrected SDK results and Intel timeout
+
+[SDK run 41970259529](https://github.com/exec-software/exec-nil-framework/actions/runs/41970259529)
+at `3414ce5` completes on Apple Silicon with 567 passes, one incremental-reuse
+failure and three skips among 571 registrations. The scoped-address correction
+now passes native PostgreSQL client validation. All 1,184 installed standard
+routes (888 retained executions plus 296 driver-checked object/link routes),
+twelve PostgreSQL routes, 146 debugger checks and live execution checkpoints
+pass. Independent raw reconciliation and peer review pass; source, payload,
+origin and cleanup seals are unchanged.
+
+The reports under `sdk-run-41970259529` have SHA-256 values:
+
+- ARM core: `7aceda85d6ce0d5900810ec0e53ba281d63a7e814ad77d7dfa759362b469f488`.
+- ARM standard consumers: `4621be7f2acc05397e7b0b6b97223c1b7adf05773ec56b822fc21a92f941edb2`.
+- ARM PostgreSQL: `020df5e84b7c164abd1c071606517e73be60a9e267c006268c83a5b07d3dbd2d`.
+- ARM debugger: `26ca853e4b53c33f1725770d9bc6903afd5a8d260915097bcd14c585382ca4c7`.
+
+The Intel workflow reaches its twenty-minute CTest step limit after 455 reported
+completions. Its raw log includes `nil.database-postgresql-client` passing in
+0.33 seconds, so the numeric-address correction has actual native Intel proof.
+CTest does not finalize its JUnit file; installation then reports that missing
+file and produces no candidate. Installed campaigns are skipped. This is a
+partial source run, not a complete source result or a packaging defect. The
+previous `2f5d695` Intel installed results remain the verified baseline. The
+partial evidence and timing comparison are retained before selecting a retry.
+
+The partial Intel reconciliation is `x86_64-partial-reconciliation.json`, SHA
+`1e9e8d2bed7692130eb3eaebe72eb81c10ad2da708d50a9a1c3a568b4ca67ab8`:
+307 files verified, with 451 passes, one known cache failure and three skips
+among the 455 completed tests. The interrupted pattern-operations and tuple
+tests had run 223.825 and 6.459 seconds; their prior successful times were
+195.75 and 21.61 seconds. No individual test reached its timeout. The preceding
+full Intel suite took 1,157.77 seconds, leaving only 42 seconds within the
+twenty-minute step. Comparable completed tests now took 1.327 times as long in
+aggregate (median ratio 1.379). This supports a slower host/run rather than a
+demonstrated stuck test; the interrupted cases still require completion.
+
+The workflow's overall CTest step now allows 35 minutes. Concurrency remains two,
+the default 360-second individual limit and all explicit test deadlines remain
+unchanged, and complete inventory and exact-payload gates still apply. The
+280-minute whole-job bound is unchanged. Independent review passes. An Intel-only
+private-provider retry will test this adjustment; the partial run remains failed.
+
+## Next private GTK and directed-input prerequisites
+
+Two separate bounded native diagnostics are being prepared. One privately
+builds pinned FriBidi, Pango, GdkPixbuf, Graphene, epoxy and GTK release archives
+using a pinned private Meson wheel. It exercises the actual Macos backend with
+GTK's GLib/AppKit integration, Cairo rendering, representative controls, real
+queued events and zero-window teardown. GTK 4.18.6 also directly requires PNG,
+TIFF and JPEG libraries even when GdkPixbuf enables only PNG; those existing
+runner dependencies must be explicitly checked and sealed. No global installs
+or accepted SDK replacements are involved.
+
+The second diagnostic targets only a verified owned child: process-directed
+keyboard input must cause real marked dispatch and text-change callbacks,
+followed by native accessibility close. Child lifetime and executable identity
+remain checked while its leader is unreaped. It does not post global input,
+change permissions or fabricate widget callbacks. These prerequisites must pass
+before the existing ten language-level desktop/interaction cases can establish
+macOS GTK acceptance. A future runtime port must enforce AppKit's main-thread
+requirement; DAP execution on a worker is a separate unqualified combination.

@@ -147,6 +147,9 @@ parity fixture uses PostgreSQL 16.15. Both macOS development SDKs at
 library root with a private PostgreSQL 16.15 provider. That local Unix-socket
 profile disables optional TLS/GSS and other integrations; it does not establish
 coverage of those deployments. A scoped-address validation failure found in its
-separate client test is fixed in newer source, with native verification pending;
+separate client test is fixed in newer source and passes native verification on
+both architectures at `3414ce5`. The full Intel campaign timed out later, so it
+has not produced a corrected installed candidate. All twelve
+installed PostgreSQL routes also pass again on Apple Silicon;
 see the [platform status](../platform-support.md). These are recorded test combinations, not
 a guarantee for every client/server distribution.
