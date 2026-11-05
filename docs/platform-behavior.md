@@ -6,14 +6,18 @@ behavior rather than the host's local convention — so a program's output, a
 recorded transcript, and a byte offset in a diagnostic all mean the same thing
 on Linux and on Windows.
 
-Linux is the development and reference host. Windows is held to it: a
-difference between the two is a bug unless it appears on this page.
+Linux is the development and reference host. Windows development acceptance
+compares against it. macOS builds and selected execution routes now pass, but
+its full parity inventory still has failures. This page states the intended
+portable behavior and explicit host differences; the
+[support matrix](platform-support.md) records what has actually been verified.
 
 ## Line endings
 
 Text output uses `\n`, on every host. `println`, the `io`
 surface, `--to-nildata`, the JSON reports, and a native program's own output
-are all byte-identical across platforms.
+must preserve the same bytes across supported execution routes. Platform
+acceptance is recorded separately from this contract.
 
 Protocols with specified terminators, such as LSP/DAP frame headers, write
 their required CRLF bytes explicitly. Binary stream mode preserves those bytes
@@ -84,8 +88,8 @@ presentation.
 in both text-NIL and binary-NIL interpretation. Its independent host oracle
 also checks ordinary whole-file and stream operations, Unicode environment
 names/values, and Unicode working-directory round trips. UTF-8 filenames
-include non-ASCII parents, supplementary characters, and distinct composed
-and decomposed spellings, with exact bytes and untouched sentinels checked
+include non-ASCII parents, supplementary characters, and composed/decomposed
+spellings, with exact bytes and untouched sentinels checked
 after execution. These checks do not qualify native lowering of the ordinary
 I/O surface or an arbitrary Windows host/code-page configuration.
 
@@ -109,6 +113,21 @@ durability limitations remain documented in the [standard library](standard-libr
 
 These are host behaviors the framework cannot reconcile. Everything else should
 match; report a difference that is not listed here.
+
+### Filesystem lookup identity
+
+NIL does not normalize Unicode path inputs. That does not require the host
+filesystem to treat every different UTF-8 spelling as a different file.
+APFS preserves the spelling stored on disk but treats canonically equivalent
+Unicode names as the same lookup identity, including on case-sensitive APFS.
+Consequently, NFC `café` and NFD `café` cannot be two independent entries in
+the same APFS directory. This behavior is documented in
+[Apple's APFS filename FAQ](https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/APFS_Guide/FAQ/FAQ.html).
+
+Use separate parent directories when independent normalization variants need
+different contents. Check stored names and file bytes without rewriting inputs
+to NFC or NFD. Case sensitivity likewise belongs to the mounted filesystem;
+neither a Unix host nor a slash-separated path guarantees case-sensitive lookup.
 
 ### Environment values
 

@@ -5,6 +5,10 @@ A design document is not evidence that its command, protocol, or package ships.
 Each record states its implementation status and distinguishes current source
 paths from future work.
 
+The [platform support matrix](../platform-support.md) records current development
+evidence. Historical design rationale remains in each record; an implemented
+feature does not by itself qualify every platform or a release package.
+
 ## Identifier conventions
 
 | Prefix | Scope |
@@ -29,7 +33,7 @@ not assigned architecture identifiers.
 | NIL-0003 | [Serialized NIL is a toolchain boundary](../../notebook/decisions/NIL-0003-serialized-nil-is-a-toolchain-boundary.md) | Implemented as a preview |
 | NIL-0004 | [Debugger state belongs to the VM](../../notebook/decisions/NIL-0004-debugger-state-belongs-to-the-vm.md) | Implemented as a preview |
 | NIL-0005 | [Generated non-void fallthrough is explicit](../../notebook/decisions/NIL-0005-generated-nonvoid-fallthrough-is-explicit.md) | Implemented and verified |
-| NIL-0006 | [Opt-in AI control for NIL programs](NIL-0006-ai-module.md) | Partial Windows prototype; interpreter introspection and Unix transport remain proposed |
+| NIL-0006 | [Opt-in AI control for NIL programs](NIL-0006-ai-module.md) | Implemented local Windows/Unix control, VM inspection and restricted same-process execution checkpoints; code hot reload remains unsupported |
 | NIL-0007 | [Integer literal widths and range validation](NIL-0007-integer-literal-widths.md) | Implemented |
 | NIL-0008 | [Shared project context and default analysis](NIL-0008-project-tooling.md) | Implemented initial local-project profile |
 | NIL-0009 | [Workspace source snapshots for analysis](NIL-0009-workspace-analysis.md) | Implemented initial source-overlay contract |
@@ -47,7 +51,7 @@ not assigned architecture identifiers.
 | NIL-0022 | [Incremental project builds and NILData configuration](NIL-0022-incremental-project-builds.md) | Implemented initial local project graph and target scheduling profile |
 | NIL-0023 | [Dynamic values and Boolean vocabulary](NIL-0023-dynamic-values-and-booleans.md) | Implemented |
 | NIL-0024 | [Tests alongside source](NIL-0024-colocated-testing.md) | Implemented initial unit/integration profile |
-| NIL-0025 | [Matrix desktop UI](NIL-0025-matrix-desktop-ui.md) | Initial Linux GTK 4 desktop profile |
+| NIL-0025 | [Matrix desktop UI](NIL-0025-matrix-desktop-ui.md) | Implemented Linux and Windows development GTK 4 profiles; macOS provider remains open |
 | NIL-0026 | [Evolving the language without breaking what is written](NIL-0026-language-evolution.md) | Editions implemented in the project manifest |
 | NIL-0093 | [Executable context is artifact self-description](NIL-0093-executable-context.md) | Implemented within the documented inspection profile |
 

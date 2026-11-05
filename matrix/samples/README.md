@@ -1,13 +1,16 @@
 # Matrix samples
 
-Proposed syntax, in reading order. None of this compiles yet: the Matrix front
-end does not exist. These files are the normative corpus the front end will be
-built against, and the place to argue about spelling before anything is
-implemented.
+These samples began as a syntax-design corpus, in reading order. The Matrix
+frontend is now implemented and shares the Ny AST, type checker, NIL and native
+backends. Its executable coverage is recorded in the
+[frontend plan](../docs/front-end-plan.md) and [conformance tests](../../tests/matrix/).
 
-Every construct here maps to something Ny already executes. Where a sample
-comment says a route rejects an operation, that is Ny's existing behaviour
-being inherited, not a Matrix limitation.
+This directory retains design examples and rationale, including earlier
+spellings; it is not a blanket claim that every sample is a runnable application.
+Use the [Matrix guide](../MATRIX-GUIDE.md) and [current examples](../../examples/README.md)
+for implemented syntax. The table and discussion below preserve the original
+design coverage; backend and platform limits follow the current
+[support matrix](../../docs/platform-support.md).
 
 | File | Covers | Ny reference |
 | --- | --- | --- |
@@ -63,7 +66,7 @@ proposal rather than left for the parser to hit:
 - **Reserved words collide with the best field names.** `field value as long`,
   `receives value as text` and `my value` all read perfectly and all collide
   with the `value` binding keyword. See
-  [`../README.md`](../README.md#reserved-words-are-the-real-cost-of-a-word-based-surface).
+  [`../README.md`](../README.md#reserved-words-and-why-the-cost-is-smaller-than-it-looks).
 
 ## The shape to notice
 

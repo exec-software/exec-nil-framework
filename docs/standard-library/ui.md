@@ -4,6 +4,8 @@
 events and explicit model bindings. Ny programs can import the same module.
 The VM and native compiler use the same checked GTK4 provider on Linux and
 Windows. Windows remains a development target, not a qualified release platform.
+The macOS tool build baseline does not include a macOS UI provider or desktop
+acceptance; see [platform support](../platform-support.md).
 Examples display the framework generation as **NIL²**, with **NIL^2** as the
 plain-text spelling. This presentation does not change numeric release or
 artifact identities in `VERSION`.

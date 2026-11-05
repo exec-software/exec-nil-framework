@@ -120,7 +120,9 @@ has installed-consumer evidence across interpreter, bundle, JIT, AOT, and
 standalone assembler/linker routes; see the
 [Windows port notebook](../notebook/2026-11-02-windows-port.md) for its exact
 source and tested surfaces. This is not whole-library or bare-host Windows
-certification. macOS has not received equivalent route evidence. Windows secure
+certification. Intel and Apple Silicon macOS now have native build and selected
+VM/JIT/AOT execution evidence, but full library and installed-SDK parity remains
+open; see the [platform support matrix](../docs/platform-support.md). Windows secure
 file operations still have weaker parent-directory/namespace guarantees than
 the POSIX descriptor-relative implementation. Windows AOT linking uses the
 bounded argument-vector process runner, not a shell command. The optional GTK

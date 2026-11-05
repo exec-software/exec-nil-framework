@@ -5,6 +5,11 @@ the SDK tools and editor extension. This document defines the bounded first
 release; it does not promote every design document to an implemented promise.
 No stable v1 tag or publication is implied by building a candidate.
 
+Development capability has advanced beyond the earlier reviewed RC binaries.
+The [platform support matrix](../platform-support.md) records paired
+Windows/Linux SDK acceptance and native macOS build/runtime baselines. Those
+results do not extend this document's pinned release qualification.
+
 ## Host and dependencies
 
 The reviewed binary release profile targets **Ubuntu 24.04 Linux x86_64**,
@@ -77,8 +82,11 @@ parallel map, and sleep. The manuals define their precise limits:
 Source `println` has exactly one argument on every route, including unchecked
 frontend mode. Use `println("")` for a blank line.
 
-The ten SDK commands are `nilcompiler`, `nilinterpreter`, `nilassembler`,
-`nillinker`, `nildebugger`, `nillsp`, `nilbuild`, `nilschema`, `nilagent`, and `aperture`.
+Current development SDKs package eleven commands: `nilcompiler`, `nilinterpreter`,
+`nilassembler`, `nillinker`, `nildebugger`, `nillsp`, `nilbuild`, `niltest`,
+`nilschema`, `nilagent`, and `aperture`. `niltest` supplies the implemented
+[co-located test profile](../tools/testing.md); adding a tool to development
+packages does not qualify new release binaries.
 `nilschema` and `nilagent` are experimental utilities, not v1 language guarantees.
 Aperture is a separately versioned analysis/debugging preview; packaging it does
 not extend the v1 language or debugger guarantees. The LSP has a deliberately
@@ -91,7 +99,7 @@ as aliases. Both frontends share the flat module-family layout. Runtime support
 is API-specific, as described in the [library status](../standard-library/index.md).
 `nil.std.reflection` provides declaration/annotation snapshots, and `nil.std.db`
 provides bounded SQLite/PostgreSQL text/NULL operations through shared VM/native
-providers. Semantic reference graphs, automatically hosted analyzer plugins,
+providers. Complete semantic reference graphs, automatically hosted analyzer plugins,
 typed/binary database values, network transports, cryptography, compression,
 and general stream handles remain outside these implemented slices.
 Quarantined modules are not promoted by their presence in a design or by a

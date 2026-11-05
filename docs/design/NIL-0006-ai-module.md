@@ -1,6 +1,6 @@
 # NIL-0006: opt-in AI control for NIL programs
 
-- **Status:** Shared local control and restricted same-process execution checkpoints (2026-11-03)
+- **Status:** Implemented shared local control and restricted same-process execution checkpoints; platform evidence updated 2026-11-04
 - **Components:** `nilinterpreter`, `nilagent`, VM execution engine
 - **Scope:** Development API, not a general process snapshot or code hot-reload system
 
@@ -19,7 +19,8 @@ Windows uses `\\\\.\\pipe\\ny_ai_<pid>`; Unix uses
 `/tmp/ny_ai_<pid>.sock`. Endpoint creation and access restrictions complete
 before the interpreter announces readiness. Windows uses a protected
 current-user DACL, rejects remote clients and requires the first pipe instance.
-Linux checks the connecting user's UID; its socket is owner-only. Existing
+Unix checks the connecting user's UID (`SO_PEERCRED` on Linux, `getpeereid` on
+macOS/BSD); the socket is owner-only. Existing
 endpoint paths are never unlinked to make startup succeed. Cleanup removes
 only the socket instance this server created.
 
@@ -134,3 +135,12 @@ repeatability, owner-thread callbacks and rejection boundaries.
 local transport: pause, nested-state capture, mutation, repeated exact restore
 and continuation. `nil.ai-transport` and `nilagent.ipc` separately test framing,
 capabilities, deadlines, privacy, malformed peers and cleanup.
+
+The paired Windows/Linux development SDK at `5630388` has installed checkpoint
+acceptance. The native Intel and Apple Silicon macOS baselines at `c123849`
+passed VM checkpoint and live interpreter checkpoint tests with LLVM both ON
+and OFF. This validates the interpreter profile, not native-process rewind or
+all surrounding tooling: the macOS suite still has failures. An earlier arm64
+IPC send timeout remains recorded rather than being declared fixed by one later
+pass. See the [platform support matrix](../platform-support.md) and
+[macOS evidence](../../notebook/2026-11-04-macos-parity-plan.md).

@@ -188,6 +188,24 @@ on the consumer host; the SDK does not redistribute it. Native compilation and
 linking still require MSVC/Windows SDK development tools. A successful run on a
 developer VM is not proof of installation on a bare Windows machine.
 
+## macOS development builds
+
+Native Intel and Apple Silicon builds are established with LLVM enabled and
+disabled. The recorded `c123849` baseline passed compiler/interpreter/Matrix and
+checkpoint execution on all four profiles, with representative JIT/AOT routes
+also passing when LLVM is enabled. The full CTest inventory still has failures;
+these are development builds, not qualified macOS SDK releases.
+
+The manually dispatched [macOS workflow](../../.github/workflows/macos-bringup.yml)
+contains the tested configure/build commands and records the runner, Apple SDK,
+LLVM and optional-provider inputs. It builds tools directly and retains the
+complete test inventory. Its tool archives have not undergone installed SDK
+extraction, relocation, provider, debugger/editor or release acceptance.
+Start with the [platform support matrix](../platform-support.md) and the
+[macOS notebook](../../notebook/2026-11-04-macos-parity-plan.md) for the exact
+source baselines and remaining work. Disabling LLVM does not make native routes
+available.
+
 ## Compile and run a program
 
 Create `hello.ny`:

@@ -12,6 +12,8 @@ command-line help, and executable tests as bugs.
 
 ## Start here
 
+- [Platform support](platform-support.md) — recorded Linux, Windows and macOS
+  development coverage, checkpoint support, and remaining qualification work.
 - [v1 release profile](release/v1-profile.md) — supported scope, installation,
   compatibility boundaries, and publication gates.
 - [Getting started](getting-started/index.md) — build the SDK, compile a minimal

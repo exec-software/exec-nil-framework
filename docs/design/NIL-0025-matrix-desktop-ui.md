@@ -1,6 +1,10 @@
 # NIL-0025: Matrix desktop UI
 
-- **Status:** Initial Linux desktop profile
+- **Status:** Implemented Linux and Windows development GTK 4 profiles; macOS provider remains open
+
+The original Linux design below is retained, followed by its Windows development
+addendum. Current platform evidence and release limits are summarized in
+[platform support](../platform-support.md).
 
 ## Purpose
 

@@ -26,7 +26,7 @@ compatibility, while newly emitted files and public APIs use NIL.
 
 ## Optional native backend
 
-An LLVM native path is under development:
+The optional LLVM backend implements JIT and native file-output routes:
 
 - `nilcompiler --native` uses LLVM when the SDK was configured with
   `NIL_ENABLE_LLVM=ON` and LLVM was found. `--jit` selects LLVM JIT execution.
@@ -53,6 +53,11 @@ x86_64 targeting, checked `i64` operands, preserved NIL instructions, and a
 bounded straight-line instruction set. It is native-only; interpreter routes
 reject it rather than omitting the code. General-purpose inline assembly is
 still outside this profile.
+
+The [platform support matrix](../platform-support.md) records Linux and Windows
+development acceptance and native Intel/Apple Silicon macOS build and execution
+evidence. Native backend availability is separate from complete route parity or
+installed SDK qualification.
 
 ## Runtime memory modes
 
@@ -115,8 +120,13 @@ library search flags or a frozen general-purpose Ny ABI.
   inspection and opt-in native context embedding on x86_64, ELF or PE/COFF.
 - A richer context extractor exists in `nilcompiler/src`, but is not a
   command-line tool.
-- Windows `nilinterpreter --ai` contains a partial, opt-in live-control server. Unix
-  transport and interpreter introspection are unfinished.
+- `nilinterpreter --ai` provides opt-in local control over Windows named pipes
+  and Unix sockets: pause/resume, instruction stepping and bounded inspection
+  of the actual VM state. `--ai-wait` starts paused before `main`.
+- Paused deterministic VM programs support reusable same-process execution
+  snapshots/restores, including frames, values and heap identities. External
+  effects, open resources, native/JIT rewind, persistent snapshots and code hot
+  reload remain outside the admitted checkpoint profile.
 - `nilaix` contains explicit `.nycrash` writers and application integration
   experiments.
 

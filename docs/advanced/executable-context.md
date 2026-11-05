@@ -25,6 +25,10 @@ inspector also accepts executable text and binary NIL without LLVM support. It
 does not execute libraries, resolve embedded source capsules, or interpret
 arbitrary native formats. Native files without the section report its
 absence.
+Mach-O embedding and inspection are not implemented. Successful macOS tool and
+native-route builds do not extend this container profile; unsupported Mach-O
+inspection also has an open diagnostic failure recorded in the
+[platform baseline](../platform-support.md#remaining-macos-work).
 NIL carrying neither functions nor type declarations rejects; NIL bearing
 either can be inspected without a `main` entry point. Inspection checks
 metadata, not program runnability.

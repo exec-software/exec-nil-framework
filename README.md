@@ -89,6 +89,10 @@ The framework includes:
 - **Program analysis and debugging.** Structured diagnostics, declaration
   metadata, and source debugging provide a common basis for editor support
   and analyzers written in Ny or Matrix.
+- **Opt-in runtime control.** Local AI/tool connections can pause, step and
+  inspect the interpreter. Restricted deterministic VM programs support reusable
+  same-process execution checkpoints. External-state rollback and code hot
+  reload remain unsupported; see the [control contract](docs/design/NIL-0006-ai-module.md).
 - **Project tooling.** `nilbuild` shares project settings and default analyzer
   rules with VS Code, and checks applications before VM or native builds.
   Live editor analysis includes unsaved source dependencies through a shared
@@ -240,10 +244,11 @@ records the reproduction.
 The current version is **1.0.0-rc.1**. Linux x86_64 is the reference development
 platform. The Windows x86_64 development SDK has
 [paired Linux acceptance and installed tooling coverage](notebook/2026-11-02-windows-port.md).
-Intel and Apple Silicon macOS have native
-[GitHub build/test bring-up jobs](.github/workflows/macos-bringup.yml);
-[remaining parity work](notebook/2026-11-04-macos-parity-plan.md) includes test
-portability, native context embedding, architecture-specific assembly and UI.
+Intel and Apple Silicon macOS have passing native build baselines with LLVM
+enabled and disabled, real interpreter/checkpoint execution, and representative
+LLVM JIT/AOT execution. Their full test inventories still expose parity gaps.
+The [platform support matrix](docs/platform-support.md) separates verified
+development behavior from remaining SDK, provider and release work.
 Windows and macOS release qualification remains pending. The
 [release profile](docs/release/v1-profile.md) defines supported configurations
 and release requirements. Known limitations and planned improvements are

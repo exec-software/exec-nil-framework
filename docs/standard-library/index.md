@@ -160,8 +160,11 @@ native named-struct-array lowering; do not infer enumeration support from the
 scalar environment operations. New source-tree verification is recorded in the
 Windows-port notebook; an older installed SDK does not acquire these additions.
 
-The supported native release boundary is currently Linux. Windows remains a
-development target; macOS has not received equivalent route verification.
+The reviewed native release boundary is currently Linux. Windows has paired
+development acceptance; Intel and Apple Silicon macOS now have native build
+and selected VM/JIT/AOT execution evidence. Full macOS standard-library and
+installed-SDK parity remains incomplete. See the
+[platform support matrix](../platform-support.md) for the recorded scope.
 Windows compiler AOT and standalone linking now launch argument vectors through
 `CreateProcessW` and embed UTF-8 process manifests in generated executables.
 Native Windows tests cover Unicode arguments and paths, shell metacharacters in

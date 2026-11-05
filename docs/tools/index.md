@@ -405,11 +405,11 @@ copies matches while preserving relative paths, and writes
 nilagent
 ```
 
-`nilagent` is an interactive application-control prototype. It currently reads
-JSON-shaped commands from stdin and writes responses to stdout; it does not
-open a network port or implement authentication. Window control, screenshots,
-hot reload, and interpreter-control connection paths vary by platform and
-several paths are stubs.
+`nilagent` is an experimental application-control utility. It reads JSON-shaped
+commands from stdin and writes responses to stdout; this command surface does
+not open a network port or implement authentication. Window control uses
+platform-specific backends. Screenshot methods still write placeholders, not
+captured images, and code hot reload remains unsupported.
 
 Local interpreter control now includes explicit `app.pause`, `app.resume`,
 `app.step`, `app.state.inspect`, `app.state.snapshot` and `app.state.restore`.
@@ -417,6 +417,11 @@ Snapshots/restores require a paused interpreter and the negotiated restricted
 same-process checkpoint profile; restore takes the returned string `checkpoint`
 ID. Code hot reload remains unsupported. See
 [NIL-0006](../design/NIL-0006-ai-module.md) for the exact boundary.
+
+These interpreter connections use the implemented Windows named-pipe or Unix
+socket client and negotiate the server's capabilities. They are distinct from
+the utility's incomplete desktop-automation features. See the
+[platform support matrix](../platform-support.md) for recorded acceptance.
 
 ## Components without shipped commands
 
