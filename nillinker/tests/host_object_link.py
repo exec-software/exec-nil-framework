@@ -9,6 +9,7 @@ import shutil
 import stat
 import struct
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -553,6 +554,37 @@ int main(int argc, char **argv) {
             "preserved output.exe" if os.name == "nt" else "preserved output"
         )
         preserved_bytes = b"failed links must preserve the caller's output\n"
+
+        if sys.platform == 'darwin':
+            original = main_object.read_bytes()
+            require(len(original) >= 32 and struct.unpack_from('<I', original)[0] == 0xfeedfacf,
+                    'native fixture must be a little-endian Mach-O64 object')
+            cpu = struct.unpack_from('<I', original, 4)[0]
+            require(cpu in (0x01000007, 0x0100000c), 'unexpected native Mach-O fixture CPU')
+            wrong_cpu = 0x0100000c if cpu == 0x01000007 else 0x01000007
+            cases = []
+            for label, offset, value, diagnostic in (
+                ('foreign-cpu', 4, wrong_cpu, 'architecture does not match this nillinker'),
+                ('wrong-width', 0, 0xfeedface, 'address class does not match this nillinker'),
+                ('wrong-endian', 0, 0xcffaedfe, 'byte order does not match this nillinker'),
+                ('executable', 12, 2, 'not a relocatable object'),
+            ):
+                changed = bytearray(original)
+                struct.pack_into('<I', changed, offset, value)
+                cases.append((label, changed, diagnostic))
+            cases.append(('truncated-header', original[:31], 'too short'))
+            for label, payload, diagnostic in cases:
+                candidate = root / ('macho-' + label + '.o')
+                candidate.write_bytes(payload)
+                # This binary's driver deliberately hangs. The exact header
+                # diagnostic proves rejection happened before driver launch.
+                reject_preserving_output(
+                    [str(timeout_linker), '--driver-timeout-ms=100', '--runtime',
+                     str(runtime), '-o', str(preserved_output), str(candidate)],
+                    root=root, output=preserved_output, sentinel=preserved_bytes,
+                    description='Mach-O ' + label + ' rejection', timeout=3.0,
+                    diagnostic_fragments=(diagnostic,),
+                )
 
         timed_out_link = reject_preserving_output(
             [

@@ -814,6 +814,36 @@ bool validate_host_object(const std::vector<char> &bytes, const fs::path &path,
         "input is not a Mach-O host object: " + display_path(path);
     return false;
   }
+  const bool is_64_bit = magic == 0xfeedfacfU || magic == 0xcffaedfeU;
+  if ((sizeof(void *) == 8) != is_64_bit) {
+    error_message = "Mach-O object address class does not match this nillinker: " +
+                    display_path(path);
+    return false;
+  }
+  if (bytes_read < (is_64_bit ? 32U : 28U)) {
+    error_message = "input is too short to be a complete Mach-O host object: " +
+                    display_path(path);
+    return false;
+  }
+  // The supported Darwin hosts are little-endian x86_64 and arm64. A header
+  // from another target must be rejected before starting the host driver.
+  if (!little_endian) {
+    error_message = "Mach-O object byte order does not match this nillinker: " +
+                    display_path(path);
+    return false;
+  }
+#if defined(__x86_64__)
+  constexpr std::uint32_t expected_cpu = 0x01000007U;
+#elif defined(__aarch64__) || defined(__arm64__)
+  constexpr std::uint32_t expected_cpu = 0x0100000cU;
+#else
+  constexpr std::uint32_t expected_cpu = 0;
+#endif
+  if (expected_cpu == 0 || read_u32(header.data() + 4, true) != expected_cpu) {
+    error_message = "Mach-O object architecture does not match this nillinker: " +
+                    display_path(path);
+    return false;
+  }
   if (read_u32(header.data() + 12, little_endian) != 1U) {
     error_message = "Mach-O input is not a relocatable object: " +
                     display_path(path);

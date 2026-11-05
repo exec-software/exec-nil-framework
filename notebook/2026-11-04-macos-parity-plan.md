@@ -522,3 +522,102 @@ tracking, add the arm64 assembly contract, and qualify providers and installed
 SDKs. UI, dylib relocation/deployment, editor desktop acceptance and release
 qualification remain explicit follow-up work. No Lich release or Anomalous SDK
 replacement was performed during this build milestone.
+
+## Documentation and filesystem portability follow-up
+
+The documentation checkpoint `f2f5244` introduces a shared
+[platform support matrix](../docs/platform-support.md) and updates sixteen
+Markdown files. Outdated Windows-only AI-control/unfinished Unix transport
+claims now describe implemented local control and the restricted same-process
+checkpoint profile. README, getting-started, STL, tooling, UI and design
+summaries separate actual macOS builds/execution from incomplete installed and
+release qualification. Historical Matrix samples no longer claim the frontend
+does not exist. Validation resolved 257 local links and built all 67 HTML pages;
+the report is `docs-refresh-20261104/validation.json` under the original macOS
+evidence root. The recorded acceptance source revisions remain explicit.
+
+Filesystem fixture checkpoint `99a8ee8` repairs several host assumptions while
+preserving the expected language behavior:
+
+- Fourteen compiler/editor/debugger/project fixtures now canonicalize only their
+  newly created temporary root. Exact output-identity assertions and intentional
+  alias cases are unchanged. Running those fourteen checks on Linux with a
+  symlinked `TMPDIR` reproduced fourteen failures before the change and fourteen
+  passes afterward (parallel 2, 11.95 seconds). This reproduces the `/var` versus
+  `/private/var` mismatch independently; native macOS verification still follows.
+- Unicode filename cases use distinct ASCII identifiers or parent directories
+  so NFC/NFD payloads cannot overwrite each other through APFS lookup identity.
+  Ordinary-I/O fixtures observe actual same-file aliases before seeding
+  wrong-spelling sentinels and record those observations. The oracle continues
+  comparing exact stored names, every file's bytes, protected sentinels and
+  unexpected entries. New negative controls deliberately create a normalized
+  output spelling and require failure; an independent host-identity control
+  proves an equivalent alias cannot overwrite its intended seed.
+- The C++ malformed-path fixture observes whether the filesystem accepts raw
+  invalid-UTF-8 names. Only host `EILSEQ`/`EINVAL` creation rejection is admitted;
+  unrelated host errors still fail. All sixteen runtime malformed-path cases
+  still require the exact UTF-8 validation diagnostic and unchanged namespace.
+  The test reports its actual raw-name sentinel count. Linux passed eight valid
+  cases, sixteen malformed cases and eight raw-name sentinels. This models
+  [APFS's documented valid-UTF-8 creation rule](https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/APFS_Guide/FAQ/FAQ.html)
+  without normalizing runtime path inputs or fabricating on-disk names.
+- The concurrent SDK-publication fixture also canonicalizes its private roots;
+  its exact generation comparison failed before and passed after under the
+  same Linux alias experiment. Its original Darwin reader `EINVAL` is not
+  claimed fixed: future failures now retain the operation's full traceback.
+  The isolated edition-run failure likewise now includes the process result
+  in its diagnostic, without changing the expected program behavior.
+
+All seven focused Linux Unicode/ordinary-I/O CTests passed, including interpreted
+and native consumers and the independent oracle controls. The updated C++
+raw-name test passed separately after its final adjustment, and the edition
+contract passed. Failure reproductions and passing reports are retained under
+`/home/nathan/vm/nil-win11/artifacts/macos-parity-20261105/` in `canonical-paths/`,
+`namespace/` and `publication/` (the evidence directory uses UTC date naming).
+These changes await native macOS execution; existing `c123849` counts remain the
+current published baseline until that run completes.
+
+## Darwin process harness and object identity follow-up
+
+The owned-process harness now handles Darwin's zombie-only process groups.
+[XNU's signal implementation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_sig.c#L1668-L1713)
+can return `EPERM` when no member remains signalable. The harness accepts that
+specific result only after its retained, unreaped child is known exited and two
+bounded, complete group observations establish no live members. The second
+observation must retain the leader and may only lose already-dead descendants;
+new members, live states, incomplete observations and other permission failures
+remain errors. The leader pins the group identity until verification finishes.
+
+The separate process-contract fixture now observes Darwin creation identities
+with `libproc`, and cleanup passes the recorded PID version to an identity-bound
+kernel signal operation. It never substitutes a fresh process version or falls
+back to a check followed by an unqualified PID signal. Native controls include
+rejecting an intentionally stale version for the fixture's own sleeper before
+valid cleanup. These private test-harness APIs are explicitly checked for
+availability and layout; the planned native evidence boundary is the current
+macOS 15 runners, not an inferred minimum OS version for the language SDK.
+Primary source: [the libproc declaration](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/libsyscall/wrappers/libproc/libproc.h#L132)
+and [the retained-process signal implementation](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/proc_info.c#L3561-L3625).
+
+Independent source review passed. Seven focused Linux CTests passed in 11.30
+seconds, with source hashes unchanged across execution. The report is
+`darwin-owned-process/linux-focused-results.json` under the original macOS
+evidence root, SHA-256
+`85033a03809924d9807c700ac261588bf5eeb3fe9fe46f1ccc1bc9f71b2a2d4e`.
+Darwin API/layout and actual process behavior still require the hosted run;
+host-side synthetic controls do not establish native success.
+
+The standalone linker also now validates the complete Mach-O header, host CPU,
+pointer width and byte order before invoking its driver. Its existing native
+CLI test mutates a real object into five incompatible/truncated variants and
+requires the exact rejection while preserving output and leaving no staging.
+The test's deliberately hanging driver ensures an unrelated driver error cannot
+substitute for pre-driver validation. An exact extracted validator reproduced
+the previous wrong-CPU acceptance and passed eight controls each with real
+cross-emitted x86_64 and arm64 Mach-O objects. This executes the selected header
+logic on Linux, not macOS. Evidence is in `macho-linker/` under the newer
+`macos-parity-20261105` root. CPU constants and header sizes match Apple's
+[Mach-O declarations](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/EXTERNAL_HEADERS/mach-o/loader.h)
+and [machine types](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/mach/machine.h).
+Independent review passed; Linux and Windows object-validation branches are
+unchanged, and native macOS verification remains pending.
