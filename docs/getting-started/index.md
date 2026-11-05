@@ -58,7 +58,10 @@ This prevents APFS from invalidating readers already resolving through a replace
 link. These records are not SDK entry points: their relative targets need not
 resolve from the retention folder. They are not automatically pruned. Remove
 retained links only when publication and every SDK reader have stopped. An
-unsupported retention primitive fails before changing the active SDK.
+unsupported retention primitive fails before changing the active SDK. Darwin
+publication creates its new symlink with mode `0777` even under a restrictive
+caller umask, restoring that umask before activation; it does not change the
+permissions of existing links or SDK directories.
 
 The framework rebrand changes the checkout folder to `exec-nil-framework`,
 with components such as `nilcompiler`, `nilstd`, `ny`, `matrix`, and `vscode`

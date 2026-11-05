@@ -572,16 +572,35 @@ def run_darwin_retention_controls(publisher) -> None:
         active = root / "sdk"
         active.symlink_to("old", target_is_directory=True)
         previous = publisher.symlink_identity(active)
+        previous_mode = active.lstat().st_mode
+        target_modes = {name: (root / name).stat().st_mode for name in ("old", "new")}
         retention = publisher.darwin_retention_directory(active)
+
+        def current_umask():
+            value = os.umask(0)
+            os.umask(value)
+            return value
+
         with patch.object(publisher.sys, "platform", "darwin"):
             mask = os.umask(0o777)
             try:
-                publisher.replace_link(active, "new")
+                real_replace = publisher.replace_directory_symlink
+
+                def check_before_activation(source, destination):
+                    assert current_umask() == 0o777, "umask not restored before activation"
+                    assert stat.S_IMODE(source.lstat().st_mode) == 0o777
+                    return real_replace(source, destination)
+
+                with patch.object(publisher, "replace_directory_symlink", side_effect=check_before_activation):
+                    publisher.replace_link(active, "new")
+                assert current_umask() == 0o777, "successful creation changed caller umask"
             finally:
                 os.umask(mask)
             assert stat.S_IMODE(retention.stat().st_mode) == 0o700
             anchors = list(retention.iterdir())
             assert len(anchors) == 1 and publisher.symlink_identity(anchors[0]) == previous
+            assert anchors[0].lstat().st_mode == previous_mode, "existing link permissions changed"
+            assert {name: (root / name).stat().st_mode for name in target_modes} == target_modes
             activated = publisher.symlink_identity(active)
             publisher.replace_link(active, "old")  # The rollback replacement path.
             assert {publisher.symlink_identity(path) for path in retention.iterdir()} == {previous, activated}
@@ -601,6 +620,25 @@ def run_darwin_retention_controls(publisher) -> None:
                     raise AssertionError("failed replacement succeeded")
             assert publisher.symlink_identity(active) == current
             assert len(list(retention.iterdir())) == before + 1
+            assert not list(root.glob(".sdk.link.*.tmp"))
+
+            # A failed symlink creation also restores the original mask and
+            # never reaches retention/activation or changes the current entry.
+            mask = os.umask(0o027)
+            try:
+                with patch.object(Path, "symlink_to", side_effect=OSError(errno.ENOSPC, "fixture creation failure")), \
+                        patch.object(publisher, "replace_directory_symlink") as activate:
+                    try:
+                        publisher.replace_link(active, "new")
+                    except OSError as error:
+                        assert error.errno == errno.ENOSPC
+                    else:
+                        raise AssertionError("failed symlink creation succeeded")
+                    activate.assert_not_called()
+                assert current_umask() == 0o027, "failed creation changed caller umask"
+            finally:
+                os.umask(mask)
+            assert publisher.symlink_identity(active) == current
             assert not list(root.glob(".sdk.link.*.tmp"))
 
         for kind in ("file", "symlink", "public-directory", "unsupported-link", "copied-link", "collision"):

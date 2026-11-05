@@ -251,7 +251,20 @@ def replace_link(destination: Path, target: str) -> None:
             )
         temporary_link.unlink()
     try:
-        temporary_link.symlink_to(target, target_is_directory=True)
+        if sys.platform == "darwin":
+            # Darwin applies umask to symlink permissions, including readlink.
+            # Only this newly created link gets the normal 0777 link mode;
+            # restore the caller's mask before retention or activation.
+            previous_umask = os.umask(0)
+            try:
+                temporary_link.symlink_to(target, target_is_directory=True)
+            finally:
+                os.umask(previous_umask)
+            created = temporary_link.lstat()
+            if not stat.S_ISLNK(created.st_mode) or stat.S_IMODE(created.st_mode) != 0o777:
+                raise OSError("new Darwin SDK symlink does not have mode 0777")
+        else:
+            temporary_link.symlink_to(target, target_is_directory=True)
         replace_directory_symlink(temporary_link, destination)
     finally:
         if temporary_link.is_symlink():

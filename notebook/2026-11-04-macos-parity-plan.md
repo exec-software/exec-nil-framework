@@ -775,3 +775,20 @@ POSIX link identity and failure preservation; native production acceptance is
 still pending. The short hosted workflow now runs the actual complete SDK
 publication contract separately from its diagnostic baselines. Unretained
 replacement and swap/unlink failures remain retained negative observations.
+
+
+### Restrictive-umask follow-up
+
+The native `6322773` probe confirms production inode retention through 5,000
+replacements on each architecture, while unretained negative baselines still
+produce reader `EINVAL`. The separate full publication contract then reached a
+new Darwin-specific defect: unlike Linux, Darwin applies a restrictive umask to
+new symlink permissions, and `readlink` on the activated mode-000 link returns
+`EACCES`. The failed run is retained as `41948858372`; it is not full acceptance.
+
+Creation of the publisher-owned temporary symlink now scopes umask zero and
+restores the caller mask before retention or activation. It verifies normal
+mode `0777` without modifying any existing link or SDK target. Controls require
+restoration before activation and after success or creation failure, with
+existing inode/target modes and failed-activation identity preserved. Root and
+independent reviews pass; native full-contract recheck remains pending.
