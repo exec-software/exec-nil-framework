@@ -287,7 +287,10 @@ Result Context::open(const std::string &driver, const std::string &address, std:
    unsigned char numeric[16];
    // inet_pton is the narrow/ASCII entry point on both hosts. In particular,
    // Windows InetPton's UNICODE alias must not reinterpret conninfo bytes.
-   bool numeric_host = !hostaddr.empty() && (inet_pton(AF_INET, hostaddr.c_str(), numeric) == 1 || inet_pton(AF_INET6, hostaddr.c_str(), numeric) == 1);
+   // Darwin also accepts IPv6 %scope suffixes and resolves interface names.
+   // Keep the API's plain numeric-address contract before invoking that parser.
+   bool numeric_host = !hostaddr.empty() && hostaddr.find('%') == std::string::npos &&
+       (inet_pton(AF_INET, hostaddr.c_str(), numeric) == 1 || inet_pton(AF_INET6, hostaddr.c_str(), numeric) == 1);
 #ifdef _WIN32
    // This provider's Windows contract is numeric TCP; do not assume that an
    // independently installed libpq supports POSIX Unix-domain socket paths.

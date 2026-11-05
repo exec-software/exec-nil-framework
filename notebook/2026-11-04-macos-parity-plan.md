@@ -1640,3 +1640,20 @@ only this application; no direct send-to-view shortcut or global input is used.
 Fifteen controls and independent review pass; correction evidence SHA is
 `5eae3ceb3cdc0519afe66b855c19c42b4851bcf431f37789d10a50d3a4fa7ff0`.
 Native re-execution remains pending.
+
+## PostgreSQL numeric-address consistency
+
+The private-provider SDK run at `2f5d695` exposed a real Darwin difference:
+`inet_pton(AF_INET6)` accepts `%scope` suffixes, including interface names.
+The PostgreSQL client contract requires plain numeric addresses, so the runtime
+now rejects `%` before either platform parser runs. The existing diagnostics,
+redaction and POSIX absolute Unix-socket support are unchanged. Four additional
+negative cases cover named/empty scopes and scopes on loopback addresses.
+
+The focused rebuilt Linux database runtime/client tests pass 2/2 with no skips.
+A retained reproduction using Apple's parser source passes fourteen controls,
+including five previously accepted scope forms rejected without parser calls.
+That reproduction is host execution of Apple source, not native Darwin proof.
+Linux evidence is `macos-parity-20261105/postgresql-numeric-host/linux-focused-report.json`,
+SHA `cf330267` (full digest in the retained report inventory). Independent review
+passes; actual Windows and both native Mac regression checks remain pending.

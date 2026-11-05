@@ -141,6 +141,7 @@ int main() {
 #endif
     for (const std::string address : {"host=never-resolve.invalid", "hostaddr=localhost", "hostaddr=127.1",
         "hostaddr=127.0.0.999", "hostaddr=127.0.0.1,127.0.0.2", "hostaddr=::gg", "hostaddr=fe80::1%3",
+        "hostaddr=fe80::1%lo0", "hostaddr=fe80::1%", "hostaddr=::1%3", "hostaddr=::1%no-such-interface",
         "hostaddr=[::1]", "hostaddr='127.0.0.1 '", "dbname=postgres"}) {
       auto result = context.open("postgresql", address + " password=private-redaction-marker", 100);
       require(!result && result.error == invalid_address, "invalid host must be rejected before connection without details");
