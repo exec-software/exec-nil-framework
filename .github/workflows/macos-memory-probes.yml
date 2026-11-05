@@ -2,12 +2,18 @@ name: macOS memory cap probes
 
 "on":
   workflow_dispatch:
+    inputs:
+      allocator_profile:
+        description: Explicit own-child allocator diagnostic
+        type: choice
+        options: [default, nano-off]
+        default: default
 
 permissions:
   contents: read
 
 concurrency:
-  group: macos-memory-probes-${{ github.ref }}
+  group: macos-memory-probes-${{ github.ref }}-${{ inputs.allocator_profile || 'default' }}
   cancel-in-progress: false
 
 # Observe fixed and explicitly separate diagnostic memory caps on native owned children.
@@ -32,6 +38,7 @@ jobs:
     env:
       NIL_CI_ARCH: ${{ matrix.host.arch }}
       NIL_CI_RUNNER: ${{ matrix.host.runner }}
+      NIL_CI_ALLOCATOR_PROFILE: ${{ inputs.allocator_profile || 'default' }}
       PYTHONDONTWRITEBYTECODE: "1"
       HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
@@ -56,6 +63,7 @@ jobs:
           identity = dict(revision=git('rev-parse', 'HEAD'), architecture=platform.machine(),
                           platform=platform.platform(), python=sys.version,
                           runner=os.environ['NIL_CI_RUNNER'], run_id=os.environ['GITHUB_RUN_ID'],
+                          allocator_profile=os.environ['NIL_CI_ALLOCATOR_PROFILE'],
                           attempt=os.environ['GITHUB_RUN_ATTEMPT'],
                           image_os=os.environ.get('ImageOS'), image_version=os.environ.get('ImageVersion'),
                           scope='Own-child memory cap observations only; no lifetime-test admission or SDK qualification')
@@ -74,6 +82,7 @@ jobs:
         run: |
           set -o pipefail
           python3 -B scripts/ci/macos-memory-probes.py --output build/macos-memory-evidence/probe \
+            --allocator-profile "$NIL_CI_ALLOCATOR_PROFILE" \
             2>&1 | tee build/macos-memory-evidence/probe.log
       - name: Seal raw observations
         if: always()
@@ -104,7 +113,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: macos-memory-probes-${{ matrix.host.arch }}-${{ github.sha }}-${{ github.run_attempt }}
+          name: macos-memory-probes-${{ inputs.allocator_profile || 'default' }}-${{ matrix.host.arch }}-${{ github.sha }}-${{ github.run_attempt }}
           path: build/macos-memory-evidence/
           if-no-files-found: error
           retention-days: 14

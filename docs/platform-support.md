@@ -101,6 +101,10 @@ the complete admission rules.
   exposed an install-time archive timestamp change and ARM assembly lowering
   errors; corrective native validation is in progress. The recorded baseline
   above still consists of build products rather than an accepted installed SDK.
+- The two native lifetime stress tests still lack a demonstrated Darwin memory
+  bound. Native diagnostics show that the fixed 96 MiB virtual-memory cap is
+  rejected at process setup; larger diagnostic profiles do not replace it.
+  Successful lifetime execution routes remain covered by the ordinary suite.
 - The GTK provider currently supports Linux and Windows. macOS UI/provider
   support and live desktop acceptance remain open.
 - Full debugger, editor, standard-library/provider and installed-package

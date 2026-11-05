@@ -1384,3 +1384,53 @@ LLVM ON, LLVM OFF and the VS Code extension all pass. The paired macOS SDK retry
 [41962386089](https://github.com/exec-software/exec-nil-framework/actions/runs/41962386089)
 targets `2e098f1` with the strict registration/catalog fix. Its installed-package
 outcomes remain pending.
+
+
+## Native memory observations and explicit allocator follow-up
+
+[Memory run 41963597498](https://github.com/exec-software/exec-nil-framework/actions/runs/41963597498)
+completed at `07ff9d8` on both architectures. Each profile retained 43 files,
+23 controls and 18 owned phases, including the deliberate two-second timeout
+and verified cleanup. Independent replay checked every case classification,
+source/binary hash and Mach-O architecture. The reconciliation is sealed as
+`8dd154a7cce4bf997b8fbccddfb6c79b6618af1248ce4c20f937a277f9aec708`
+under `macos-parity-20261105/memory-probe-run-41963597498/reconciliation.json`.
+
+All four fixed-96-MiB cases rejected setup with `EINVAL` on each host. The small
+probe's measured startup virtual maps were 420,447,207,424 bytes on ARM and
+34,939,764,736 bytes on Intel. These are virtual mappings, not resident memory.
+The separately named current-map-plus-64-MiB profile rejected over-headroom
+reservations on both hosts. Intel also completed allocation/free reuse and
+rejected retained mmap/calloc after successful allocations. ARM failed its first
+malloc after one successful mmap and rejected calloc before any success; its
+allocator controls therefore remain unproven. Neither result admits the fixed
+96 MiB lifetime tests.
+
+The padded executable really contained at least 192 MiB of zero-fill storage,
+but its observed post-exec map was smaller than the launcher map. This left
+402,685,952 bytes of nominal headroom, above the diagnostic reservation bound.
+The probe correctly returned `INCONCLUSIVE_RESERVATION_BOUND`; it did not prove
+or disprove the exec reapplication caveat and did not increase its allocation
+ceiling to force a result.
+
+A follow-up now exposes an explicit `nano-off` allocator profile that applies
+`MallocNanoZone=0` only to owned child processes. Apple's
+[nano allocator source](https://github.com/apple-oss-distributions/libmalloc/blob/main/src/nano_malloc_common.c)
+recognizes that environment override. The hypothesis is that startup allocator
+reservations contribute to the large maps; a native result is still needed.
+The default and alternate runs remove inherited `Malloc*` options, record their
+exact requested profile, and retain all original cap/classification/bound checks.
+This is a diagnostic choice, not a new production setting or lifetime-test
+admission. Twenty-four local controls pass, including environment isolation and
+rejection of an unknown/automatic fallback profile.
+
+The older paired `f96f237` SDK attempt is also complete: Intel matches ARM at
+565 passed, one known cache-reuse failure and five skips out of 571. All six
+fault-lifetime routes now complete, with Intel direct text/binary executions
+at 1.402/1.195 seconds and exact output/exit checks. Intel reconciliation is
+sealed as `80d867962f9119cda54006c82d44e70948053652b81539d8c5d8a8718623b45b`.
+Both profiles stopped before SDK packaging at the already-corrected catalog
+binding mismatch. The replacement `2e098f1` run has passed its ARM build and
+pre-test snapshot; full installed results remain pending. Linux Source validation
+[41962360138](https://github.com/exec-software/exec-nil-framework/actions/runs/41962360138)
+passes LLVM ON, LLVM OFF and the extension for that revision.

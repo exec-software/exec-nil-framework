@@ -42,6 +42,19 @@ def case(mode='reserve', profile='fixed96'):
 
 
 class MemoryObservations(unittest.TestCase):
+    def test_allocator_profile_is_explicit_and_does_not_change_parent_environment(self):
+        inherited = {'PATH': '/usr/bin', 'MallocNanoZone': '1', 'MallocGuardEdges': '1'}
+        original = inherited.copy()
+        default = probe.probe_environment(inherited, 'default', Path('/tmp/probe'))
+        alternate = probe.probe_environment(inherited, 'nano-off', Path('/tmp/probe'))
+        self.assertEqual(inherited, original)
+        self.assertEqual(default['PATH'], '/usr/bin')
+        self.assertFalse(any(k.startswith('Malloc') for k in default))
+        self.assertEqual({k: v for k, v in alternate.items() if k.startswith('Malloc')}, {'MallocNanoZone': '0'})
+        self.assertEqual(alternate['TMPDIR'], '/tmp/probe')
+        with self.assertRaises(ValueError):
+            probe.probe_environment(inherited, 'automatic-fallback', Path('/tmp/probe'))
+
     def classify(self, rows=None, code=0, mode='reserve', profile='fixed96'):
         return probe.classify_case(case(mode, profile) if rows is None else rows, code, profile, mode)
 

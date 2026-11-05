@@ -21,7 +21,18 @@ SOURCES = [
     'https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_exec.c',
     'https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/vm/vm_map.c',
     'https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/task.c',
+    'https://github.com/apple-oss-distributions/libmalloc/blob/main/src/nano_malloc_common.c',
 ]
+
+
+def probe_environment(inherited, allocator_profile, temporary):
+    if allocator_profile not in ('default', 'nano-off'):
+        raise ValueError('unknown allocator diagnostic profile')
+    environment = {k: v for k, v in inherited.items() if not k.startswith('Malloc')}
+    environment.update(PYTHONDONTWRITEBYTECODE='1', TMPDIR=str(temporary))
+    if allocator_profile == 'nano-off':
+        environment['MallocNanoZone'] = '0'
+    return environment
 
 
 def digest(path):
@@ -174,6 +185,8 @@ def profile_result(cases, profile, uncapped_success):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--allocator-profile', choices=('default', 'nano-off'), default='default',
+                        help='explicit own-child allocator diagnosis; neither profile admits lifetime tests')
     args = parser.parse_args()
     if sys.platform != 'darwin' or platform.machine() not in ('arm64', 'x86_64'):
         raise SystemExit('Native macOS arm64/x86_64 required')
@@ -194,6 +207,9 @@ def main():
     report = {'schema': 'nil.macos-memory-probe.v1', 'status': 'INCOMPLETE', 'qualification': False,
               'scope': 'Own-child RLIMIT_AS diagnosis only; no runtime/admission/lifetime-test changes',
               'architecture': platform.machine(), 'host': platform.platform(), 'python': sys.version,
+              'allocator_profile': args.allocator_profile,
+              'allocator_environment': {'MallocNanoZone': '0'} if args.allocator_profile == 'nano-off' else {},
+              'allocator_environment_policy': 'Remove inherited Malloc* options; apply only the named own-child profile.',
               'host_image': {k: os.environ.get(k) for k in ('ImageVersion', 'ImageOS', 'GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT')},
               'source_before': pins, 'api_sources': SOURCES, 'phases': phases, 'problems': problems,
               'cases': cases, 'limits': {'whole_seconds': 180, 'per_child_seconds': 20,
@@ -205,7 +221,7 @@ def main():
                               'Inherited getrlimit values do not prove post-exec enforcement.',
                               'The named larger profile is diagnostic and never substitutes for fixed96.',
                               'RSS/resident size is supplementary, not a committed-memory or hard-cap proof.']}
-    environment = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', TMPDIR=str(temporary))
+    environment = probe_environment(os.environ, args.allocator_profile, temporary)
     def run(name, argv, *, allow_case=False, timeout=20, expected_timeout=False):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
