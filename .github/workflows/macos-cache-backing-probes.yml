@@ -1,0 +1,93 @@
+name: macOS cache file correspondence probes
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-cache-backing-probes-${{ github.ref }}
+  cancel-in-progress: false
+
+# Observe loader-attributed backing files and full hashing cost. This does not
+# enable incremental reuse or build, activate, publish or qualify an SDK.
+jobs:
+  host:
+    name: macOS ${{ matrix.host.arch }} cache file correspondence
+    runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        host:
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: macos-15
+            arch: arm64
+    defaults:
+      run:
+        shell: bash
+    env:
+      NIL_CI_ARCH: ${{ matrix.host.arch }}
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check correspondence and hashing controls
+        timeout-minutes: 2
+        run: |
+          mkdir -p build/macos-cache-backing-evidence
+          set -o pipefail
+          python3 -B scripts/ci/test_macos_cache_backing_probes.py -v \
+            2>&1 | tee build/macos-cache-backing-evidence/controls.log
+      - name: Observe all loaded headers and two complete cache hash passes
+        timeout-minutes: 11
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-cache-backing-probes.py \
+            --output "$GITHUB_WORKSPACE/build/macos-cache-backing-evidence/probe" \
+            --work-dir "$RUNNER_TEMP/nil-cache-backing-probe" \
+            --revision "$GITHUB_SHA" --architecture "$NIL_CI_ARCH" \
+            2>&1 | tee build/macos-cache-backing-evidence/probe.log
+      - name: Seal complete or partial observations
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python3 -B - <<'PY'
+          import hashlib, json, os, stat, subprocess
+          from pathlib import Path
+          root = Path('build/macos-cache-backing-evidence')
+          root.mkdir(parents=True, exist_ok=True)
+          records = {}
+          for path in sorted(root.rglob('*')):
+              mode = path.lstat().st_mode
+              assert stat.S_ISDIR(mode) or stat.S_ISREG(mode), str(path)
+              if stat.S_ISREG(mode):
+                  digest = hashlib.sha256()
+                  with path.open('rb') as stream:
+                      while chunk := stream.read(1024**2): digest.update(chunk)
+                  records[path.relative_to(root).as_posix()] = {
+                      'bytes': path.stat().st_size, 'sha256': digest.hexdigest()}
+          dirty = subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'],
+                                          text=True, timeout=15)
+          (root / 'evidence.json').write_text(json.dumps({
+              'source_revision': os.environ['GITHUB_SHA'], 'architecture': os.environ['NIL_CI_ARCH'],
+              'run_id': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'source_unchanged': not dirty, 'tracked_changes': dirty,
+              'files': records, 'qualification': False, 'cache_reuse_enabled': False}, indent=2) + '\n')
+          assert not dirty
+          PY
+      - name: Upload cache file observations
+        if: always()
+        timeout-minutes: 4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-cache-backing-probes-${{ matrix.host.arch }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: build/macos-cache-backing-evidence/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 1

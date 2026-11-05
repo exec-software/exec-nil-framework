@@ -1870,3 +1870,24 @@ round trips. Independent review passes. Local evidence is
 `ui-probe-run-41973044774/producer-whole-second-v1/report.json`, SHA
 `445d768654e8c8749b717566194bc46a54a5d2d7f52ec4fcaf37bce1c034d6f1`.
 Actual native execution remains required; the previous failures are preserved.
+
+## Complete cache-file correspondence diagnostic
+
+The separate [cache backing workflow](../.github/workflows/macos-cache-backing-probes.yml)
+now implements the reviewed observation model. It copies bounded metadata from
+its own loaded headers, explicitly accounts for the loader, and joins exact
+active mapping ranges to root/subcache image tables. Outside-cache copies remain
+ordinary files. Whole-file hashing uses two complete CommonCrypto passes over
+the exact backing set, with a limit of 128 files and 8 GiB per pass. Generation,
+file/source seals, partial failures and complete timing fields are retained.
+There are no external-task reads or production cache changes.
+
+The owner has 600 seconds, including a twenty-second final-check reserve; hashing
+has a 240-second bound. Twenty-nine pure controls and seven executions of the
+extracted signed-slide arithmetic pass. The complete native source also passes
+Clang 18.1.3 syntax checks with explicit local stub headers; that is not native
+Apple API execution or ABI proof. Independent reviews cover the parser, ranges,
+loader accounting, hash bounds and reserved final checks. Local evidence SHA is
+`0e6e47af6886ff9e94888290110a326bc8bb4378b18de364bc72e06a146694c9` under
+`macos-parity-20261105/cache-backing-local-controls/report-final.json`.
+Actual paired native correspondence and full-file timings remain pending.
