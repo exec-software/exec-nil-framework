@@ -73,6 +73,13 @@ jobs:
           set -o pipefail
           python3 -B scripts/ci/macos-host-probes.py --suite ordinary-native \
             --output build/macos-host-probes/ordinary-native 2>&1 | tee build/macos-host-probes/ordinary-native.log
+      - name: Check production SDK publication contract
+        if: ${{ !cancelled() && steps.identity.outcome == 'success' }}
+        timeout-minutes: 1
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-host-probes.py --suite sdk-publication \
+            --output build/macos-host-probes/sdk-publication 2>&1 | tee build/macos-host-probes/sdk-publication.log
       - name: Check ordinary-I/O process oracle
         if: ${{ !cancelled() && steps.identity.outcome == 'success' }}
         timeout-minutes: 2

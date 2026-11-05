@@ -752,3 +752,26 @@ hashes remain valuable and must not be discarded to represent this toolchain
 gap. An explicit completeness field can disable reuse while retaining input
 protection. Complete Darwin loaded-code and native link-input discovery remain
 work to do; no incremental-parity claim is made.
+
+
+## APFS publication inode retention
+
+The Darwin publisher now hardlinks the old active symlink into a private,
+same-filesystem sibling directory before its existing atomic replacement. It
+opens the directory without following links and verifies ownership, mode,
+filesystem, link type, exact inode identity and target spelling. Unsupported
+linking, name collisions and invalid retention storage leave activation unchanged.
+Rollback to a prior SDK uses the same path; rollback to no active SDK also
+retains the just-published inode before unlinking it.
+
+Anchors persist after successful publication, failure, rollback and process exit.
+A crash can leave an extra anchor. No age/count heuristic establishes that all
+readers have finished, so there is no automatic pruning. Relative targets in
+these records are not consumer entry points. Cleanup requires stopped publishers
+and readers. Linux and Windows production replacement paths remain unchanged.
+
+Both root and independent peer review passed. Portable controls exercise real
+POSIX link identity and failure preservation; native production acceptance is
+still pending. The short hosted workflow now runs the actual complete SDK
+publication contract separately from its diagnostic baselines. Unretained
+replacement and swap/unlink failures remain retained negative observations.

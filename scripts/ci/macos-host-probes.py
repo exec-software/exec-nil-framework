@@ -25,6 +25,7 @@ SUITES = {
     'process-identity': ('tests/tools/test_process_contract_support.py', 30),
     'process-consumer': ('validation/ny-3d/scripts/test_debugger_consumer.py', 90),
     'parallel-process': ('tests/tools/parallel_process_contract.py', 240),
+    'sdk-publication': ('tests/publish_sdk_concurrency.py', 30),
 }
 
 
@@ -44,6 +45,10 @@ def run_suite(name, output):
     argv = [sys.executable, '-B', str(repository / relative)]
     if name == 'parallel-process':
         argv += ['--root', str(repository), '--cxx', '/usr/bin/clang++']
+    elif name == 'sdk-publication':
+        argv += ['--publisher', str(repository / 'scripts/publish-sdk.py')]
+        source_files.append(repository / 'scripts/publish-sdk.py')
+        pins = {str(path.relative_to(repository)): sha(path) for path in source_files}
     else:
         argv.append('-v')
     output.mkdir(exist_ok=False)
@@ -91,10 +96,12 @@ def main():
 
     cases = []
     whole_start = time.monotonic()
-    for mode in ('production-replace', 'swap-unlink', 'swap-retain', 'hardlink-retain'):
+    for mode in ('production-replace', 'unretained-replace', 'swap-unlink', 'swap-retain', 'hardlink-retain'):
         started = time.monotonic()
         row = dict(mode=mode, replacements=0, reads=0, saw_old=False, saw_new=False,
-                   failures=[], deadline_seconds=10, maximum_replacements=5000)
+                   failures=[], deadline_seconds=15, maximum_replacements=5000,
+                   role=('production' if mode == 'production-replace' else
+                         'negative-baseline' if mode in ('unretained-replace', 'swap-unlink') else 'comparison'))
         with tempfile.TemporaryDirectory(prefix='nil-publish-diagnostic-') as raw:
             root = Path(raw).resolve(strict=True) / 'space λ'
             root.mkdir()
@@ -135,7 +142,7 @@ def main():
                     for index in range(5000):
                         if stop.is_set():
                             break
-                        if time.monotonic() - started > 10 or time.monotonic() - whole_start > 45:
+                        if time.monotonic() - started > 15 or time.monotonic() - whole_start > 80:
                             raise TimeoutError('bounded diagnostic deadline reached')
                         target = 'new' if index % 2 == 0 else 'old'
                         if mode == 'production-replace':
@@ -143,7 +150,9 @@ def main():
                         else:
                             temporary = root / 'next-link'
                             temporary.symlink_to(target, target_is_directory=True)
-                            if mode == 'hardlink-retain':
+                            if mode == 'unretained-replace':
+                                os.replace(temporary, active)
+                            elif mode == 'hardlink-retain':
                                 # macOS15 linkat accepts AT_SYMLINK_FOLLOW or 0;
                                 # 0 selects NOFOLLOW for the final component.
                                 # AT_SYMLINK_NOFOLLOW_ANY is not accepted by
@@ -177,6 +186,9 @@ def main():
                     (output / 'stuck-reader.json').write_text(json.dumps(row, indent=2))
                     os._exit(2)
             row['retained_links'] = len(list(retired.iterdir()))
+            production_retention = publisher.darwin_retention_directory(active)
+            row['production_retained_links'] = (len(list(production_retention.iterdir()))
+                                                if production_retention.is_dir() else 0)
             row['status'] = ('PASS' if not row['failures'] and row['replacements'] == 5000 and
                              row['saw_old'] and row['saw_new'] and row['held_old_bytes_unchanged'] else 'FAIL')
         row['elapsed_seconds'] = time.monotonic() - started
@@ -187,7 +199,7 @@ def main():
                   source_sha256=source_sha, probe_sha256=probe_sha,
                   source_unchanged=(source_sha == sha(publisher_path) and
                                     probe_sha == sha(Path(__file__).resolve())),
-                  cases=cases, elapsed_seconds=time.monotonic() - whole_start)
+                  cases=cases, deadline_seconds=80, elapsed_seconds=time.monotonic() - whole_start)
     (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({row['mode']: {'status': row['status'], 'reads': row['reads'],
                                    'replacements': row['replacements']} for row in cases}))

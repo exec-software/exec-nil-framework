@@ -60,9 +60,10 @@ the complete admission rules.
   pass the five focused filesystem/process suites on both architectures; a new
   full run must confirm their integration. Path spelling and host lookup
   identity differ; see [platform behavior](platform-behavior.md#filesystem-lookup-identity).
-- SDK publication still needs an APFS link-lifetime fix. The native diagnostic
-  reproduces reader errors when replaced symlink inodes are removed; retained
-  link variants pass the bounded stress probe. This is not publication acceptance.
+- SDK publication now retains old symlink inodes on Darwin after native probes
+  isolated APFS reader errors from immediate removal. The production fix still
+  awaits its native contract run; the diagnostic alone is not acceptance. See
+  [SDK publication](getting-started/index.md) for retention lifetime.
 - Native incremental dependency discovery and reuse remain incomplete. Darwin
   compiler loaded-library identity is also incomplete for VM cache reuse;
   successful compilation does not establish reliable incremental reuse.

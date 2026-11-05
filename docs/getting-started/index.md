@@ -51,6 +51,15 @@ platform's executable suffix where needed). The helper validates this layout
 and only replaces the active SDK after the entire standard library and smoke
 path pass.
 
+SDK publication keeps immutable generations behind the active directory symlink.
+On macOS, replacement also retains old symlink inodes in a private sibling
+folder named `.<sdk-name>.retained-links` (for example, `.sdk.retained-links`).
+This prevents APFS from invalidating readers already resolving through a replaced
+link. These records are not SDK entry points: their relative targets need not
+resolve from the retention folder. They are not automatically pruned. Remove
+retained links only when publication and every SDK reader have stopped. An
+unsupported retention primitive fails before changing the active SDK.
+
 The framework rebrand changes the checkout folder to `exec-nil-framework`,
 with components such as `nilcompiler`, `nilstd`, `ny`, `matrix`, and `vscode`
 directly beneath it; the former `code/` and `ext/` wrapper directories are removed.

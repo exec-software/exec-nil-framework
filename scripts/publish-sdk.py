@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 
@@ -88,6 +89,75 @@ def validate_generation(
         )
 
 
+def darwin_retention_directory(destination: Path) -> Path:
+    return destination.parent / ("." + destination.name + ".retained-links")
+
+
+def retain_darwin_symlink(destination: Path) -> None:
+    """Keep an old link inode alive for readers already resolving through it.
+
+    APFS readers can receive EINVAL when the last link to a replaced symlink
+    is immediately removed. Anchors are deliberately persistent, including
+    after rollback or publisher exit: no age/count limit proves that readers
+    have finished. They may be removed only after readers have been stopped.
+    A crash can leave an extra anchor; failure here never changes activation.
+    Anchors are inode-retention records, not SDK entrypoints: relative targets
+    need not resolve from this sibling directory.
+    """
+    import ctypes
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    parent_fd = os.open(destination.parent, flags)
+    retention_fd = None
+    try:
+        try:
+            previous = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return  # First activation has no old inode to retain.
+        if not stat.S_ISLNK(previous.st_mode):
+            raise OSError("SDK retention source is not a symlink: " + str(destination))
+        previous_target = os.readlink(destination.name, dir_fd=parent_fd)
+        retention = darwin_retention_directory(destination)
+        # Like publication_lock, this single-threaded publisher creates its
+        # persistent private state independently of a caller's restrictive umask.
+        previous_umask = os.umask(0)
+        try:
+            try:
+                os.mkdir(retention.name, mode=0o700, dir_fd=parent_fd)
+            except FileExistsError:
+                pass
+        finally:
+            os.umask(previous_umask)
+        retention_fd = os.open(retention.name, flags, dir_fd=parent_fd)
+        directory = os.fstat(retention_fd)
+        if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.geteuid() or
+                stat.S_IMODE(directory.st_mode) != 0o700 or directory.st_dev != previous.st_dev):
+            raise OSError("SDK retained-link directory is not private on the destination filesystem: " + str(retention))
+        api = ctypes.CDLL(None, use_errno=True)
+        api.linkat.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+        api.linkat.restype = ctypes.c_int
+        anchor = uuid.uuid4().hex
+        # Darwin linkat flags=0 links the symlink itself; AT_SYMLINK_FOLLOW
+        # would follow its directory target. Existing anchor names fail EEXIST.
+        if api.linkat(parent_fd, os.fsencode(destination.name), retention_fd, anchor.encode(), 0):
+            error = ctypes.get_errno()
+            raise OSError(error, "could not retain old SDK symlink: " + os.strerror(error), str(destination))
+        pinned = os.stat(anchor, dir_fd=retention_fd, follow_symlinks=False)
+        current = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
+        identity = (previous.st_dev, previous.st_ino)
+        if (not stat.S_ISLNK(pinned.st_mode) or not stat.S_ISLNK(current.st_mode) or
+                (pinned.st_dev, pinned.st_ino) != identity or
+                (current.st_dev, current.st_ino) != identity or
+                os.readlink(anchor, dir_fd=retention_fd) != previous_target or
+                os.readlink(destination.name, dir_fd=parent_fd) != previous_target):
+            raise OSError("old SDK symlink identity changed while being retained")
+    finally:
+        if retention_fd is not None:
+            os.close(retention_fd)
+        os.close(parent_fd)
+
+
 def replace_directory_symlink(source: Path, destination: Path) -> None:
     """Atomically replace the directory link itself, never either referent.
 
@@ -101,6 +171,8 @@ def replace_directory_symlink(source: Path, destination: Path) -> None:
     if exists_or_link(destination) and not destination.is_symlink():
         raise OSError("refusing to replace a non-symlink SDK path: " + str(destination))
     if os.name != "nt":
+        if sys.platform == "darwin":
+            retain_darwin_symlink(destination)
         os.replace(source, destination)
         return
 
@@ -421,6 +493,8 @@ def main() -> int:
                 and symlink_identity(destination) == activated_identity
             ):
                 if previous_target is None:
+                    if sys.platform == "darwin":
+                        retain_darwin_symlink(destination)
                     destination.unlink()
                 else:
                     replace_link(destination, previous_target)

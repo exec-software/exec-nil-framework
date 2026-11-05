@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import errno
 import hashlib
 import importlib.util
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -15,7 +18,8 @@ import threading
 import time
 import traceback
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 
 VALIDATOR_SOURCE = r'''#!/usr/bin/env python3
@@ -222,6 +226,14 @@ def run_scenario(publisher: Path, with_previous_target: bool) -> None:
             raise AssertionError(
                 "publication lock leaked into the SDK destination directory"
             )
+        if sys.platform == "darwin":
+            retained = active.parent / ("." + active.name + ".retained-links")
+            links = list(retained.iterdir())
+            assert len(links) == (3 if with_previous_target else 1), links
+            assert all(path.is_symlink() for path in links)
+            assert os.path.relpath(versions / older_digest, active.parent) in {
+                os.readlink(path) for path in links
+            }, "failed activation was not retained through rollback"
 
 
 def publisher_command(
@@ -479,7 +491,15 @@ def run_atomic_reader_scenario(publisher) -> None:
         assert not failures, failures
         assert observations[0] >= 2, observations
         assert active.resolve(strict=True) == new
-        assert sorted(path.name for path in root.iterdir()) == ["new", "old", "sdk"]
+        expected_entries = ["new", "old", "sdk"]
+        if sys.platform == "darwin":
+            retention = publisher.darwin_retention_directory(active)
+            expected_entries.append(retention.name)
+            anchors = list(retention.iterdir())
+            assert len(anchors) == 251, len(anchors)
+            assert all(path.is_symlink() and os.readlink(path) in {"old", "new"} for path in anchors)
+            assert stat.S_IMODE(retention.stat().st_mode) == 0o700
+        assert sorted(path.name for path in root.iterdir()) == sorted(expected_entries)
 
         # Simulate a filesystem refusing the atomic primitive. replace_link
         # must neither remove the active link nor leave its temporary behind.
@@ -494,7 +514,7 @@ def run_atomic_reader_scenario(publisher) -> None:
                 raise AssertionError("failed atomic replacement unexpectedly succeeded")
         assert publisher.symlink_identity(active) == previous_identity
         assert active.resolve(strict=True) == new
-        assert sorted(path.name for path in root.iterdir()) == ["new", "old", "sdk"]
+        assert sorted(path.name for path in root.iterdir()) == sorted(expected_entries)
 
         # A rejected source must also retain the old active link.
         try:
@@ -539,6 +559,103 @@ def run_atomic_reader_scenario(publisher) -> None:
                     locked.unlink()
 
 
+def run_darwin_retention_controls(publisher) -> None:
+    """Real no-follow linkat controls on POSIX; platform dispatch is simulated on Linux."""
+    if os.name == "nt":
+        return
+    import ctypes
+
+    with tempfile.TemporaryDirectory(prefix="nil-sdk-retention-controls-") as raw:
+        root = Path(raw).resolve(strict=True)
+        (root / "old").mkdir()
+        (root / "new").mkdir()
+        active = root / "sdk"
+        active.symlink_to("old", target_is_directory=True)
+        previous = publisher.symlink_identity(active)
+        retention = publisher.darwin_retention_directory(active)
+        with patch.object(publisher.sys, "platform", "darwin"):
+            mask = os.umask(0o777)
+            try:
+                publisher.replace_link(active, "new")
+            finally:
+                os.umask(mask)
+            assert stat.S_IMODE(retention.stat().st_mode) == 0o700
+            anchors = list(retention.iterdir())
+            assert len(anchors) == 1 and publisher.symlink_identity(anchors[0]) == previous
+            activated = publisher.symlink_identity(active)
+            publisher.replace_link(active, "old")  # The rollback replacement path.
+            assert {publisher.symlink_identity(path) for path in retention.iterdir()} == {previous, activated}
+            assert active.resolve(strict=True) == root / "old"
+            assert not list(root.glob(".sdk.link.*.tmp")), "successful replacement did not consume source"
+
+            # A failure after anchoring leaves the active link intact and keeps
+            # the anchor: deleting it is not required for a valid failed publish.
+            current = publisher.symlink_identity(active)
+            before = len(list(retention.iterdir()))
+            with patch.object(publisher.os, "replace", side_effect=OSError(errno.EIO, "fixture rename failure")):
+                try:
+                    publisher.replace_link(active, "new")
+                except OSError as error:
+                    assert error.errno == errno.EIO
+                else:
+                    raise AssertionError("failed replacement succeeded")
+            assert publisher.symlink_identity(active) == current
+            assert len(list(retention.iterdir())) == before + 1
+            assert not list(root.glob(".sdk.link.*.tmp"))
+
+        for kind in ("file", "symlink", "public-directory", "unsupported-link", "copied-link", "collision"):
+            case = root / kind
+            case.mkdir()
+            destination, source = case / "sdk", case / "next"
+            destination.symlink_to("old", target_is_directory=True)
+            source.symlink_to("new", target_is_directory=True)
+            old_identity = publisher.symlink_identity(destination)
+            new_identity = publisher.symlink_identity(source)
+            kept = publisher.darwin_retention_directory(destination)
+            if kind == "file":
+                kept.write_bytes(b"protected non-directory")
+            elif kind == "symlink":
+                kept.symlink_to(root, target_is_directory=True)
+            else:
+                kept.mkdir(mode=0o700)
+                if kind == "public-directory":
+                    kept.chmod(0o755)
+
+            def unsupported(*unused):
+                ctypes.set_errno(errno.ENOTSUP)
+                return -1
+
+            def copy_link(parent_fd, name, kept_fd, anchor, flags):
+                assert flags == 0
+                os.symlink(os.readlink(name, dir_fd=parent_fd), anchor, dir_fd=kept_fd)
+                return 0  # Same target but a different inode is not retention.
+
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(patch.object(publisher.sys, "platform", "darwin"))
+                if kind in {"unsupported-link", "copied-link"}:
+                    operation = Mock(side_effect=unsupported if kind == "unsupported-link" else copy_link)
+                    stack.enter_context(patch.object(ctypes, "CDLL", return_value=SimpleNamespace(linkat=operation)))
+                if kind == "collision":
+                    (kept / "existing").write_bytes(b"exclusive anchor sentinel")
+                    stack.enter_context(patch.object(publisher.uuid, "uuid4", return_value=SimpleNamespace(hex="existing")))
+                try:
+                    publisher.replace_directory_symlink(source, destination)
+                except OSError:
+                    pass
+                else:
+                    raise AssertionError("unsafe retention accepted: " + kind)
+            assert publisher.symlink_identity(destination) == old_identity, kind
+            assert publisher.symlink_identity(source) == new_identity, kind
+            if kind == "collision":
+                assert (kept / "existing").read_bytes() == b"exclusive anchor sentinel"
+            elif kind == "file":
+                assert kept.read_bytes() == b"protected non-directory"
+            elif kind == "symlink":
+                assert kept.is_symlink() and kept.resolve(strict=True) == root
+    print("Darwin retained-link controls passed (native POSIX primitives; " +
+          ("native Darwin" if sys.platform == "darwin" else "Darwin dispatch simulated") + ")")
+
+
 def main() -> int:
     args = arguments()
     publisher = args.publisher.resolve(strict=True)
@@ -565,6 +682,7 @@ def main() -> int:
             return 77
         implementation.replace_directory_symlink(replacement, link)
 
+    run_darwin_retention_controls(implementation)
     run_atomic_reader_scenario(implementation)
     run_scenario(publisher, with_previous_target=False)
     run_scenario(publisher, with_previous_target=True)
