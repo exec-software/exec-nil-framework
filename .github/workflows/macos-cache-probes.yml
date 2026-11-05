@@ -1,0 +1,109 @@
+name: macOS cache identity probes
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-cache-probes-${{ github.ref }}
+  cancel-in-progress: false
+
+# Diagnose the native host's loaded-code and linker inputs. This workflow does
+# not enable cache reuse, build/install an SDK, or qualify a release.
+jobs:
+  host:
+    name: macOS ${{ matrix.host.arch }} cache identity
+    runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        host:
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: macos-15
+            arch: arm64
+    defaults:
+      run:
+        shell: bash
+    env:
+      NIL_CI_ARCH: ${{ matrix.host.arch }}
+      NIL_CI_RUNNER: ${{ matrix.host.runner }}
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Record source and host
+        id: identity
+        timeout-minutes: 1
+        run: |
+          python3 -B - <<'PY'
+          import json, os, platform, subprocess, sys
+          from pathlib import Path
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True, timeout=15).strip()
+          assert platform.system() == 'Darwin'
+          assert platform.machine() == os.environ['NIL_CI_ARCH']
+          assert git('rev-parse', 'HEAD') == os.environ['GITHUB_SHA']
+          assert not git('status', '--porcelain', '--untracked-files=no')
+          root = Path('build/macos-cache-evidence')
+          root.mkdir(parents=True, exist_ok=False)
+          identity = dict(revision=git('rev-parse', 'HEAD'), architecture=platform.machine(),
+                          platform=platform.platform(), python=sys.version,
+                          runner=os.environ['NIL_CI_RUNNER'], run_id=os.environ['GITHUB_RUN_ID'],
+                          attempt=os.environ['GITHUB_RUN_ATTEMPT'],
+                          image_os=os.environ.get('ImageOS'), image_version=os.environ.get('ImageVersion'),
+                          scope='Host identity diagnosis only; no cache or SDK qualification')
+          (root / 'identity.json').write_text(json.dumps(identity, indent=2) + '\n')
+          PY
+      - name: Check bounded observation controls
+        if: ${{ !cancelled() && steps.identity.outcome == 'success' }}
+        timeout-minutes: 1
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/test_macos_cache_probes.py -v \
+            2>&1 | tee build/macos-cache-evidence/controls.log
+      - name: Probe loaded images and native link inputs
+        if: ${{ !cancelled() && steps.identity.outcome == 'success' }}
+        timeout-minutes: 10
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-cache-probes.py --output build/macos-cache-evidence/probe \
+            2>&1 | tee build/macos-cache-evidence/probe.log
+      - name: Seal raw observations
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python3 -B - <<'PY'
+          import hashlib, json, subprocess
+          from pathlib import Path
+          root = Path('build/macos-cache-evidence')
+          root.mkdir(parents=True, exist_ok=True)
+          records = {}
+          for path in sorted(root.rglob('*')):
+              if path.is_file():
+                  digest = hashlib.sha256()
+                  with path.open('rb') as stream:
+                      while chunk := stream.read(1024 * 1024):
+                          digest.update(chunk)
+                  records[str(path.relative_to(root))] = dict(bytes=path.stat().st_size, sha256=digest.hexdigest())
+          dirty = subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'],
+                                          text=True, timeout=15)
+          (root / 'evidence.json').write_text(json.dumps(dict(source_unchanged=not dirty,
+                                              tracked_changes=dirty, files=records), indent=2) + '\n')
+          assert not dirty, dirty
+          PY
+      - name: Upload bounded cache identity evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-cache-probes-${{ matrix.host.arch }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: build/macos-cache-evidence/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 1

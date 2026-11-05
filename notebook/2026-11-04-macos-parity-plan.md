@@ -957,3 +957,29 @@ the final raw report is
 `7cdd5a8a55984130ce16f544771fd94c9855cc1f4b6e9c1537710d91f47e00e7`.
 This verifies the common cache-contract change on Windows, not a replacement
 for the complete paired `5630388` SDK acceptance.
+
+
+## Next parity pass: native cache evidence, ARM assembly and SDK staging
+
+The next pass keeps the completed `e087964` baseline and advances three separate
+surfaces: a bounded `aarch64` inline-assembly profile, complete Darwin compiler
+and linker identity, and isolated macOS development SDK staging/relocation.
+The existing safe no-reuse behavior remains in place while cache discovery is
+investigated; neither unavailable backing files nor shared-cache UUIDs alone
+may authorize reuse.
+
+The manual `macOS cache identity probes` workflow collects own-process loaded
+image observations, availability-checked dyld snapshot SPI, actual shared-cache
+backing file paths and bounded byte hashes, plus a native driver/linker dependency
+record. It records incomplete observations and source/host identity explicitly.
+Hashing is limited to 16 GiB and 120 seconds; the complete diagnostic has a
+420-second limit. This does not build an SDK or enable cache reuse. Nine pure
+parser/file-bound controls and root/independent workflow reviews pass; actual
+native API and backing-file behavior will be measured on both hosted CPUs.
+
+API signatures and snapshot lifetimes were checked against Apple's
+[dyld introspection declarations](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/dyld_introspection.h)
+and [public dyld declarations](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/dyld.h).
+The public callback storage has process lifetime because those callbacks cannot
+be unregistered. SPI absence, inconsistent snapshots and inaccessible files
+remain explicit; no production dependency on those APIs is introduced here.
