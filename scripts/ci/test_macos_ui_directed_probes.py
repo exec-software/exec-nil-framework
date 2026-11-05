@@ -31,7 +31,14 @@ class Controls(unittest.TestCase):
     def driver(self, phase):
         return dict(identity_verified=True, post_event_access=True, ax_trusted=True, own_window_selected=True,
                     focus_verified=True, marker_readback=phase == 'keys', events_posted=8 if phase == 'keys' else 0,
-                    close_action=phase == 'close', success=True)
+                    close_action=phase == 'close', success=True, focus_observation=self.focus())
+
+    def focus(self):
+        return dict(legacy_window_error=0, legacy_window_boolean=True, legacy_window_value=False,
+                    app_window_error=0, app_window_element=True, app_window_pid_matches=True, app_window_matches=True,
+                    field_error=0, field_element=True, field_pid_matches=True, field_role_error=0,
+                    field_text_role=True, field_role_category='text_field', field_window_error=0, field_window_element=True,
+                    field_window_pid_matches=True, field_window_matches=True)
 
     def test_private_fresh_disjoint_paths(self):
         self.assertEqual(gate.paths(self.root/'build/evidence', self.base/'work', self.root),
@@ -106,6 +113,7 @@ class Controls(unittest.TestCase):
             self.assertTrue(gate.driver_frame(self.driver(phase), phase, 0))
             for key in ('identity_verified', 'post_event_access', 'ax_trusted', 'own_window_selected', 'focus_verified'):
                 row = self.driver(phase); row[key] = False; row['success'] = False
+                if key == 'focus_verified': row['focus_observation']['app_window_matches'] = False
                 self.assertFalse(gate.driver_frame(row, phase, 2))
                 with self.assertRaises(ValueError): gate.driver_frame(row, phase, 0)
 
@@ -174,6 +182,33 @@ class Controls(unittest.TestCase):
         frames = gate.Frames(Reader(), io.BytesIO())
         with self.assertRaises(ValueError): frames.next('ready', time.monotonic() + 1)
         frames.drain(time.monotonic() - 1)
+
+    def test_application_window_and_field_identity_define_focus(self):
+        self.assertTrue(gate.focus_proof(self.focus()))
+        value = self.focus(); value['legacy_window_error'] = -25205; value['legacy_window_boolean'] = False
+        self.assertTrue(gate.focus_proof(value))
+        for key in ('app_window_element', 'app_window_pid_matches', 'app_window_matches', 'field_element',
+                    'field_pid_matches', 'field_text_role', 'field_window_element', 'field_window_pid_matches',
+                    'field_window_matches'):
+            value = self.focus(); value[key] = False
+            if key == 'field_text_role': value['field_role_category'] = 'text_area'
+            with self.subTest(key=key): self.assertFalse(gate.focus_proof(value))
+
+    def test_failed_focus_queries_cannot_pass(self):
+        for key in ('app_window_error', 'field_error', 'field_role_error', 'field_window_error'):
+            value = self.focus(); value[key] = -25205
+            with self.subTest(key=key): self.assertFalse(gate.focus_proof(value))
+        self.assertFalse(gate.focus_proof({}))
+
+    def test_focus_diagnostics_are_bounded_and_cannot_add_private_text(self):
+        for key, item in (('field_role_error', True), ('field_error', -99999), ('field_text_role', 'AXTextField'),
+                          ('external_title', 'not retained')):
+            value = self.focus(); value[key] = item
+            with self.subTest(key=key), self.assertRaises(ValueError): gate.focus_proof(value)
+
+    def test_focus_summary_cannot_override_wrong_window(self):
+        value = self.driver('keys'); value['focus_observation']['field_window_matches'] = False
+        with self.assertRaisesRegex(ValueError, 'Focus proof/summary mismatch'): gate.driver_frame(value, 'keys', 0)
 
 
 if __name__ == '__main__':

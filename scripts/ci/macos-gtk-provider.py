@@ -308,7 +308,7 @@ def smoke_result(row):
                 key.get('release') is bool(index%2) and key.get('own_surface') is True and key.get('matches') is True,
                 'GTK dispatched event metadata differs from own queued event')
     origins = row['origins']
-    require(set(origins) == {'gtk','pango','pangocairo','pixbuf','glib','gobject','cairo','png','coretext','appkit'},
+    require(set(origins) == {'gtk','pango','pangocairo','pixbuf','glib','gobject','cairo','png','harfbuzz','coretext','appkit'},
             'GTK runtime origin inventory differs')
     for key, value in origins.items():
         require(isinstance(value, dict) and isinstance(value.get('declared'), str) and
@@ -564,7 +564,7 @@ def main():
         require((prefix/'share/glib-2.0/schemas/gschemas.compiled').is_file(), 'Compiled GTK schemas missing')
         prefix_before = tree_seal(prefix, deadline, ui.record); save(output/'prefix-before.json', prefix_before)
         smoke_source = ROOT/'scripts/ci/macos-gtk-provider-smoke.mm'
-        smoke_flags = flags('smoke-flags', [*selected_pkg, '--cflags', '--libs', 'gtk4-macos', 'pangocairo', 'gdk-pixbuf-2.0', 'libpng'])
+        smoke_flags = flags('smoke-flags', [*selected_pkg, '--cflags', '--libs', 'gtk4-macos', 'pangocairo', 'gdk-pixbuf-2.0', 'libpng', 'harfbuzz'])
         smoke = work/'gtk-smoke'
         header_seal('smoke', compiler, smoke_source, smoke_flags)
         run('compile-smoke', [compiler, '-std=c++17', '-fobjc-arc', '-Wall', '-Wextra', '-Werror',

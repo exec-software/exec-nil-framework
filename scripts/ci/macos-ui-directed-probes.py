@@ -95,12 +95,32 @@ def final_frame(value):
             'Actual app dispatch/text/native close proof incomplete')
 
 
+def focus_proof(value):
+    require(type(value) is dict, 'Missing bounded focus observations')
+    if not value:
+        return False
+    errors = ('legacy_window_error', 'app_window_error', 'field_error', 'field_role_error', 'field_window_error')
+    flags = ('legacy_window_boolean', 'legacy_window_value', 'app_window_element', 'app_window_pid_matches',
+             'app_window_matches', 'field_element', 'field_pid_matches', 'field_text_role',
+             'field_window_element', 'field_window_pid_matches', 'field_window_matches')
+    require(set(value) == set(errors + flags + ('field_role_category',)) and all(type(value[k]) is int and -26000 <= value[k] <= 0 for k in errors)
+            and all(type(value[k]) is bool for k in flags), 'Malformed focus observation')
+    require(value['field_role_category'] in ('unavailable', 'text_field', 'text_area', 'other') and
+            value['field_text_role'] == (value['field_role_category'] == 'text_field'), 'Inconsistent bounded field role')
+    require(not value['legacy_window_value'] or (value['legacy_window_boolean'] and value['legacy_window_error'] == 0),
+            'Inconsistent legacy window observation')
+    # The old window AXFocused boolean remains diagnostic only. Admission uses
+    # the application's focused window and focused field's own window identity.
+    return all(value[k] == 0 for k in errors[1:]) and all(value[k] for k in flags[2:])
+
+
 def driver_frame(value, phase, code):
     require(code in (0, 2), 'Unexpected driver exit')
     common = ('identity_verified', 'post_event_access', 'ax_trusted', 'own_window_selected', 'focus_verified')
     for key in (*common, 'marker_readback', 'close_action', 'success'):
         require(type(value.get(key)) is bool, 'Driver observation missing: ' + key)
     require(type(value.get('events_posted')) is int and 0 <= value['events_posted'] <= 8, 'Unbounded event count')
+    require(value['focus_verified'] == focus_proof(value.get('focus_observation')), 'Focus proof/summary mismatch')
     success = all(value[key] for key in common) and (
         value['marker_readback'] and value['events_posted'] == 8 and not value['close_action'] if phase == 'keys'
         else value['close_action'] and value['events_posted'] == 0 and not value['marker_readback'])

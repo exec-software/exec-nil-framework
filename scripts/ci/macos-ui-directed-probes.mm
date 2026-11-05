@@ -77,9 +77,11 @@ static bool parseTarget(int argc, const char **argv, Target &target) {
   return canonical(argv[8], target.executable) && target.executable == argv[8] &&
       proc_pidpath(getpid(), ownPath, sizeof(ownPath)) > 0 && canonical(ownPath, own) && own == target.executable;
 }
-static CFTypeRef attribute(AXUIElementRef element, CFStringRef key) {
+static CFTypeRef attribute(AXUIElementRef element, CFStringRef key, AXError *status = nullptr) {
   CFTypeRef value = nullptr;
-  if (AXUIElementCopyAttributeValue(element, key, &value) != kAXErrorSuccess) return nullptr;
+  const AXError error = AXUIElementCopyAttributeValue(element, key, &value);
+  if (status) *status = error;
+  if (error != kAXErrorSuccess) return nullptr;
   return value;
 }
 static bool owner(AXUIElementRef element, pid_t pid) {
@@ -88,11 +90,6 @@ static bool owner(AXUIElementRef element, pid_t pid) {
 static bool stringAttribute(AXUIElementRef element, CFStringRef key, CFStringRef expected) {
   CFTypeRef value = attribute(element, key);
   bool ok = value && CFGetTypeID(value) == CFStringGetTypeID() && CFEqual(value, expected);
-  if (value) CFRelease(value);
-  return ok;
-}
-static bool trueAttribute(AXUIElementRef element, CFStringRef key) {
-  CFTypeRef value = attribute(element, key); bool ok = value && CFEqual(value, kCFBooleanTrue);
   if (value) CFRelease(value);
   return ok;
 }
@@ -115,24 +112,70 @@ static AXUIElementRef ownWindow(AXUIElementRef app, const Target &target) {
   }
   CFRelease(value); return result;
 }
+static bool focusedField(AXUIElementRef app, AXUIElementRef window, const Target &target,
+                         NSMutableDictionary *observed) {
+  AXError error = kAXErrorSuccess;
+  // Retain the previous observation, but keyboard-element focus is not the
+  // public contract for an application's focused window.
+  CFTypeRef legacy = attribute(window, kAXFocusedAttribute, &error);
+  observed[@"legacy_window_error"] = @(error);
+  observed[@"legacy_window_boolean"] = @(legacy && CFGetTypeID(legacy) == CFBooleanGetTypeID());
+  observed[@"legacy_window_value"] = @(legacy && CFEqual(legacy, kCFBooleanTrue));
+  if (legacy) CFRelease(legacy);
+  CFTypeRef focusedWindow = attribute(app, kAXFocusedWindowAttribute, &error);
+  observed[@"app_window_error"] = @(error);
+  const bool appElement = focusedWindow && CFGetTypeID(focusedWindow) == AXUIElementGetTypeID();
+  const bool appOwner = appElement && owner(static_cast<AXUIElementRef>(const_cast<void *>(focusedWindow)), target.pid);
+  const bool appMatch = appOwner && CFEqual(focusedWindow, window);
+  observed[@"app_window_element"] = @(appElement);
+  observed[@"app_window_pid_matches"] = @(appOwner);
+  observed[@"app_window_matches"] = @(appMatch);
+  if (focusedWindow) CFRelease(focusedWindow);
+  CFTypeRef field = attribute(app, kAXFocusedUIElementAttribute, &error);
+  observed[@"field_error"] = @(error);
+  const bool fieldElement = field && CFGetTypeID(field) == AXUIElementGetTypeID();
+  auto element = fieldElement ? static_cast<AXUIElementRef>(const_cast<void *>(field)) : nullptr;
+  const bool fieldOwner = element && owner(element, target.pid);
+  observed[@"field_element"] = @(fieldElement);
+  observed[@"field_pid_matches"] = @(fieldOwner);
+  bool roleMatch = false, windowMatch = false;
+  observed[@"field_role_error"] = @(-1); observed[@"field_window_error"] = @(-1);
+  observed[@"field_role_category"] = @"unavailable";
+  observed[@"field_text_role"] = @NO; observed[@"field_window_element"] = @NO;
+  observed[@"field_window_pid_matches"] = @NO; observed[@"field_window_matches"] = @NO;
+  if (fieldOwner && AXUIElementSetMessagingTimeout(element, 1.0f) == kAXErrorSuccess) {
+    CFTypeRef role = attribute(element, kAXRoleAttribute, &error);
+    roleMatch = role && CFGetTypeID(role) == CFStringGetTypeID() && CFEqual(role, kAXTextFieldRole);
+    observed[@"field_role_error"] = @(error); observed[@"field_text_role"] = @(roleMatch);
+    if (role && CFGetTypeID(role) == CFStringGetTypeID())
+      observed[@"field_role_category"] = roleMatch ? @"text_field" : CFEqual(role, kAXTextAreaRole) ? @"text_area" : @"other";
+    if (role) CFRelease(role);
+    CFTypeRef fieldWindow = attribute(element, kAXWindowAttribute, &error);
+    const bool isElement = fieldWindow && CFGetTypeID(fieldWindow) == AXUIElementGetTypeID();
+    const bool samePid = isElement && owner(static_cast<AXUIElementRef>(const_cast<void *>(fieldWindow)), target.pid);
+    windowMatch = samePid && CFEqual(fieldWindow, window);
+    observed[@"field_window_error"] = @(error); observed[@"field_window_element"] = @(isElement);
+    observed[@"field_window_pid_matches"] = @(samePid); observed[@"field_window_matches"] = @(windowMatch);
+    if (fieldWindow) CFRelease(fieldWindow);
+  }
+  if (field) CFRelease(field);
+  return appMatch && fieldOwner && roleMatch && windowMatch;
+}
 static int driver(const char *mode, const Target &target) {
   bool identity = target.verify();
   const bool post = CGPreflightPostEventAccess(), ax = AXIsProcessTrusted();
   bool selected = false, focused = false, marked = false, pressed = false;
   unsigned posted = 0;
+  NSMutableDictionary *focusObservation = [NSMutableDictionary dictionary];
   AXUIElementRef app = nullptr, window = nullptr; CFTypeRef button = nullptr;
   if (identity && post && ax) {
     app = AXUIElementCreateApplication(target.pid);
     if (app && AXUIElementSetMessagingTimeout(app, 1.0f) == kAXErrorSuccess) window = ownWindow(app, target);
     selected = window != nullptr;
     if (selected) {
-      focused = trueAttribute(window, kAXFocusedAttribute);
+      focused = AXUIElementSetMessagingTimeout(window, 1.0f) == kAXErrorSuccess &&
+        focusedField(app, window, target, focusObservation);
       if (!std::strcmp(mode, "keys") && focused) {
-        CFTypeRef field = attribute(app, kAXFocusedUIElementAttribute);
-        focused = field && CFGetTypeID(field) == AXUIElementGetTypeID() &&
-          owner(static_cast<AXUIElementRef>(const_cast<void *>(field)), target.pid) &&
-          stringAttribute(static_cast<AXUIElementRef>(const_cast<void *>(field)), kAXRoleAttribute, kAXTextFieldRole);
-        if (field) CFRelease(field);
         marked = focused;
         for (unsigned i = 0; focused && i < 4; ++i) {
           for (unsigned down = 0; down < 2; ++down) {
@@ -169,6 +212,7 @@ static int driver(const char *mode, const Target &target) {
   emit(@{@"schema": @1, @"phase": [NSString stringWithUTF8String:mode], @"qualification": @NO,
       @"identity_verified": @(identity), @"post_event_access": @(post), @"ax_trusted": @(ax),
       @"own_window_selected": @(selected), @"focus_verified": @(focused), @"marker_readback": @(marked),
+      @"focus_observation": focusObservation,
       @"events_posted": @(posted), @"close_action": @(pressed), @"success": @(success)});
   return success ? 0 : 2;
 }

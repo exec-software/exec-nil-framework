@@ -2037,3 +2037,45 @@ from racing the last keyUp. Extra output after the final protocol record fails
 while its raw bytes remain retained. Twenty focused controls and independent
 ownership/protocol/API review pass. No product provider has been enabled by
 either diagnostic; both are ready for paired native execution.
+
+
+## First native provider/input runs and public API corrections
+
+[Directed run 41977026331](https://github.com/exec-software/exec-nil-framework/actions/runs/41977026331)
+at `ff727a8` compiles the strict Objective-C++ probe on both hosts. Both targets
+reach active/key-window/field-editor readiness; kernel lifetime/executable identity,
+AX trust, event-posting access and exact own-window selection pass. The driver
+refuses input at its focus query, so zero events are posted. Cleanup and every
+source/tool seal pass. Independent reconciliation SHA is
+`c5fe42d7d8192ae2935ce52d661cc0a6821012bd62603def6b32065437691320`.
+
+The query confused an element's keyboard focus with the application's focused
+window. Apple's [focused-window attribute](https://developer.apple.com/documentation/applicationservices/kaxfocusedwindowattribute)
+returns the application's window; the [element attribute](https://developer.apple.com/documentation/applicationservices/kaxfocusedattribute)
+describes keyboard focus. The corrected driver requires the app's focused-window
+object/PID to match the nonce-selected window, then verifies the focused text
+field's PID, role and enclosing window. Bounded query error/type/equality records
+retain the old observation separately. No permissions or target scope change.
+Twenty-four controls and peer review pass; correction report SHA is
+`dea80ab2353fce61485bb104aa8b73d9567c45d78a474f8edaa0c7e945b7c249`.
+Actual directed delivery still requires the next native run.
+
+[Provider run 41977023247](https://github.com/exec-software/exec-nil-framework/actions/runs/41977023247)
+builds and installs all six pinned providers on Apple Silicon in a helper run
+lasting 218.40 seconds. The actual Pango configure output confirms CoreText and
+Cairo Quartz. Smoke header discovery then fails because `pangocoretext.h` is
+an implementation header omitted from the installed public header set. The 302
+retained evidence files and all source/release/input/prefix/cleanup seals verify;
+there was no widget execution. ARM reconciliation SHA is
+`17ecfd5c4523e3d4582f705a4c9e02e5c05dd317757a848b8260bbdca46018cf`.
+The first Intel provider run remains under observation.
+
+The smoke now obtains the actual font through installed PangoCairo/HarfBuzz
+APIs: its Cairo scaled font must be Quartz, and its borrowed HarfBuzz font must
+expose a real CoreText font. Layout and pixel checks remain unchanged. Explicit
+HarfBuzz compile/link metadata and actual loaded origin join the sealed
+prerequisites and loader closure. No private header or type declaration is
+copied into the test. Thirty provider controls pass; public-header/source/install
+manifest checks and independent review pass. Local correction evidence SHA is
+`559a2af38f808017c8d7fd46597a45afeac7f09266a03ddb0a7dc45082b9b47c`.
+The next native run must still compile and execute the corrected smoke.

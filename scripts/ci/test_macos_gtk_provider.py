@@ -196,7 +196,7 @@ def smoke_fixture():
         'font':{'quartz':True,'coretext':True,'width':40,'height':12},
         'events':[],'observed_keys':[{'pressed':1,'released':1} for _ in range(3)],'dispatched_keys':[],
         'origins':{key:{'declared':'/private/'+key,'canonical':'/private/'+key,'file_backed':True}
-                   for key in ('gtk','pango','pangocairo','pixbuf','glib','gobject','cairo','png')}}
+                   for key in ('gtk','pango','pangocairo','pixbuf','glib','gobject','cairo','png','harfbuzz')}}
     for key in ('coretext','appkit'):
         result['origins'][key]={'declared':'/System/Library/Frameworks/'+key,'canonical':None,'file_backed':False}
     for index in range(3):
@@ -246,6 +246,12 @@ class SmokeControls(unittest.TestCase):
             for name in path[:-1]:target=target[name]
             target[path[-1]]=value
             with self.subTest(path=path),self.assertRaises(ValueError):M.smoke_result(row)
+
+    def test_harfbuzz_font_origin_is_required_and_file_backed(self):
+        row=smoke_fixture();del row['origins']['harfbuzz']
+        with self.assertRaises(ValueError):M.smoke_result(row)
+        row=smoke_fixture();row['origins']['harfbuzz']['file_backed']=False
+        with self.assertRaises(ValueError):M.smoke_result(row)
 
     def test_qualified_or_out_of_bound_reports_cannot_pass(self):
         for field,value in (('language_acceptance',True),('elapsed_seconds',30),('elapsed_seconds',float('nan')),

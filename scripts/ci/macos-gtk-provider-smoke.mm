@@ -4,7 +4,7 @@
 #include <gtk/gtk.h>
 #include <gdk/macos/gdkmacos.h>
 #include <pango/pangocairo.h>
-#include <pango/pangocoretext.h>
+#include <hb-coretext.h>
 #include <png.h>
 #include <dlfcn.h>
 #include <pthread.h>
@@ -149,12 +149,18 @@ static NSDictionary *fontProof(GtkWidget *widget) {
   PangoFont *font = pango_context_load_font(context, description);
   pango_font_description_free(description);
   require(font != nullptr, "CoreText font load failed");
-  const bool coretext = PANGO_IS_CORE_TEXT_FONT(font);
-  CTFontRef native = coretext ? pango_core_text_font_get_ctfont(PANGO_CORE_TEXT_FONT(font)) : nullptr;
+  // Pango's CoreText implementation header is not installed. Observe the font
+  // through installed PangoCairo/HarfBuzz APIs instead of declaring its internals.
+  cairo_scaled_font_t *scaled = PANGO_IS_CAIRO_FONT(font)
+      ? pango_cairo_font_get_scaled_font(PANGO_CAIRO_FONT(font)) : nullptr;
+  const bool quartz = scaled && cairo_scaled_font_status(scaled) == CAIRO_STATUS_SUCCESS &&
+      cairo_scaled_font_get_type(scaled) == CAIRO_FONT_TYPE_QUARTZ;
+  hb_font_t *hbfont = pango_font_get_hb_font(font); // Borrowed from this exact Pango font.
+  CTFontRef native = hbfont && hbfont != hb_font_get_empty() ? hb_coretext_font_get_ct_font(hbfont) : nullptr;
   const bool nativeValid = native && CTFontGetSize(native) > 0;
   NSString *fontType = text(G_OBJECT_TYPE_NAME(font));
   g_object_unref(font);
-  require(coretext && nativeValid, "actual font is not backed by CoreText");
+  require(quartz && nativeValid, "actual Pango font lacks Quartz/CoreText backing");
   PangoLayout *layout = pango_layout_new(context);
   require(layout != nullptr, "Pango layout failed");
   pango_layout_set_text(layout, "Ny GTK", -1);
@@ -226,8 +232,9 @@ int main(int argc, char **) {
                 std::strcmp(GDK_PIXBUF_VERSION,gdk_pixbuf_version) == 0 &&
                 std::strcmp(PNG_LIBPNG_VER_STRING,png_get_libpng_ver(nullptr)) == 0, "header/runtime version mismatch");
         report[@"origins"] = @{@"gtk":origin((const void *)&gtk_init_check),
-            @"pango":origin((const void *)&pango_core_text_font_get_type),
+            @"pango":origin((const void *)&pango_font_get_hb_font),
             @"pangocairo":origin((const void *)&pango_cairo_font_map_get_default),
+            @"harfbuzz":origin((const void *)&hb_coretext_font_get_ct_font),
             @"pixbuf":origin((const void *)&gdk_pixbuf_loader_new_with_type),
             @"glib":origin((const void *)&g_main_context_iteration),
             @"gobject":origin((const void *)&g_object_ref), @"cairo":origin((const void *)&cairo_version_string),
