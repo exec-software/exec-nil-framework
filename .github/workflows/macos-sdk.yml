@@ -2,12 +2,18 @@ name: macOS development SDK
 
 "on":
   workflow_dispatch:
+    inputs:
+      architecture:
+        description: Native development SDK architecture
+        type: choice
+        options: [both, x86_64, arm64]
+        default: both
 
 permissions:
   contents: read
 
 concurrency:
-  group: macos-development-sdk-${{ github.ref }}
+  group: macos-development-sdk-${{ github.ref }}-${{ inputs.architecture || 'both' }}
   cancel-in-progress: false
 
 # Isolated development candidates only. Failed CTest cases stay failed; neither
@@ -21,11 +27,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        host:
-          - runner: macos-15-intel
-            arch: x86_64
-          - runner: macos-15
-            arch: arm64
+        host: ${{ fromJSON(inputs.architecture == 'arm64' && '[{"runner":"macos-15","arch":"arm64"}]' || inputs.architecture == 'x86_64' && '[{"runner":"macos-15-intel","arch":"x86_64"}]' || '[{"runner":"macos-15-intel","arch":"x86_64"},{"runner":"macos-15","arch":"arm64"}]') }}
     defaults:
       run:
         shell: bash

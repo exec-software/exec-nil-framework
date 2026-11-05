@@ -124,6 +124,26 @@ class CandidateTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE((root / "pandoc").stat().st_mode), 0o755)
             self.assertEqual({p.name for p in root.iterdir()}, {"pandoc.zip", "pandoc"})
 
+    def test_pandoc_actual_arm_metadata_and_binary_bound(self):
+        # Metadata from the retained, hash-verified official 3.13 ARM64 ZIP.
+        entry = zipfile.ZipInfo("pandoc-3.13-arm64/bin/pandoc")
+        entry.create_system = 3
+        entry.external_attr = 0x81ED0000
+        entry.file_size = 195370176
+        entry.compress_size = 43052167
+        sdk.check_pandoc_binary(entry)
+        for size in (1, sdk.PANDOC_BINARY_LIMIT):
+            entry.file_size = size
+            sdk.check_pandoc_binary(entry)
+        for size in (0, -1, sdk.PANDOC_BINARY_LIMIT + 1):
+            entry.file_size = size
+            with self.subTest(size=size), self.assertRaisesRegex(ValueError, "byte bound"):
+                sdk.check_pandoc_binary(entry)
+        entry.file_size = 195370176
+        entry.external_attr = (stat.S_IFLNK | 0o755) << 16
+        with self.assertRaisesRegex(ValueError, "regular archive member"):
+            sdk.check_pandoc_binary(entry)
+
     def test_pandoc_rejects_bad_hash_traversal_and_linked_binary(self):
         for failure in ("digest", "path", "link"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:

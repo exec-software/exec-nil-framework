@@ -29,6 +29,9 @@ from sdk_qualification import TOOLS, source_identity, summarize_ctest
 # Official jgm/pandoc release 3.13 assets and SHA256 digests, verified using
 # https://api.github.com/repos/jgm/pandoc/releases/tags/3.13 . No package upgrades.
 PANDOC_VERSION = "3.13"
+# The official ARM64 3.13 executable is 195,370,176 bytes (the x86_64
+# executable is smaller). Keep a finite extraction bound above both assets.
+PANDOC_BINARY_LIMIT = 256 * 1024**2
 PANDOC = {
     "arm64": "f436d18bebbfb3ddd326597686dacab9fac5dc23bd060495020f35a28a43a7c3",
     "x86_64": "1823278715aa405aaf21b59cde5dc789346aa8d4fc307467f9a9ee84162bedc5",
@@ -138,6 +141,12 @@ def payload(root):
     return result
 
 
+def check_pandoc_binary(entry):
+    require(stat.S_ISREG(entry.external_attr >> 16), "Pandoc executable is not a regular archive member")
+    require(0 < entry.file_size <= PANDOC_BINARY_LIMIT,
+            f"Pandoc executable size {entry.file_size} exceeds the 1..{PANDOC_BINARY_LIMIT} byte bound")
+
+
 def extract_pandoc(archive, output, expected_digest, architecture):
     require(record(archive)["sha256"] == expected_digest, "Pandoc archive hash differs from pinned release")
     require(architecture in PANDOC, "unsupported Pandoc architecture")
@@ -149,8 +158,7 @@ def extract_pandoc(archive, output, expected_digest, architecture):
             name = PurePosixPath(entry.filename)
             require(not name.is_absolute() and ".." not in name.parts, "unsafe Pandoc archive entry")
         entry = zipped.getinfo(expected)
-        require(stat.S_ISREG(entry.external_attr >> 16) and
-                0 < entry.file_size <= 160 * 1024**2, "Pandoc binary is not a bounded regular file")
+        check_pandoc_binary(entry)
         with zipped.open(entry) as source, output.open("xb") as destination:
             shutil.copyfileobj(source, destination, 1024**2)
     output.chmod(0o755)

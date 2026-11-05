@@ -1126,3 +1126,28 @@ candidate evidence. The five-file validation report is sealed as
 `628e72b3816232679b8f0b415da6e151f87ccd195b66c69a66fcaee30eb20dd8`
 under `macos-parity-20261105/sdk-staging-workflow-controls/report-final.json`.
 These are workflow controls, not native SDK acceptance.
+
+
+## First SDK run: official ARM documentation-tool size
+
+[Run 41957412951](https://github.com/exec-software/exec-nil-framework/actions/runs/41957412951)
+started at `1cfe0bf877cd0eb38665a45156194847780b6374`. Intel passed Pandoc
+and proceeded to its native build. ARM stopped before configuring NIL: the
+correctly hash-pinned official Pandoc ZIP contains a regular 0755 executable
+of 195,370,176 bytes, above the initial 160 MiB extraction ceiling. The original
+failure, ZIP, eight evidence files and clean source identity are retained.
+
+The finite executable ceiling is now 256 MiB; hash, expected member path and
+regular-file checks are unchanged. Thirteen staging controls pass, including
+the actual ARM ZIP metadata and boundary cases. Extraction of the retained
+official ZIP succeeds with binary SHA256
+`8f17378a70e46eed7b63b5433fff6f5a0802f92659aa5782418548e0ca4a8e44`;
+that Linux check does not execute the macOS binary. The independently reviewed
+report is sealed as
+`7a178dfae7df4aa068290e98f8e25d1f55bf3f0837da8c29fb532975821d8403`
+under `macos-parity-20261105/pandoc-arm-bound-20261105/report.json`.
+
+The workflow now accepts an explicit `both`, `x86_64` or `arm64` native host
+selection, defaulting to both, so an ARM-only retry can preserve the running
+Intel job. The selector's exact runner matrix and all shell bodies are checked.
+This correction changes documentation-tool admission, not language behavior.
