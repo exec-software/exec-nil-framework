@@ -4,8 +4,10 @@
 compiler. A `nil.project.nildata` manifest supplies the entrypoint, import
 roots, SDK selection and analyzer policy to the CLI and VS Code extension.
 Each project produces one executable; project references express the ordering
-between projects. Execution is currently qualified on Linux. The native target
-requires an LLVM-enabled compiler and a host C++ linker.
+between projects. Project execution has paired Linux/Windows development
+acceptance at the `5630388` SDK baseline; see the
+[platform support matrix](../platform-support.md) for current scope and macOS
+work. The native target requires an LLVM-enabled compiler and a host C++ linker.
 
 ## Create a project
 

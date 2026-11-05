@@ -239,7 +239,9 @@ It also turned up a real defect: numeric-to-text casts (`say (5 becomes text)`)
 compile on all four interpreted routes but are rejected by the LLVM native
 backend. The renderer works around it and the
 [README](validation/matrix-3d/README.md#known-limitation-number-to-text-casts-on-native-routes)
-records the reproduction.
+records the reproduction. For portable scalar formatting, use explicit
+[formatted interpolation](docs/language-reference/expressions.md#formatted-text),
+such as `say formatted "value={5}"`; it works on interpreted and native routes.
 
 ## Project status
 

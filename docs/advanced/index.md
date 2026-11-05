@@ -118,7 +118,9 @@ library search flags or a frozen general-purpose Ny ABI.
   and test code generation contains metadata-registration hooks.
 - [Executable context](executable-context.md) provides read-only JSON
   inspection and opt-in native context embedding in x86_64 ELF/PE and thin
-  x86_64/arm64 Mach-O. The new Mach-O profile awaits native hosted acceptance.
+  x86_64/arm64 Mach-O. Both native macOS architectures passed embedding,
+  inspection and dead-strip retention checks at `7e53828`; see the
+  [recorded platform coverage](../platform-support.md#native-executable-context).
 - A richer context extractor exists in `nilcompiler/src`, but is not a
   command-line tool.
 - `nilinterpreter --ai` provides opt-in local control over Windows named pipes

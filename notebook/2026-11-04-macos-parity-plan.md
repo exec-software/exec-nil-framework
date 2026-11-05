@@ -857,3 +857,27 @@ newer evidence root, SHA-256
 `327f7576e90f83e9d68d9d2544f3cac66250ea7c5af5a0a7c9c82f1356fb0665`.
 The new complete framework run is `41949698862`; installed/release SDK
 qualification remains separate.
+
+
+## SDK packaging audit for the next macOS stage
+
+A read-only audit of `8d906b7` distinguishes existing format support from the
+remaining distribution work. The runtime helpers already recognize Mach-O
+dylibs and BSD static archives. The development consumer gate in
+`scripts/check-sdk-routes.py` explicitly rejects Darwin, however, and the hosted
+workflow uses `CMAKE_INSTALL_BINDIR=bin` rather than the root command/runtime
+layout expected by packaging. The recorded hosted provider inventory lacks
+Pandoc, which the SDK documentation builder requires.
+
+The next stage needs a Darwin development consumer gate, SDK-root installation
+configuration, Pandoc, a pre-CTest qualification snapshot, and actual staged
+install/package/validate/relocation checks. Build archives containing `bin` and
+`lib` are not substitutes. Staged loader closure, manifest/hash equality,
+minimum OS behavior and an explicit policy for external provider/DYLD paths
+must be measured on both hosts. The reviewed release profile remains Linux-only.
+
+Findings are saved outside the repository as
+`/home/nathan/vm/nil-win11/artifacts/macos-parity-20261105/sdk-packaging-audit-8d906b7/findings.txt`,
+SHA-256 `4d37dc2550cc9984d4e2fbd3764e7742b5364e83432c95e2ef4c1954d3a1f0df`.
+No SDK builder, installation, provider setup or release action was performed
+for this audit.

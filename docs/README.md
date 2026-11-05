@@ -63,6 +63,7 @@ do not assume every documented combination is accepted by every backend yet.
 
 The canonical component directories are directly under the project root: `nilcompiler`, `nilinterpreter`,
 `nildebugger`, `nillsp`, `nilstd`, `nilaix`, `nilassembler`, `nillinker`,
-`nilschema`, `nilagent`, and `nilbuild`. Shared tooling utilities live in `common`.
+`nilschema`, `nilagent`, `nilbuild`, `niltest`, and `aperture`.
+Shared tooling utilities live in `common`.
 First-party package experiments live under
 `packages`.

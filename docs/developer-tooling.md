@@ -26,8 +26,21 @@ coverage, and test-debug profiles remain future work.
 Project manifests now default to NILData. Local project references establish
 dependency ordering, and bounded parallel jobs build independent projects and
 VM/native targets. SHA-256 input and artifact identities avoid redundant
-compilation while every invocation still performs fresh analysis. A single
-executable remains one compiler job over its complete import graph.
+compilation only when the compiler certifies its source and loaded-code input
+graphs; native reuse also requires a complete linker/toolchain graph. Every
+invocation still performs fresh analysis. Darwin currently rebuilds both VM
+and native outputs while loaded-image/shared-cache identity is incomplete,
+preserving source protection checks. See the
+[incremental build contract](tools/projects.md#incremental-and-parallel-builds).
+A single executable remains one compiler job over its complete import graph.
+
+Source debugging is implemented through `nildebugger --dap` and VS Code launch
+configurations for Ny, Matrix and debug-enabled NIL. Source breakpoints,
+stepping, frames, locals and streamed output use the interpreter's actual
+execution state. The paired Windows/Linux `5630388` development baseline
+includes installed debugger acceptance, with VS Code acceptance recorded for
+Windows. See [platform support](platform-support.md) and the
+[source-debugging guide](tools/index.md#source-debugging-and-vs-code).
 
 Workspace source requests now let the compiler analyze open unsaved dependencies
 alongside the primary buffer. Import resolution and Ny textual includes consume
@@ -79,7 +92,7 @@ not complete signatures or a stable type graph. See
 | Semantic editing | Extend member/signature queries to unsupported contexts and general parser recovery; add explicitly scoped cross-file references and transactional rename. Extend existing compiler-backed definition navigation as coverage grows. | Real extension-host tests exercise edit/undo, Unicode offsets, cancellation and multi-root workspaces against an installed SDK. |
 | Analyzer extensions | Versioned read-only semantic queries and an explicit, bounded host for language-authored analyzers; shared diagnostics, configuration and fix protocol. | Malformed output, limits, analyzer failure and source-version mismatch cannot apply incorrect edits or corrupt compilation. |
 | Separate compilation | Extend the implemented local project graph and content cache with reusable library targets and a compiler-owned separate compilation contract. | Module interfaces, dependency changes and artifact reuse remain consistent across VM and native targets; a failed build cannot run stale artifacts. |
-| Integrated debugging | Project launch profiles, consistent source maps, richer variable inspection and native-debugger integration. | End-to-end stepping and breakpoint tests cover both languages and each claimed execution route. |
+| Extend debugging | Build on the implemented source maps, VS Code/DAP launches and interpreter inspection with project-aware launch configuration, richer variable inspection and native-debugger integration. | Extend existing source-debugger tests to each newly supported configuration and execution route. |
 
 [NIL-0013](design/NIL-0013-project-semantic-editing.md) proposes the entrypoint-graph
 scope, source roles and transactional checks required for cross-file editing.

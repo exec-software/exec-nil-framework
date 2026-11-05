@@ -15,7 +15,7 @@ A complete SDK has the following top-level shape:
 ```text
 nilcompiler  nilinterpreter  nilassembler  nillinker
 nillsp       nildebugger     nilschema     nilagent
-nilbuild     aperture
+nilbuild     aperture        niltest
 nillib/      nilstd/         docs/         manifest.json
 ```
 
@@ -35,10 +35,10 @@ and regenerates imported bodies. Direct compiled-body linking is a later format
 step, so `nillib` is a source-independent distribution today, not yet a
 zero-recompilation module cache.
 
-Earlier sealed `nil.sdk.v1` generations contain the original nine commands;
-validation continues to accept that complete inventory. New SDK builds require
-Aperture, include its digest in the manifest and build evidence, and check its
-help/version identity. Aperture retains its own preview version.
+Validation continues to accept earlier sealed `nil.sdk.v1` generations with
+the original nine commands, or ten with Aperture. New SDK builds require all
+eleven commands, including `niltest`, with their hashes and tool identities
+checked during packaging. Aperture retains its own preview version.
 
 ## `aperture`
 
@@ -49,17 +49,33 @@ add `--native` for native compilation and execution. Inspect a saved report with
 
 Reports include allocated, freed, live and peak logical storage, allocation
 sites, and GC activity within their stated accounting scope. They do not measure
-process RSS or establish memory leaks. Recording currently requires a POSIX
-host; saved-report inspection does not execute the target. Heap snapshots,
+process RSS or establish memory leaks. Recording supports POSIX and Windows;
+Windows VM/native recording passed in the paired `5630388` development SDK
+baseline documented in [platform support](../platform-support.md).
+Saved-report inspection does not execute the target. Heap snapshots,
 CPU tracing, code exploration and debugger integration remain planned. See the
 [Aperture overview](../../aperture/README.md) for options and limitations.
 
 ## `nilbuild`
 
-The [project driver](projects.md) provides `init`, `convert`, `describe`, `check`, `build` and
-`run` over a `nil.project.nildata` file. It shares compiler analysis and project
-settings with the VS Code extension. VM/native targets share content-based incremental builds and bounded parallel
-project scheduling. Project process execution is currently qualified on Linux.
+The [project driver](projects.md) provides `init`, `convert`, `describe`, `check`,
+`build`, `run` and `test` over a `nil.project.nildata` file. It shares compiler
+analysis and project settings with the VS Code extension. VM/native targets
+share bounded parallel project scheduling. Incremental reuse requires complete
+source and toolchain identities; Darwin currently rebuilds both targets while
+loaded-image identity remains incomplete. See the
+[incremental build contract](projects.md#incremental-and-parallel-builds).
+Project process execution has recorded Linux and paired Windows `5630388`
+development acceptance; [platform support](../platform-support.md) separates
+that baseline from release qualification.
+
+## `niltest`
+
+`niltest list` discovers compiler-checked Ny and Matrix tests. `niltest run`
+executes selected cases in isolated interpreter or native processes with
+bounded execution and structured reports. `nilbuild test` and the VS Code
+Testing view use this runner. See the [testing guide](testing.md) for syntax,
+selection, limits and supported routes.
 
 ## `nilcompiler`
 

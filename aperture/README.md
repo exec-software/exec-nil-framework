@@ -72,8 +72,11 @@ function names, so review them before sharing outside your project.
 
 ## Current scope
 
-Recording is supported on POSIX hosts. Saved JSON reports can be inspected
-without executing their targets. The current profiler covers the NIL runtime
+Recording is supported on POSIX and Windows. VM/native recording passed in the
+paired Windows/Linux `5630388` development SDK baseline; see
+[platform support](../docs/platform-support.md) for acceptance and release
+boundaries. Saved JSON reports can be inspected without executing their targets.
+The current profiler covers the NIL runtime
 allocations described in each report's `scope`. VM coverage currently includes
 typed arrays, raw buffers, and iterator payloads; VM text and record storage,
 container capacity, and `Value` overhead are excluded. Native coverage includes
