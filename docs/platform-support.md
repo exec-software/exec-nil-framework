@@ -70,6 +70,10 @@ installed binaries or qualify a new complete SDK. A later private build at
 `f96f237` passes five focused CTests, including 351 assembly validator checks,
 eight native Ny/Matrix executions, the additional Matrix routes and the real
 same-process execution-checkpoint contract. The accepted SDK remains unchanged.
+A private Windows build at `8d1f65d` also passes both database runtime/client
+tests after the numeric-address correction, including IPv4/IPv6 timeout and
+socket-close checks. The original checkout, installed SDK and provider DLLs
+remain unchanged.
 
 ## Native executable context
 
@@ -125,7 +129,9 @@ the complete admission rules.
   rejected at process setup; larger diagnostic profiles do not replace it.
   Successful lifetime execution routes remain covered by the ordinary suite.
 - The GTK provider currently supports Linux and Windows. macOS UI/provider
-  support and live desktop acceptance remain open.
+  support and live desktop acceptance remain open. Both hosted Mac architectures
+  now pass the prerequisite GLib, Cairo-Quartz and HarfBuzz/CoreText compile,
+  link and runtime checks; this is not GTK or application interaction acceptance.
 - Full debugger, editor, standard-library/provider and installed-package
   acceptance remains separate from the passing runtime/process contracts. Shipping a
   Mach-O tool alone does not qualify these surfaces.

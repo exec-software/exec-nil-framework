@@ -160,12 +160,25 @@ def cocoa_result(raw):
     for name in ('main_thread', 'session', 'on_console', 'login_done', 'post_event_access',
                  'ax_trusted', 'window_created', 'cleanup_verified'):
         require(type(value.get(name)) is bool, 'Missing Cocoa observation: ' + name)
+    expected = value.get('queued_event', {})
+    for name in ('queued_event', 'app_event', 'view_event'):
+        event = value.get(name, {})
+        require(isinstance(event, dict), 'Invalid Cocoa event observation')
+        for key in ('characters', 'characters_ignoring_modifiers'):
+            require(key not in event or (type(event[key]) is str and len(event[key].encode('utf-16-le')) <= 16),
+                    'Cocoa event character observation exceeds bound')
+    exact_event = (expected.get('synthetic_identity_match') is True and expected.get('strings_bounded') is True and
+        type(expected.get('window_number')) is int and expected['window_number'] > 0 and
+        all(type(expected.get(key)) is int and expected[key] == number for key, number in
+            (('key_code', 45), ('type', 10), ('modifier_flags', 0))) and
+        expected.get('characters') == expected.get('characters_ignoring_modifiers') == 'n' and
+        expected == value.get('app_event') == value.get('view_event'))
     value['own_window_feasible'] = all(value.get(name) is True for name in
         ('main_thread', 'session', 'login_done', 'window_created', 'visible', 'event_ready', 'event_queued',
          'own_event_delivered', 'own_close_delivered', 'cleanup_verified')) and value.get('exception') is False and (
              type(value.get('dispatch_count')) is int and value['dispatch_count'] == 1 and
              type(value.get('view_delivery_count')) is int and value['view_delivery_count'] == 1 and
-             value.get('wrong_target') is False)
+             value.get('wrong_target') is False and exact_event)
     return value
 
 

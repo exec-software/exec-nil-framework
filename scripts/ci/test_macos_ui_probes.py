@@ -22,10 +22,13 @@ class ProbeControls(unittest.TestCase):
         self.repo = self.base/'source'; self.repo.mkdir()
 
     def cocoa(self):
+        event = dict(synthetic_identity_match=True, strings_bounded=True, window_number=17,
+                     key_code=45, type=10, modifier_flags=0, characters='n', characters_ignoring_modifiers='n')
         return dict(schema=1, qualification=False, main_thread=True, session=True, on_console=True,
                     login_done=True, post_event_access=False, ax_trusted=False, window_created=True,
                     visible=True, event_ready=True, event_queued=True, own_event_delivered=True, own_close_delivered=True,
                     dispatch_count=1, view_delivery_count=1, wrong_target=False,
+                    queued_event=dict(event), app_event=dict(event), view_event=dict(event),
                     exception=False, cleanup_verified=True)
 
     def test_own_queue_success_does_not_claim_external_input_permission(self):
@@ -47,6 +50,21 @@ class ProbeControls(unittest.TestCase):
             with self.subTest(name=name, value=value):
                 report = self.cocoa(); report[name] = value
                 self.assertFalse(gate.cocoa_result(json.dumps(report).encode())['own_window_feasible'])
+
+    def test_exact_synthetic_key_metadata_must_reach_app_and_view(self):
+        for name in ('queued_event', 'app_event', 'view_event'):
+            for key, value in (('synthetic_identity_match', False), ('window_number', 18),
+                               ('key_code', 0), ('type', 11), ('modifier_flags', 1),
+                               ('characters', 'a'), ('characters_ignoring_modifiers', 'a'), ('strings_bounded', False)):
+                with self.subTest(name=name, key=key):
+                    report = self.cocoa(); report[name][key] = value
+                    self.assertFalse(gate.cocoa_result(json.dumps(report).encode())['own_window_feasible'])
+
+    def test_synthetic_character_observations_remain_bounded(self):
+        for value in ('a' * 9, '\U0001f600' * 5):
+            report = self.cocoa(); report['view_event']['characters'] = value
+            with self.assertRaisesRegex(ValueError, 'exceeds bound'):
+                gate.cocoa_result(json.dumps(report).encode())
 
     def test_observation_flags_require_booleans(self):
         value = self.cocoa(); value['post_event_access'] = 1

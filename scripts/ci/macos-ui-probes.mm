@@ -5,14 +5,40 @@
 #include <cstdio>
 #include <chrono>
 
+static bool sameSyntheticEvent(NSEvent *event, NSEvent *expected) {
+  return expected && (event == expected || event.timestamp == expected.timestamp);
+}
+
+static NSDictionary *observeSyntheticEvent(NSEvent *event, NSEvent *expected) {
+  // Never retain unrelated input. An AppKit copy must keep the exact timestamp
+  // of the event created by this process before any character data is observed.
+  if (!sameSyntheticEvent(event, expected)) return @{@"synthetic_identity_match":@NO};
+  NSString *characters = event.characters ?: @"";
+  NSString *unmodified = event.charactersIgnoringModifiers ?: @"";
+  const bool bounded = characters.length <= 8 && unmodified.length <= 8;
+  return @{@"synthetic_identity_match":@YES, @"strings_bounded":@(bounded),
+      @"window_number":@(event.windowNumber), @"key_code":@(event.keyCode),
+      @"type":@(event.type), @"modifier_flags":@(event.modifierFlags),
+      @"characters":bounded ? characters : @"", @"characters_ignoring_modifiers":bounded ? unmodified : @""};
+}
+
+static bool expectedKey(NSEvent *event, NSEvent *expected, NSWindow *window) {
+  return sameSyntheticEvent(event, expected) && event.window == window &&
+      event.type == NSEventTypeKeyDown && event.keyCode == 45 && event.modifierFlags == 0 &&
+      [event.characters isEqualToString:@"n"] && [event.charactersIgnoringModifiers isEqualToString:@"n"];
+}
+
 @interface NyProbeView : NSView
 @property(nonatomic) NSUInteger received;
 @property(nonatomic) BOOL wrongTarget;
+@property(nonatomic, strong) NSEvent *expectedEvent;
+@property(nonatomic, strong) NSDictionary *observation;
 @end
 @implementation NyProbeView
 - (BOOL)acceptsFirstResponder { return YES; }
 - (void)keyDown:(NSEvent *)event {
-  if (event.window != self.window || ![event.characters isEqualToString:@"Ny"])
+  if (!self.observation) self.observation = observeSyntheticEvent(event, self.expectedEvent);
+  if (!expectedKey(event, self.expectedEvent, self.window))
     self.wrongTarget = YES;
   else
     self.received += 1;
@@ -75,6 +101,7 @@ int main() {
     id monitor = nil;
     __block bool queued = false, ready = false, closeAttempted = false;
     __block NSUInteger dispatched = 0;
+    __block NSDictionary *appObservation = nil;
     bool visible = false, delivered = false, closeDelivered = false, cleaned = false, exception = false;
     @try {
       NSApplication *app = [NSApplication sharedApplication];
@@ -100,7 +127,10 @@ int main() {
       // Observe only this application's dispatch of our exact private event.
       // Return every event unchanged; this is not a global event monitor.
       monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *event) {
-        if (event.window == window && [event.characters isEqualToString:@"Ny"]) dispatched += 1;
+        if (sameSyntheticEvent(event, view.expectedEvent)) {
+          if (!appObservation) appObservation = observeSyntheticEvent(event, view.expectedEvent);
+          if (expectedKey(event, view.expectedEvent, window)) dispatched += 1;
+        }
         return event;
       }];
       const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(6);
@@ -109,10 +139,14 @@ int main() {
           ready = true;
           NSEvent *event = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSMakePoint(20, 20)
               modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime
-              windowNumber:window.windowNumber context:nil characters:@"Ny"
-              charactersIgnoringModifiers:@"Ny" isARepeat:NO keyCode:0];
+              windowNumber:window.windowNumber context:nil characters:@"n"
+              charactersIgnoringModifiers:@"n" isARepeat:NO keyCode:45]; // ANSI N
           queued = event && event.window == window;
-          if (queued) [app postEvent:event atStart:NO];
+          if (queued) {
+            view.expectedEvent = event;
+            result[@"queued_event"] = observeSyntheticEvent(event, event);
+            [app postEvent:event atStart:NO];
+          }
         }
         if (view.received || view.wrongTarget || std::chrono::steady_clock::now() >= end) {
           closeAttempted = true;
@@ -134,6 +168,8 @@ int main() {
       result[@"dispatch_count"] = @(dispatched);
       result[@"view_delivery_count"] = @(view.received);
       result[@"wrong_target"] = @(view.wrongTarget);
+      result[@"app_event"] = appObservation ?: @{};
+      result[@"view_event"] = view.observation ?: @{};
       delivered = dispatched == 1 && view.received == 1 && !view.wrongTarget;
       closeDelivered = closeAttempted && delegate.closeRequests == 1 && delegate.closed == 1 && !window.isVisible;
     } @catch (NSException *error) {
@@ -142,6 +178,7 @@ int main() {
     } @finally {
       [timer invalidate];
       if (monitor) [NSEvent removeMonitor:monitor];
+      view.expectedEvent = nil;
       if (window) {
         [window orderOut:nil];
         if (window.isVisible || delegate.closed == 0) [window close];

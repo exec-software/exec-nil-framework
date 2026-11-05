@@ -1708,3 +1708,33 @@ global input or permission changes are made. Sixteen controls and independent
 reviews pass. Correction evidence SHA is
 `0e2460f61ece3b14579ab6827164d579f9128cf7ea6d98c91d79360e83a051b3`;
 native execution remains pending.
+
+## Windows address regression and native UI dependency results
+
+The private Windows build at `8d1f65d6a3150b2ad21e39fa834e6d0f5e903b8b`
+passes both database runtime/client tests without skips, including eight bounded
+IPv4/IPv6 stalls and socket closure. Eight owned phases retain sixteen raw
+streams, exact source/tested executable hashes and verified cleanup. The
+original clean checkout, accepted SDK, provider DLLs and all input seals remain
+unchanged. Independent copied-evidence review passes. Reconciliation is
+`macos-parity-20261105/windows-pg-8d1f65d/windows-reconciliation.json`, SHA
+`368c47f677508d1d937d8b7956ac7314f53e9978ded3cc83d57021e6a23a4570`.
+
+The third [native UI prerequisite run](https://github.com/exec-software/exec-nil-framework/actions/runs/41970256617)
+at `3414ce5` passes actual dependency compilation, linking and loaded API checks
+on both hosts, with header/runtime/pkg-config versions and loaded origins
+matched. Each host retains 43 owned phases and 86 raw streams; all seals and
+cleanup pass. Reconciliation SHA is
+`155952d8b72b24d54f3178e85c70f2dfe942cb93b38fcc5afc8d71f1542d1782`.
+The owned Cocoa window now activates and becomes key, but the view reports a
+wrong target. That flag combines window and character checks; the precise cause
+was not captured, so character normalization remains only a hypothesis.
+
+The next narrow correction uses one consistent synthetic key (`n`, key code 45)
+and records bounded metadata at queue, application dispatch and view delivery.
+Only the retained synthetic event or its exact timestamp can contribute character
+observations; unrelated input is not recorded. Readiness, exact delivery counts,
+matching metadata, own close and cleanup are all still required. Eighteen
+controls and independent review pass; correction evidence SHA is
+`bfafd63196cc2a2238d81cb7c38bc2a52a77204018b1862a31f97aeb01a59796`.
+This remains a prerequisite probe, not a GTK runtime port or parity declaration.
