@@ -1989,3 +1989,51 @@ change permissions or fabricate widget callbacks. These prerequisites must pass
 before the existing ten language-level desktop/interaction cases can establish
 macOS GTK acceptance. A future runtime port must enforce AppKit's main-thread
 requirement; DAP execution on a worker is a separate unqualified combination.
+
+
+## Cache identity research lead
+
+The measured multi-gigabyte hash cost suggests investigating an explicit
+OS-backed cache identity instead of inserting entire cache files into every
+compiler key. Apple's pinned
+[dyld 1285.19 cache builder](https://github.com/apple-oss-distributions/dyld/blob/dyld-1285.19/cache_builder/SubCache.cpp#L672)
+derives a cache UUID from a SHA-256 digest of its CodeDirectory, then adjusts
+UUID format bits and recomputes the first page's signature hash after writing
+that UUID. The local builder uses an ad-hoc signature; the UUID alone is not
+proof that arbitrary disk bytes are trusted or unchanged.
+
+A possible later diagnostic could relate the active OS cache identity to bounded
+CodeDirectory metadata, reconstructing the first-page treatment, while retaining
+exact loaded-image/subcache membership. Before product use this needs verified
+kernel/OS integrity guarantees, coverage of every relevant subcache, file-change
+and race behavior, malformed-format controls, and measured performance. It would
+also need an explicit identity contract distinct from ordinary file hashes.
+This is a research hypothesis, not an implemented optimization or a reason to
+mark compiler identity complete. Native linker/toolchain closure remains a
+separate requirement.
+
+
+## Private GTK and directed-input diagnostics implemented
+
+The [private provider workflow](../.github/workflows/macos-gtk-provider.yml)
+builds only the pinned private prefix with two compiler jobs, a 1,800-second
+whole-helper bound and thirty seconds reserved for final checks. All six
+release archives and the Meson wheel are verified and extracted before their
+build code runs. Twenty-nine controls pass, along with exact extraction of all
+seven assets, all option-name checks, ten generated CSS pins and a strict owned
+Linux image-dependency probe. No downloaded build code or native GTK was run
+locally. Frozen local evidence is
+`darwin-gtk-provider-lock/local-controls-v1.json`, SHA
+`46c9a2673edfd0fa2e8941d9ec05f361bc73404c0c206ae57c3944fa68f7139b`.
+Independent source, build-interface and public GTK API reviews pass; actual
+native compilation and provider execution remain required.
+
+The [directed-input workflow](../.github/workflows/macos-ui-directed-probes.yml)
+has a 180-second helper limit, a thirty-second target lifetime and ten seconds
+per input/close driver. The parent retains the child leader through both drivers;
+normal text callbacks must occur during marked key dispatch. The ready-for-close
+record is sent only after all eight keyDown/keyUp dispatches, preventing close
+from racing the last keyUp. Extra output after the final protocol record fails
+while its raw bytes remain retained. Twenty focused controls and independent
+ownership/protocol/API review pass. No product provider has been enabled by
+either diagnostic; both are ready for paired native execution.
