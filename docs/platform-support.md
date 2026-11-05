@@ -60,13 +60,15 @@ the complete admission rules.
   pass the five focused filesystem/process suites on both architectures; a new
   full run must confirm their integration. Path spelling and host lookup
   identity differ; see [platform behavior](platform-behavior.md#filesystem-lookup-identity).
-- SDK publication now retains old symlink inodes on Darwin after native probes
-  isolated APFS reader errors from immediate removal. The production fix still
-  awaits its native contract run; the diagnostic alone is not acceptance. See
+- The `e087964` follow-up passes the complete SDK publication contract and
+  5,000-replacement production stress check on both architectures. Darwin retains
+  old symlink inodes and preserves readable new links under restrictive umasks.
+  This verifies publication mechanics, not a complete installed SDK. See
   [SDK publication](getting-started/index.md) for retention lifetime.
 - Native incremental dependency discovery and reuse remain incomplete. Darwin
-  compiler loaded-library identity is also incomplete for VM cache reuse;
-  successful compilation does not establish reliable incremental reuse.
+  compiler loaded-library identity is also incomplete. Both VM and native builds
+  now deliberately rebuild rather than reuse artifacts without complete identity;
+  successful compilation does not establish incremental parity.
 - The GTK provider currently supports Linux and Windows. macOS UI/provider
   support and live desktop acceptance remain open.
 - Full debugger, editor, standard-library/provider and installed-package

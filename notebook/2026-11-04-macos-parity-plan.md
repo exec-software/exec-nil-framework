@@ -834,3 +834,26 @@ changed path. Production code did not change for that correction.
 The reconciled report is `compiler-identity-containment/linux-reconciliation.json`
 under the newer macOS evidence root, SHA-256
 `e658f064b3b2532cc54a69f975fabbd2a7f54c81d4178473b45954cc4dcf17b5`.
+
+
+## Native publication follow-up accepted
+
+[Run 41949695452](https://github.com/exec-software/exec-nil-framework/actions/runs/41949695452)
+at `e08796410621ea06c821e57c167635e61661a985` passes the actual complete
+publication contract on both Intel and Apple Silicon, including restrictive
+umask, concurrent validation/rollback and strict reader observations. All six
+focused host suites pass on each architecture with verified cleanup.
+
+Production stress completes 5,000 replacements with 5,000 retained anchors on
+each host: 111,658 reader opens on ARM and 98,837 on Intel. Held old-generation
+bytes remain unchanged. The unretained-replace and swap/unlink negative
+baselines still produce `EINVAL`; they retain explicit FAIL observations and
+account for the diagnostic workflow's red aggregate. The production result is
+separate and passes; no retry or error suppression was introduced.
+
+All 64 evidence files, source pins, artifact ZIP digests and raw logs were
+verified. The report is `host-probes-41949695452/reconciliation.json` under the
+newer evidence root, SHA-256
+`327f7576e90f83e9d68d9d2544f3cac66250ea7c5af5a0a7c9c82f1356fb0665`.
+The new complete framework run is `41949698862`; installed/release SDK
+qualification remains separate.
