@@ -1544,3 +1544,22 @@ incremental reuse, and the malformed-library negative oracle failed on the same
 already-corrected Darwin wording. Intel reconciliation SHA is
 `16f49141279985eec927b8860024041d6e8a00ee1f7ba182cfa018ce546c4396`.
 The full installed consumer campaign did not run on either `2e098f1` host.
+
+
+The next attempt, [41966299989](https://github.com/exec-software/exec-nil-framework/actions/runs/41966299989)
+at `2a75b5d`, reached native PostgreSQL configure on both hosts. Its pinned parser
+rejects `--without-ssl` because `--with-ssl` requires a library argument; the
+supported boolean `--without-openssl` preserves the intended TLS-disabled local
+profile. Both original failures retain 34 files per host, five owned phases,
+verified cleanup/source seals and all initial control passes. Reconciliation SHA
+is `23ebe0f84679f3d7f31ef5d50113b278ae39f0b0ec599502507b3582dd447d4b`.
+
+The corrected complete option list also passed one bounded Linux configure-only
+run against the exact pinned release in 8.21 seconds, with empty stderr, unchanged
+release sources and verified cleanup. Its generated header confirms 160015 and
+all eleven intended optional features disabled. No make, install or server ran.
+The shared argument builder differs only by the Apple SDK path in the native
+profile. Eighteen controls and independent review pass. Linux configure evidence
+SHA is `0944003c66c7738b40c24f9624d9f4a2c5c8daf5a2580697a44b228dd6401021`
+under `macos-parity-20261105/postgresql-provider-16.15/configure-linux-v1/report.json`.
+Native provider compilation and SDK consumers remain pending.

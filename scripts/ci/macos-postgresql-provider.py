@@ -234,6 +234,20 @@ def parse_preflight(raw, expected):
     return {"header_version": VERSION_NUMBER, "version": VERSION_NUMBER, "path": str(expected)}
 
 
+def configure_arguments(source, prefix, sdk=None):
+    # 16.15 treats --with-ssl as a required LIB-valued option, including an
+    # error for --without-ssl. Its supported boolean OpenSSL switch preserves
+    # the default TLS-disabled profile used by the private Unix-socket tests.
+    arguments = [source / "configure", "--prefix=" + str(prefix),
+                 "--without-icu", "--without-readline", "--without-zlib", "--without-openssl",
+                 "--without-gssapi", "--without-ldap", "--without-libxml", "--without-libxslt",
+                 "--without-llvm", "--without-lz4", "--without-zstd",
+                 "CC=/usr/bin/clang", "CXX=/usr/bin/clang++", "CFLAGS=-O2"]
+    if sdk is not None:
+        arguments.append("PG_SYSROOT=" + sdk)
+    return arguments
+
+
 def fresh_roots(output, work):
     output = output.parent.resolve(strict=True) / output.name
     work = work.parent.resolve(strict=True) / work.name
@@ -356,12 +370,7 @@ def main():
         save(output / "release-source-before.json", original_source)
         # Release tarballs include generated parser sources: no package-manager
         # generators, updates or network access are needed for this build.
-        configure = [source / "configure", "--prefix=" + str(prefix),
-                     "--without-icu", "--without-readline", "--without-zlib", "--without-ssl",
-                     "--without-gssapi", "--without-ldap", "--without-libxml", "--without-libxslt",
-                     "--without-llvm", "--without-lz4", "--without-zstd",
-                     "CC=/usr/bin/clang", "CXX=/usr/bin/clang++", "CFLAGS=-O2",
-                     "PG_SYSROOT=" + report["toolchain"]["sdk"]]
+        configure = configure_arguments(source, prefix, report["toolchain"]["sdk"])
         report["configure_argv"] = [str(x) for x in configure]
         run("configure", configure, 90, cwd=build)
         run("build", ["/usr/bin/make", "--silent", "--jobs=2"], 420, cwd=build)
