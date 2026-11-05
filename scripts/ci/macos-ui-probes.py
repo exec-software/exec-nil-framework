@@ -154,6 +154,26 @@ def parse_lines(raw):
     return result
 
 
+def event_identity_matches(identity, queued, marker_retained):
+    if type(identity) is not dict or set(identity) != {'kind', 'queued_timestamp_hex', 'observed_timestamp_hex'}:
+        return False
+    if any(type(identity[key]) is not str or len(identity[key]) > 64 for key in identity):
+        return False
+    if identity['queued_timestamp_hex'] != queued:
+        return False
+    try:
+        expected, observed = float.fromhex(queued), float.fromhex(identity['observed_timestamp_hex'])
+    except ValueError:
+        return False
+    if not all(math.isfinite(value) and value > 0 for value in (expected, observed)):
+        return False
+    if identity['kind'] in ('object', 'timestamp_exact'):
+        return observed == expected
+    if identity['kind'] == 'timestamp_adjacent':
+        return observed != expected and abs(observed - expected) <= 1e-9 and math.nextafter(expected, observed) == observed
+    return identity['kind'] == 'marker' and marker_retained is True
+
+
 def cocoa_result(raw):
     require(len(raw) <= 8192, 'Cocoa report exceeds bound')
     value = json.loads(raw)
@@ -188,12 +208,18 @@ def cocoa_result(raw):
             (('key_code', 45), ('type', 10), ('modifier_flags', 0))) and
         expected.get('characters') == expected.get('characters_ignoring_modifiers') == 'n' and
         expected == value.get('app_event') == value.get('view_event'))
+    queued_identity = value.get('queued_identity', {})
+    queued_time = queued_identity.get('queued_timestamp_hex') if type(queued_identity) is dict else None
+    identity_verified = type(queued_identity) is dict and queued_identity.get('kind') == 'object' and all(
+        event_identity_matches(value.get(name), queued_time, value.get('source_marker_retained'))
+        for name in ('queued_identity', 'app_identity', 'view_identity'))
     value['own_window_feasible'] = all(value.get(name) is True for name in
         ('main_thread', 'session', 'login_done', 'observer_subclass', 'window_created', 'visible', 'event_ready', 'event_queued',
-         'own_event_delivered', 'own_close_delivered', 'cleanup_verified')) and value.get('exception') is False and (
+         'own_event_delivered', 'own_close_delivered', 'cleanup_verified', 'timestamp_controls_passed')) and value.get('exception') is False and (
              type(value.get('dispatch_count')) is int and value['dispatch_count'] == 1 and
              type(value.get('view_delivery_count')) is int and value['view_delivery_count'] == 1 and
-             value.get('view_during_owned_dispatch') is True and value.get('wrong_target') is False and exact_event)
+             type(value.get('timestamp_control_count')) is int and value['timestamp_control_count'] == 19 and
+             value.get('view_during_owned_dispatch') is True and value.get('wrong_target') is False and exact_event and identity_verified)
     return value
 
 

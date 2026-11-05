@@ -162,9 +162,9 @@ Windows-port notebook; an older installed SDK does not acquire these additions.
 
 The reviewed native release boundary is currently Linux. Windows has paired
 development acceptance; Intel and Apple Silicon macOS now have native build
-and selected VM/JIT/AOT execution evidence. The Apple Silicon development SDK
-also passes the full installed standard-library campaign and isolated PostgreSQL
-routes. Desktop UI, installed debugger acceptance and remaining source-suite
+and selected VM/JIT/AOT execution evidence. Both macOS development SDKs
+also pass the full installed standard-library campaign and isolated PostgreSQL
+routes, plus installed debugger/checkpoint acceptance. Desktop UI and remaining source-suite
 gaps still prevent full macOS parity. See the
 [platform support matrix](../platform-support.md) for the recorded scope.
 Windows compiler AOT and standalone linking now launch argument vectors through

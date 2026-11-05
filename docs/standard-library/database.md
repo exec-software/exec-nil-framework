@@ -142,8 +142,8 @@ Pass server binaries with `--postgres-bin` (or `NIL_TEST_POSTGRES_BIN`) and opti
 this optional test skips. It never uses an existing database. LLVM-enabled CTest
 requires all six routes; missing native routes cannot silently pass. Earlier
 Linux validation used PostgreSQL 18.6 and SQLite 3.46.1; the Windows development
-parity fixture uses PostgreSQL 16.15. The Apple Silicon development SDK at
-`2f5d695` also passes all six routes against each installed source and binary
+parity fixture uses PostgreSQL 16.15. Both macOS development SDKs at
+`2f5d695` also pass all six routes against each installed source and binary
 library root with a private PostgreSQL 16.15 provider. That local Unix-socket
 profile disables optional TLS/GSS and other integrations; it does not establish
 coverage of those deployments. A scoped-address validation failure found in its

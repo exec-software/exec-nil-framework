@@ -7,20 +7,99 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <limits>
+#include <vector>
+
+// BEGIN standalone timestamp controls (also exercised before native UI setup).
+struct KeyTimestamp {
+  double seconds;
+  int64_t window;
+  unsigned type, code;
+  uint64_t modifiers;
+};
+
+static const char *timestampMatch(const KeyTimestamp &event, const KeyTimestamp &expected) {
+  if (!std::isfinite(event.seconds) || !std::isfinite(expected.seconds) ||
+      event.seconds <= 0 || expected.seconds <= 0 || expected.window <= 0 || event.window != expected.window ||
+      event.type != 10 || expected.type != 10 || event.code != 45 || expected.code != 45 ||
+      event.modifiers != 0 || expected.modifiers != 0) return "none";
+  if (event.seconds == expected.seconds) return "timestamp_exact";
+  if (std::abs(event.seconds - expected.seconds) <= 1e-9 &&
+      std::nextafter(expected.seconds, event.seconds) == event.seconds) return "timestamp_adjacent";
+  return "none";
+}
+
+struct TimestampControls { size_t count; bool passed; };
+static TimestampControls checkTimestamps() {
+  const KeyTimestamp base{64.0, 7, 10, 45, 0};
+  struct Case { KeyTimestamp event, expected; const char *kind; };
+  std::vector<Case> cases{{base, base, "timestamp_exact"}};
+  for (const double direction : {0.0, std::numeric_limits<double>::infinity()}) {
+    auto event = base;
+    event.seconds = std::nextafter(base.seconds, direction);
+    cases.push_back({event, base, "timestamp_adjacent"});
+    event.seconds = std::nextafter(event.seconds, direction);
+    cases.push_back({event, base, "none"});
+  }
+  for (int field = 0; field != 4; ++field) {
+    auto event = base; event.seconds = std::nextafter(base.seconds, 0.0);
+    if (field == 0) event.window = 8;
+    if (field == 1) event.type = 11;
+    if (field == 2) event.code = 0;
+    if (field == 3) event.modifiers = 1;
+    cases.push_back({event, base, "none"});
+  }
+  for (const double value : {0.0, -1.0, std::numeric_limits<double>::infinity(),
+                             std::numeric_limits<double>::quiet_NaN()}) {
+    auto invalid = base; invalid.seconds = value;
+    cases.push_back({invalid, base, "none"});
+    cases.push_back({base, invalid, "none"});
+  }
+  auto zeroWindow = base; zeroWindow.window = 0;
+  cases.push_back({zeroWindow, zeroWindow, "none"});
+  auto large = base; large.seconds = 16777216.0;
+  auto adjacentLarge = large; adjacentLarge.seconds = std::nextafter(large.seconds, INFINITY);
+  cases.push_back({adjacentLarge, large, "none"}); // One ULP now exceeds the absolute 1 ns cap.
+  bool passed = true;
+  for (const auto &test : cases)
+    passed = passed && std::strcmp(timestampMatch(test.event, test.expected), test.kind) == 0;
+  return {cases.size(), passed};
+}
+// END standalone timestamp controls.
 
 static int64_t privateMarker = 0;
 static bool markerRetained = false;
 
-static bool sameSyntheticEvent(NSEvent *event, NSEvent *expected) {
-  if (!expected) return false;
-  if (event == expected || event.timestamp == expected.timestamp) return true;
+static const char *syntheticMatchKind(NSEvent *event, NSEvent *expected) {
+  if (!expected) return "none";
+  if (event == expected) return "object";
+  const char *timeKind = timestampMatch(
+      {event.timestamp, event.windowNumber, static_cast<unsigned>(event.type), event.keyCode, event.modifierFlags},
+      {expected.timestamp, expected.windowNumber, static_cast<unsigned>(expected.type), expected.keyCode, expected.modifierFlags});
+  if (std::strcmp(timeKind, "none") != 0) return timeKind;
   CGEventRef quartz = markerRetained ? event.CGEvent : nullptr;
-  return quartz && CGEventGetIntegerValueField(quartz, kCGEventSourceUserData) == privateMarker;
+  return quartz && CGEventGetIntegerValueField(quartz, kCGEventSourceUserData) == privateMarker ? "marker" : "none";
+}
+
+static bool sameSyntheticEvent(NSEvent *event, NSEvent *expected) {
+  return std::strcmp(syntheticMatchKind(event, expected), "none") != 0;
+}
+
+static NSDictionary *observeIdentity(NSEvent *event, NSEvent *expected) {
+  const char *kind = syntheticMatchKind(event, expected);
+  if (std::strcmp(kind, "none") == 0) return @{};
+  char queued[64], received[64];
+  std::snprintf(queued, sizeof queued, "%a", expected.timestamp);
+  std::snprintf(received, sizeof received, "%a", event.timestamp);
+  return @{@"kind":[NSString stringWithUTF8String:kind],
+      @"queued_timestamp_hex":[NSString stringWithUTF8String:queued],
+      @"observed_timestamp_hex":[NSString stringWithUTF8String:received]};
 }
 
 static NSDictionary *observeSyntheticEvent(NSEvent *event, NSEvent *expected) {
   // Character data is retained only for the owned event or a copy identified by
-  // its exact timestamp or the private marker verified on the queued NSEvent.
+  // its bounded timestamp conversion or a marker verified on the queued NSEvent.
   if (!sameSyntheticEvent(event, expected)) return @{@"synthetic_identity_match":@NO};
   NSString *characters = event.characters ?: @"";
   NSString *unmodified = event.charactersIgnoringModifiers ?: @"";
@@ -51,6 +130,7 @@ static void observeUnmatched(NSMutableArray *records, NSEvent *event, NSEvent *e
 @property(nonatomic, strong) NSEvent *expectedEvent;
 @property(nonatomic, weak) NSWindow *expectedWindow;
 @property(nonatomic, strong) NSDictionary *observation;
+@property(nonatomic, strong) NSDictionary *identity;
 @property(nonatomic, strong) NSMutableArray *unmatched;
 @property(nonatomic) NSUInteger dispatched;
 @property(nonatomic) BOOL dispatchingOwned;
@@ -62,7 +142,10 @@ static void observeUnmatched(NSMutableArray *records, NSEvent *event, NSEvent *e
   @try {
     if (event.type == NSEventTypeKeyDown) {
       if (self.dispatchingOwned) {
-        if (!self.observation) self.observation = observeSyntheticEvent(event, self.expectedEvent);
+        if (!self.observation) {
+          self.observation = observeSyntheticEvent(event, self.expectedEvent);
+          self.identity = observeIdentity(event, self.expectedEvent);
+        }
         if (expectedKey(event, self.expectedEvent, self.expectedWindow)) self.dispatched += 1;
       } else observeUnmatched(self.unmatched, event, self.expectedEvent);
     }
@@ -79,6 +162,7 @@ static void observeUnmatched(NSMutableArray *records, NSEvent *event, NSEvent *e
 @property(nonatomic) BOOL wrongTarget;
 @property(nonatomic, strong) NSEvent *expectedEvent;
 @property(nonatomic, strong) NSDictionary *observation;
+@property(nonatomic, strong) NSDictionary *identity;
 @property(nonatomic, strong) NSMutableArray *unmatched;
 @property(nonatomic, weak) NyProbeApplication *application;
 @property(nonatomic) BOOL receivedDuringDispatch;
@@ -91,7 +175,10 @@ static void observeUnmatched(NSMutableArray *records, NSEvent *event, NSEvent *e
     [super keyDown:event];
     return;
   }
-  if (!self.observation) self.observation = observeSyntheticEvent(event, self.expectedEvent);
+  if (!self.observation) {
+    self.observation = observeSyntheticEvent(event, self.expectedEvent);
+    self.identity = observeIdentity(event, self.expectedEvent);
+  }
   self.receivedDuringDispatch = self.application.dispatchingOwned && self.application.dispatched == 1;
   if (!self.receivedDuringDispatch || !expectedKey(event, self.expectedEvent, self.window))
     self.wrongTarget = YES;
@@ -136,6 +223,7 @@ static void emit(NSDictionary *value) {
 
 int main() {
   @autoreleasepool {
+    const auto timestampControls = checkTimestamps();
     const bool mainThread = pthread_main_np() != 0;
     const bool postAccess = CGPreflightPostEventAccess();
     const bool axTrusted = AXIsProcessTrusted(); // Query only; never prompts.
@@ -147,8 +235,9 @@ int main() {
     NSMutableDictionary *result = [@{@"schema":@1, @"qualification":@NO, @"main_thread":@(mainThread),
         @"session":@(hasSession), @"on_console":@(onConsole), @"login_done":@(loginDone),
         @"post_event_access":@(postAccess), @"ax_trusted":@(axTrusted),
+        @"timestamp_controls_passed":@(timestampControls.passed), @"timestamp_control_count":@(timestampControls.count),
         @"window_created":@NO, @"cleanup_verified":@YES} mutableCopy];
-    if (!mainThread || !hasSession || !loginDone) { emit(result); return 2; }
+    if (!timestampControls.passed || !mainThread || !hasSession || !loginDone) { emit(result); return 2; }
     NSWindow *window = nil;
     NyProbeView *view = nil;
     NyProbeDelegate *delegate = nil;
@@ -218,6 +307,7 @@ int main() {
             view.expectedEvent = event;
             app.expectedEvent = event;
             result[@"queued_event"] = observeSyntheticEvent(event, event);
+            result[@"queued_identity"] = observeIdentity(event, event);
             [app postEvent:event atStart:NO];
           }
         }
@@ -246,6 +336,8 @@ int main() {
       result[@"wrong_target"] = @(view.wrongTarget);
       result[@"app_event"] = app.observation ?: @{};
       result[@"view_event"] = view.observation ?: @{};
+      result[@"app_identity"] = app.identity ?: @{};
+      result[@"view_identity"] = view.identity ?: @{};
       result[@"app_unmatched"] = app.unmatched;
       result[@"view_unmatched"] = view.unmatched;
       delivered = app.dispatched == 1 && view.received == 1 && view.receivedDuringDispatch && !view.wrongTarget;

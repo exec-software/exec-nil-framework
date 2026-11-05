@@ -1768,3 +1768,82 @@ correction evidence SHA is
 The retained primary references include Apple's
 [NSApplication dispatch contract](https://developer.apple.com/documentation/appkit/nsapplication/sendevent(_:))
 and [NSEvent/CoreGraphics correspondence](https://developer.apple.com/documentation/appkit/nsevent/cgevent).
+
+## Completed paired installed application campaigns
+
+The original [SDK run at `2f5d695`](https://github.com/exec-software/exec-nil-framework/actions/runs/41966883934)
+is complete on both architectures. Intel independently matches the ARM result:
+566 source tests pass, two fail (incremental reuse and numeric PostgreSQL address
+validation), and three skip out of 571. Each installed standard-library campaign
+reports 1,184 passes, with 888 retained execution records and 296 driver-checked
+object/link routes. Intel's campaign took 1,058.70 seconds. Both private PostgreSQL
+providers and all twelve installed source/binary routes pass. The original
+debugger helper fails before execution on the preserved manifest-field mismatch.
+
+Intel evidence is under `macos-parity-20261105/sdk-run-41966883934`.
+Core reconciliation SHA is `ef5e680f369844ce8f0162b85f37609f03b6a7d41aea084b488d761cbf4d61ce`;
+consumer SHA is `83fdae0ff352197100e9cbf26fd70b6f6948ad02b6e94bbd7bffa804c70a9395`;
+PostgreSQL SHA is `722afcf4a1320301cfb9f033ade36d313163f5fec41e329b7a62573cfa5d9f8d`.
+The corrected [paired source/SDK run](https://github.com/exec-software/exec-nil-framework/actions/runs/41970259529)
+uses `3414ce5`, including the address correction and corrected debugger helper.
+Its results must remain distinct from this original candidate's acceptance.
+
+## Cache identity model review
+
+A read-only audit found that the earlier vnode-attestation requirement exceeded
+the existing Linux/Windows compiler-file contract. Those implementations collect
+loader-attributed readable files and fingerprint complete backing-file contents;
+they do not attest relocated memory pages. Apple's own
+[dyld cache implementation](https://github.com/apple-oss-distributions/dyld/blob/dyld-1285.19/common/DyldSharedCache.cpp)
+uses active ranges and exact image VM offsets. A comparable Darwin design can
+join actual loaded headers to unique on-disk cache image addresses under the
+active slide, verify root/subcache tables and paths, and hash the complete files.
+Same-name or same-UUID copies outside those mappings must remain ordinary files.
+
+The loader itself needs explicit accounting: retained SPI inventories include
+308 images, while public callbacks contain 307. Full content identity also has
+a performance constraint: each cache set is about 4.6 GiB and current `nilbuild`
+can hash it several times per invocation. Prefix timings do not establish whole
+file cost. A bounded standalone correspondence and two-pass full hashing probe
+is being prepared; production cache reuse remains disabled. Darwin native
+linker/toolchain discovery is independently incomplete even if VM compiler-file
+identity succeeds.
+
+The detailed design, limitations and pinned primary sources are retained under
+`macos-parity-20261105/cache-identity-model-audit`; findings SHA is
+`37be6e947860f27d326c6ba39cc7b8bfea3920582cd47971f580b6599945d20b`.
+
+## Installed debugger and execution checkpoints verified
+
+The [artifact replay](https://github.com/exec-software/exec-nil-framework/actions/runs/41972326715)
+passes on both architectures with SDK source `2f5d695` and acceptance-helper
+source `12f70cb`. No SDK was rebuilt. Each independently checked result binds
+146 named checks, twenty command records/forty raw streams, fifteen JSONL/DAP
+sessions, eleven compiled consumer artifacts and thirteen project source files.
+The separate real execution-checkpoint phase also passes with exact source,
+argv, output and owned cleanup evidence. SDK payloads, helper sources, origin
+anchors and declared direct prerequisites remain unchanged.
+
+Evidence is under `macos-parity-20261105/sdk-replay-run-41972326715`.
+ARM reconciliation SHA is `d7f05aa875e99ccea4894ddcade86034a546df59257558f355ff93fb56f82267`;
+Intel SHA is `e4dd85909d61ade41f703f563d5e61d9919c46906d9a00453714eeca7abc0ec4`.
+These are installed interpreter-debugger and same-process execution-checkpoint
+results, not native debugging, editor UI, whole-platform or release acceptance.
+
+The fifth [UI prerequisite run](https://github.com/exec-software/exec-nil-framework/actions/runs/41971964403)
+passes owned application dispatch, exact view delivery and close on Intel.
+ARM observes the same window/key/type at both stages, with a timestamp difference
+of `-2^-46` seconds. The original absolute timestamps were not retained, so this
+is consistent with adjacent binary64 values but does not yet prove adjacency.
+Both hosts pass dependency operations and all cleanup/seals. Reconciliation SHA
+is `a50beaede1150293f3765928a8eccc4d78007cf20dd14afbb67e6fed38fda139`.
+
+The next correction admits only one representable timestamp step, additionally
+capped at one nanosecond, with finite positive timestamps and the exact owned
+window/type/key/modifiers. Hexadecimal timestamps and match kinds are recorded
+separately from unchanged key-metadata equality checks. Two-step, wrong-target,
+nonfinite and larger-delta controls reject the match. Twenty-three Python controls
+and nineteen executions of the extracted C++ boundary logic pass; those C++
+controls also run before native UI setup. Independent review passes. Correction
+evidence SHA is `81f2ac196d1f30bf8d44f06be59bb659d309af5ad6972b5e9e40f43baed74da2`;
+native re-execution remains required.

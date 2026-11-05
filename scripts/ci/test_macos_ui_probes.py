@@ -2,6 +2,7 @@
 """Pure preflight binding controls; no native desktop execution claim."""
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -24,12 +25,15 @@ class ProbeControls(unittest.TestCase):
     def cocoa(self):
         event = dict(synthetic_identity_match=True, strings_bounded=True, window_number=17,
                      key_code=45, type=10, modifier_flags=0, characters='n', characters_ignoring_modifiers='n')
+        identity = dict(kind='object', queued_timestamp_hex=float.hex(64.0), observed_timestamp_hex=float.hex(64.0))
         return dict(schema=1, qualification=False, main_thread=True, session=True, on_console=True,
                     login_done=True, post_event_access=False, ax_trusted=False, window_created=True,
                     visible=True, event_ready=True, event_queued=True, own_event_delivered=True, own_close_delivered=True,
                     dispatch_count=1, view_delivery_count=1, wrong_target=False,
                     queued_event=dict(event), app_event=dict(event), view_event=dict(event),
                     observer_subclass=True, view_during_owned_dispatch=True, local_monitor_count=0, source_marker_retained=False,
+                    queued_identity=dict(identity), app_identity=dict(identity), view_identity=dict(identity),
+                    timestamp_controls_passed=True, timestamp_control_count=19,
                     app_unmatched=[], view_unmatched=[],
                     exception=False, cleanup_verified=True)
 
@@ -49,7 +53,8 @@ class ProbeControls(unittest.TestCase):
     def test_queued_event_without_app_dispatch_or_view_delivery_is_insufficient(self):
         for name, value in (('dispatch_count', 0), ('view_delivery_count', 0),
                             ('dispatch_count', True), ('view_delivery_count', 2), ('wrong_target', True),
-                            ('view_during_owned_dispatch', False), ('observer_subclass', False)):
+                            ('view_during_owned_dispatch', False), ('observer_subclass', False),
+                            ('timestamp_controls_passed', False), ('timestamp_control_count', 0)):
             with self.subTest(name=name, value=value):
                 report = self.cocoa(); report[name] = value
                 self.assertFalse(gate.cocoa_result(json.dumps(report).encode())['own_window_feasible'])
@@ -68,6 +73,31 @@ class ProbeControls(unittest.TestCase):
             report = self.cocoa(); report['view_event']['characters'] = value
             with self.assertRaisesRegex(ValueError, 'exceeds bound'):
                 gate.cocoa_result(json.dumps(report).encode())
+
+    def test_exact_and_adjacent_timestamp_identity_within_one_nanosecond(self):
+        for value, kind in ((64.0, 'timestamp_exact'), (math.nextafter(64.0, 0), 'timestamp_adjacent'),
+                            (math.nextafter(64.0, math.inf), 'timestamp_adjacent')):
+            report = self.cocoa()
+            for name in ('app_identity', 'view_identity'):
+                report[name].update(kind=kind, observed_timestamp_hex=float.hex(value))
+            self.assertTrue(gate.cocoa_result(json.dumps(report).encode())['own_window_feasible'])
+
+    def test_timestamp_identity_rejects_two_steps_nonfinite_and_large_absolute_delta(self):
+        for base, observed in ((64.0, math.nextafter(math.nextafter(64.0, 0), 0)),
+                               (64.0, math.nextafter(math.nextafter(64.0, math.inf), math.inf)),
+                               (2**24, math.nextafter(float(2**24), math.inf)),
+                               (64.0, math.inf), (math.inf, math.inf), (64.0, math.nan),
+                               (0.0, 0.0), (-1.0, -1.0)):
+            queued = float.hex(float(base))
+            identity = dict(kind='timestamp_adjacent', queued_timestamp_hex=queued,
+                            observed_timestamp_hex=float.hex(observed))
+            self.assertFalse(gate.event_identity_matches(identity, queued, False))
+
+    def test_verified_marker_remains_explicit_and_time_hex_binding_cannot_change(self):
+        identity = dict(kind='marker', queued_timestamp_hex=float.hex(64.0), observed_timestamp_hex=float.hex(65.0))
+        self.assertFalse(gate.event_identity_matches(identity, float.hex(64.0), False))
+        self.assertTrue(gate.event_identity_matches(identity, float.hex(64.0), True))
+        self.assertFalse(gate.event_identity_matches(identity, float.hex(63.0), True))
 
     def test_unmatched_input_is_diagnostic_and_does_not_substitute_for_owned_delivery(self):
         report = self.cocoa()
