@@ -711,6 +711,12 @@ if(BUILD_TESTING)
                 --cxx "${CMAKE_C_COMPILER}"
                 --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(nilbuild.incremental-contract PROPERTIES LABELS "tools;project;rc" TIMEOUT 240)
+        add_test(NAME nilbuild.compiler-identity-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/incremental_build_contract.py"
+                --builder $<TARGET_FILE:nilbuild> --compiler $<TARGET_FILE:nilcompiler>
+                --interpreter $<TARGET_FILE:nilinterpreter> --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                --cxx "${CMAKE_C_COMPILER}" --compiler-identity-only)
+        set_tests_properties(nilbuild.compiler-identity-contract PROPERTIES LABELS "tools;project;rc" TIMEOUT 120)
         add_test(NAME nilbuild.parallel-process-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/parallel_process_contract.py"
                 --root "${CMAKE_CURRENT_SOURCE_DIR}" --cxx "${CMAKE_CXX_COMPILER}")

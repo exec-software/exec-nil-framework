@@ -35,6 +35,12 @@ library containers. `dependenciesComplete` certifies successful disk analysis
 with a complete, consistent list. Editor overlays and failed/incomplete checks
 cannot certify a disk build. The native runtime archive and configured linker
 driver are identified separately for native toolchain fingerprints.
+`compilerFilesComplete` separately certifies the observed compiler loaded-file
+inventory. Missing or false certification disables reuse without discarding valid
+source dependency hashes or their output-collision and change protection.
+Darwin currently leaves this flag false until loaded-image/shared-cache identity
+is implemented. Its native link-input discovery is also incomplete. Successful
+uncached builds do not establish incremental parity.
 
 The driver uses those inputs, effective project settings, tool identity and
 artifact content to decide whether compilation and linking can be skipped.

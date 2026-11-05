@@ -54,6 +54,7 @@ def main():
             result = run(['--analyze', '--no-stdlib', *extra, path], input=input, status=status)
             report = json.loads(result.stdout)
             assert isinstance(report['dependenciesComplete'], bool), report
+            assert isinstance(report['compilerFilesComplete'], bool), report
             paths = [item['path'] for item in report['dependencies']]
             assert paths == sorted(set(paths)), paths
             assert all(Path(path).is_absolute() and not path.startswith('nillib:') for path in paths)
@@ -82,6 +83,12 @@ def main():
         assert all(Path(path).is_absolute() and Path(path).is_file() for path in compiler_files)
         if sys.platform.startswith('linux'):
             assert str(compiler) in compiler_files, compiler_files
+        if sys.platform.startswith('linux') or os.name == 'nt':
+            assert report['compilerFilesComplete'], report
+        elif sys.platform == 'darwin':
+            # Source certification remains available while loaded-image/shared
+            # cache identity is deliberately incomplete on this host.
+            assert not report['compilerFilesComplete'] and report['dependenciesComplete'], report
 
         # Preserving the timestamp cannot conceal an edit; the digest describes bytes.
         previous = nested.stat()

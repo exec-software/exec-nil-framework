@@ -890,7 +890,8 @@ std::string analysis_session::json(bool success) const {
     first_dependency = false;
     out << "{\"path\":" << quoted(path) << ",\"digest\":" << quoted(digest) << '}';
   }
-  out << "],\"compilerFiles\":[";
+  out << "],\"compilerFilesComplete\":" << (compiler_files_complete ? "true" : "false")
+      << ",\"compilerFiles\":[";
   bool first_compiler_file = true;
   for (const auto &path : compiler_files) {
     if (!first_compiler_file) out << ',';

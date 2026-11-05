@@ -108,6 +108,8 @@ def main():
     parser.add_argument('--interpreter', type=Path, required=True)
     parser.add_argument('--stdlib', type=Path, required=True)
     parser.add_argument('--llvm', default='OFF')
+    parser.add_argument('--compiler-identity-only', action='store_true',
+                        help='controlled cache eligibility and source protection, without the positive native parity check')
     parser.add_argument('--cxx', type=Path,
                         help='C compiler, used only on Windows to build the '
                              'launcher that stands in for a shebang')
@@ -151,7 +153,16 @@ def event(kind):
 if '--analyze' in sys.argv:
  good='BAD' not in data
  report={'schema':'nil.analysis.v1','success':good,'diagnostics':[],
-  'dependenciesComplete':good,'dependencies':[{'path':str(p),'digest':hashlib.sha256(p.read_bytes()).hexdigest()} for p in files]}
+  'dependenciesComplete':good,'dependencies':[{'path':str(p),'digest':hashlib.sha256(p.read_bytes()).hexdigest()} for p in files],
+  'compilerFilesComplete':True,'compilerFiles':[]}
+ # This controlled stand-in explicitly certifies its fixture identity; real
+ # compiler loaded-image discovery is exercised separately below.
+ identity=entry.parent/'compiler-identity.json'
+ if identity.is_file():
+  overrides=json.loads(identity.read_text())
+  report.pop('compilerFilesComplete')
+  if 'compilerFilesComplete' in overrides: report['compilerFilesComplete']=overrides['compilerFilesComplete']
+  if overrides.get('omitCompilerFiles'): report.pop('compilerFiles')
  modules=entry.parent/'compiler-modules.json'
  if modules.is_file(): report['compilerFiles']=json.loads(modules.read_text())
  print(json.dumps(report))
@@ -164,6 +175,15 @@ output.write_text(data + ('native' if '--native' in sys.argv else 'vm'))
 if '--native' in sys.argv: output.chmod(0o755)
 next_modules=entry.parent/'compiler-modules-after.json'
 if next_modules.is_file(): os.replace(next_modules, entry.parent/'compiler-modules.json')
+next_identity=entry.parent/'compiler-identity-after.json'
+if next_identity.is_file(): os.replace(next_identity, entry.parent/'compiler-identity.json')
+next_dependency=entry.parent/'dependency-content-after'
+if next_dependency.is_file():
+ dependency=entry.parent/'dependency.input'
+ previous=dependency.stat()
+ dependency.write_bytes(next_dependency.read_bytes())
+ os.utime(dependency,ns=(previous.st_atime_ns,previous.st_mtime_ns))
+ next_dependency.unlink()
 next_contents=entry.parent/'apphelp-content-after'
 if next_contents.is_file():
  module=entry.parent/'apphelp.dll'
@@ -216,6 +236,70 @@ event('finish')
             file.write_text(json.dumps(data), newline='\n')
             run('convert','--project',file)
             return directory/'nil.project.nildata'
+
+        if args.compiler_identity_only:
+            # Begin with a valid reusable entry, then remove certification.
+            # Neither old cached output nor a newly written state may authorize
+            # reuse when loaded compiler identity is missing or uncertain.
+            for label,identity in [('missing',{}),('false',{'compilerFilesComplete':False}),
+                                   ('wrong-type',{'compilerFilesComplete':'true'}),
+                                   ('missing-files',{'compilerFilesComplete':True,'omitCompilerFiles':True})]:
+                project=create(root/('identity-'+label),'app')
+                artifact=project.parent/'build/app.nil'
+                state=artifact.parent/'.nilbuild/app.nil.nildata'
+                run('build','--project',project)
+                assert state.is_file()
+                assert 'up to date:' in run('build','--project',project).stderr
+                (project.parent/'compiler-identity.json').write_text(json.dumps(identity))
+                before=starts()
+                for attempt in range(2):
+                    result=run('build','--project',project)
+                    assert 'up to date:' not in result.stderr, result.stderr
+                    assert starts()==before+attempt+1 and artifact.is_file() and not state.exists()
+
+            # Missing/false toolchain certification must not discard otherwise
+            # valid source dependencies or allow an output to overwrite them.
+            for label,identity in [('missing',{}),('false',{'compilerFilesComplete':False})]:
+                project=create(root/('protected-'+label),'consumed.input')
+                data=json.loads((project.parent/'nil.project.json').read_text())
+                data['outputDirectory']='.'
+                (project.parent/'nil.project.json').write_text(json.dumps(data));project.unlink()
+                run('convert','--project',project.parent/'nil.project.json')
+                consumed=project.parent/'consumed.input.nil'
+                consumed.write_text('must survive\n',newline='\n')
+                (project.parent/'compiler-identity.json').write_text(json.dumps(identity))
+                before=starts()
+                rejected=run('build','--project',project,status=2)
+                assert 'output would overwrite a consumed build input' in rejected.stderr,rejected.stderr
+                assert consumed.read_text()=='must survive\n' and starts()==before
+
+            # Source byte changes still reject publication in an uncached build.
+            project=create(root/'uncached-source-change','app')
+            (project.parent/'compiler-identity.json').write_text(json.dumps({'compilerFilesComplete':False}))
+            dependency=project.parent/'dependency.input';dependency.write_bytes(b'source version 1')
+            run('build','--project',project)
+            artifact=project.parent/'build/app.nil';original=artifact.read_bytes();before=dependency.stat()
+            (project.parent/'dependency-content-after').write_bytes(b'source version 2')
+            rejected=run('build','--project',project,status=2)
+            assert 'build input changed during the build' in rejected.stderr and str(dependency) in rejected.stderr,rejected.stderr
+            assert artifact.read_bytes()==original and dependency.stat().st_mtime_ns==before.st_mtime_ns
+            assert not (artifact.parent/'.nilbuild/app.nil.nildata').exists()
+
+            # A completeness transition cannot publish bytes or cache state
+            # based on a graph that is no longer certified after compilation.
+            project=create(root/'identity-transition','app')
+            run('build','--project',project)
+            artifact=project.parent/'build/app.nil';state=artifact.parent/'.nilbuild/app.nil.nildata'
+            original,old_state=artifact.read_bytes(),state.read_bytes()
+            (project.parent/'main.matrix').write_text('version two\n',newline='\n')
+            (project.parent/'compiler-identity-after.json').write_text(json.dumps({'compilerFilesComplete':False}))
+            rejected=run('build','--project',project,status=2)
+            assert 'compiler module identity completeness changed' in rejected.stderr,rejected.stderr
+            assert artifact.read_bytes()==original and state.read_bytes()==old_state
+            run('build','--project',project)
+            assert artifact.read_bytes()!=original and not state.exists()
+            print(f'nilbuild compiler identity: {checks} explicit certification, uncached build and source protection checks passed')
+            return
 
         # Generated defaults and legacy output creation use the same schema.
         initialized = root/'init'
@@ -421,6 +505,9 @@ event('finish')
         assert content_artifact.read_bytes()!=old_artifact
         assert 'up to date:' in run('build','--project',content_project).stderr
 
+        # Positive parity remains required here, including on Darwin where
+        # incomplete loaded-image discovery deliberately prevents reuse.
+        # Containment is covered independently by --compiler-identity-only.
         # Real compiler smoke: unchanged imports skip compilation for both routes.
         actual=root/'real';actual.mkdir()
         (actual/'main.ny').write_text('import provider\nfn main() -> i32\n println(answer())\n return 0\nend fn\n', newline='\n')

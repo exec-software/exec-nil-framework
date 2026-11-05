@@ -53,6 +53,9 @@ struct analysis_session {
   // An empty list means native toolchain closure is not reported on Windows.
   std::vector<std::string> native_library_paths;
   std::set<std::string> compiler_files;
+  // Loaded compiler-code identity is independent of the consumed source graph.
+  // Unknown/partial host discovery must never authorize incremental reuse.
+  bool compiler_files_complete = false;
   // Canonical native source paths only. Binary-library identities never use
   // this map, and unrelated buffers are not added to the compilation graph.
   std::map<std::string, std::string> workspace_sources;

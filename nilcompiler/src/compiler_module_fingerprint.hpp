@@ -1,8 +1,10 @@
 #pragma once
 
 #include <filesystem>
+#include <istream>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -18,6 +20,41 @@
 namespace nil::detail::compiler_modules {
 namespace fs = std::filesystem;
 using files = std::set<std::string>;
+
+// Linux file-backed mappings are a separate identity graph from source inputs.
+// Keep valid observations on failure; callers may still protect/hash them, but
+// must not certify completeness or reuse an artifact from a partial inventory.
+template <typename Readable>
+bool collect_mapped_files(std::istream &mappings, files &observed, Readable readable) {
+  bool complete = static_cast<bool>(mappings), any_file = false;
+  std::string mapping;
+  while (std::getline(mappings, mapping)) {
+    std::istringstream fields(mapping);
+    std::string address, permissions, offset, device, inode, path;
+    if (!(fields >> address >> permissions >> offset >> device >> inode)) {
+      complete = false;
+      continue;
+    }
+    std::getline(fields >> std::ws, path);
+    if (inode.find_first_not_of("0123456789") != std::string::npos) {
+      complete = false;
+      continue;
+    }
+    if (path.empty() || path.front() == '[') {
+      // A nonzero inode with no filename is a truncated/unresolved file-backed
+      // observation, not an anonymous or kernel-provided mapping.
+      if (inode != "0") complete = false;
+      continue;
+    }
+    if (inode == "0" || path.front() != '/' || path.find(" (deleted)") != std::string::npos || !readable(path)) {
+      complete = false;
+      continue;
+    }
+    observed.insert(path);
+    any_file = true;
+  }
+  return complete && any_file && mappings.eof() && !mappings.bad();
+}
 
 // Add one known optional system component whether or not this process happened
 // to load it. This is a conservative fingerprint superset, not an exclusion:

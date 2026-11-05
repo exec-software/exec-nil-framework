@@ -122,14 +122,19 @@ Its content identities use SHA-256, including the compiler-reported source,
 textual include and binary-library inputs, effective settings and toolchain,
 and the produced artifact. Native builds also account for the resolved runtime
 archive, linker driver, startup objects and system link-library files. Unknown
-native linker layouts disable cache reuse. Modifying a source while preserving its timestamp,
+native linker layouts or incomplete compiler loaded-file identity disable cache
+reuse. Darwin currently rebuilds both VM and native outputs because loaded-image
+identity is incomplete; native link-input discovery also remains open. Modifying
+a source while preserving its timestamp,
 changing import resolution, replacing a tool, or changing the existing artifact
 invalidates reuse. A missing or malformed state file is a cache miss.
 
 Analysis remains fresh even when compilation is skipped. It supplies current
 diagnostics and resolves the import graph again, so a newly created source
 that shadows an earlier import is observed. A compiler that does not certify
-complete input dependencies remains usable; its projects are rebuilt each time.
+complete input dependencies or compiler file identity remains usable; its projects
+are rebuilt each time. Missing compiler identity does not discard known source
+dependencies or bypass their change and output-collision checks.
 Use `--rebuild` to force compilation and linking without deleting outputs:
 
 ```sh

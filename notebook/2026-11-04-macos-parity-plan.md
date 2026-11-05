@@ -792,3 +792,45 @@ mode `0777` without modifying any existing link or SDK target. Controls require
 restoration before activation and after success or creation failure, with
 existing inode/target modes and failed-activation identity preserved. Root and
 independent reviews pass; native full-contract recheck remains pending.
+
+
+## Compiler identity completeness and cache containment
+
+Analysis now reports `compilerFilesComplete` independently of
+`dependenciesComplete`. Linux loaded-file collection refuses incomplete,
+deleted or unreadable mappings; Windows uses its existing module collector;
+Darwin explicitly remains incomplete. Nilbuild requires explicit true compiler
+identity and the file array before reuse. Older or incomplete reports still
+build, but cannot authorize cached output.
+
+Known source and tool inputs remain hashed and protected when reuse is disabled.
+A changed identity-completeness result between pre-build and post-build analysis
+rejects publication. This closes the Darwin VM reuse gap without pretending that
+loaded-image/shared-cache or native linker discovery has been implemented.
+
+A separate controlled compiler-identity contract checks rejection of existing
+cache entries for missing, false, malformed or absent-list certification;
+uncached repeated builds; consumed-input collision protection; same-mtime source
+mutation rejection; and a mid-build completeness transition. The existing real
+positive incremental-parity test remains active and will still fail on Darwin.
+Root and independent review passed. Linux real VM/native reuse and existing
+source/project contracts pass; native compiler-containment verification follows
+in the next complete matrix.
+
+The remaining ARM assembly failure is also recorded precisely: its Matrix
+fixture requests x86_64 assembly and expects native success. The compiler
+correctly rejects that foreign target on ARM. A real bounded aarch64 instruction
+profile, with target-specific validation and native route tests, remains
+unimplemented; successful parsing and VM rejection do not fill that gap.
+
+
+Final Linux cache validation passes seven distinct focused contracts: 33 explicit
+compiler-identity checks, 41 module fingerprint checks, 11 source-dependency
+checks, and the existing analysis/project/native-toolchain/real incremental
+contracts. An initial new-test failure expected the later graph-change message;
+actual source digest validation rejected the mutation earlier. That failure is
+preserved, and the corrected assertion requires the actual diagnostic and exact
+changed path. Production code did not change for that correction.
+The reconciled report is `compiler-identity-containment/linux-reconciliation.json`
+under the newer macOS evidence root, SHA-256
+`e658f064b3b2532cc54a69f975fabbd2a7f54c81d4178473b45954cc4dcf17b5`.

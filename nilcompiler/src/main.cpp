@@ -7,9 +7,9 @@
 #include "../../common/native_executable_path.hpp"
 #include "../../common/windows_utf8_manifest.hpp"
 #include "../../common/windows_private_storage.hpp"
+#include "compiler_module_fingerprint.hpp"
 #ifdef _WIN32
 #include "../../nillinker/process_runner.hpp"
-#include "compiler_module_fingerprint.hpp"
 #endif
 #include "codegen.hpp"
 #include "analysis.hpp"
@@ -1658,17 +1658,12 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     // the compiler is dynamically linked. A system library upgrade must not
     // leave an executable-only build fingerprint looking current.
     std::ifstream mappings("/proc/self/maps");
-    std::string mapping;
-    while (std::getline(mappings, mapping)) {
-      std::istringstream fields(mapping);
-      std::string address, permissions, offset, device, inode, path;
-      if (!(fields >> address >> permissions >> offset >> device >> inode)) continue;
-      std::getline(fields >> std::ws, path);
-      if (!path.empty() && path.front() == '/' && path.find(" (deleted)") == std::string::npos) {
-        std::error_code error;
-        if (std::filesystem::is_regular_file(path, error)) analysis->compiler_files.insert(path);
-      }
-    }
+    analysis->compiler_files_complete = nil::detail::compiler_modules::collect_mapped_files(
+        mappings, analysis->compiler_files, [](const std::string &path) {
+          std::error_code error;
+          if (!std::filesystem::is_regular_file(path, error) || error) return false;
+          return static_cast<bool>(std::ifstream(path, std::ios::binary));
+        });
 #elif defined(_WIN32)
     // Compiler DLLs (including LLVM and the CRT) are executable inputs just
     // as loaded .so files are on Linux. Incomplete discovery must disable
@@ -1676,8 +1671,12 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     // Include the known optional system apphelp component even when it was
     // not loaded in this process. Keep its bytes fingerprinted while avoiding
     // a false graph change between separate analysis processes.
-    if (!nil::detail::compiler_modules::collect_windows(analysis->compiler_files))
-      analysis->dependencies_consistent = false;
+    analysis->compiler_files_complete =
+        nil::detail::compiler_modules::collect_windows(analysis->compiler_files);
+#else
+    // Darwin loaded images/shared-cache backing identity is not yet complete.
+    // Successful source analysis still reports and protects all consumed files.
+    analysis->compiler_files_complete = false;
 #endif
 #if defined(NY_HAS_LLVM)
     if (const auto runtime = find_native_runtime_archive(argv[0]))

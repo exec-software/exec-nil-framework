@@ -177,7 +177,8 @@ Analysis reports also expose metadata for incremental build clients:
 | --- | --- |
 | `dependencies` | Sorted, unique `{path, digest}` entries for consumed native files. `path` is canonical and absolute; `digest` is lowercase hexadecimal SHA-256 of the exact consumed bytes. |
 | `dependenciesComplete` | True only after successful disk-based analysis with a complete, consistent dependency list containing the primary source. |
-| `compilerFiles` | Sorted paths of regular files mapped into the compiler on Linux, including its executable and loaded shared libraries. Empty when unavailable on another host. |
+| `compilerFiles` | Sorted compiler toolchain file paths on Linux and Windows, including loaded shared libraries and known optional code inputs. Paths require content hashing; a partial list does not certify completeness. |
+| `compilerFilesComplete` | Explicit boolean certification of the compiler file inventory, independent of source dependency completeness. Missing or false disables build reuse. Darwin currently reports false because loaded-image/shared-cache identity is incomplete. |
 | `nativeRuntime` | Resolved native runtime archive path, or null when unavailable. |
 | `nativeLinker` | Resolved configured native linker driver path, or null when unavailable. |
 
@@ -198,12 +199,16 @@ Digests describe what analysis read; clients must compare them against the
 current filesystem before reusing an artifact. They do not establish an
 immutable snapshot. Native runtime/linker fields identify tools without hashing
 them; a build client accounts for their current contents and its effective
-settings separately. On Linux, `compilerFiles` lets a client include the loaded
-compiler libraries, such as a dynamically linked LLVM, in its toolchain
-identity. Those paths also require content hashing; they are not dependency
-digests or a complete inventory of the native linker's own inputs. Fresh
-analysis is required to discover
-changed import resolution before considering an incremental cache entry.
+settings separately. On Linux and Windows, `compilerFiles` lets a client include
+loaded compiler libraries, such as a dynamically linked LLVM, in its toolchain
+identity. These are not dependency digests or a complete inventory of the native
+linker's own inputs. Reuse requires an explicit `compilerFilesComplete: true`
+and the file list, as well as complete source dependencies. Incomplete compiler
+identity does not invalidate otherwise valid source hashes: clients must still
+check changes and protect consumed files from being overwritten by outputs.
+A completeness change between pre-build and post-build analysis rejects artifact
+publication. Fresh analysis is required to discover changed import resolution
+before considering an incremental cache entry.
 
 `nilcompiler --analyze` and editor request/response protocols remain JSON. The
 project driver's optional NILData/YAML presentation does not change that IPC

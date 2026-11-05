@@ -685,6 +685,12 @@ std::optional<input_map> reported_inputs(const json &report) {
   verify_inputs(inputs);
   return inputs;
 }
+bool compiler_files_complete(const json &report) {
+  const auto complete = report.object.find("compilerFilesComplete");
+  const auto files = report.object.find("compilerFiles");
+  return complete != report.object.end() && complete->second.type == json::kind::boolean &&
+         complete->second.boolean && files != report.object.end() && files->second.type == json::kind::array;
+}
 // The compiler tells us which runtime and linker it would select. Query that
 // driver for startup objects, libraries and its linker rather than guessing a
 // host installation layout. Missing identities disable reuse, not compilation.
@@ -816,7 +822,8 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
       }
       for (const bool native : {false, true}) {
         if ((native && opts.target == "vm") || (!native && opts.target == "native")) continue;
-        build_task task{index, native, native ? value.native_output() : value.vm_output(), sources.value_or(input_map{}), {}, {}, sources.has_value()};
+        build_task task{index, native, native ? value.native_output() : value.vm_output(), sources.value_or(input_map{}), {}, {},
+                        sources.has_value() && compiler_files_complete(reports[i])};
         if (task.inputs) {
           add_input(*task.inputs, value.file); add_input(*task.inputs, value.entry); add_input(*task.inputs, compiler); add_input(*task.inputs, self);
           if (reports[i].object.count("compilerFiles")) {
@@ -868,6 +875,8 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
         if (checked) return checked;
         if (nilbuild::dump(current.at("dependencies")) != nilbuild::dump(reports[i].at("dependencies")) || !reported_inputs(current))
           throw std::runtime_error("dependency graph changed during the build; retry: " + value.file.string());
+        if (compiler_files_complete(current) != compiler_files_complete(reports[i]))
+          throw std::runtime_error("compiler module identity completeness changed during the build; retry: " + value.file.string());
         if (current.object.count("compilerFiles") != reports[i].object.count("compilerFiles") ||
             (current.object.count("compilerFiles") &&
              nilbuild::dump(current.at("compilerFiles")) !=

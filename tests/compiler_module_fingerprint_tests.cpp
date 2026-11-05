@@ -111,6 +111,34 @@ void portable(const fs::path &root) {
 #endif
 }
 
+void mapped_file_inventory() {
+  const auto mapping = [](const std::string &path) {
+    return "1000-2000 r-xp 00000000 00:01 42 " + path + "\n";
+  };
+  const auto readable = [](const std::string &path) { return path == "/compiler" || path == "/library with spaces.so"; };
+  modules::files files;
+  std::istringstream complete(mapping("/compiler") + mapping("/library with spaces.so") +
+                              mapping("/compiler") + "2000-3000 rw-p 00000000 00:00 0\n"
+                              "3000-4000 r-xp 00000000 00:00 0 [vdso]\n");
+  check(modules::collect_mapped_files(complete, files, readable), "complete readable mappings certify compiler identity");
+  check(files == modules::files{"/compiler", "/library with spaces.so"}, "mapping duplicates collapse without splitting path spaces");
+  for (const auto &tail : {mapping("/compiler (deleted)"), mapping("/unreadable.so"),
+                           mapping("relative.so"), mapping(""), mapping("[unresolved-file]"),
+                           std::string("1000-2000 r-xp 00000000 00:01 invalid /compiler\n"),
+                           std::string("truncated mapping\n")}) {
+    files.clear();
+    std::istringstream incomplete(mapping("/compiler") + tail);
+    check(!modules::collect_mapped_files(incomplete, files, readable), "partial loaded-file identity never certifies completeness");
+    check(files == modules::files{"/compiler"}, "partial discovery retains valid observed inputs");
+  }
+  files.clear();
+  std::istringstream empty;
+  check(!modules::collect_mapped_files(empty, files, readable), "empty mapping inventory is incomplete");
+  std::istringstream unreadable(mapping("/compiler"));
+  unreadable.setstate(std::ios::badbit);
+  check(!modules::collect_mapped_files(unreadable, files, readable), "unreadable mapping stream is incomplete");
+}
+
 #ifdef _WIN32
 void windows_api() {
   const auto anchor = modules::system_apphelp_anchor();
@@ -141,6 +169,7 @@ int main() {
   const auto root = nil::detail::create_private_directory(fs::temp_directory_path(), "nil-compiler-modules-");
   try {
     portable(root);
+    mapped_file_inventory();
 #ifdef _WIN32
     windows_api();
 #endif
