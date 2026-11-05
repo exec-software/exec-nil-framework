@@ -13,6 +13,8 @@ and editor tools for both languages.
 [Ny](ny/README.md) · [Matrix](matrix/MATRIX-GUIDE.md) ·
 [Contributing](CONTRIBUTING.md)
 
+[![Support us on Buy Me a Coffee](https://img.shields.io/badge/Support_us-Buy_Me_a_Coffee-FF5F5F?logo=buymeacoffee&logoColor=white)](https://www.buymeacoffee.com/execsoftware)
+
 ## Ny and Matrix
 
 ### Ny
@@ -267,6 +269,13 @@ that reproduces the problem and the commands used to build or run it.
 
 Architectural decisions are recorded in the [design index](docs/design/README.md):
 `NIL-` for the shared framework, `NY-` for Ny, and `MAT-` for Matrix.
+
+## Support our work
+
+We run on your support and donations! Every contribution helps us continue
+building open-source software. Thank you for your continued support.
+
+[Contribute through Buy Me a Coffee](https://www.buymeacoffee.com/execsoftware).
 
 ## License
 
