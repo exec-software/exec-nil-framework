@@ -1345,3 +1345,42 @@ inputs were unchanged. Its independently replayed 68-file evidence is sealed
 as `20f6c2ba2f21cb02b7b4acbeb6b4aa9ce485169afb5de164b3c3f78c6a06cbde`
 under `macos-parity-20261105/windows-asm-f96f237/windows-reconciliation.json`.
 No installed SDK or settings were replaced.
+
+
+## Bounded native memory-cap diagnosis
+
+The two native lifetime tests remain excluded on Darwin until a meaningful
+memory bound is demonstrated. Modern XNU has an `RLIMIT_AS` implementation,
+but successful `setrlimit`/`getrlimit` alone cannot establish that an executed
+program retains the bound. Exec startup mappings and allocator reservations
+must be observed directly; RSS sampling would miss reserved, untouched pages.
+
+The separate manual [memory-cap workflow](../.github/workflows/macos-memory-probes.yml)
+runs small owned children on Intel and Apple Silicon. It preserves the fixed
+96 MiB profile and reports setup rejection, exec failure, inherited limits and
+actual post-exec reservation/allocation outcomes separately. A second, explicitly
+named current-map-plus-64-MiB profile is diagnostic only. Neither that profile
+nor the diagnostic workflow admits a production lifetime test. A child with
+192 MiB of untouched BSS probes the exec startup caveat. Allocation/free reuse,
+retained mmap and retained calloc controls distinguish useful enforcement from
+an unusable cap or an unbounded allocator.
+
+Every child has a 20-second deadline; work stops at 160 seconds with 20 seconds
+reserved for cleanup and evidence. Single virtual reservations stop at 256 MiB,
+retained allocations and physical touches at 128 MiB per child. A deliberate
+owned-child timeout checks cleanup. Raw observations, exact source/binary
+fingerprints and partial failure evidence are retained. `OBSERVED` means the
+outcomes were collected; every report retains `qualification: false`.
+
+Twenty-three local classification/bound controls pass, as do strict C++ syntax
+checks against temporary Darwin API stubs. Those checks do not establish native
+compilation or enforcement. Independent review passed; the local report is
+sealed as `7daec76103a145681f5ee333ab81f3cf57e8cdc45db0288947491539d798a07c`
+under `macos-parity-20261105/memory-probe-local-controls/report.json`.
+
+The corrected runtime at `f96f237` also completed Linux Source validation
+[41960686724](https://github.com/exec-software/exec-nil-framework/actions/runs/41960686724):
+LLVM ON, LLVM OFF and the VS Code extension all pass. The paired macOS SDK retry
+[41962386089](https://github.com/exec-software/exec-nil-framework/actions/runs/41962386089)
+targets `2e098f1` with the strict registration/catalog fix. Its installed-package
+outcomes remain pending.

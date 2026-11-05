@@ -39,6 +39,8 @@ positive cache-reuse test continues to fail on Darwin. Apple Silicon also fails
 the x86_64 native-assembly fixture in that baseline. The subsequent bounded
 `aarch64` implementation at `f96f237` passes 351 validator checks and eight
 actual Ny/Matrix ARM executions through JIT, AOT and text/binary object linking.
+Both bounded native assembly profiles are documented in the
+[assembly contract](advanced/inline-assembly.md).
 The newer full ARM inventory has only the known cache-reuse failure. Its SDK
 snapshot stopped at a catalog/registration timeout mismatch, so it does not
 establish installed SDK acceptance.
@@ -47,7 +49,10 @@ These source checks do not replace accepted SDK bytes or establish full parity.
 A private Windows build at `e087964` also passes four focused compiler-identity,
 source-protection and real VM/native incremental contracts: 181 checks, no skips.
 This supplements the recorded Windows SDK baseline; it does not replace its
-installed binaries or qualify a new complete SDK.
+installed binaries or qualify a new complete SDK. A later private build at
+`f96f237` passes five focused CTests, including 351 assembly validator checks,
+eight native Ny/Matrix executions, the additional Matrix routes and the real
+same-process execution-checkpoint contract. The accepted SDK remains unchanged.
 
 ## Native executable context
 
@@ -90,9 +95,6 @@ the complete admission rules.
   compiler loaded-library identity is also incomplete. Both VM and native builds
   now deliberately rebuild rather than reuse artifacts without complete identity;
   successful compilation does not establish incremental parity.
-- Both bounded inline-assembly profiles pass actual native route checks,
-  including AArch64 at `f96f237`. See the
-  [assembly contract](advanced/inline-assembly.md) for their limits.
 - A separate [development SDK workflow](../.github/workflows/macos-sdk.yml) now
   implements native Darwin consumer admission, root install layout, pinned
   documentation tooling, and staged dependency/relocation checks. Initial runs
