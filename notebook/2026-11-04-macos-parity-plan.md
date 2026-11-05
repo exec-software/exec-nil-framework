@@ -1,13 +1,16 @@
-# macOS parity: initial audit and test environments
+# macOS parity: native build baseline and remaining work
 
 ## Status
 
-Initial source audit was at `3848e9c`. Same-source Windows/Linux development
-SDK closeout is now recorded at `60e6bb9`; the first Intel and Apple Silicon
-macOS workflow has been dispatched; the first native build exposed concrete
-Apple SDK portability issues now being repaired. The user wants both
-macOS architectures built on GitHub after Windows closeout. This entry tracks
-bring-up evidence and remaining work, not a macOS support or release claim.
+The Windows/Linux development SDK closeout is recorded at `60e6bb9`. Native
+Intel and Apple Silicon macOS builds now pass on GitHub at `c123849`, with LLVM
+both enabled and disabled. All four backend-selection checks pass, and actual
+compiler, interpreter, Matrix and checkpoint execution is established. Native
+execution also passes targeted route tests on both architectures. The full
+CTest inventory still exposes macOS parity gaps; build support is established,
+but macOS SDK packaging, installed acceptance and release qualification remain
+open. The initial source audit below was at `3848e9c`; subsequent sections retain
+each run's source identity, failures and repairs.
 
 The Windows SDK at `5630388` has accepted full-suite, installed-consumer, GTK and
 VS Code evidence, recorded in [the Windows notebook](2026-11-02-windows-port.md).
@@ -75,7 +78,11 @@ behavior; native Apple Silicon and desktop-provider acceptance remain separate.
 No macOS VM or persistent cloud host was provisioned. The initial audit did not
 create CI jobs; the subsequent manual workflow is described below.
 
-## Decision and follow-up
+## Original plan and current follow-up
+
+Steps 1 and 3 are complete: paired Windows/Linux development acceptance and
+four native macOS build baselines are recorded below. Steps 2 and 4–6 retain
+their feature, installed-package and release scope.
 
 1. Finish Windows closeout against a named Linux baseline. Compare capabilities
    and installed routes, then run any missing current-revision acceptance,
@@ -100,9 +107,9 @@ create CI jobs; the subsequent manual workflow is described below.
    route results. Retain architecture-specific assembly contracts. Release
    promotion requires the reviewed macOS packaging and host policy afterward.
 
-The immediate implementation task after Windows closeout is the first bounded
-macOS build matrix and retained failure inventory. Buying hardware is not a
-prerequisite for that step.
+The first bounded macOS build matrix and retained failure inventory now exist.
+Buying hardware was not a prerequisite for this build milestone; live desktop
+acceptance still needs a suitable environment.
 
 ## Windows closeout and macOS build workflow
 
@@ -407,3 +414,111 @@ requiring follow-up, not a compiler build failure or a silently waived test.
 Intel/LLVM OFF also completed with the same 391-pass, 27-failure, 146-skip counts
 and passing compiler/interpreter/Matrix/parser/checkpoint controls. Its payload
 inventory is recorded separately under the fourth-run evidence root.
+
+All fourth-run profiles completed at exact `0b2b884`, with every build/backend
+selection gate passing and every CTest registration observed:
+
+| Architecture | LLVM | Passed | Failed | Skipped | Registered/observed |
+| --- | --- | ---: | ---: | ---: | ---: |
+| arm64 | ON | 335 | 228 | 5 | 568 |
+| arm64 | OFF | 391 | 27 | 146 | 564 |
+| x86_64 | ON | 335 | 228 | 5 | 568 |
+| x86_64 | OFF | 391 | 27 | 146 | 564 |
+
+The failed-test sets need not be identical despite matching totals. The
+large-frame AI TCP timeout occurred only in arm64/LLVM ON: the request contains
+a 62,000-character unknown field, and sending it timed out before checkpoint
+operations. Intel LLVM ON and both LLVM-OFF profiles passed that IPC contract.
+VM checkpoint-state tests passed throughout.
+
+A separate read-only streamed inspection verified 44/44 tool payloads: all
+eleven expected tools per profile are regular owner-executable Mach-O64
+`MH_EXECUTE` files with the correct CPU type and exact collector byte counts
+and SHA-256 values. Source/metadata/archive inputs remained unchanged. This
+checks build payloads, not SDK packaging or full platform qualification. Report:
+`run-41935062099/artifact-tool-inventory.json`, SHA-256
+`a97f160c512c6b4290c71bb56a13ff053616ee0c12205f1ec3cecd21f4c7e5d7`.
+
+The final direct-compiler/test-helper PIE cleanup was committed as `c123849`
+and dispatched as
+[run 41937145303](https://github.com/exec-software/exec-nil-framework/actions/runs/41937145303).
+The complete fourth-run evidence remains separate and unchanged.
+
+## Final build baseline at `c123849`
+
+[Run 41937145303](https://github.com/exec-software/exec-nil-framework/actions/runs/41937145303)
+completed all four profiles at exact source
+`c1238494b8a4c2869acb73e629cdd8a14f8ae6a5`. Every full build and backend-selection
+check passed. Each complete CTest inventory has unchanged source, zero collector
+errors, and exactly one observation for every registration:
+
+| Architecture | LLVM | Passed | Failed | Skipped | Registered/observed |
+| --- | --- | ---: | ---: | ---: | ---: |
+| arm64 | ON | 533 | 30 | 5 | 568 |
+| arm64 | OFF | 390 | 28 | 146 | 564 |
+| x86_64 | ON | 534 | 29 | 5 | 568 |
+| x86_64 | OFF | 391 | 27 | 146 | 564 |
+
+Compiler smoke, textual/binary interpreter smoke, Matrix execution, parser
+controls, VM checkpoints and the AI checkpoint IPC contract passed in all four
+profiles. Both LLVM-ON profiles passed the assembler CLI and representative
+full JIT/AOT route tests, including native string escaping and lexical/global
+shadowing. The deprecated Darwin linker diagnostics no longer appear. This is
+native language execution evidence on both architectures, beyond tool builds.
+LLVM-OFF results do not establish execution of disabled native routes.
+
+The original 27 failed contracts recur in all four profiles. The additional
+LLVM-ON failures are now specific:
+
+- Both architectures fail `nilbuild.incremental-contract`: NIL output is reused,
+  but the native output rebuilds. Darwin native dependency discovery remains
+  incomplete, so native reuse is not established.
+- Both fail `ny.tools.context-manifest` during Mach-O context inspection. The
+  harness cannot decode compiler stderr as UTF-8 (raw byte `0xcf` at offset 62),
+  consistent with the unsupported Mach-O dispatch falling into text parsing.
+  Fix bounded format detection and diagnostics as well as Mach-O context
+  embedding/inspection; changing the harness decoder alone would not deliver
+  the missing feature.
+- Only arm64 fails `matrix.routes.inline-assembly-native`, matching the absent
+  ARM assembly profile. Intel passes its existing x86_64 native assembly route.
+
+Arm64/LLVM OFF additionally failed `nil.project-edition`: the first manifest run
+produced no captured output instead of `REACHED-END`. Its failure message omits
+the captured process result, so this record does not distinguish a launch or
+process failure from program behavior. The same contract passed in the previous
+arm64/OFF run and the other three final profiles. Preserve this unresolved
+observation and improve the diagnostic before assigning a cause; no retry or
+waiver was used to change this run's counts.
+
+The five LLVM-ON skips concern PostgreSQL availability, the absent macOS UI
+provider/display, and two host-specific lifetime gates. The 146 LLVM-OFF skips
+also include disabled native routes. The earlier arm64 AI large-frame send
+timeout remains in the fourth-run evidence even though the final IPC contract
+passed everywhere; this single clean run does not prove that timing issue fixed.
+
+All four final artifacts and job logs are retained under
+`/home/nathan/vm/nil-win11/artifacts/macos-bringup-20261104/run-41937145303/`.
+`full-four-profile-summary.json` binds the counts, failed/skipped names,
+representative execution controls, source and inventory hashes to the completed
+GitHub run. A separate streamed inspection passed for all 44 tool payloads:
+eleven regular owner-executable Mach-O64 `MH_EXECUTE` files per profile, with
+the expected CPU, byte counts and SHA-256 values. Inspection inputs remained
+unchanged. The report is `artifact-tool-inventory.json`, SHA-256
+`9607f760e5c7feb57af9702fd7ae05431444525772d4c37b5512293bab3ae42f`.
+These archives contain build products; they are not installed or release-qualified
+SDK packages.
+
+The same source also passed all three
+[Linux source-validation jobs](https://github.com/exec-software/exec-nil-framework/actions/runs/41937098841):
+framework LLVM ON, framework LLVM OFF, and the VS Code extension. The accepted
+Windows/Linux SDK bytes remain at `5630388`; the subsequent portability fixes
+and their focused Windows/Linux checks do not replace those packages.
+
+The next parity pass should first resolve the shared macOS path, namespace and
+owned-process assumptions without weakening cleanup or identity checks. That
+will expose the downstream debugger/editor/project behavior currently blocked
+by early assertions. Then complete Mach-O context handling and native dependency
+tracking, add the arm64 assembly contract, and qualify providers and installed
+SDKs. UI, dylib relocation/deployment, editor desktop acceptance and release
+qualification remain explicit follow-up work. No Lich release or Anomalous SDK
+replacement was performed during this build milestone.
