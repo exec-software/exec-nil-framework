@@ -12,7 +12,7 @@ release boundary. A newer source checkout does not update an installed SDK.
 | Linux x86_64 | Reference host. The clean `5630388` SDK passed the full suite, installed consumer routes, shared runtime, debugger, Unicode/I/O, execution checkpoints and GTK checks. | The reviewed Ubuntu release toolchain is separate from this development SDK. New release binaries still require the release gates. |
 | Windows x86_64 | The same `5630388` source has paired Linux acceptance: interpreter/bundles, LLVM JIT/AOT, object/link routes, installed tooling, checkpoints, GTK and VS Code. | Development acceptance on the provisioned Windows VM; bare-host installation and Windows release qualification remain open. GTK and PostgreSQL require external runtimes. |
 | macOS 15 Intel x86_64 | At `e087964`, native builds with LLVM ON and OFF passed build/backend-selection gates. Compiler, textual/binary interpreter, Matrix, parser and checkpoint execution passed. LLVM ON also passed assembler/linker contracts, representative JIT/AOT routes and embedded Mach-O context, including dead-strip linking and execution. | The full inventory fails only its positive incremental-reuse contract. Installed SDK, debugger/editor desktop acceptance, providers and release qualification remain open. |
-| macOS 15 Apple Silicon arm64 | The same `e087964` build and execution baseline passed, including LLVM-ON native routes and embedded Mach-O context. | The macOS gaps above also apply here. A bounded AArch64 inline-assembly profile has since been implemented; native ARM acceptance is pending. |
+| macOS 15 Apple Silicon arm64 | The `e087964` baseline includes native routes and embedded Mach-O context. At `f96f237`, the full LLVM-ON source suite also passes the new AArch64 assembly routes for Ny and Matrix: 565 passed, one failed and five skipped out of 571. | The remaining source-test failure is incremental reuse. SDK snapshot/package, provider, desktop and release acceptance remain separate. |
 
 LLVM-OFF builds exercise frontend/interpreter behavior and rejection of disabled
 native operations. Their successful tests do not establish native execution.
@@ -37,8 +37,11 @@ All four pass the filesystem, Unicode namespace, owned-process, parallel-process
 and SDK-publication contracts. The new compiler-identity checks pass while the
 positive cache-reuse test continues to fail on Darwin. Apple Silicon also fails
 the x86_64 native-assembly fixture in that baseline. The subsequent bounded
-`aarch64` implementation passes 351 validator checks and Linux regression tests,
-including foreign-target rejection; its actual ARM execution is still pending.
+`aarch64` implementation at `f96f237` passes 351 validator checks and eight
+actual Ny/Matrix ARM executions through JIT, AOT and text/binary object linking.
+The newer full ARM inventory has only the known cache-reuse failure. Its SDK
+snapshot stopped at a catalog/registration timeout mismatch, so it does not
+establish installed SDK acceptance.
 These source checks do not replace accepted SDK bytes or establish full parity.
 
 A private Windows build at `e087964` also passes four focused compiler-identity,
@@ -87,9 +90,9 @@ the complete admission rules.
   compiler loaded-library identity is also incomplete. Both VM and native builds
   now deliberately rebuild rather than reuse artifacts without complete identity;
   successful compilation does not establish incremental parity.
-- The bounded ARM inline-assembly profile and host-selected native route checks
-  are implemented but await native ARM acceptance. Intel x86_64 native assembly
-  passes. See the [assembly contract](advanced/inline-assembly.md) for both profiles.
+- Both bounded inline-assembly profiles pass actual native route checks,
+  including AArch64 at `f96f237`. See the
+  [assembly contract](advanced/inline-assembly.md) for their limits.
 - A separate [development SDK workflow](../.github/workflows/macos-sdk.yml) now
   implements native Darwin consumer admission, root install layout, pinned
   documentation tooling, and staged dependency/relocation checks. Initial runs

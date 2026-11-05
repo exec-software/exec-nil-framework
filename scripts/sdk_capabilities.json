@@ -116,7 +116,7 @@
     {"test": "ny.routes.class-execution", "fixture": "class-execution", "stdlib": false},
     {"test": "ny.routes.fault-control-flow", "fixture": "fault-control-flow", "stdlib": false},
     {"test": "ny.routes.fault-nominal-identity", "fixture": "fault-nominal-identity", "stdlib": false},
-    {"test": "ny.routes.fault-managed-lifetime", "fixture": "fault-managed-lifetime", "stdlib": true},
+    {"test": "ny.routes.fault-managed-lifetime", "fixture": "fault-managed-lifetime", "stdlib": true, "timeout_seconds": 30},
     {"test": "ny.routes.class-polymorphism", "fixture": "class-polymorphism", "stdlib": true},
     {"test": "ny.routes.reference-handles", "fixture": "reference-handles", "stdlib": false},
     {"test": "ny.routes.owned-buffers", "fixture": "owned-buffers", "stdlib": false},

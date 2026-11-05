@@ -1293,3 +1293,55 @@ The complete Intel evidence reconciliation is sealed as
 under `macos-parity-20261105/sdk-run-41957412951/intel-reconciliation.json`.
 Its package step also failed before installed validation. No first-run SDK
 is accepted or substituted for the installed Linux/Windows baseline.
+
+
+## ARM execution confirmed at f96f237; strict snapshot binding corrected
+
+The ARM profile in
+[run 41960707317](https://github.com/exec-software/exec-nil-framework/actions/runs/41960707317)
+completed all 571 registrations at `f96f2378bac888a6d06af4cc829f7cbd5aa51de5`:
+565 passed, the single known positive cache-reuse contract failed, and five
+tests skipped. This includes 351 assembly validator checks, eight actual
+Ny/Matrix ARM native executions through text/binary object linking, JIT and
+AOT, two additional native Matrix routes, and four interpreted Matrix rejection
+routes. The real checkpoint contract, all three socket-channel controls and all
+six fault-managed-lifetime routes also pass. Native execution, not cross-object
+emission alone, now confirms the separator correction.
+
+The pre-test SDK snapshot correctly refused a registration/catalog mismatch:
+the lifetime fixture now requested 30 seconds, but its positive-proof catalog
+only admitted the historical ten-second default. Therefore no snapshot, tool
+payload fingerprints, installation or consumers were produced by this ARM job.
+Its 346-file evidence reconciliation is sealed as
+`9d45a32126e76c855393e838aca3b0926b7a10010a188eef32881cc16ad67220`
+under `macos-parity-20261105/sdk-run-41960707317/arm64-reconciliation.json`.
+These are complete native source-test results, not an accepted SDK.
+
+The catalog now declares an optional integer `timeout_seconds: 30` only on
+that exact fault-managed-lifetime proof. The command must match it exactly;
+missing, changed, duplicate and undeclared timeout options remain errors.
+Catalog entries without the field keep their historical ten-second meaning,
+so older manifest evidence is not reinterpreted. The catalog hash changes
+explicitly, and source/registration/report/manifest bindings remain enforced.
+Twenty-four capability controls and 45 qualification controls pass. Replaying
+the actual local CTest listing first reproduces the old error and then binds
+all 31 proofs correctly. This matches the native snapshot error. A cheap
+registration preflight now runs immediately after configure, while the exact
+pre-test built-payload snapshot remains mandatory.
+
+Binder evidence is sealed as
+`4a19eb6b3071602994d68318a8cdb38faebf16c1865ee0f3705797e866849890`
+under `macos-parity-20261105/sdk-capability-timeout-fix/report.json`.
+The new catalog canonical SHA is
+`4b43113c6e3ae51debe2ff8ba8c9352ddb3ea1ce148d29637cb67cdc4efbaad8`;
+old validators deliberately reject the new optional shape.
+
+The same `f96f237` source also passed a fresh private Windows build and five
+focused CTests, including the real checkpoint contract. It retains the 351
+validator checks, eight native executions, six Matrix routes and four complete
+ARM text/binary serialization/rejection checks. All 12 owned phases cleaned
+up, and the accepted SDK's 13 tool/runtime files, manifest, source and helper
+inputs were unchanged. Its independently replayed 68-file evidence is sealed
+as `20f6c2ba2f21cb02b7b4acbeb6b4aa9ce485169afb5de164b3c3f78c6a06cbde`
+under `macos-parity-20261105/windows-asm-f96f237/windows-reconciliation.json`.
+No installed SDK or settings were replaced.

@@ -139,6 +139,18 @@ jobs:
             -DNILCOMPILER_POSTGRESQL_INCLUDE_DIR="$NIL_CI_PQ_INCLUDE" \
             2>&1 | tee build/macos-sdk-evidence/configure.log
           ctest --test-dir build/ci --show-only=json-v1 > build/macos-sdk-evidence/registration.json
+          # Check the real CTest/catalog binding before compiling. The later
+          # pre-test snapshot still binds the exact built payload bytes.
+          python3 -B - <<'PY'
+          import json, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from sdk_capabilities import record_capabilities
+          evidence = Path('build/macos-sdk-evidence')
+          listing = json.loads((evidence / 'registration.json').read_text())
+          binding = record_capabilities(Path('.').resolve(), Path('build/ci').resolve(), listing)
+          (evidence / 'capability-registration.json').write_text(json.dumps(binding, indent=2) + '\n')
+          PY
       - name: Build every framework tool and test
         id: build
         timeout-minutes: 30

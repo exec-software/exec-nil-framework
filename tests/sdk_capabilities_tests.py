@@ -40,6 +40,8 @@ class CapabilityTests(unittest.TestCase):
                     ("--expected-exit", "0"), ("--routes", "all")):
                 argv += [option, value]
             argv += ["--compiler-arg=" + value for value in inputs["compiler_args"]]
+            if "timeout_seconds" in proof:
+                argv += ["--timeout", str(proof["timeout_seconds"])]
             listing["tests"].append({"name": proof["test"], "command": argv})
         self.listing = listing
         captured = capabilities.record_capabilities(ROOT, self.build, listing)
@@ -148,6 +150,84 @@ class CapabilityTests(unittest.TestCase):
         value.pop("qualification")
         self.assertEqual(qualification.qualification_errors(value), [])
         self.assertTrue(qualification.qualification_errors(value, True))
+
+    def test_declared_fault_timeout_binds_registration_report_and_manifest(self):
+        proof = next(p for p in self.catalog["proofs"] if p["fixture"] == "fault-managed-lifetime")
+        self.assertEqual(proof["timeout_seconds"], 30)
+        record = self.collect()
+        observed = next(p for p in record["evidence"]["proofs"] if p["test"] == proof["test"])
+        item = observed["contract"]
+        self.assertEqual(item["inputs"]["timeout_seconds"], 30.0)
+        self.assertEqual(item["command"][item["command"].index("--timeout") + 1], "30")
+        self.assertEqual(capabilities.capability_errors(record, self.evidence, True), [])
+
+        path = Path(item["report_path"])
+        report = json.loads(path.read_text(encoding="utf-8"))
+        report["inputs"]["timeout_seconds"] = 10.0
+        path.write_text(json.dumps(report), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.collect()
+        item["inputs"]["timeout_seconds"] = 10.0
+        self.assertTrue(capabilities.capability_errors(record, self.evidence, True))
+
+    def test_fault_timeout_rejects_missing_changed_duplicate_and_unknown_options(self):
+        index = next(i for i, p in enumerate(self.catalog["proofs"])
+                     if p["fixture"] == "fault-managed-lifetime")
+        original = self.listing["tests"][index]["command"]
+        timeout = original.index("--timeout")
+        variants = [original[:timeout] + original[timeout + 2:],
+                    original + ["--timeout", "30"], original + ["--unexpected", "30"]]
+        for value in ("10", "31", "0", "-1", "30.0", "nan", "inf", ""):
+            changed = original.copy()
+            changed[timeout + 1] = value
+            variants.append(changed)
+        for argv in variants:
+            with self.subTest(argv=argv):
+                listing = deepcopy(self.listing)
+                listing["tests"][index]["command"] = argv
+                with self.assertRaises(ValueError):
+                    capabilities.record_capabilities(ROOT, self.build, listing)
+
+    def test_default_proof_does_not_admit_timeout_option(self):
+        self.assertNotIn("timeout_seconds", self.catalog["proofs"][0])
+        for value in ("10", "30"):
+            listing = deepcopy(self.listing)
+            listing["tests"][0]["command"] += ["--timeout", value]
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                capabilities.record_capabilities(ROOT, self.build, listing)
+
+    def test_catalog_rejects_other_timeout_values_types_and_proofs(self):
+        index = next(i for i, p in enumerate(self.catalog["proofs"])
+                     if p["fixture"] == "fault-managed-lifetime")
+        for value in (10, 31, 0, -1, 30.0, "30", True, None):
+            catalog = deepcopy(self.catalog)
+            catalog["proofs"][index]["timeout_seconds"] = value
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                capabilities.validate_catalog(catalog)
+        catalog = deepcopy(self.catalog)
+        catalog["proofs"][0]["timeout_seconds"] = 30
+        with self.assertRaises(ValueError):
+            capabilities.validate_catalog(catalog)
+
+    def test_historical_fault_catalog_keeps_implicit_ten_second_contract(self):
+        record = self.collect()
+        proof = next(p for p in record["catalog"]["proofs"] if p["fixture"] == "fault-managed-lifetime")
+        del proof["timeout_seconds"]
+        capabilities.validate_catalog(record["catalog"])
+        historical_hash = capabilities.canonical_hash(record["catalog"])
+        self.assertNotEqual(historical_hash, record["catalog_sha256"])
+        record["catalog_sha256"] = historical_hash
+        item = next(p for p in record["evidence"]["proofs"] if p["test"] == proof["test"])["contract"]
+        timeout = item["command"].index("--timeout")
+        del item["command"][timeout:timeout + 2]
+        item["inputs"]["timeout_seconds"] = 10.0
+        self.assertEqual(capabilities.contract(ROOT, self.build, proof, item["command"])["inputs"]["timeout_seconds"], 10.0)
+        self.assertEqual(capabilities.capability_errors(record, self.evidence, True), [])
+        with self.assertRaises(ValueError):
+            capabilities.contract(ROOT, self.build, proof, item["command"] + ["--timeout", "30"])
+        self.snapshot["capabilities"]["catalog_sha256"] = historical_hash
+        with self.assertRaises(ValueError):
+            self.collect()
 
     def test_development_without_proof_is_unverified(self):
         record = capabilities.collect_capabilities(ROOT, None, None, None, False)

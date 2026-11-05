@@ -39,6 +39,18 @@ def strings(value: Any) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) and item for item in value)
 
 
+def proof_timeout(proof: dict[str, Any]) -> int:
+    # Omission preserves historical catalogs and their ten-second reports.
+    # The only admitted override is the declared allocation-heavy fault proof.
+    if "timeout_seconds" not in proof:
+        return 10
+    require(proof.get("test") == "ny.routes.fault-managed-lifetime" and
+            proof.get("fixture") == "fault-managed-lifetime" and
+            type(proof["timeout_seconds"]) is int and proof["timeout_seconds"] == 30,
+            "unsupported proof timeout override")
+    return 30
+
+
 def validate_catalog(value: Any) -> None:
     require(isinstance(value, dict) and set(value) == {
         "schema", "release_declaration", "coverage", "routes", "groups", "proofs", "limitations"},
@@ -51,11 +63,14 @@ def validate_catalog(value: Any) -> None:
     require(isinstance(value["proofs"], list) and bool(value["proofs"]), "catalog proofs are missing")
     names = []
     for proof in value["proofs"]:
-        require(isinstance(proof, dict) and set(proof) == {"test", "fixture", "stdlib"}, "invalid catalog proof")
+        require(isinstance(proof, dict) and set(proof) in (
+            {"test", "fixture", "stdlib"}, {"test", "fixture", "stdlib", "timeout_seconds"}),
+            "invalid catalog proof")
         require(isinstance(proof["fixture"], str) and
                 re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", proof["fixture"]) is not None and
                 proof["test"] == "ny.routes." + proof["fixture"] and
                 isinstance(proof["stdlib"], bool), "invalid proof fixture identity")
+        proof_timeout(proof)
         names.append(proof["test"])
     require(len(set(names)) == len(names), "duplicate catalog proof")
     require(isinstance(value["groups"], list) and bool(value["groups"]), "catalog groups are missing")
@@ -91,7 +106,7 @@ def expected_inputs(repo: Path, build: Path, proof: dict[str, Any]) -> dict[str,
         "source": str(sources[0]),
         "expected_stdout": str(repo / "tests/language" / (proof["fixture"] + ".stdout")),
         "expected_stderr": None, "expected_exit": 0, "routes": ROUTES,
-        "timeout_seconds": 10.0,
+        "timeout_seconds": float(proof_timeout(proof)),
         "compiler_args": ["--sdk-path", str(repo / "nilstd/src")] if proof["stdlib"] else [],
         "interpreter_args": [], "program_args": [], "text_nil_contains": [],
         "with_stdlib": False, "strict": False, "xfail_stderr_contains": {},
@@ -105,14 +120,17 @@ def contract(repo: Path, build: Path, proof: dict[str, Any], argv: Any,
             "proof command must run the route matrix harness")
     inputs = expected_inputs(repo, build, proof)
     options, extras = {}, []
+    allowed = {"--compiler", "--interpreter", "--source", "--expected-stdout",
+               "--expected-exit", "--routes", "--work-dir", "--report-json"}
+    if "timeout_seconds" in proof:
+        allowed.add("--timeout")
     arguments = iter(argv[2:])
     for argument in arguments:
         if argument.startswith("--compiler-arg="):
             extras.append(argument.split("=", 1)[1])
             continue
-        require(argument in {"--compiler", "--interpreter", "--source", "--expected-stdout",
-                             "--expected-exit", "--routes", "--work-dir", "--report-json"} and
-                argument not in options, "unexpected or duplicate positive proof option")
+        require(argument in allowed and argument not in options,
+                "unexpected or duplicate positive proof option")
         value = next(arguments, None)
         require(isinstance(value, str), "proof option has no value")
         options[argument] = value
@@ -121,6 +139,8 @@ def contract(repo: Path, build: Path, proof: dict[str, Any], argv: Any,
                 "--source": inputs["source"], "--expected-stdout": inputs["expected_stdout"],
                 "--expected-exit": "0", "--routes": "all", "--work-dir": str(build / "tests/routes"),
                 "--report-json": str(report)}
+    if "timeout_seconds" in proof:
+        expected["--timeout"] = str(proof_timeout(proof))
     path_options = {"--compiler", "--interpreter", "--source", "--expected-stdout",
                     "--work-dir", "--report-json"}
     require(options.keys() == expected.keys() and all(
