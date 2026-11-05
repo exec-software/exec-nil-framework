@@ -113,14 +113,20 @@ def environment():
     return load("sdk_consumer_environment", "scripts/check-sdk-routes.py").consumer_environment()
 
 
-def run(name, command, timeout, *, cwd=ROOT, clean=False):
+def run(name, command, timeout, *, cwd=ROOT, clean=False, provider_library=None):
     """Reuse the tested bounded owner/capture; preserve failure and partial logs."""
     support = load("sdk_owned_capture", "tests/tools/ordinary_io_parity_contract.py")
     ownership = support.load_ownership(ROOT)
     variables = environment() if clean else os.environ.copy()
+    if provider_library is not None:
+        require(clean and Path(provider_library).is_dir(), "declared provider requires clean environment and library directory")
+        variables["DYLD_FALLBACK_LIBRARY_PATH"] = str(provider_library) + ":/usr/lib"
     row = support.run_process(ownership, [str(x) for x in command], cwd,
                               variables, OUTPUT, name, timeout)
     row["environment_profile"] = "Apple toolchain; no inherited NIL/NY/DYLD/tool overrides" if clean else "recorded build/provider environment"
+    if provider_library is not None:
+        row["environment_profile"] = "Apple toolchain; inherited overrides removed; one explicit PostgreSQL provider"
+        row["declared_provider_library"] = str(provider_library)
     save(name + ".json", row)
     require(row["status"] == "PASS" and row["cleanup_verified"],
             name + " failed; retained " + str(OUTPUT / (name + ".json")))
@@ -227,6 +233,9 @@ def relocate():
     require(not STAGE.exists() and payload(destination) == before, "SDK relocation changed payload")
     save("relocation.json", {"old_path": str(STAGE), "new_path": str(destination),
                             "old_path_absent": True, "payload": before})
+    save("relocation-origin.json", {"source_manifest_sha256": before["manifest.json"]["sha256"],
+                                   "source_revision": os.environ["GITHUB_SHA"],
+                                   "scope": "Exact staged manifest sealed before relocation"})
 
 
 def load_commands(text):
@@ -333,6 +342,12 @@ def shadow_validation(sdk, validate):
         raise failure
 
 
+def malformed_macho_diagnostic(stderr):
+    # Darwin versions describe rejection of the same malformed dylib differently.
+    return any(value in stderr.lower() for value in
+               ("not a mach-o", "file too short", "slice is not valid mach-o file"))
+
+
 def shared_loader_consumer(sdk):
     """Execute an actual @rpath consumer; dladdr proves the packaged library."""
     probe = sdk.parent / "loader-probe"
@@ -367,7 +382,7 @@ def shared_loader_consumer(sdk):
         require(negative["cleanup_verified"] and negative.get("exit_code") not in (None, 0) and
                 not negative.get("timed_out", False) and not negative.get("error") and
                 (OUTPUT / negative["stdout"]).read_bytes() == b"" and "libnil.dylib" in stderr and
-                any(value in stderr.lower() for value in ("not a mach-o", "file too short")) and
+                malformed_macho_diagnostic(stderr) and
                 any(value in stderr for value in (str(sdk.parent / "lib/libnil.dylib"),
                                                  str(probe / "../lib/libnil.dylib"))),
                 "negative loader control did not identify the malformed sibling library")
@@ -449,7 +464,8 @@ def collect():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=("identity", "pandoc", "install", "docs", "package", "validate-stage",
-                                         "relocate", "dependencies", "validate-relocated", "consumers", "collect"))
+                                         "relocate", "dependencies", "validate-relocated", "debugger",
+                                         "postgresql-consumers", "consumers", "collect"))
     args = parser.parse_args()
     require(sys.platform == "darwin" and platform.machine() in PANDOC, "native macOS x86_64/arm64 required")
     phase = args.phase
@@ -493,6 +509,54 @@ def main():
         relocate()
     elif phase == "dependencies":
         dependencies()
+    elif phase == "debugger":
+        sdk = relocated_sdk()
+        origin = OUTPUT / "relocation-origin.json"
+        require(json.loads(origin.read_text())["source_manifest_sha256"] == record(sdk / "manifest.json")["sha256"],
+                "relocation origin differs from installed debugger candidate")
+        run("installed-debugger", [sys.executable, "-B", ROOT / "scripts/ci/macos-debugger.py",
+             "--sdk", sdk, "--origin", origin, "--expected-revision", os.environ["GITHUB_SHA"],
+             "--output", OUTPUT / "installed-debugger"], 1500, clean=True)
+        relocated_sdk()
+    elif phase == "postgresql-consumers":
+        sdk = relocated_sdk()
+        provider = load("macos_declared_postgresql", "scripts/ci/macos-postgresql-provider.py")
+        provider_report = OUTPUT / "postgresql-provider/report.json"
+        provider_anchor = record(provider_report)
+        report = json.loads(provider_report.read_text())
+        declaration = provider.validate_provider(report)
+        binding = {"provider_report": provider_anchor, "sdk_manifest": record(sdk / "manifest.json"),
+                   "source_revision": os.environ["GITHUB_SHA"], "required_routes_per_root": 6,
+                   "completed_library_roots": [], "after_checks": {}, "status": "FAIL"}
+        failure = None
+        try:
+            for library_name in ("nilstd", "nillib"):
+                run("postgresql-" + library_name, [sys.executable, "-B", ROOT / "tests/database_postgresql_isolated.py",
+                     "--compiler", sdk / "nilcompiler", "--interpreter", sdk / "nilinterpreter",
+                     "--stdlib", sdk / library_name, "--postgres-bin", declaration["bin_dir"],
+                     "--postgres-share", declaration["share_dir"], "--require-all-routes",
+                     "--report-dir", OUTPUT / ("postgresql-" + library_name)], 380,
+                    clean=True, provider_library=declaration["library_dir"])
+                binding["completed_library_roots"].append(library_name)
+        except BaseException as error:
+            failure = error
+            binding["route_error"] = type(error).__name__ + ": " + str(error)
+        finally:
+            for name, check in (
+                ("provider", lambda: provider.validate_provider(report) == declaration),
+                ("declaration", lambda: record(provider_report) == provider_anchor),
+                ("sdk", lambda: relocated_sdk() == sdk),
+            ):
+                try:
+                    require(check(), "PostgreSQL consumer after-state changed: " + name)
+                    binding["after_checks"][name] = {"status": "PASS"}
+                except Exception as error:
+                    binding["after_checks"][name] = {"status": "FAIL", "error": type(error).__name__ + ": " + str(error)}
+                    failure = failure or error
+            binding["status"] = "FAIL" if failure else "PASS"
+            save("postgresql-consumer-binding.json", binding)
+        if failure:
+            raise failure
     elif phase == "consumers":
         sdk = relocated_sdk()
         run("consumers", [sys.executable, "-B", ROOT / "scripts/check-sdk-routes.py", "--sdk", sdk,

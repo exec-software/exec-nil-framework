@@ -154,6 +154,24 @@ class CandidateTests(unittest.TestCase):
                     sdk.extract_pandoc(archive, root / "pandoc", "0" * 64 if failure == "digest" else digest, "arm64")
                 self.assertFalse((root / "pandoc").exists())
 
+    def test_negative_loader_accepts_observed_darwin_malformed_slice_message(self):
+        # Exact stderr retained from native ARM SDK run 41962386089.
+        observed = """dyld[32048]: Library not loaded: @rpath/libnil.dylib
+  Referenced from: <17526956-40FD-367E-A2D4-6C7741B31789> /Users/runner/work/_temp/nil-macos-sdk-5yu1dfaa/loader-probe/shared-consumer
+  Reason: tried: '/Users/runner/work/_temp/nil-macos-sdk-5yu1dfaa/loader-probe/nillib/native/libnil.dylib' (no such file), '/Users/runner/work/_temp/nil-macos-sdk-5yu1dfaa/loader-probe/libnil.dylib' (no such file), '/Users/runner/work/_temp/nil-macos-sdk-5yu1dfaa/loader-probe/../lib/libnil.dylib' (slice is not valid mach-o file), '/Users/runner/work/_temp/nil-macos-sdk-5yu1dfaa/loader-probe/nillib/native/libnil.dylib' (no such file), '/Users/runner/work/_temp/nil-macos-sdk-5yu1dfaa/loader-probe/libnil.dylib' (no such file), '/Users/runner/work/_temp/nil-macos-sdk-5yu1dfaa/loader-probe/../lib/libnil.dylib' (slice is not valid mach-o file)
+"""
+        self.assertEqual(hashlib.sha256(observed.encode()).hexdigest(),
+                         "a72e36b02efccdda53dc8c69dfb4387a7a5d6e150eca598f609a451b38e6d5d8")
+        self.assertTrue(sdk.malformed_macho_diagnostic(observed))
+        for reason in ("not a mach-o", "file too short"):
+            self.assertTrue(sdk.malformed_macho_diagnostic(
+                observed.replace("slice is not valid mach-o file", reason)))
+        for reason in ("no such file", "wrong architecture", "permission denied"):
+            self.assertFalse(sdk.malformed_macho_diagnostic(
+                observed.replace("slice is not valid mach-o file", reason)))
+        self.assertFalse(sdk.malformed_macho_diagnostic("Library not loaded: @rpath/libnil.dylib"))
+        self.assertFalse(sdk.malformed_macho_diagnostic(""))
+
     def test_loader_observation_preserves_spelling_order_and_sdk_priority(self):
         output = """Load command 0
           cmd LC_RPATH

@@ -1434,3 +1434,80 @@ binding mismatch. The replacement `2e098f1` run has passed its ARM build and
 pre-test snapshot; full installed results remain pending. Linux Source validation
 [41962360138](https://github.com/exec-software/exec-nil-framework/actions/runs/41962360138)
 passes LLVM ON, LLVM OFF and the extension for that revision.
+
+
+## First packaged ARM candidate and installed acceptance expansion
+
+The ARM job in [41962386089](https://github.com/exec-software/exec-nil-framework/actions/runs/41962386089)
+at `2e098f1` reached exact-byte SDK packaging, staged validation, relocation,
+relocated validation and a real shared-runtime ABI/loader check. It contains
+eleven tools, eighteen compiled modules and 67 HTML pages. All 260 payload files
+plus the manifest retain their exact bytes/modes, and all eleven tool hashes plus
+both runtime hashes match the pre-test snapshot. This confirms the deterministic
+archive fix with real installation. Its source inventory remains 565 passed,
+one known cache-reuse failure and five skips out of 571.
+
+The malformed-sibling negative control actually rejected the correct library,
+with exit -6, empty stdout and verified cleanup. Darwin's error was
+`slice is not valid mach-o file`; the assertion only admitted two other known
+spellings. The retry adds that exact observed spelling, preserving the required
+nonzero exit, empty stdout, exact malformed sibling path, timeout/cleanup checks
+and unchanged candidate seal. The control reproduces the retained 834-byte stderr
+and its SHA `a72e36b02efccdda53dc8c69dfb4387a7a5d6e150eca598f609a451b38e6d5d8`;
+missing-library, wrong-architecture and permission errors remain rejected.
+Fourteen staging controls and independent review pass. The original failed
+result remains preserved; none of the 1,184 installed consumers ran in this job.
+
+ARM reconciliation is sealed as
+`a265af26cb4944f61db59401e7b309496f2dd212356dcd48612e70fb47e71f53`
+under `macos-parity-20261105/sdk-run-41962386089/arm64-reconciliation.json`.
+All 433 collector files and twelve actual Mach-O headers/load-command records
+were replayed. Homebrew zstd remains an external prerequisite; this is not a
+portable dependency closure or a release-qualified SDK.
+
+The next SDK run adds installed debugger acceptance, bound to an external
+manifest anchor recorded before relocation. A private copied consumer exercises
+146 named checks, twenty exact compile/run commands and fifteen retained JSONL/DAP
+sessions. It separately runs the real interpreter capture/mutate/reusable restore/
+continuation contract: the scene demo's persisted state file is not an execution
+checkpoint. Source, SDK, origin and raw transcript seals are checked after failure
+as well as success. Darwin uses a clean Apple toolchain environment; Linux and
+Windows behavior is preserved. Fifteen helper controls pass; the existing consumer
+suite has 31 passes and five platform skips on Linux. Independent review passed.
+Local evidence is sealed as
+`6e97fa2c8e6b338c38f4e2c025e314172c404ae33186eaae657eece33b94b849`
+under `macos-parity-20261105/installed-debugger-helper-controls/report-final.json`.
+Native installed debugger acceptance is still pending.
+
+The optional `private16` SDK profile builds the hash-pinned official PostgreSQL
+16.15 release in a private runner directory with two build jobs and a twelve-minute
+whole bound. It uses one coherent header/client/server/share installation;
+preflight binds `PG_VERSION_NUM`, `PQlibVersion` and the actual `dladdr` target.
+A wrong-library negative control and full before/after install manifest remain
+mandatory. The provider enables a private Unix-socket test profile, with optional
+TLS/GSS/ICU/readline/compression extras disabled; it does not claim those features
+or start a service. Standard CTest then runs the existing real client deadlines,
+provider lifecycle and six routes. Installed consumers additionally require all
+six routes from each of the SDK's source and binary library roots. Their explicit
+provider environment and unchanged SDK/provider declarations are recorded even
+when a route fails.
+
+Sixteen provider controls and independent review pass. The official archive has
+9,094 members and 161,404,380 expanded bytes. Extraction preserves pinned release
+mtimes so generated parser files stay newer than their grammar inputs; it does
+not regenerate the release with an incidental runner Bison. Extraction evidence
+is sealed as `58f059a055aee69c1d3be55b70fd20e0a3cd293079843840a65c01ab6bca67cd`
+under `macos-parity-20261105/postgresql-provider-16.15/extraction-validation-v2.json`.
+The native provider build and routes remain pending.
+
+The separate `nano-off` memory follow-up
+[41964342238](https://github.com/exec-software/exec-nil-framework/actions/runs/41964342238)
+completed at `fa4370a`. Startup maps dropped by 512 MiB, but the fixed-96-MiB
+setups still reject with `EINVAL` on both hosts; ARM's measured-headroom allocator
+controls remain unproven, while Intel's helper-only results remain positive.
+The padded child did not reach its entry point (ARM exit -9, Intel -6 with a dyld
+shared-cache/libc++ mapping error); neither outcome proves the exec-setter caveat.
+All 43 files per host, eighteen owned phases and 24 controls were independently
+replayed. Reconciliation SHA is
+`4633a9a752062d46f617d2bb65b8bb70dcdfe3f427ee9129cb532236f8df77b8`.
+No lifetime tests were admitted and no production allocator setting changed.

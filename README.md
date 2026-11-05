@@ -250,9 +250,10 @@ platform. The Windows x86_64 development SDK has
 [paired Linux acceptance and installed tooling coverage](notebook/2026-11-02-windows-port.md).
 Intel and Apple Silicon macOS have passing native build baselines with LLVM
 enabled and disabled, real interpreter/checkpoint execution, and representative
-LLVM JIT/AOT execution. Both macOS architectures also pass executable-context
-embedding, inspection and dead-strip retention checks. Their full test inventories
-still expose parity gaps.
+LLVM JIT/AOT execution. Both macOS architectures also pass bounded native inline
+assembly and executable-context embedding, inspection and dead-strip retention
+checks. Installed SDK, debugger and database-provider acceptance is in progress;
+the full test inventories still expose parity gaps.
 The [platform support matrix](docs/platform-support.md) separates verified
 development behavior from remaining SDK, provider and release work.
 Windows and macOS release qualification remains pending. The

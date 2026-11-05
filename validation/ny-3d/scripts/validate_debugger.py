@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import platform
 import subprocess
+import sys
 import time
 
 from debugger_process import OwnedProcess, PipeReader, CaptureBudget, OUTPUT_LIMIT, write_pipe
@@ -31,7 +32,14 @@ def clean_env():
             'LIBRARY_PATH', 'CPATH', 'CPLUS_INCLUDE_PATH', 'C_INCLUDE_PATH'}}
     # Windows native linking requires the selected vcvars environment (PATH,
     # INCLUDE, LIB and LIBPATH). Framework tools themselves use absolute paths.
-    if os.name != 'nt':
+    if sys.platform == 'darwin':
+        overrides = {'CC', 'CXX', 'SDKROOT', 'LDFLAGS', 'CPPFLAGS', 'CFLAGS', 'CXXFLAGS',
+                     'MACOSX_DEPLOYMENT_TARGET', 'DEVELOPER_DIR', 'TOOLCHAINS',
+                     'COMPILER_PATH', 'GCC_EXEC_PREFIX', 'CCC_OVERRIDE_OPTIONS'}
+        env = {key: value for key, value in env.items()
+               if not key.upper().startswith(('DYLD_', 'LD_')) and key.upper() not in overrides}
+        env['PATH'] = '/usr/bin:/bin:/usr/sbin:/sbin'
+    elif os.name != 'nt':
         env['PATH'] = '/usr/local/bin:/usr/bin:/bin'
     env['LC_ALL'] = 'C'
     return env

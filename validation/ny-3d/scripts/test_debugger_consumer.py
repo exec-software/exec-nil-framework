@@ -389,7 +389,10 @@ class ConsumerTests(unittest.TestCase):
             self.assertNotIn(name, env)
         for name in ('INCLUDE', 'LIB', 'LIBPATH', 'SystemRoot'):
             self.assertEqual({key.upper(): value for key, value in env.items()}[name.upper()], inputs[name])
-        self.assertEqual(env['PATH'], inputs['PATH'] if os.name == 'nt' else '/usr/local/bin:/usr/bin:/bin')
+        expected_path = (inputs['PATH'] if os.name == 'nt' else
+                         '/usr/bin:/bin:/usr/sbin:/sbin' if sys.platform == 'darwin' else
+                         '/usr/local/bin:/usr/bin:/bin')
+        self.assertEqual(env['PATH'], expected_path)
 
     def test_source_identity_not_path_basename(self):
         left, right = self.directory / 'left', self.directory / 'right'

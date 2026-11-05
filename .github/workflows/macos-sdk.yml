@@ -8,12 +8,17 @@ name: macOS development SDK
         type: choice
         options: [both, x86_64, arm64]
         default: both
+      postgresql_provider:
+        description: PostgreSQL provider for this isolated development SDK
+        type: choice
+        options: [runner, private16]
+        default: runner
 
 permissions:
   contents: read
 
 concurrency:
-  group: macos-development-sdk-${{ github.ref }}-${{ inputs.architecture || 'both' }}
+  group: macos-development-sdk-${{ github.ref }}-${{ inputs.architecture || 'both' }}-${{ inputs.postgresql_provider || 'runner' }}
   cancel-in-progress: false
 
 # Isolated development candidates only. Failed CTest cases stay failed; neither
@@ -22,7 +27,7 @@ jobs:
   candidate:
     name: macOS ${{ matrix.host.arch }} development candidate
     runs-on: ${{ matrix.host.runner }}
-    timeout-minutes: 210
+    timeout-minutes: 280
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -33,6 +38,7 @@ jobs:
         shell: bash
     env:
       NIL_CI_ARCH: ${{ matrix.host.arch }}
+      NIL_CI_POSTGRES_PROFILE: ${{ inputs.postgresql_provider || 'runner' }}
       PYTHONDONTWRITEBYTECODE: "1"
       HOMEBREW_NO_AUTO_UPDATE: "1"
       HOMEBREW_NO_INSTALL_CLEANUP: "1"
@@ -55,12 +61,23 @@ jobs:
           python3 -B scripts/ci/test_macos_sdk.py -v 2>&1 | tee build/macos-sdk-evidence/staging-controls.log
           python3 -B scripts/ci/test_macos_evidence.py -v 2>&1 | tee build/macos-sdk-evidence/inventory-controls.log
           python3 -B tests/sdk_consumer_routes_tests.py -v 2>&1 | tee build/macos-sdk-evidence/consumer-controls.log
+          python3 -B scripts/ci/test_macos_postgresql_provider.py -v 2>&1 | tee build/macos-sdk-evidence/provider-controls.log
+          python3 -B scripts/ci/test_macos_debugger.py -v 2>&1 | tee build/macos-sdk-evidence/debugger-controls.log
       - name: Fetch hash-pinned official Pandoc
         id: pandoc
         timeout-minutes: 5
         run: |
           set -o pipefail
           python3 -B scripts/ci/macos-sdk.py pandoc 2>&1 | tee build/macos-sdk-evidence/pandoc.log
+      - name: Build isolated pinned PostgreSQL provider
+        if: inputs.postgresql_provider == 'private16'
+        timeout-minutes: 14
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-postgresql-provider.py \
+            --output build/macos-sdk-evidence/postgresql-provider \
+            --work-dir "$RUNNER_TEMP/nil-postgresql16" \
+            2>&1 | tee build/macos-sdk-evidence/postgresql-provider.log
       - name: Record installed toolchain and optional providers
         id: toolchain
         timeout-minutes: 3
@@ -76,7 +93,25 @@ jobs:
           echo "NIL_CI_SQLITE_INCLUDE=$nil_macos_sdk/usr/include" >> "$GITHUB_ENV"
           echo "DYLD_FALLBACK_LIBRARY_PATH=/usr/local/lib:/usr/lib" >> "$GITHUB_ENV"
           printf 'SQLite: Apple SDK headers at %s; system dylib\n' "$nil_macos_sdk/usr/include" > build/macos-sdk-evidence/providers.txt
-          if nil_pg_prefix="$(brew --prefix postgresql@16 2>/dev/null)" &&
+          if [ "$NIL_CI_POSTGRES_PROFILE" = private16 ]; then
+            python3 -B - <<'PY'
+          import importlib.util, json, os
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location('private_pg', 'scripts/ci/macos-postgresql-provider.py')
+          provider = importlib.util.module_from_spec(spec); spec.loader.exec_module(provider)
+          report = json.loads(Path('build/macos-sdk-evidence/postgresql-provider/report.json').read_text())
+          provider.validate_provider(report)
+          values = {'NIL_TEST_POSTGRES_BIN': report['bin_dir'], 'NIL_TEST_POSTGRES_SHARE': report['share_dir'],
+                    'NIL_CI_PQ_INCLUDE': report['include_dir'],
+                    'DYLD_FALLBACK_LIBRARY_PATH': report['library_dir'] + ':/usr/lib'}
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              for key, value in values.items():
+                  assert isinstance(value, str) and '\n' not in value and '\r' not in value
+                  stream.write(key + '=' + value + '\n')
+          with open('build/macos-sdk-evidence/providers.txt', 'a') as stream:
+              stream.write('PostgreSQL: isolated pinned16.15 provider; exact paths/digests in postgresql-provider/report.json\n')
+          PY
+          elif nil_pg_prefix="$(brew --prefix postgresql@16 2>/dev/null)" &&
              test -x "$nil_pg_prefix/bin/pg_config" && test -x "$nil_pg_prefix/bin/initdb"; then
             nil_pg_include="$("$nil_pg_prefix/bin/pg_config" --includedir)"
             nil_pg_library="$("$nil_pg_prefix/bin/pg_config" --libdir)"
@@ -98,6 +133,7 @@ jobs:
           {
             echo 'GTK: macOS provider is not implemented'
             echo 'Installed candidate checks: inherited DYLD/source/tool overrides removed; Apple toolchain PATH; system SQLite only'
+            echo 'Private PostgreSQL installed checks use a separate explicitly declared provider environment'
             echo 'Homebrew LLVM dependencies remain external development prerequisites, not bundled portable libraries'
           } >> build/macos-sdk-evidence/providers.txt
           {
@@ -224,6 +260,18 @@ jobs:
         run: |
           set -o pipefail
           python3 -B scripts/ci/macos-sdk.py validate-relocated 2>&1 | tee build/macos-sdk-evidence/validate-relocated.log
+      - name: Exercise installed debugger and execution checkpoints
+        if: ${{ !cancelled() && steps.relocated.outcome == 'success' }}
+        timeout-minutes: 26
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-sdk.py debugger 2>&1 | tee build/macos-sdk-evidence/debugger.log
+      - name: Exercise installed PostgreSQL source and binary library routes
+        if: ${{ !cancelled() && steps.relocated.outcome == 'success' && inputs.postgresql_provider == 'private16' }}
+        timeout-minutes: 16
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-sdk.py postgresql-consumers 2>&1 | tee build/macos-sdk-evidence/postgresql-consumers.log
       - name: Run full installed source and binary consumer campaign
         if: ${{ !cancelled() && steps.relocated.outcome == 'success' }}
         timeout-minutes: 45

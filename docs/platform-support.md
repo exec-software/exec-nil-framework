@@ -41,9 +41,13 @@ the x86_64 native-assembly fixture in that baseline. The subsequent bounded
 actual Ny/Matrix ARM executions through JIT, AOT and text/binary object linking.
 Both bounded native assembly profiles are documented in the
 [assembly contract](advanced/inline-assembly.md).
-The newer full ARM inventory has only the known cache-reuse failure. Its SDK
-snapshot stopped at a catalog/registration timeout mismatch, so it does not
-establish installed SDK acceptance.
+Both full LLVM-ON inventories at `f96f237` have 565 passes, one known cache-reuse
+failure and five skips out of 571 registrations. Their catalog/registration
+timeout mismatch was corrected subsequently. At `2e098f1`, the ARM SDK packages
+with exact tested bytes and passes staged and relocated validation, including
+an actual shared-runtime ABI/loader check. A diagnostic wording mismatch in the
+malformed-library negative control stopped the installed consumer campaign;
+full SDK acceptance is still pending.
 These source checks do not replace accepted SDK bytes or establish full parity.
 
 A private Windows build at `e087964` also passes four focused compiler-identity,
@@ -97,10 +101,12 @@ the complete admission rules.
   successful compilation does not establish incremental parity.
 - A separate [development SDK workflow](../.github/workflows/macos-sdk.yml) now
   implements native Darwin consumer admission, root install layout, pinned
-  documentation tooling, and staged dependency/relocation checks. Initial runs
-  exposed an install-time archive timestamp change and ARM assembly lowering
-  errors; corrective native validation is in progress. The recorded baseline
-  above still consists of build products rather than an accepted installed SDK.
+  documentation tooling, and staged dependency/relocation checks. The ARM
+  candidate now preserves all 260 payload files plus its manifest through
+  relocation. Full consumer acceptance and the new installed debugger/checkpoint
+  checks remain pending. An optional isolated PostgreSQL 16 profile adds a
+  coherent client/server prerequisite and installed source/binary library routes;
+  its native validation is also pending.
 - The two native lifetime stress tests still lack a demonstrated Darwin memory
   bound. Native diagnostics show that the fixed 96 MiB virtual-memory cap is
   rejected at process setup; larger diagnostic profiles do not replace it.
