@@ -24,6 +24,8 @@ OUTPUT_LIMIT = 16 * 1024 * 1024
 
 def _darwin_group_snapshot(pgid, deadline):
     """Observe only the retained child's group; never scan or signal other PIDs."""
+    if time.monotonic() >= deadline:
+        raise RuntimeError('Darwin owned group observation exceeded cleanup deadline')
     import ctypes as c
 
     class ShortInfo(c.Structure):
@@ -68,8 +70,7 @@ def _darwin_group_snapshot(pgid, deadline):
     return result
 
 
-def _darwin_group_exited(pgid):
-    deadline = time.monotonic() + CLEANUP_SECONDS
+def _darwin_group_exited(pgid, deadline):
     first = _darwin_group_snapshot(pgid, deadline)
     # A missing retained leader is uncertainty, not an empty owned group.
     if pgid not in first or any(state != 5 for state in first.values()):  # SZOMB
@@ -79,7 +80,8 @@ def _darwin_group_exited(pgid):
     # A previously observed zombie may be reaped between snapshots; no new or
     # live member may appear, and our retained leader must still be present.
     second = _darwin_group_snapshot(pgid, deadline)
-    return pgid in second and second.items() <= first.items()
+    return (time.monotonic() < deadline and pgid in second and
+            second.items() <= first.items())
 
 
 def write_pipe(pipe, data, timeout, terminate):
@@ -395,6 +397,7 @@ class OwnedProcess:
     def __init__(self, command, **options):
         self.lock = threading.RLock()
         self.windows = os.name == 'nt'
+        self.posix_cleanup_deadline = None
         self.job = WindowsJob() if os.name == 'nt' else None
         try:
             self.process = (self.job.start([str(x) for x in command], **options) if self.job else
@@ -425,6 +428,8 @@ class OwnedProcess:
             # The direct child is not reaped until after timeout cleanup. Its
             # unreaped PID pins the process-group number against reuse.
             if self.process.returncode is None:
+                if sys.platform == 'darwin' and self.posix_cleanup_deadline is None:
+                    self.posix_cleanup_deadline = time.monotonic() + CLEANUP_SECONDS
                 try:
                     os.killpg(self.process.pid, signal.SIGKILL)
                 except ProcessLookupError:
@@ -433,17 +438,32 @@ class OwnedProcess:
                     # XNU killpg1 excludes zombies and returns EPERM if none
                     # were signalable. Accept only that proven dead-group case;
                     # retain the leader (WNOWAIT) until both snapshots finish.
-                    if (sys.platform != 'darwin' or error.errno != errno.EPERM or
-                            self.poll() is None or not _darwin_group_exited(self.process.pid)):
+                    if sys.platform != 'darwin' or error.errno != errno.EPERM:
                         raise
+                    # A previous callback may already have delivered SIGKILL,
+                    # before waitid or libproc observes the completed exit.
+                    # Every callback and snapshot shares the original deadline.
+                    deadline = self.posix_cleanup_deadline
+                    while time.monotonic() < deadline:
+                        if self.poll() is not None:
+                            try:
+                                if _darwin_group_exited(self.process.pid, deadline):
+                                    return
+                            except ProcessLookupError:
+                                # A listed member may be reaped before pidinfo.
+                                # Retry the COMPLETE proof, never signal that PID.
+                                pass
+                        time.sleep(min(.01, max(0, deadline - time.monotonic())))
+                    raise
 
     def kill(self):
         with self.lock:
             self.terminate()
             # Budget-reader callbacks share this lock: none may signal a
             # POSIX group in the interval between waitpid and returncode update.
-            remaining = (max(.01, self.job.cleanup_deadline - time.monotonic())
-                         if self.job and self.job.cleanup_deadline is not None else CLEANUP_SECONDS)
+            deadline = self.job.cleanup_deadline if self.job else self.posix_cleanup_deadline
+            remaining = (max(.01, deadline - time.monotonic())
+                         if deadline is not None else CLEANUP_SECONDS)
             self.process.wait(timeout=remaining)
             if self.job:
                 self.job.drain()

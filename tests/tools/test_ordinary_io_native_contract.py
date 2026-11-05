@@ -3,6 +3,7 @@
 from pathlib import Path
 import tempfile
 import unittest
+import unicodedata
 
 import ordinary_io_native_contract as contract
 
@@ -39,9 +40,19 @@ class OracleTests(unittest.TestCase):
         self.assertEqual(self.check()['status'], 'FAIL')
         self.assertEqual(len(self.check()['changed']), 1)
 
-    def test_normalization_alias_write_fails(self):
+    def test_normalized_output_spelling_fails(self):
         self.materialize_outputs()
-        (self.root / 'parent-café-日本語-🦊' / 'café.bytes').write_bytes(contract.PAYLOAD)
+        original = Path(self.arguments[1] + '.bytes')
+        payload = original.read_bytes()
+        original.unlink()
+        original.with_name(unicodedata.normalize('NFC', original.name)).write_bytes(payload)
+        result = self.check()
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertIn('parent-café-日本語-🦊/cafe\u0301.bytes', result['missing'])
+
+    def test_protected_sentinel_change_fails(self):
+        self.materialize_outputs()
+        (self.root / 'parent-café-日本語-🦊' / 'sentinel-café.bytes').write_bytes(contract.PAYLOAD)
         self.assertEqual(self.check()['status'], 'FAIL')
 
     def test_cwd_sentinel_change_fails(self):

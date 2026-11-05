@@ -666,3 +666,35 @@ SHA-256 `ae848f9ee8d1e2daaee815601dbeeb6c4d8a2a7d77134f5d35d431d10b1f16b9`.
 User-facing context, tool and platform docs describe the new implementation
 while keeping native hosted acceptance pending. Existing Linux/Windows SDK
 bytes and their earlier acceptance records are unchanged.
+
+
+## Residual host fixtures and bounded process transitions
+
+The `7e53828` native matrix has passing builds and backend selection on all four
+profiles. Completed profiles exposed a second ordinary-I/O fixture that assigned
+different bytes to NFC/NFD aliases, and a C++ fixture whose `-I` repository root
+let `VERSION` shadow libc++ `<version>` on a case-insensitive filesystem. The
+fixture now keeps a separately named protected sentinel, checks exact output
+spelling, and retains failed namespace observations. Quoted-header search uses
+`-iquote`; MSVC behavior is unchanged. All three affected Linux CTests pass, and
+a private include-poison control fails with `-I` and passes with `-iquote`.
+
+The retained debugger-consumer trace shows repeated termination after a timeout
+signal. It does not distinguish pending leader-exit observation from a changing
+group snapshot. Darwin cleanup now shares one owner deadline across signal,
+exit observation, complete group proofs, retries and final reaping. It accepts
+no new/live members or missing retained leader, and never signals an enumerated
+PID. Independent review and Linux controls pass; native closure remains pending.
+The ordinary-I/O output-budget control also retains its full failed cleanup row.
+
+Evidence is in `followup-fixtures/` and `process-transition-followup/` under
+`/home/nathan/vm/nil-win11/artifacts/macos-parity-20261105`. The latter Linux
+report is sealed as
+`409645774c62e977893b128f9ad663d5426e79511cad24fdd5f1c564ea8d92e3`.
+
+A manual two-architecture `macOS host probes` workflow runs these focused suites
+without rebuilding the framework. Its publication diagnostic uses private
+synthetic SDK trees and preserves each failed observation while comparing
+replacement, swap/unlink, swap/retention and hardlink/retention primitives.
+The production publisher is unchanged: the APFS reader `EINVAL` is still open.
+These diagnostics neither publish an SDK nor qualify a release.

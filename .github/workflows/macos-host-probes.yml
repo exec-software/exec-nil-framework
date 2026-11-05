@@ -1,0 +1,131 @@
+name: macOS host probes
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-host-probes-${{ github.ref }}
+  cancel-in-progress: false
+
+# Short host diagnosis only: no framework build, package installation, real
+# SDK publication, release upload, or claim of complete platform parity.
+jobs:
+  host:
+    name: macOS ${{ matrix.host.arch }} host probes
+    runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        host:
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: macos-15
+            arch: arm64
+    defaults:
+      run:
+        shell: bash
+    env:
+      NIL_CI_ARCH: ${{ matrix.host.arch }}
+      NIL_CI_RUNNER: ${{ matrix.host.runner }}
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Record source and native runner
+        id: identity
+        timeout-minutes: 1
+        run: |
+          python3 -B - <<'PY'
+          import json, os, platform, subprocess, sys
+          from pathlib import Path
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True, timeout=15).strip()
+          assert platform.system() == 'Darwin'
+          assert platform.machine() == os.environ['NIL_CI_ARCH']
+          assert git('status', '--porcelain', '--untracked-files=no') == ''
+          assert git('rev-parse', 'HEAD') == os.environ['GITHUB_SHA']
+          root = Path('build/macos-host-probes')
+          root.mkdir(parents=True, exist_ok=False)
+          identity = dict(revision=git('rev-parse', 'HEAD'), architecture=platform.machine(),
+                          platform=platform.platform(), python=sys.version,
+                          runner=os.environ['NIL_CI_RUNNER'], run_id=os.environ['GITHUB_RUN_ID'],
+                          attempt=os.environ['GITHUB_RUN_ATTEMPT'], scope='host diagnosis only')
+          (root / 'identity.json').write_text(json.dumps(identity, indent=2) + '\n')
+          PY
+      - name: Observe atomic publication primitives
+        if: ${{ !cancelled() && steps.identity.outcome == 'success' }}
+        timeout-minutes: 2
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-host-probes.py --output build/macos-host-probes/publication \
+            2>&1 | tee build/macos-host-probes/publication.log
+      - name: Check native ordinary-I/O oracle
+        if: ${{ !cancelled() && steps.identity.outcome == 'success' }}
+        timeout-minutes: 1
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-host-probes.py --suite ordinary-native \
+            --output build/macos-host-probes/ordinary-native 2>&1 | tee build/macos-host-probes/ordinary-native.log
+      - name: Check ordinary-I/O process oracle
+        if: ${{ !cancelled() && steps.identity.outcome == 'success' }}
+        timeout-minutes: 2
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-host-probes.py --suite ordinary-parity \
+            --output build/macos-host-probes/ordinary-parity 2>&1 | tee build/macos-host-probes/ordinary-parity.log
+      - name: Check process identity guards
+        if: ${{ !cancelled() && steps.identity.outcome == 'success' }}
+        timeout-minutes: 1
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-host-probes.py --suite process-identity \
+            --output build/macos-host-probes/process-identity 2>&1 | tee build/macos-host-probes/process-identity.log
+      - name: Check process consumer cleanup
+        if: ${{ !cancelled() && steps.identity.outcome == 'success' }}
+        timeout-minutes: 2
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-host-probes.py --suite process-consumer \
+            --output build/macos-host-probes/process-consumer 2>&1 | tee build/macos-host-probes/process-consumer.log
+      - name: Check parallel process contract
+        if: ${{ !cancelled() && steps.identity.outcome == 'success' }}
+        timeout-minutes: 5
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-host-probes.py --suite parallel-process \
+            --output build/macos-host-probes/parallel-process 2>&1 | tee build/macos-host-probes/parallel-process.log
+      - name: Record final source and evidence hashes
+        if: always()
+        timeout-minutes: 1
+        run: |
+          python3 -B - <<'PY'
+          import hashlib, json, subprocess
+          from pathlib import Path
+          root = Path('build/macos-host-probes')
+          root.mkdir(parents=True, exist_ok=True)
+          files = {}
+          for path in sorted(root.rglob('*')):
+              if path.is_file():
+                  data = path.read_bytes()
+                  files[str(path.relative_to(root))] = dict(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+          dirty = subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'], text=True, timeout=15)
+          report = dict(source_unchanged=not dirty, tracked_changes=dirty, files=files)
+          (root / 'evidence.json').write_text(json.dumps(report, indent=2) + '\n')
+          assert not dirty, dirty
+          PY
+      - name: Upload raw host evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-host-probes-${{ matrix.host.arch }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: build/macos-host-probes/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 1

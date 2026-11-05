@@ -27,6 +27,7 @@ TEXT = 'café日本語🦊\r\ntail\n'.encode('utf-8')
 
 def prepare(root):
     root.mkdir()
+    root = root.resolve(strict=True)
     parent = root / 'parent-café-日本語-🦊'
     parent.mkdir()
     target = parent / 'cafe\u0301'
@@ -35,12 +36,15 @@ def prepare(root):
     cwd = root / 'cwd-café-日本語-🦊'
     cwd.mkdir()
     sentinel = b'untouched namespace sentinel\0\xff'
-    (parent / 'café.bytes').write_bytes(sentinel)  # NFC must not alias NFD.
+    # Host lookup may alias NFC/NFD spellings. Give the protected file its own
+    # identity; the exact namespace oracle still rejects normalized outputs.
+    protected = parent / 'sentinel-café.bytes'
+    protected.write_bytes(sentinel)
     (cwd / 'sentinel').write_bytes(sentinel)
     expected = {
         parent.name: None, cwd.name: None,
         seed.relative_to(root).as_posix(): PAYLOAD,
-        (parent / 'café.bytes').relative_to(root).as_posix(): sentinel,
+        protected.relative_to(root).as_posix(): sentinel,
         (cwd / 'sentinel').relative_to(root).as_posix(): sentinel,
     }
     for suffix, data in (('.bytes', PAYLOAD), ('.text', TEXT), ('.stream', PAYLOAD)):
@@ -116,9 +120,13 @@ def run_contract(args):
                 arguments, expected, extra = prepare(cwd)
                 run(name, [*command, *arguments], cwd, EXPECTED_STDOUT, extra)
                 namespace = support.check_namespace(cwd, expected)
-                support.require(namespace['status'] == 'PASS', 'Host namespace/byte oracle failed: ' + name)
                 report['executions'].append({'library': library_name, 'route': route,
-                                             'status': 'PASS', 'namespace': namespace})
+                                             'status': namespace['status'], 'namespace': namespace})
+                support.require(namespace['status'] == 'PASS',
+                                'Host namespace/byte oracle failed: ' + name +
+                                '; missing=' + repr(namespace['missing']) +
+                                '; unexpected=' + repr(namespace['unexpected']) +
+                                '; changed=' + repr(namespace['changed']))
 
             for encoding in ('text', 'binary'):
                 flags = [] if encoding == 'text' else ['--emit-binary-nil']

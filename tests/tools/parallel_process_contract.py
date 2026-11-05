@@ -250,8 +250,11 @@ def main():
             compile_command = [args.cxx, '/nologo', '/std:c++17', '/EHsc', '/W4', '/WX',
                                '/I' + str(args.root), str(source), '/Fe:' + str(driver)]
         else:
+            # Repository VERSION must not shadow libc++ <version> on a
+            # case-insensitive filesystem. Only the quoted fixture header
+            # belongs in this search path; system headers keep their order.
             compile_command = [args.cxx, '-std=c++17', '-Wall', '-Wextra', '-Werror',
-                               '-I', str(args.root), str(source), '-o', str(driver)]
+                               '-iquote', str(args.root), str(source), '-o', str(driver)]
         subprocess.run(compile_command, cwd=directory, check=True, timeout=120)
 
         def command(name, jobs, modes):

@@ -83,6 +83,24 @@ class ConsumerTests(unittest.TestCase):
             owned.process.stdout.close()
             owned.process.stderr.close()
 
+    @unittest.skipIf(os.name == 'nt', 'POSIX repeated process-group termination')
+    def test_repeated_termination_waits_for_owned_exit(self):
+        # Exercise the output-budget/protocol-close pattern on the native host:
+        # one callback signals, another requests cleanup during the exit.
+        for attempt in range(8):
+            with self.subTest(attempt=attempt):
+                owned = self.process('import time; time.sleep(60)')
+                try:
+                    owned.terminate()
+                    owned.terminate()
+                    owned.kill()
+                    self.assertIsNotNone(owned.process.returncode)
+                finally:
+                    owned.kill()
+                    owned.finish()
+                    owned.process.stdout.close()
+                    owned.process.stderr.close()
+
     def test_reap_serializes_concurrent_budget_termination(self):
         owned = self.process('pass')
         original_wait = owned.process.wait
@@ -400,6 +418,23 @@ class ConsumerTests(unittest.TestCase):
 
 
 class DarwinGroupTests(unittest.TestCase):
+    def setUp(self):
+        self.now = 0
+        def advance(seconds):
+            self.now += seconds
+        for mocked in (patch.object(processes.time, 'monotonic', side_effect=lambda: self.now),
+                       patch.object(processes.time, 'sleep', side_effect=advance),
+                       patch.object(processes, 'CLEANUP_SECONDS', .03)):
+            mocked.start()
+            self.addCleanup(mocked.stop)
+
+    def owner(self):
+        owner = OwnedProcess.__new__(OwnedProcess)
+        owner.lock, owner.windows = threading.RLock(), False
+        owner.posix_cleanup_deadline = None
+        owner.process = SimpleNamespace(pid=1234, returncode=None)
+        return owner
+
     def test_permission_exception_requires_every_dead_group_precondition(self):
         for platform, error, exited, dead_group, accepted in (
                 ('darwin', errno.EPERM, 0, True, True),
@@ -408,9 +443,7 @@ class DarwinGroupTests(unittest.TestCase):
                 ('darwin', errno.EPERM, None, True, False),
                 ('darwin', errno.EPERM, 0, False, False)):
             with self.subTest(platform=platform, error=error, exited=exited, dead_group=dead_group):
-                owner = OwnedProcess.__new__(OwnedProcess)
-                owner.lock, owner.windows = threading.RLock(), False
-                owner.process = SimpleNamespace(pid=1234, returncode=None)
+                owner = self.owner()
                 # This mocked POSIX path also runs on Windows, which has no
                 # SIGKILL constant. No native process receives this fixture signal.
                 with patch.object(processes.signal, 'SIGKILL', 9, create=True), \
@@ -423,6 +456,80 @@ class DarwinGroupTests(unittest.TestCase):
                     else:
                         with self.assertRaises(PermissionError):
                             owner.terminate()
+
+    def test_repeated_termination_waits_for_exit_and_complete_group_proof(self):
+        owner = self.owner()
+        with patch.object(processes.signal, 'SIGKILL', 9, create=True), \
+                patch.object(processes.sys, 'platform', 'darwin'), \
+                patch.object(processes.os, 'killpg', side_effect=[None, PermissionError(errno.EPERM, 'fixture')], create=True) as killpg, \
+                patch.object(owner, 'poll', side_effect=[None, 0, 0]), \
+                patch.object(processes, '_darwin_group_exited', side_effect=[False, True]) as proof:
+            owner.terminate()
+            deadline = owner.posix_cleanup_deadline
+            owner.terminate()
+        self.assertEqual(killpg.call_count, 2)
+        self.assertEqual(proof.call_count, 2)
+        self.assertTrue(all(call.args == (1234, deadline) for call in proof.call_args_list))
+        self.assertEqual(owner.posix_cleanup_deadline, deadline)
+        self.assertLess(self.now, deadline)
+
+    def test_real_permission_denial_exhausts_one_deadline_without_reaping(self):
+        owner = self.owner()
+        with patch.object(processes.signal, 'SIGKILL', 9, create=True), \
+                patch.object(processes.sys, 'platform', 'darwin'), \
+                patch.object(processes.os, 'killpg', side_effect=PermissionError(errno.EPERM, 'fixture'), create=True), \
+                patch.object(owner, 'poll', return_value=None), \
+                patch.object(processes, '_darwin_group_exited') as proof:
+            with self.assertRaises(PermissionError):
+                owner.terminate()
+            deadline = owner.posix_cleanup_deadline
+            with self.assertRaises(PermissionError):
+                owner.terminate()
+        self.assertEqual(self.now, deadline)
+        self.assertIsNone(owner.process.returncode)
+        proof.assert_not_called()
+
+    def test_final_reap_uses_remaining_original_cleanup_budget(self):
+        owner = self.owner()
+        owner.job = None
+        owner.process.wait = Mock(return_value=-9)
+        with patch.object(processes.signal, 'SIGKILL', 9, create=True), \
+                patch.object(processes.sys, 'platform', 'darwin'), \
+                patch.object(processes.os, 'killpg', create=True):
+            owner.terminate()
+            self.now = .02
+            owner.kill()
+        self.assertEqual(owner.posix_cleanup_deadline, .03)
+        owner.process.wait.assert_called_once_with(timeout=.01)
+
+    def test_disappearing_member_requires_fresh_complete_proof(self):
+        owner = self.owner()
+        with patch.object(processes.signal, 'SIGKILL', 9, create=True), \
+                patch.object(processes.sys, 'platform', 'darwin'), \
+                patch.object(processes.os, 'killpg', side_effect=PermissionError(errno.EPERM, 'fixture'), create=True), \
+                patch.object(owner, 'poll', return_value=0), \
+                patch.object(processes, '_darwin_group_exited', side_effect=[ProcessLookupError(errno.ESRCH, 'fixture'), True]) as proof:
+            owner.terminate()
+        self.assertEqual(proof.call_count, 2)
+
+    def test_observation_permission_failure_is_not_retried_or_accepted(self):
+        owner = self.owner()
+        with patch.object(processes.signal, 'SIGKILL', 9, create=True), \
+                patch.object(processes.sys, 'platform', 'darwin'), \
+                patch.object(processes.os, 'killpg', side_effect=PermissionError(errno.EPERM, 'fixture'), create=True), \
+                patch.object(owner, 'poll', return_value=0), \
+                patch.object(processes, '_darwin_group_exited', side_effect=PermissionError(errno.EACCES, 'lookup')) as proof:
+            with self.assertRaises(PermissionError) as caught:
+                owner.terminate()
+        self.assertEqual(caught.exception.errno, errno.EACCES)
+        self.assertEqual(proof.call_count, 1)
+
+    def test_dead_group_proof_after_deadline_is_rejected(self):
+        def snapshot(pgid, deadline):
+            self.now += .02
+            return {1234: 5}
+        with patch.object(processes, '_darwin_group_snapshot', side_effect=snapshot):
+            self.assertFalse(processes._darwin_group_exited(1234, .03))
 
     def test_two_complete_dead_snapshots_with_retained_leader_are_required(self):
         for first, second, expected in (
@@ -437,12 +544,12 @@ class DarwinGroupTests(unittest.TestCase):
                 ({1234: 5}, {1234: 5, 1235: 2}, False)):
             with self.subTest(first=first, second=second), \
                     patch.object(processes, '_darwin_group_snapshot', side_effect=[first, second]):
-                self.assertEqual(processes._darwin_group_exited(1234), expected)
+                self.assertEqual(processes._darwin_group_exited(1234, self.now + .03), expected)
 
     def test_uncertain_group_lookup_does_not_authorize_cleanup(self):
         with patch.object(processes, '_darwin_group_snapshot', side_effect=PermissionError(errno.EPERM, 'fixture')):
             with self.assertRaises(PermissionError):
-                processes._darwin_group_exited(1234)
+                processes._darwin_group_exited(1234, self.now + .03)
 
     def snapshot(self, *, ids=(1234,), list_size=None, lookup_error=0,
                  member_size=64, member_pid=1234, member_group=1234, deadline=None):

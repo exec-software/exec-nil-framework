@@ -219,7 +219,7 @@ class OwnershipTests(unittest.TestCase):
         with patch.object(M, 'MAX_OUTPUT', 4096):
             row = self.run_python('import os\nwhile True:os.write(1,b"x"*65536)')
         self.assertEqual(row['status'], 'FAIL')
-        self.assertTrue(row['cleanup_verified'])
+        self.assertTrue(row['cleanup_verified'], row)
         self.assertLessEqual(row['stdout_record']['bytes'], 4096)
 
     def test_constructor_failure_never_invents_cleanup_proof(self):
