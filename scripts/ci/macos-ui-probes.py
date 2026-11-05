@@ -165,12 +165,11 @@ def event_identity_matches(identity, queued, marker_retained):
         expected, observed = float.fromhex(queued), float.fromhex(identity['observed_timestamp_hex'])
     except ValueError:
         return False
-    if not all(math.isfinite(value) and value > 0 for value in (expected, observed)):
+    if not all(math.isfinite(value) and value > 0 for value in (expected, observed)) or not (
+            expected.is_integer() and 1 <= expected <= 2**32):
         return False
     if identity['kind'] in ('object', 'timestamp_exact'):
         return observed == expected
-    if identity['kind'] == 'timestamp_adjacent':
-        return observed != expected and abs(observed - expected) <= 1e-9 and math.nextafter(expected, observed) == observed
     return identity['kind'] == 'marker' and marker_retained is True
 
 
@@ -218,7 +217,7 @@ def cocoa_result(raw):
          'own_event_delivered', 'own_close_delivered', 'cleanup_verified', 'timestamp_controls_passed')) and value.get('exception') is False and (
              type(value.get('dispatch_count')) is int and value['dispatch_count'] == 1 and
              type(value.get('view_delivery_count')) is int and value['view_delivery_count'] == 1 and
-             type(value.get('timestamp_control_count')) is int and value['timestamp_control_count'] == 19 and
+             type(value.get('timestamp_control_count')) is int and value['timestamp_control_count'] == 29 and
              value.get('view_during_owned_dispatch') is True and value.get('wrong_target') is False and exact_event and identity_verified)
     return value
 

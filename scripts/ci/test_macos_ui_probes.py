@@ -33,7 +33,7 @@ class ProbeControls(unittest.TestCase):
                     queued_event=dict(event), app_event=dict(event), view_event=dict(event),
                     observer_subclass=True, view_during_owned_dispatch=True, local_monitor_count=0, source_marker_retained=False,
                     queued_identity=dict(identity), app_identity=dict(identity), view_identity=dict(identity),
-                    timestamp_controls_passed=True, timestamp_control_count=19,
+                    timestamp_controls_passed=True, timestamp_control_count=29,
                     app_unmatched=[], view_unmatched=[],
                     exception=False, cleanup_verified=True)
 
@@ -74,22 +74,25 @@ class ProbeControls(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'exceeds bound'):
                 gate.cocoa_result(json.dumps(report).encode())
 
-    def test_exact_and_adjacent_timestamp_identity_within_one_nanosecond(self):
-        for value, kind in ((64.0, 'timestamp_exact'), (math.nextafter(64.0, 0), 'timestamp_adjacent'),
-                            (math.nextafter(64.0, math.inf), 'timestamp_adjacent')):
+    def test_exact_whole_second_timestamp_identity(self):
+        for value in (1.0, 64.0, float(2**32)):
             report = self.cocoa()
+            for name in ('queued_identity', 'app_identity', 'view_identity'):
+                report[name].update(queued_timestamp_hex=float.hex(value), observed_timestamp_hex=float.hex(value))
             for name in ('app_identity', 'view_identity'):
-                report[name].update(kind=kind, observed_timestamp_hex=float.hex(value))
+                report[name]['kind'] = 'timestamp_exact'
             self.assertTrue(gate.cocoa_result(json.dumps(report).encode())['own_window_feasible'])
 
-    def test_timestamp_identity_rejects_two_steps_nonfinite_and_large_absolute_delta(self):
-        for base, observed in ((64.0, math.nextafter(math.nextafter(64.0, 0), 0)),
+    def test_timestamp_identity_rejects_any_rounding_fractional_source_and_invalid_times(self):
+        for base, observed in ((64.0, math.nextafter(64.0, 0)), (64.0, math.nextafter(64.0, math.inf)),
+                               (64.0, math.nextafter(math.nextafter(64.0, 0), 0)),
                                (64.0, math.nextafter(math.nextafter(64.0, math.inf), math.inf)),
                                (2**24, math.nextafter(float(2**24), math.inf)),
                                (64.0, math.inf), (math.inf, math.inf), (64.0, math.nan),
-                               (0.0, 0.0), (-1.0, -1.0)):
+                               (0.0, 0.0), (-1.0, -1.0), (64.5, 64.5),
+                               (101.85785270833333, 101.857852708), (2**32 + 1.0, 2**32 + 1.0)):
             queued = float.hex(float(base))
-            identity = dict(kind='timestamp_adjacent', queued_timestamp_hex=queued,
+            identity = dict(kind='timestamp_exact', queued_timestamp_hex=queued,
                             observed_timestamp_hex=float.hex(observed))
             self.assertFalse(gate.event_identity_matches(identity, queued, False))
 

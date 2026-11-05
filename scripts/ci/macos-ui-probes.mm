@@ -9,9 +9,16 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <utility>
 #include <vector>
 
 // BEGIN standalone timestamp controls (also exercised before native UI setup).
+static double syntheticTimestamp(double uptime) {
+  // AppKit may convert through integer nanoseconds. Whole seconds round-trip
+  // exactly in this bounded diagnostic range, without a matching tolerance.
+  return std::isfinite(uptime) && uptime >= 1 && uptime <= 4294967296.0 ? std::floor(uptime) : 0;
+}
+
 struct KeyTimestamp {
   double seconds;
   int64_t window;
@@ -25,8 +32,6 @@ static const char *timestampMatch(const KeyTimestamp &event, const KeyTimestamp 
       event.type != 10 || expected.type != 10 || event.code != 45 || expected.code != 45 ||
       event.modifiers != 0 || expected.modifiers != 0) return "none";
   if (event.seconds == expected.seconds) return "timestamp_exact";
-  if (std::abs(event.seconds - expected.seconds) <= 1e-9 &&
-      std::nextafter(expected.seconds, event.seconds) == event.seconds) return "timestamp_adjacent";
   return "none";
 }
 
@@ -38,7 +43,7 @@ static TimestampControls checkTimestamps() {
   for (const double direction : {0.0, std::numeric_limits<double>::infinity()}) {
     auto event = base;
     event.seconds = std::nextafter(base.seconds, direction);
-    cases.push_back({event, base, "timestamp_adjacent"});
+    cases.push_back({event, base, "none"});
     event.seconds = std::nextafter(event.seconds, direction);
     cases.push_back({event, base, "none"});
   }
@@ -60,11 +65,24 @@ static TimestampControls checkTimestamps() {
   cases.push_back({zeroWindow, zeroWindow, "none"});
   auto large = base; large.seconds = 16777216.0;
   auto adjacentLarge = large; adjacentLarge.seconds = std::nextafter(large.seconds, INFINITY);
-  cases.push_back({adjacentLarge, large, "none"}); // One ULP now exceeds the absolute 1 ns cap.
+  cases.push_back({adjacentLarge, large, "none"}); // Adjacent values are rejected at every magnitude.
   bool passed = true;
   for (const auto &test : cases)
     passed = passed && std::strcmp(timestampMatch(test.event, test.expected), test.kind) == 0;
-  return {cases.size(), passed};
+  size_t count = cases.size();
+  for (const auto &sample : std::vector<std::pair<double, double>>{
+      {101.85785270833333, 101}, {1, 1}, {64.999999999, 64}, {4294967296.0, 4294967296.0},
+      {0, 0}, {0.5, 0}, {-1, 0}, {std::numeric_limits<double>::infinity(), 0},
+      {std::numeric_limits<double>::quiet_NaN(), 0}, {4294967297.0, 0}}) {
+    const double published = syntheticTimestamp(sample.first);
+    passed = passed && published == sample.second;
+    if (published > 0) {
+      const auto nanoseconds = static_cast<uint64_t>(published * 1000000000.0);
+      passed = passed && static_cast<double>(nanoseconds) / 1000000000.0 == published;
+    }
+    ++count;
+  }
+  return {count, passed};
 }
 // END standalone timestamp controls.
 
@@ -99,7 +117,7 @@ static NSDictionary *observeIdentity(NSEvent *event, NSEvent *expected) {
 
 static NSDictionary *observeSyntheticEvent(NSEvent *event, NSEvent *expected) {
   // Character data is retained only for the owned event or a copy identified by
-  // its bounded timestamp conversion or a marker verified on the queued NSEvent.
+  // its exact timestamp or a marker verified on the queued NSEvent.
   if (!sameSyntheticEvent(event, expected)) return @{@"synthetic_identity_match":@NO};
   NSString *characters = event.characters ?: @"";
   NSString *unmodified = event.charactersIgnoringModifiers ?: @"";
@@ -288,11 +306,14 @@ int main() {
       timer = [NSTimer timerWithTimeInterval:0.01 repeats:YES block:^(NSTimer *sender) {
         if (!queued && app.isActive && app.isRunning && window.isKeyWindow && window.firstResponder == view) {
           ready = true;
+          const double eventTime = syntheticTimestamp(NSProcessInfo.processInfo.systemUptime);
+          if (eventTime == 0)
+            @throw [NSException exceptionWithName:@"NyProbeTimestamp" reason:@"Uptime outside synthetic event range" userInfo:nil];
           NSEvent *event = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSMakePoint(20, 20)
-              modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime
+              modifierFlags:0 timestamp:eventTime
               windowNumber:window.windowNumber context:nil characters:@"n"
               charactersIgnoringModifiers:@"n" isARepeat:NO keyCode:45]; // ANSI N
-          queued = event && event.window == window;
+          queued = event && event.window == window && event.timestamp == eventTime;
           if (queued) {
             uint64_t randomMarker = 0;
             arc4random_buf(&randomMarker, sizeof randomMarker);

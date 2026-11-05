@@ -1847,3 +1847,26 @@ and nineteen executions of the extracted C++ boundary logic pass; those C++
 controls also run before native UI setup. Independent review passes. Correction
 evidence SHA is `81f2ac196d1f30bf8d44f06be59bb659d309af5ad6972b5e9e40f43baed74da2`;
 native re-execution remains required.
+
+## Exact synthetic-event timestamp production
+
+The sixth [UI run](https://github.com/exec-software/exec-nil-framework/actions/runs/41973044774)
+passes on Intel with adjacent-value evidence, but ARM records a larger
+`-3.333440190544934e-10` second difference. Its queued timestamp is
+`101.85785270833334` seconds, consistent with truncation through integer
+nanoseconds to `101.857852708`. The bounded adjacent-value rule correctly rejects
+that result. All dependency, native boundary-control, source and cleanup checks
+remain passing. Reconciliation SHA is
+`dda8c6ad4d829d725638ab87b5537c9017492aedd6dbb796e43e47c9cad9ed4b`.
+
+The synthetic producer now selects whole-second uptime within a finite bounded
+range and verifies exact readback from the queued NSEvent. This removes fractional
+nanoseconds at the source; timestamp matching is exact again. Hex identity records,
+actual application dispatch followed by view delivery, exact key metadata and
+close/cleanup gates remain unchanged. Twenty-three Python controls and twenty-nine
+executions of the exact extracted C++ producer/classifier pass, including invalid
+uptime, the observed fractional case, range boundaries and integer-nanosecond
+round trips. Independent review passes. Local evidence is
+`ui-probe-run-41973044774/producer-whole-second-v1/report.json`, SHA
+`445d768654e8c8749b717566194bc46a54a5d2d7f52ec4fcaf37bce1c034d6f1`.
+Actual native execution remains required; the previous failures are preserved.
