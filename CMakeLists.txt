@@ -607,6 +607,10 @@ if(BUILD_TESTING)
                 "${CMAKE_CURRENT_SOURCE_DIR}/validation/ny-3d/scripts/test_debugger_consumer.py")
         set_tests_properties(nildebugger.consumer-harness PROPERTIES
             LABELS "debugger;tools" TIMEOUT 90)
+        add_test(NAME nil.process-contract-support
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_process_contract_support.py")
+        set_tests_properties(nil.process-contract-support PROPERTIES LABELS "tools;process" TIMEOUT 30)
         find_program(NIL_UI_XVFB NAMES Xvfb DOC "Optional Xvfb for isolated desktop UI tests")
         add_test(NAME nil.etp-golden-frames
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/etp_golden_frames.py"

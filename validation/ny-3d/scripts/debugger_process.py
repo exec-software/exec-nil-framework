@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import io
+import errno
 from pathlib import Path
 import queue
 import signal
@@ -19,6 +20,66 @@ import time
 
 CLEANUP_SECONDS = 5
 OUTPUT_LIMIT = 16 * 1024 * 1024
+
+
+def _darwin_group_snapshot(pgid, deadline):
+    """Observe only the retained child's group; never scan or signal other PIDs."""
+    import ctypes as c
+
+    class ShortInfo(c.Structure):
+        _fields_ = [(name, c.c_uint32) for name in ('pid', 'ppid', 'pgid', 'status')] + [
+            ('comm', c.c_char * 16)] + [(name, c.c_uint32) for name in
+                ('flags', 'uid', 'gid', 'ruid', 'rgid', 'svuid', 'svgid', 'reserved')]
+
+    if c.sizeof(ShortInfo) != 64 or not 0 < pgid <= 0x7fffffff:
+        raise RuntimeError('invalid Darwin process-group observation layout or identity')
+    lib = c.CDLL('/usr/lib/libproc.dylib', use_errno=True)
+    lib.proc_listpids.argtypes = [c.c_uint32, c.c_uint32, c.c_void_p, c.c_int]
+    lib.proc_listpids.restype = c.c_int
+    lib.proc_pidinfo.argtypes = [c.c_int, c.c_int, c.c_uint64, c.c_void_p, c.c_int]
+    lib.proc_pidinfo.restype = c.c_int
+    # One extra entry detects truncation, rather than accepting an incomplete
+    # fixed-size list as proof that every member has exited.
+    ids = (c.c_int * 4097)()
+    c.set_errno(0)
+    size = lib.proc_listpids(2, pgid, ids, c.sizeof(ids))  # PROC_PGRP_ONLY
+    error = c.get_errno()
+    if size <= 0 and error:
+        raise OSError(error, 'Darwin owned group lookup failed')
+    if size <= 0 or size % c.sizeof(c.c_int) or size >= c.sizeof(ids):
+        raise RuntimeError('Darwin owned group snapshot was empty or incomplete')
+    pids = list(ids[:size // c.sizeof(c.c_int)])
+    if len(set(pids)) != len(pids) or any(pid <= 0 for pid in pids):
+        raise RuntimeError('Darwin owned group snapshot contained invalid identities')
+    result = {}
+    for pid in pids:
+        if time.monotonic() >= deadline:
+            raise RuntimeError('Darwin owned group observation exceeded cleanup deadline')
+        info = ShortInfo()
+        c.set_errno(0)
+        # arg=1 includes zombies: the unreaped leader must remain observable.
+        size = lib.proc_pidinfo(pid, 13, 1, c.byref(info), c.sizeof(info))
+        if size == 0 and c.get_errno():
+            raise OSError(c.get_errno(), 'Darwin owned group member lookup failed')
+        if size != c.sizeof(info) or info.pid != pid or info.pgid != pgid:
+            raise RuntimeError(f'Darwin owned group member identity was not established: '
+                               f'bytes={size}/64, pid={info.pid}/{pid}, group={info.pgid}/{pgid}')
+        result[pid] = info.status
+    return result
+
+
+def _darwin_group_exited(pgid):
+    deadline = time.monotonic() + CLEANUP_SECONDS
+    first = _darwin_group_snapshot(pgid, deadline)
+    # A missing retained leader is uncertainty, not an empty owned group.
+    if pgid not in first or any(state != 5 for state in first.values()):  # SZOMB
+        return False
+    # A member could fork before its first state observation. Require another
+    # complete group snapshot after observing every first-snapshot member dead.
+    # A previously observed zombie may be reaped between snapshots; no new or
+    # live member may appear, and our retained leader must still be present.
+    second = _darwin_group_snapshot(pgid, deadline)
+    return pgid in second and second.items() <= first.items()
 
 
 def write_pipe(pipe, data, timeout, terminate):
@@ -368,6 +429,13 @@ class OwnedProcess:
                     os.killpg(self.process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+                except PermissionError as error:
+                    # XNU killpg1 excludes zombies and returns EPERM if none
+                    # were signalable. Accept only that proven dead-group case;
+                    # retain the leader (WNOWAIT) until both snapshots finish.
+                    if (sys.platform != 'darwin' or error.errno != errno.EPERM or
+                            self.poll() is None or not _darwin_group_exited(self.process.pid)):
+                        raise
 
     def kill(self):
         with self.lock:

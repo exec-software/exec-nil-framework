@@ -2,6 +2,8 @@
 
 import os
 import json
+import errno
+from functools import lru_cache
 from pathlib import Path
 import signal
 import subprocess
@@ -88,8 +90,79 @@ def _windows_creation(kernel, handle):
     return (created.dwHighDateTime << 32) | created.dwLowDateTime
 
 
+@lru_cache(maxsize=1)
+def _darwin_api():
+    import ctypes as c
+
+    # XNU 11417 (macOS 15) libproc/proc_info ABI; these private test-harness
+    # interfaces are checked at runtime, not assumed to exist on older hosts.
+    class BsdInfo(c.Structure):
+        _fields_ = [(name, c.c_uint32) for name in
+                    ('flags', 'status', 'exit_status', 'pid', 'ppid', 'uid', 'gid',
+                     'ruid', 'rgid', 'svuid', 'svgid', 'reserved')] + [
+            ('comm', c.c_char * 16), ('name', c.c_char * 32)] + [
+            (name, c.c_uint32) for name in ('nfiles', 'pgid', 'job_count', 'tty', 'tty_pgid')] + [
+            ('nice', c.c_int32), ('start_seconds', c.c_uint64), ('start_useconds', c.c_uint64)]
+
+    class UniqueInfo(c.Structure):
+        _fields_ = [('uuid', c.c_uint8 * 16), ('unique_id', c.c_uint64),
+                    ('parent_id', c.c_uint64), ('version', c.c_int32),
+                    ('parent_version', c.c_int32), ('reserved2', c.c_uint64),
+                    ('reserved3', c.c_uint64)]
+
+    class Info(c.Structure):
+        _fields_ = [('bsd', BsdInfo), ('unique', UniqueInfo)]
+
+    sizes = (c.sizeof(BsdInfo), c.sizeof(UniqueInfo), c.sizeof(Info))
+    if sizes != (136, 56, 192):
+        raise RuntimeError(f'unsupported Darwin process identity layout: {sizes}')
+    lib = c.CDLL('/usr/lib/libproc.dylib', use_errno=True)
+    lib.proc_pidinfo.argtypes = [c.c_int, c.c_int, c.c_uint64, c.c_void_p, c.c_int]
+    lib.proc_pidinfo.restype = c.c_int
+    # This XNU API checks PID + version while retaining the process in-kernel.
+    # If unavailable, fail explicitly; a check followed by os.kill is not safe.
+    lib.proc_signal_with_audittoken.argtypes = [c.c_void_p, c.c_int]
+    lib.proc_signal_with_audittoken.restype = c.c_int
+    return c, lib, Info
+
+
+def _darwin_identity(pid):
+    c, lib, Info = _darwin_api()
+    if type(pid) is not int or not 0 < pid <= 0x7fffffff:
+        raise ValueError('invalid Darwin process identity PID')
+    info = Info()
+    c.set_errno(0)
+    size = lib.proc_pidinfo(pid, 18, 1, c.byref(info), c.sizeof(info))
+    if size == 0 and c.get_errno():
+        raise OSError(c.get_errno(), 'Darwin process identity lookup failed')
+    if (size != c.sizeof(info) or info.bsd.pid != pid or
+            info.bsd.status not in (1, 2, 3, 4, 5) or not info.unique.unique_id):
+        raise RuntimeError(f'Darwin process identity was not established: bytes={size}/192, '
+                           f'pid={info.bsd.pid}/{pid}, state={info.bsd.status}')
+    # Keep the existing two-field fixture record. The opaque creation token
+    # includes the unique lifetime ID and the exact PID version used to signal.
+    created = (info.unique.unique_id << 32) | (info.unique.version & 0xffffffff)
+    return created, 'Z' if info.bsd.status == 5 else 'R'
+
+
+def _darwin_cleanup(identity):
+    if not process_alive(identity):
+        return
+    c, lib, _ = _darwin_api()
+    token = (c.c_uint32 * 8)()
+    token[5] = identity['pid']
+    token[7] = identity['created'] & 0xffffffff
+    # Use the RECORDED version, never a fresh replacement process's version.
+    # libproc returns an errno value directly (not -1/ctypes.get_errno()).
+    error = lib.proc_signal_with_audittoken(c.byref(token), signal.SIGKILL)
+    if error not in (0, errno.ESRCH):
+        raise OSError(error, 'Darwin identity-qualified process cleanup failed')
+
+
 def _posix_identity(pid):
-    # The supported POSIX test host is Linux. Field 22 is the creation tick;
+    if sys.platform == 'darwin':
+        return _darwin_identity(pid)
+    # On Linux field 22 is the creation tick;
     # split after ')' because the process name itself may contain whitespace.
     fields = (Path('/proc') / str(pid) / 'stat').read_text().rsplit(')', 1)[1].split()
     return int(fields[19]), fields[0]
@@ -137,7 +210,7 @@ def process_alive(identity):
         created, state = _posix_identity(pid)
         # Zombies cannot execute and can outlive our reaped parent under PID 1.
         return created == identity['created'] and state != 'Z'
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return False
 
 
@@ -162,6 +235,8 @@ def cleanup_process(identity):
                     assert kernel.WaitForSingleObject(handle, 5000) == 0, pid
             finally:
                 kernel.CloseHandle(handle)
+    elif sys.platform == 'darwin':
+        _darwin_cleanup(identity)
     else:
         try:
             handle = os.pidfd_open(pid)

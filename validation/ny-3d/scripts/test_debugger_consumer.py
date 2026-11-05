@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Portable harness regressions; runs without any SDK or compiler internals."""
 import json
+import ctypes
+import errno
 import os
 from pathlib import Path
 import subprocess
@@ -9,8 +11,10 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
+import debugger_process as processes
 from debugger_process import OwnedProcess, PipeReader, WindowsJob, write_pipe
 import validate_debugger as debugger
 
@@ -62,6 +66,22 @@ class ConsumerTests(unittest.TestCase):
             owned.communicate(.15)
         self.assertLess(time.monotonic() - start, 8)
         self.assertIsNotNone(owned.process.returncode)
+
+    @unittest.skipIf(os.name == 'nt', 'POSIX retained group leader')
+    def test_exited_leader_remains_owned_until_group_cleanup(self):
+        owned = self.process('raise SystemExit(23)')
+        try:
+            deadline = time.monotonic() + 5
+            while owned.poll() is None and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertEqual(owned.poll(), 23)
+            self.assertIsNone(owned.process.returncode, 'leader reaped before group cleanup')
+            self.assertEqual(owned.wait(5), 23)
+        finally:
+            owned.kill()
+            owned.finish()
+            owned.process.stdout.close()
+            owned.process.stderr.close()
 
     def test_reap_serializes_concurrent_budget_termination(self):
         owned = self.process('pass')
@@ -377,6 +397,83 @@ class ConsumerTests(unittest.TestCase):
                     debugger.main()
             self.assertEqual(stopped.exception.code, 2)
             self.assertEqual(target.read_bytes(), before)
+
+
+class DarwinGroupTests(unittest.TestCase):
+    def test_permission_exception_requires_every_dead_group_precondition(self):
+        for platform, error, exited, dead_group, accepted in (
+                ('darwin', errno.EPERM, 0, True, True),
+                ('linux', errno.EPERM, 0, True, False),
+                ('darwin', errno.EACCES, 0, True, False),
+                ('darwin', errno.EPERM, None, True, False),
+                ('darwin', errno.EPERM, 0, False, False)):
+            with self.subTest(platform=platform, error=error, exited=exited, dead_group=dead_group):
+                owner = OwnedProcess.__new__(OwnedProcess)
+                owner.lock, owner.windows = threading.RLock(), False
+                owner.process = SimpleNamespace(pid=1234, returncode=None)
+                with patch.object(processes.sys, 'platform', platform), \
+                        patch.object(processes.os, 'killpg', side_effect=PermissionError(error, 'fixture'), create=True), \
+                        patch.object(owner, 'poll', return_value=exited), \
+                        patch.object(processes, '_darwin_group_exited', return_value=dead_group):
+                    if accepted:
+                        owner.terminate()
+                    else:
+                        with self.assertRaises(PermissionError):
+                            owner.terminate()
+
+    def test_two_complete_dead_snapshots_with_retained_leader_are_required(self):
+        for first, second, expected in (
+                ({1234: 5}, {1234: 5}, True),
+                ({1234: 5, 1235: 5}, {1234: 5, 1235: 5}, True),
+                ({1234: 5, 1235: 5}, {1234: 5}, True),
+                ({1235: 5}, {1235: 5}, False),
+                ({1234: 5, 1235: 2}, {1234: 5, 1235: 2}, False),
+                ({1234: 5, 1235: 5}, {1235: 5}, False),
+                ({1234: 5}, {1234: 2}, False),
+                ({1234: 5}, {1234: 5, 1235: 5}, False),
+                ({1234: 5}, {1234: 5, 1235: 2}, False)):
+            with self.subTest(first=first, second=second), \
+                    patch.object(processes, '_darwin_group_snapshot', side_effect=[first, second]):
+                self.assertEqual(processes._darwin_group_exited(1234), expected)
+
+    def test_uncertain_group_lookup_does_not_authorize_cleanup(self):
+        with patch.object(processes, '_darwin_group_snapshot', side_effect=PermissionError(errno.EPERM, 'fixture')):
+            with self.assertRaises(PermissionError):
+                processes._darwin_group_exited(1234)
+
+    def snapshot(self, *, ids=(1234,), list_size=None, lookup_error=0,
+                 member_size=64, member_pid=1234, member_group=1234, deadline=None):
+        def list_pids(kind, group, output, capacity):
+            self.assertEqual((kind, group, capacity), (2, 1234, 4097 * 4))
+            for index, pid in enumerate(ids):
+                output[index] = pid
+            ctypes.set_errno(lookup_error)
+            return len(ids) * 4 if list_size is None else list_size
+
+        def pid_info(pid, flavor, include_zombies, output, capacity):
+            self.assertEqual((flavor, include_zombies, capacity), (13, 1, 64))
+            info = output._obj
+            info.pid, info.pgid, info.status = member_pid, member_group, 5
+            return member_size
+
+        lib = SimpleNamespace(proc_listpids=Mock(side_effect=list_pids),
+                              proc_pidinfo=Mock(side_effect=pid_info))
+        with patch.object(ctypes, 'CDLL', return_value=lib):
+            return processes._darwin_group_snapshot(1234, time.monotonic() + 5 if deadline is None else deadline)
+
+    def test_group_lookup_uses_exact_bounded_group_and_zombie_layout(self):
+        self.assertEqual(self.snapshot(), {1234: 5})
+
+    def test_incomplete_invalid_or_foreign_group_observations_fail(self):
+        for options in ({'list_size': 4097 * 4}, {'list_size': 3}, {'ids': ()},
+                        {'ids': (1234, 1234)}, {'ids': (-1,)}, {'member_size': 63},
+                        {'member_pid': 4321}, {'member_group': 4321}, {'deadline': 0}):
+            with self.subTest(options=options), self.assertRaises(RuntimeError):
+                self.snapshot(**options)
+
+    def test_group_lookup_permission_error_is_not_an_empty_group(self):
+        with self.assertRaises(PermissionError):
+            self.snapshot(ids=(), lookup_error=errno.EPERM)
 
 
 if __name__ == '__main__':
