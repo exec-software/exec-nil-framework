@@ -16,11 +16,17 @@ struct Result {
 };
 
 // Checks the optional GTK 4 provider's symbols, without opening a display.
+// macOS requires NIL_UI_GTK_DIRECTORY: an absolute trusted directory containing
+// libgtk-4.1.dylib, libgobject-2.0.0.dylib and libglib-2.0.0.dylib. Curated aliases
+// may point to canonical external prerequisites; all resolved symbol origins
+// and GTK/GObject dependency lookups must match the selected files.
 bool available() noexcept;
 
 // Handles are nonzero, process-unique, and owned by one Context. No toolkit
 // pointers cross this boundary. UI calls run on the context's creation thread
 // and, once GTK initializes, the single process UI thread.
+// On macOS that thread must always be the process main thread, including first
+// initialization. This requirement also applies to embedded/VM/debugger hosts.
 class Context {
 public:
   Context();

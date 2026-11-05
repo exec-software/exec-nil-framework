@@ -13,6 +13,9 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#if defined(__APPLE__)
+#include <filesystem>
+#endif
 
 namespace {
 int checks = 0;
@@ -91,11 +94,74 @@ void no_display() {
   // This changes only this test process, never product/provider environment.
   require(_wputenv_s(L"GDK_BACKEND", L"nil-test-no-display") == 0,
           "configure isolated unavailable display");
+#elif defined(__APPLE__)
+  require(setenv("GDK_BACKEND", "nil-test-no-display", 1) == 0,
+          "configure isolated unavailable macOS display");
 #endif
   ny::ui::Context context;
   auto result = context.window("unavailable display", 300, 200);
   rejected(result, ny::ui::available() ? "display" : "provider");
 }
+
+#if defined(__APPLE__)
+int (*preloaded_initialized)() = nullptr;
+void preload_mixed_provider() {
+  const char *path = std::getenv("NIL_UI_GTK_TEST_PRELOAD_GTK");
+  require(path && *path && std::filesystem::path(path).is_absolute(), "mixed probe requires absolute original GTK");
+  const auto original = std::filesystem::canonical(path);
+  require(std::filesystem::is_regular_file(original), "mixed probe original GTK must be regular");
+  void *library = dlopen(original.c_str(), RTLD_NOW | RTLD_LOCAL);
+  require(library != nullptr, "preload original GTK dependency graph");
+  void *symbol = dlsym(library, "gtk_is_initialized");
+  Dl_info info{};
+  require(symbol && dladdr(symbol, &info) && info.dli_fname &&
+          std::filesystem::equivalent(original, info.dli_fname), "preloaded GTK symbol origin must match");
+  preloaded_initialized = reinterpret_cast<decltype(preloaded_initialized)>(symbol);
+  require(!preloaded_initialized(), "mixed fixture must not initialize GTK");
+  const char *directory = std::getenv("NIL_UI_GTK_DIRECTORY");
+  require(directory && *directory && std::filesystem::path(directory).is_absolute(), "mixed probe selected directory must be absolute");
+  const auto selected_gtk = std::filesystem::canonical(std::filesystem::path(directory) / "libgtk-4.1.dylib");
+  const auto selected_object = std::filesystem::canonical(std::filesystem::path(directory) / "libgobject-2.0.0.dylib");
+  const auto selected_glib = std::filesystem::canonical(std::filesystem::path(directory) / "libglib-2.0.0.dylib");
+  require(std::filesystem::equivalent(original, selected_gtk) && std::filesystem::is_regular_file(selected_glib),
+          "mixed fixture must select the same GTK and a real alternate GLib file");
+  Dl_info object_info{}, glib_info{};
+  void *object_symbol = dlsym(library, "g_object_ref");
+  void *glib_symbol = dlsym(library, "g_main_context_iteration");
+  require(object_symbol && dladdr(object_symbol, &object_info) && object_info.dli_fname &&
+          std::filesystem::equivalent(selected_object, object_info.dli_fname),
+          "mixed fixture must keep GTK's actual GObject dependency");
+  require(glib_symbol && dladdr(glib_symbol, &glib_info) && glib_info.dli_fname &&
+          !std::filesystem::equivalent(selected_glib, glib_info.dli_fname),
+          "mixed fixture must actually differ from GTK's loaded GLib dependency");
+  // Retain this handle: unloading registered toolkit types would be unsafe.
+}
+
+void worker_first() {
+  require(ny::ui::available(), "real provider is required for worker-first initialization test");
+  GtkRegistryObserver registry;
+  require(!registry.initialized(), "symbol-only availability must not initialize GTK");
+  ny::ui::Result result;
+  std::thread worker([&] {
+    ny::ui::Context context;
+    result = context.window("Forbidden first worker window", 120, 80);
+  });
+  worker.join();
+  rejected(result, "macOS main thread");
+  require(!registry.initialized(), "worker refusal must happen before gtk_init_check");
+  ny::ui::Context main;
+  const auto handle = ok(main.window("Main-thread initialization", 120, 80));
+  require(registry.initialized(), "main thread must actually initialize GTK after worker refusal");
+  require(registry.count() == 1, "main-thread initialization creates exactly one real window");
+  ok(main.close(handle));
+  require(registry.count() == 0, "worker-first test must leave no GTK windows");
+}
+
+std::optional<std::string> environment_value(const char *name) {
+  if (const char *value = std::getenv(name)) return std::string(value);
+  return std::nullopt;
+}
+#endif
 
 void noninteractive_display() {
 #if defined(_WIN32)
@@ -358,7 +424,7 @@ void display_tests() {
   context.clear();
   rejected(context.poll(replacement), "closed");
 
-#if defined(__linux__) || defined(_WIN32)
+#if defined(__linux__) || defined(_WIN32) || defined(__APPLE__)
   // Observe GTK's actual top-level registry across normal and deferred teardown.
   GtkRegistryObserver registry;
   const auto baseline = registry.count();
@@ -381,20 +447,37 @@ void display_tests() {
 
 int main(int argc, char **argv) {
   try {
-    require(argc <= 2, "usage: ui_runtime_tests [--no-display|--display|--provider-present|--provider-absent|--noninteractive-display]");
+    require(argc <= 2, "usage: ui_runtime_tests [--no-display|--display|--provider-present|--provider-absent|--noninteractive-display|--darwin-worker-first|--darwin-mixed-provider]");
     const std::string mode = argc == 2 ? argv[1] : "--no-display";
     require(mode == "--no-display" || mode == "--display" ||
             mode == "--provider-present" || mode == "--provider-absent" ||
-            mode == "--noninteractive-display", "unknown UI test mode");
+            mode == "--noninteractive-display" || mode == "--darwin-worker-first" ||
+            mode == "--darwin-mixed-provider", "unknown UI test mode");
+#if !defined(__APPLE__)
+    if (mode == "--darwin-worker-first" || mode == "--darwin-mixed-provider")
+      throw std::runtime_error("Darwin UI test modes require macOS");
+#endif
 #if defined(_WIN32)
     const auto path_before = environment_value(L"PATH");
     const auto runtime_before = environment_value(L"NIL_UI_GTK_DIRECTORY");
     const auto dll_before = dll_directory();
+#elif defined(__APPLE__)
+    const auto path_before = environment_value("PATH");
+    const auto runtime_before = environment_value("NIL_UI_GTK_DIRECTORY");
+    const auto loader_before = environment_value("DYLD_LIBRARY_PATH");
+    if (mode == "--darwin-mixed-provider") preload_mixed_provider();
 #endif
     basic_validation();
     if (mode == "--display") display_tests();
     else if (mode == "--no-display") no_display();
     else if (mode == "--noninteractive-display") noninteractive_display();
+    else if (mode == "--darwin-worker-first") {
+#if defined(__APPLE__)
+      worker_first();
+#else
+      throw std::runtime_error("--darwin-worker-first requires macOS");
+#endif
+    }
     else {
       const bool available = ny::ui::available();
       if (!available && mode == "--provider-present") {
@@ -402,15 +485,33 @@ int main(int argc, char **argv) {
         throw std::runtime_error(context.window("Provider diagnostic", 100, 100).error);
       }
       require(available == (mode == "--provider-present"), "provider availability must match the selected runtime");
-      if (mode == "--provider-absent") {
+      if (mode == "--provider-absent" || mode == "--darwin-mixed-provider") {
         ny::ui::Context context;
-        rejected(context.window("Missing provider", 100, 100), "provider is unavailable");
+        rejected(context.window("Missing provider", 100, 100), mode == "--darwin-mixed-provider"
+            ? "missing or mismatched macOS symbol" : "provider is unavailable");
       }
+#if defined(__APPLE__)
+      if (mode == "--darwin-mixed-provider")
+        require(preloaded_initialized && !preloaded_initialized(), "mixed provider must fail before GTK initialization");
+      if (mode == "--darwin-mixed-provider") {
+        const auto selected = std::filesystem::canonical(std::filesystem::path(std::getenv("NIL_UI_GTK_DIRECTORY")) / "libglib-2.0.0.dylib");
+        void *existing = dlopen(selected.c_str(), RTLD_NOLOAD | RTLD_NOW | RTLD_LOCAL);
+        Dl_info info{};
+        void *symbol = existing ? dlsym(existing, "g_main_context_iteration") : nullptr;
+        require(!existing || (symbol && dladdr(symbol, &info) && info.dli_fname &&
+                !std::filesystem::equivalent(selected, info.dli_fname)),
+                "mixed provider preflight must not load the alternate GLib file");
+      }
+#endif
     }
 #if defined(_WIN32)
     require(environment_value(L"PATH") == path_before, "provider must preserve PATH");
     require(environment_value(L"NIL_UI_GTK_DIRECTORY") == runtime_before, "provider must preserve runtime selection");
     require(dll_directory() == dll_before, "provider must preserve the process DLL directory");
+#elif defined(__APPLE__)
+    require(environment_value("PATH") == path_before, "provider must preserve PATH");
+    require(environment_value("NIL_UI_GTK_DIRECTORY") == runtime_before, "provider must preserve runtime selection");
+    require(environment_value("DYLD_LIBRARY_PATH") == loader_before, "provider must preserve loader environment");
 #endif
     std::cout << "UI runtime: " << checks << " checks passed (" << mode << ")\n";
     return 0;

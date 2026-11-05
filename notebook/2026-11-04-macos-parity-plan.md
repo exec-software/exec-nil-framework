@@ -2079,3 +2079,113 @@ copied into the test. Thirty provider controls pass; public-header/source/instal
 manifest checks and independent review pass. Local correction evidence SHA is
 `559a2af38f808017c8d7fd46597a45afeac7f09266a03ddb0a7dc45082b9b47c`.
 The next native run must still compile and execute the corrected smoke.
+
+
+## Real directed input passes on both native hosts
+
+[Run 41978064432](https://github.com/exec-software/exec-nil-framework/actions/runs/41978064432)
+at `207ac00` passes on both Intel and Apple Silicon, with independent raw replay
+and peer review. Each host passes 24 controls, strict native compilation, child
+lifetime/executable checks, AX/CG capability checks and exact owned-window/field
+selection. Eight actual marked key dispatches produce four real text callbacks
+with `ny42`, followed by one native should-close/will-close sequence and exit 0.
+No unmarked or invalid input occurs. Seven owned phases plus the target retain
+sixteen raw streams per host; all source/tool and cleanup checks pass. ARM takes
+8.18 seconds and Intel 11.96 seconds. The retained legacy window-focus boolean
+is false while the proper application-focused-window and field-window identities
+match, confirming the narrow correction.
+
+The forty copied evidence files and official archive/run/source bindings were
+independently rechecked. Reconciliation is
+`ui-directed-run-41978064432/reconciliation.json`, SHA
+`834ca7e086f783f729bc573eb570c965043ba7281e033e884dab42da83a1d0e9`.
+This proves directed own-child AppKit feasibility; GTK accessibility and the ten
+language-level desktop/interaction cases remain separate work.
+
+The first provider run also finishes on Intel: all six configure/build/install
+sequences pass, with the same uninstalled-header failure before widget execution.
+Intel takes 523.12 seconds in total, including 335.26 seconds building GTK; ARM's
+GTK build takes 137.89 seconds. Both retain 89 owned phases, 302 evidence files,
+and passing source/input/release/prefix/cleanup checks. Paired reconciliation SHA
+is `845121aed286533eb76c2318413d683b294007400d921251449d24f78cf65943`.
+The public-font correction is committed at `207ac00` and paired provider retry
+`41978067414` is running. The full corrected Intel SDK retry `41976360302` has
+completed its framework build and is in the full source-test campaign.
+
+
+## Private GTK provider passes on Intel and Apple Silicon
+
+[Corrected run 41978067414](https://github.com/exec-software/exec-nil-framework/actions/runs/41978067414)
+at `207ac00` passes on both architectures with independent raw reconciliation.
+All six pinned providers build/install, and the actual main-thread Macos display
+uses the Cairo renderer. The real Pango font has Quartz/CoreText backing and
+produces a nonempty layout; PNG decoding matches exact RGBA pixels. Six actual
+GDK key events match their queued surface/time/code/state identities and produce
+entry text, button click and checkbox toggle callbacks. Native close removes
+all real GTK top-level windows.
+
+ARM takes 231.59 seconds overall (1.077 seconds for smoke), retaining 148 owned
+phases, 57 loader files and 481 evidence files. Intel takes 544.48 seconds
+(8.336 seconds for smoke), with 146 owned phases, 55 loader files and 475 evidence
+files. Each private prefix has 1,059 entries. All source, prerequisite, release,
+prefix, actual-origin and cleanup checks pass. Paired reconciliation is
+`gtk-provider-run-41978067414/reconciliation.json`, SHA
+`0d1f362e63f68874205ddb25f2d1d5c99a1a4d516fea3681d9d563dc54532647`.
+These are public toolkit checks, not yet language or installed-SDK UI acceptance.
+
+The next product slice adds explicit canonical macOS GTK/GObject/GLib selection,
+loaded dependency-origin checks and AppKit main-thread enforcement, preserving
+existing widget/event/lifetime behavior. A standalone compilation of the actual
+product runtime will exercise its provider and display controls against this
+sealed prefix. A separate directly owned GTK child will test native keyboard
+and accessibility close with real GTK callbacks. The workflow gains two bounded
+180-second helpers; its whole-job limit increases from 45 to 50 minutes while
+the provider's own 1,800-second limit remains unchanged.
+
+## Product runtime implementation and native acceptance checkpoint
+
+The Darwin runtime now selects canonical GTK/GObject/GLib files from the explicit
+provider directory and validates actual symbol and dependency origins. When a
+selected GTK or GObject is already loaded, it checks that dependency graph before
+loading an alternate core library. Fresh-process negative cases include a real
+preloaded graph paired with a private copied GLib; rejection must leave the
+alternate copy unloaded. Availability remains a symbol/version check, while
+window creation and polling enforce the main thread and the Macos display type.
+
+Linux regression checks compile the actual runtime with `-Wall -Wextra -Werror`:
+16 provider, 16 no-display and 4,468 private-Xvfb display checks pass. The one
+warning correction casts a nonnegative `count_if` result to `size_t` for the
+existing window limit. Evidence is `darwin-ui-runtime/linux-controls-v2/report.json`,
+SHA `ba02490e893b765a86e500967ae9531857f4c7aed5dfd93bd10716d6864d5c1f`.
+This is Linux regression evidence, not Darwin execution.
+
+The native runtime helper uses the unchanged validated provider, compiles the
+actual product source and runs twelve fresh-process provider/display cases.
+It also syntax-checks the newly admitted Darwin lifecycle body against its real
+repository headers; it does not link or execute the VM lifecycle test. Nineteen
+local controls and the Linux lifecycle syntax check pass. The syntax phase uses
+the target's C++17 warning profile; a stricter exploratory compile encountered
+existing unused-parameter warnings in `ast.hpp`, retained separately. Local
+evidence is `gtk-runtime-local-controls/v2/report.json`, SHA
+`e804dbd6837873a9ab63e12d22a31f7d2303bd980c318d852504620098c4d177`.
+
+The separate GTK child probe retains its direct child until both input drivers
+finish, verifies its process lifetime and executable identity, and requires
+twenty real GDK key events to produce `Matrix`, six text changes, one toggle and
+one button callback. App-focused native-window identity and GTK entry focus are
+checked separately. All key releases must arrive before native close, followed
+by zero real GTK windows. AccessKit is disabled in this provider profile, so
+inner accessibility roles are diagnostic and no inner-widget accessibility
+support is claimed. Twenty-four local controls and independent Python/native
+reviews pass; evidence is `darwin-gtk-directed-probe/local-controls-v1/report.json`,
+SHA `f8789658fb19441c5c02bc05545a771c69e3e61988aed8a5a9a16ab90295ba04`.
+Both new helpers retain 180-second whole bounds and 20-second final-check reserves.
+Native execution on each architecture is the next gate; these preparations do
+not establish language, editor or installed-SDK desktop acceptance.
+
+The corrected Intel SDK run `41976360302` has now completed its full source
+inventory in 17 minutes 14 seconds, followed by installation, debugger/checkpoint
+and PostgreSQL checks. The source-test step is still failed; its exact inventory
+will be reconciled from the final artifact. Installed standard-library consumers
+remain in progress. Source CI at `207ac00` passes both LLVM profiles and extension
+checks in run `41978016377`.

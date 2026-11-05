@@ -255,7 +255,8 @@ assembly and executable-context embedding, inspection and dead-strip retention
 checks. Both macOS development SDKs also pass the full installed
 standard-library campaign, isolated PostgreSQL application routes, installed
 debugger checks and execution checkpoints. Both hosts now pass the underlying
-AppKit window/event checks; the GTK port and desktop acceptance remain in progress.
+AppKit window/event checks, including directed keyboard input and native closure
+of a verified child window. The GTK port and desktop acceptance remain in progress.
 Incremental reuse and native memory-limit tests also remain open, so full platform
 parity is not yet established.
 The [platform support matrix](docs/platform-support.md) separates verified

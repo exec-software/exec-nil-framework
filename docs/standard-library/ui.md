@@ -4,8 +4,9 @@
 events and explicit model bindings. Ny programs can import the same module.
 The VM and native compiler use the same checked GTK4 provider on Linux and
 Windows. Windows remains a development target, not a qualified release platform.
-The macOS tool build baseline does not include a macOS UI provider or desktop
-acceptance; see [platform support](../platform-support.md).
+The macOS provider is being integrated. Its private GTK stack and toolkit
+window/event checks pass on Intel and Apple Silicon; product and language-level
+desktop acceptance remain in progress. See [platform support](../platform-support.md).
 Examples display the framework generation as **NIL²**, with **NIL^2** as the
 plain-text spelling. This presentation does not change numeric release or
 artifact identities in `VERSION`.
@@ -54,6 +55,24 @@ an embedding host. GTK is an optional external dependency, not bundled in the SD
 Windows window creation requires an interactive, visible window station.
 Service-session requests return a display error before GTK initialization;
 successful provider availability alone does not prove a desktop is usable.
+
+The macOS source provider requires `NIL_UI_GTK_DIRECTORY` to name an existing
+absolute trusted directory containing `libgtk-4.1.dylib`,
+`libgobject-2.0.0.dylib` and `libglib-2.0.0.dylib`. Curated symlinks may point to
+the selected external runtime files. Resolved symbols and GTK's direct core
+dependency lookups must match those selected files. There is no implicit
+current-directory or `PATH` lookup, and the provider does not change loader
+settings. GTK remains an external prerequisite; this does not create a portable
+GTK bundle or validate every transitive dependency of an embedding host.
+
+On macOS, creation and polling must run on the process main thread, including
+the first GTK initialization. The provider requires the native Macos/Quartz
+display backend. Ordinary interpreter, JIT and native entry routes use the main
+thread; UI behavior through these routes still needs the desktop acceptance
+campaign. DAP currently executes the debuggee on a worker, so DAP with macOS UI
+is outside this port. Pausing a text/JSON debug session also does not automatically
+pump window events. The recorded private toolkit profile uses Cairo rendering;
+other renderer and accessibility configurations remain unqualified.
 
 ## Windows and widgets
 

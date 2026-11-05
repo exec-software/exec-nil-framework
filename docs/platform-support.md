@@ -58,7 +58,7 @@ Each private PostgreSQL 16.15 provider passes build/install and canonical loader
 checks, followed by six routes each against installed source and binary roots.
 The full source inventory has 566 passes, two failures and three skips. The new
 failure exposed Darwin accepting scoped IPv6 text as a plain numeric host address;
-`8d1f65d` rejects scope suffixes before parsing. Native Apple Silicon verification
+`8d1f65d` rejects scope suffixes before parsing. Native verification
 passes on both architectures at `3414ce5`. The Intel result is retained in a
 partial source-test run; it does not establish a complete corrected Intel SDK.
 The installed debugger helper stopped before execution on a manifest-field
@@ -150,9 +150,11 @@ the complete admission rules.
   support and live desktop acceptance remain open. Both hosted Mac architectures
   now pass the prerequisite GLib, Cairo-Quartz and HarfBuzz/CoreText compile,
   link and runtime checks, plus exact own-process AppKit key dispatch, view
-  delivery and window closure. Private GTK provider builds and directed child
-  keyboard/close checks are the next prerequisites; the AppKit result is not
-  GTK or application interaction acceptance.
+  delivery and window closure. Directed keyboard input to a verified child and
+  native accessibility closure also pass on both hosts. Both have built and
+  installed the private GTK dependency stack and passed actual widget input,
+  CoreText/font layout, PNG decoding and window teardown checks. Integration
+  with the product runtime and language-level desktop acceptance remain open.
 - Editor desktop integration, untested provider configurations and release-package
   acceptance remain separate from the passing installed campaigns. Shipping a
   Mach-O tool alone does not qualify these surfaces.

@@ -14,8 +14,14 @@
 #include <thread>
 #include <utility>
 #include <vector>
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 #include <dlfcn.h>
+#if defined(__APPLE__)
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <pthread.h>
+#endif
 #elif defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -122,6 +128,36 @@ bool interactive_window_station() noexcept {
 }
 #endif
 
+#if defined(__APPLE__)
+// Darwin has no ambient GTK runtime. A trusted provider directory names the
+// three exact ABI files; curated aliases may select canonical external files.
+std::filesystem::path gtk_directory() {
+  const char *selected = std::getenv("NIL_UI_GTK_DIRECTORY");
+  if (!selected || !*selected || std::strlen(selected) > 4096) return {};
+  const std::filesystem::path path(selected);
+  std::error_code error;
+  if (!path.is_absolute() || !std::filesystem::is_directory(path, error) || error) return {};
+  const auto canonical = std::filesystem::canonical(path, error);
+  return error ? std::filesystem::path{} : canonical;
+}
+
+std::filesystem::path gtk_library(const std::filesystem::path &directory, const char *name) {
+  std::error_code error;
+  const auto file = std::filesystem::canonical(directory / name, error);
+  if (error || !std::filesystem::is_regular_file(file, error) || error) return {};
+  return file;
+}
+
+bool gtk_symbol_matches(void *symbol, const std::filesystem::path &expected) {
+  Dl_info info{};
+  if (!symbol || !dladdr(symbol, &info) || !info.dli_fname) return false;
+  const std::filesystem::path path(info.dli_fname);
+  if (!path.is_absolute()) return false;
+  std::error_code error;
+  return std::filesystem::equivalent(path, expected, error) && !error;
+}
+#endif
+
 struct Api {
   bool loaded = false;
   const char *unavailable = "GTK 4 provider is unavailable; install the GTK 4 runtime";
@@ -186,6 +222,11 @@ struct Api {
 #define DECLARE_SYMBOL(result, name, arguments) result (*name) arguments = nullptr;
   UI_SYMBOLS(DECLARE_SYMBOL)
 #undef DECLARE_SYMBOL
+#if defined(__APPLE__)
+  void *(*gdk_display_get_default)() = nullptr;
+  unsigned long (*gdk_macos_display_get_type)() = nullptr;
+  int (*g_type_check_instance_is_a)(void *, unsigned long) = nullptr;
+#endif
   Api() noexcept {
 #if defined(__linux__)
     // Keep these libraries loaded: GTK owns process-wide types, callbacks and
@@ -202,6 +243,69 @@ struct Api {
     UI_SYMBOLS(LOAD_SYMBOL)
 #undef LOAD_SYMBOL
     loaded = gtk_get_major_version() == 4;
+#elif defined(__APPLE__)
+    unavailable = "GTK 4 provider is unavailable; set NIL_UI_GTK_DIRECTORY to an absolute trusted macOS GTK 4 runtime directory";
+    try {
+      const auto directory = gtk_directory();
+      if (directory.empty()) {
+        unavailable = "GTK 4 provider is unavailable: NIL_UI_GTK_DIRECTORY must name an existing absolute directory";
+        return;
+      }
+      const auto gtk_path = gtk_library(directory, "libgtk-4.1.dylib");
+      const auto object_path = gtk_library(directory, "libgobject-2.0.0.dylib");
+      const auto glib_path = gtk_library(directory, "libglib-2.0.0.dylib");
+      if (gtk_path.empty() || object_path.empty() || glib_path.empty()) {
+        unavailable = "GTK 4 provider is unavailable: the selected directory must contain the GTK 4, GObject and GLib dylib set";
+        return;
+      }
+      // Keep all handles for process lifetime, including incomplete attempts:
+      // registered toolkit types/callbacks must never outlive their code.
+      // Inspect an already loaded selected stack before introducing another
+      // core library. RTLD_NOLOAD cannot bring a competing provider into it.
+      void *existing_gtk = dlopen(gtk_path.c_str(), RTLD_NOLOAD | RTLD_NOW | RTLD_LOCAL);
+      void *existing_object = dlopen(object_path.c_str(), RTLD_NOLOAD | RTLD_NOW | RTLD_LOCAL);
+      if ((existing_gtk &&
+           (!gtk_symbol_matches(dlsym(existing_gtk, "gtk_get_major_version"), gtk_path) ||
+            !gtk_symbol_matches(dlsym(existing_gtk, "g_object_ref"), object_path) ||
+            !gtk_symbol_matches(dlsym(existing_gtk, "g_signal_connect_data"), object_path) ||
+            !gtk_symbol_matches(dlsym(existing_gtk, "g_main_context_iteration"), glib_path))) ||
+          (existing_object &&
+           (!gtk_symbol_matches(dlsym(existing_object, "g_object_ref"), object_path) ||
+            !gtk_symbol_matches(dlsym(existing_object, "g_main_context_iteration"), glib_path)))) {
+        unavailable = "GTK 4 provider is unavailable: missing or mismatched macOS symbol in the already loaded dependency stack";
+        return;
+      }
+      void *glib = dlopen(glib_path.c_str(), RTLD_NOW | RTLD_LOCAL);
+      void *object = glib ? dlopen(object_path.c_str(), RTLD_NOW | RTLD_LOCAL) : nullptr;
+      void *gtk = object ? dlopen(gtk_path.c_str(), RTLD_NOW | RTLD_LOCAL) : nullptr;
+      if (!gtk || !object || !glib) {
+        unavailable = "GTK 4 provider is unavailable: the selected macOS dylibs or their declared dependencies could not load";
+        return;
+      }
+      const auto symbol = [&](const char *name) -> void * {
+        const bool toolkit = std::strncmp(name, "gtk_", 4) == 0 || std::strncmp(name, "gdk_", 4) == 0;
+        const bool main_context = std::strncmp(name, "g_main_", 7) == 0;
+        void *owner = toolkit ? gtk : main_context ? glib : object;
+        const auto &expected = toolkit ? gtk_path : main_context ? glib_path : object_path;
+        void *value = dlsym(owner, name);
+        // Also inspect GTK's dependency lookup. Separately opening a selected
+        // library would not prove that GTK actually resolves that same stack.
+        if (!gtk_symbol_matches(value, expected) ||
+            !gtk_symbol_matches(dlsym(gtk, name), expected) ||
+            (main_context && !gtk_symbol_matches(dlsym(object, name), glib_path))) return nullptr;
+        return value;
+      };
+#define LOAD_SYMBOL(result, name, arguments) \
+      name = reinterpret_cast<decltype(name)>(symbol(#name)); \
+      if (!name) { unavailable = "GTK 4 provider is unavailable: missing or mismatched macOS symbol " #name; return; }
+      UI_SYMBOLS(LOAD_SYMBOL)
+      LOAD_SYMBOL(void *, gdk_display_get_default, ())
+      LOAD_SYMBOL(unsigned long, gdk_macos_display_get_type, ())
+      LOAD_SYMBOL(int, g_type_check_instance_is_a, (void *, unsigned long))
+#undef LOAD_SYMBOL
+      loaded = gtk_get_major_version() == 4;
+      if (!loaded) unavailable = "GTK 4 provider is unavailable: the selected dylib does not provide GTK major version 4";
+    } catch (...) { /* Optional provider failures must not terminate the host. */ }
 #elif defined(_WIN32)
     unavailable = "GTK 4 provider is unavailable; set NIL_UI_GTK_DIRECTORY to an absolute trusted GTK 4 runtime bin directory, or place the runtime beside the executable";
     try {
@@ -339,6 +443,10 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
   Result check() {
     if (owner != std::this_thread::get_id()) return failure("context must be used on its creation thread");
     if (!active.load()) return failure("context has been closed");
+#if defined(__APPLE__)
+    // Refuse first initialization and later pumping alike before touching GTK.
+    if (!pthread_main_np()) return failure("GTK must be used on the process UI thread (macOS main thread)");
+#endif
     auto &a = api();
     bool initialized;
     {
@@ -369,10 +477,17 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
     if (!a.gtk_init_check()) {
 #if defined(_WIN32)
       return failure("GTK could not open a display; a working Windows desktop session is required");
+#elif defined(__APPLE__)
+      return failure("GTK could not open a display; a working macOS Quartz desktop session is required");
 #else
       return failure("GTK could not open a display; a working Wayland or X11 session is required");
 #endif
     }
+#if defined(__APPLE__)
+    void *display = a.gdk_display_get_default();
+    if (!display || !a.g_type_check_instance_is_a(display, a.gdk_macos_display_get_type()))
+      return failure("GTK could not open the required macOS Quartz display");
+#endif
     a.ui_thread = std::this_thread::get_id();
     a.initialized = true;
     return success();
@@ -467,8 +582,8 @@ Result Context::window(const std::string &title, std::int64_t width, std::int64_
     return failure("window width and height must be between 1 and 16384");
   if (auto result = impl_->initialize(); !result) return result;
   if (title.size() > max_event_text_bytes - impl_->text_bytes) return failure("stored text limit exceeded (16 MiB per context)");
-  if (impl_->nodes.size() >= max_widgets || std::count_if(impl_->nodes.begin(), impl_->nodes.end(),
-        [](const auto &item) { return item.second.kind == Kind::window; }) >= max_windows)
+  if (impl_->nodes.size() >= max_widgets || static_cast<std::size_t>(std::count_if(impl_->nodes.begin(), impl_->nodes.end(),
+        [](const auto &item) { return item.second.kind == Kind::window; })) >= max_windows)
     return failure("window or widget limit exceeded (64 windows, 4096 widgets per context)");
   const auto handle = fresh_handle();
   if (!handle) return failure("handle space exhausted");

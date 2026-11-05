@@ -1,4 +1,4 @@
-name: macOS private GTK provider
+name: macOS GTK development checks
 
 "on":
   workflow_dispatch:
@@ -16,13 +16,13 @@ concurrency:
   group: macos-gtk-provider-${{ github.ref }}-${{ inputs.architecture }}
   cancel-in-progress: false
 
-# Build an isolated diagnostic GTK prefix and exercise its public API.
+# Build an isolated GTK prefix and exercise its public API and product runtime.
 # No Homebrew/global Python updates, SDK activation or release publication.
 jobs:
   provider:
     name: macOS ${{ matrix.host.arch }} private GTK
     runs-on: ${{ matrix.host.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -47,7 +47,12 @@ jobs:
           set -o pipefail
           python3 -B scripts/ci/test_macos_gtk_provider.py -v \
             2>&1 | tee build/macos-gtk-evidence/controls.log
+          python3 -B scripts/ci/test_macos_gtk_runtime.py -v \
+            2>&1 | tee build/macos-gtk-evidence/runtime-controls.log
+          python3 -B scripts/ci/test_macos_gtk_directed_probes.py -v \
+            2>&1 | tee build/macos-gtk-evidence/directed-controls.log
       - name: Build pinned provider and run owned public-API smoke
+        id: provider
         timeout-minutes: 32
         run: |
           set -o pipefail
@@ -56,6 +61,27 @@ jobs:
             --work-dir "$RUNNER_TEMP/nil-private-gtk" \
             --revision "$GITHUB_SHA" --architecture "$NIL_CI_ARCH" \
             2>&1 | tee build/macos-gtk-evidence/provider.log
+      - name: Check product runtime against the sealed private provider
+        timeout-minutes: 4
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-gtk-runtime.py \
+            --provider-report "$GITHUB_WORKSPACE/build/macos-gtk-evidence/provider/report.json" \
+            --output "$GITHUB_WORKSPACE/build/macos-gtk-evidence/runtime" \
+            --work-dir "$RUNNER_TEMP/nil-gtk-runtime" \
+            --revision "$GITHUB_SHA" --architecture "$NIL_CI_ARCH" \
+            2>&1 | tee build/macos-gtk-evidence/runtime.log
+      - name: Observe directed input to an owned GTK child
+        if: ${{ !cancelled() && steps.provider.outcome == 'success' }}
+        timeout-minutes: 4
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-gtk-directed-probes.py \
+            --provider-report "$GITHUB_WORKSPACE/build/macos-gtk-evidence/provider/report.json" \
+            --output "$GITHUB_WORKSPACE/build/macos-gtk-evidence/directed" \
+            --work-dir "$RUNNER_TEMP/nil-gtk-directed" \
+            --revision "$GITHUB_SHA" --architecture "$NIL_CI_ARCH" \
+            2>&1 | tee build/macos-gtk-evidence/directed.log
       - name: Seal complete or partial provider evidence
         if: always()
         timeout-minutes: 2

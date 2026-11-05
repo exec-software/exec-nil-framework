@@ -26,7 +26,7 @@ void require(bool condition, const std::string &message) {
   if (!condition) throw std::runtime_error(message);
 }
 
-#if defined(__linux__) || defined(_WIN32)
+#if defined(__linux__) || defined(_WIN32) || defined(__APPLE__)
 // Inspect the toolkit's real window registry, independently of the provider's
 // handle map. A stale-handle rejection alone would not prove GTK was released.
 struct Windows {
@@ -219,14 +219,14 @@ int main(int argc, char **argv) {
   try {
     require(argc == 2 && std::string(argv[1]) == "--display",
             "usage: nil_ui_lifecycle_tests --display (requires an isolated display)");
-#if defined(__linux__) || defined(_WIN32)
+#if defined(__linux__) || defined(_WIN32) || defined(__APPLE__)
     Windows windows;
     vm_lifecycles(windows);
     native_lifecycles(windows);
     std::cout << "UI lifecycle: " << checks << " checks passed\n";
     return 0;
 #else
-    std::cerr << "SKIP: GTK UI lifecycle tests require Linux or Windows\n";
+    std::cerr << "SKIP: GTK UI lifecycle tests require Linux, Windows or macOS\n";
     return 77;
 #endif
   } catch (const std::exception &error) {
