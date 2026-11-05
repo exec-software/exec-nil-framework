@@ -19,7 +19,7 @@ def main():
            if not key.startswith(('NY_', 'NIL_'))}
     checks = 0
     with tempfile.TemporaryDirectory(prefix='niltest-compiler-') as directory:
-        work = Path(directory)
+        work = Path(directory).resolve(strict=True)
 
         def run(command, status=0):
             nonlocal checks

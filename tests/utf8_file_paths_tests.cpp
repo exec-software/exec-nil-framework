@@ -1,6 +1,7 @@
 #include "native_runtime.hpp"
 
 #include <chrono>
+#include <cerrno>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -73,6 +74,24 @@ void host_write(const fs::path &path, const std::string &bytes) {
   output.close();
   require(static_cast<bool>(output), "host could not finish fixture file");
 }
+
+#ifndef _WIN32
+bool host_write_raw_path(const fs::path &path, const std::string &bytes) {
+  // APFS accepts only valid UTF-8 filenames; other POSIX filesystems can
+  // retain these raw bytes. Observe that capability without inventing a file
+  // or accepting unrelated permission, storage or I/O failures.
+  errno = 0;
+  std::ofstream output(path, std::ios::binary | std::ios::trunc);
+  const auto open_error = errno;
+  if (!output && (open_error == EILSEQ || open_error == EINVAL))
+    return false;
+  require(static_cast<bool>(output), "host could not create raw-path fixture");
+  output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  output.close();
+  require(static_cast<bool>(output), "host could not finish raw-path fixture");
+  return true;
+}
+#endif
 
 std::string host_read(const fs::path &path) {
   require(fs::file_size(path) <= 4096, "unexpectedly large fixture file");
@@ -160,7 +179,10 @@ void valid_paths(const fs::path &root, inventory &expected) {
       // No root frames are registered: the native embedding context owns these
       // unmanaged-call results until context_end, as required by the ABI.
       context_scope context;
-      const std::string base = parent + "/secret-" + names[index];
+      // APFS preserves spelling but aliases NFC/NFD lookups. Distinct ASCII
+      // case identifiers keep payloads independent on either kind of host;
+      // the exact directory inventory still rejects normalized output names.
+      const std::string base = parent + "/secret-" + std::to_string(index) + "-" + names[index];
       const auto input = base + ".input", created = base + ".new";
       const auto protected_file = base + ".protected", replaced = base + ".replace";
       std::string payload;
@@ -228,7 +250,8 @@ std::string cp1252_alias(const std::string &bytes) {
   return result;
 }
 
-void malformed_paths(const fs::path &root, inventory &expected) {
+std::size_t malformed_paths(const fs::path &root, inventory &expected) {
+  std::size_t raw_names = 0;
   directory(root, "malformed", expected);
   const std::vector<std::string> invalid = {
       "\x80", "\xc0\xaf", "\xe0\x80\xaf", "\xe2\x82",
@@ -244,10 +267,13 @@ void malformed_paths(const fs::path &root, inventory &expected) {
       file(root, prefix + replacement + ".bin", "host-replacement-sentinel", expected);
     }
 #ifndef _WIN32
-    // POSIX accepts these raw filename bytes. A successful read must still be
-    // rejected by the language UTF-8 boundary, not by a missing-file accident.
-    host_write(root / fs::path(name), "host-raw-byte-sentinel");
-    expected.emplace(name, std::make_pair(false, std::string("host-raw-byte-sentinel")));
+    // Where the host accepts a raw name, rejection must not depend on a
+    // missing-file accident. Every host must still return the exact runtime
+    // UTF-8 validation error, preserve aliases and reject both write modes.
+    if (host_write_raw_path(root / fs::path(name), "host-raw-byte-sentinel")) {
+      expected.emplace(name, std::make_pair(false, std::string("host-raw-byte-sentinel")));
+      ++raw_names;
+    }
 #endif
     for (int absolute = 0; absolute < 2; ++absolute) {
       context_scope context;
@@ -276,11 +302,13 @@ void malformed_paths(const fs::path &root, inventory &expected) {
       }
     }
   }
+  return raw_names;
 }
 } // namespace
 
 int main(int argc, char **argv) {
   fs::path root;
+  std::size_t raw_names = 0;
   try {
 #ifdef _WIN32
     const auto acp = GetACP();
@@ -301,7 +329,7 @@ int main(int argc, char **argv) {
       cwd_scope cwd(root);
       inventory expected;
       valid_paths(root, expected);
-      malformed_paths(root, expected);
+      raw_names = malformed_paths(root, expected);
       check_inventory(root, expected);
     }
     // Only the exact private directory created by this process is removed.
@@ -309,7 +337,8 @@ int main(int argc, char **argv) {
     std::error_code error;
     const auto removed = fs::remove_all(root, error);
     require(!error && removed > 0 && !fs::exists(root), "private fixture cleanup failed");
-    std::cout << "UTF-8 file path ABI: 8 valid cases and 16 malformed path cases passed; cleanup verified\n";
+    std::cout << "UTF-8 file path ABI: 8 valid cases and 16 malformed path cases passed; "
+              << raw_names << " host raw-name sentinels; cleanup verified\n";
     return 0;
   } catch (const std::exception &error) {
     std::cerr << "UTF-8 file path ABI: " << error.what() << '\n';

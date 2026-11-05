@@ -38,7 +38,7 @@ def main():
     environment = {k: v for k, v in os.environ.items() if not k.startswith(('NIL_', 'NY_'))}
     checks = 0
     with tempfile.TemporaryDirectory(prefix='nil query contract ') as directory:
-        root = Path(directory)
+        root = Path(directory).resolve(strict=True)
 
         def run(command, status=0, stdout=None, diagnostic=None):
             nonlocal checks

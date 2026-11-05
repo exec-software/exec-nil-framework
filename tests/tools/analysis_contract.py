@@ -32,7 +32,7 @@ def main():
         assert rule['phase'] == ('syntax' if rule['code'].startswith('NIL1') else 'semantic')
         assert rule['has_fix'] == rule['code'].startswith('NIL1')
     with tempfile.TemporaryDirectory(prefix='nil-analysis-') as directory:
-        root = pathlib.Path(directory)
+        root = pathlib.Path(directory).resolve(strict=True)
         primary = root / 'unsaved.ny'
         def analyze(source, *, path=primary, extra=(), status=0):
             proc = run_with_exact_stdin([args.compiler, '--analyze', '--source-stdin',

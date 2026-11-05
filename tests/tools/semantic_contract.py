@@ -20,7 +20,7 @@ def main():
     compiler = str(pathlib.Path(args.compiler).resolve())
     checks = 0
     with tempfile.TemporaryDirectory(prefix='nil-semantic-') as directory:
-        root = pathlib.Path(directory)
+        root = pathlib.Path(directory).resolve(strict=True)
 
         def analyze(sources, primary, *, status=0, semantic=True, extra=(), mode="workspace"):
             nonlocal checks

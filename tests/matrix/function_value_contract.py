@@ -17,7 +17,7 @@ def main():
     interpreter = str(args.interpreter.resolve(strict=True))
     checks = 0
     with tempfile.TemporaryDirectory(prefix='matrix-function-values-') as directory:
-        root = Path(directory)
+        root = Path(directory).resolve(strict=True)
 
         def run(command, *, status=0):
             result = subprocess.run(command, cwd=root, stdin=subprocess.DEVNULL,

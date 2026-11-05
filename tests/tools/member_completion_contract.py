@@ -19,7 +19,7 @@ def main():
     compiler = str(Path(args.compiler).resolve())
     checks = 0
     with tempfile.TemporaryDirectory(prefix='nil-member-completion-') as directory:
-        root = Path(directory)
+        root = Path(directory).resolve(strict=True)
 
         def run(command, *, payload=None, status=0):
             nonlocal checks

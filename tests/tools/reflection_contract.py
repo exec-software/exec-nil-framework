@@ -35,7 +35,7 @@ def main() -> None:
             environment.pop(prefix + suffix, None)
 
     with tempfile.TemporaryDirectory(prefix="nil-reflection-") as temporary:
-        work = Path(temporary)
+        work = Path(temporary).resolve(strict=True)
 
         def run(command, *, source=None, status=0):
             result = run_with_exact_stdin(command, source, cwd=work,

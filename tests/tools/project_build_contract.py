@@ -110,7 +110,7 @@ def main():
     args.stdlib = str(Path(args.stdlib).resolve())
     count = 0
     with tempfile.TemporaryDirectory(prefix='nil project ; space ') as directory:
-        root = Path(directory)
+        root = Path(directory).resolve(strict=True)
         project = root / 'nil.project.json'
         sources = root / 'src'
         library = root / 'library with spaces'

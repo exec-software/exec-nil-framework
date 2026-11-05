@@ -301,7 +301,7 @@ def main():
     sys.modules[specification.name] = routes
     specification.loader.exec_module(routes)
     with tempfile.TemporaryDirectory(prefix="ny-dap-regression-") as temporary:
-        root = Path(temporary)
+        root = Path(temporary).resolve(strict=True)
         main_source = root / "main.ny"
         helper_source = root / "space λ helper.ny"
         main_source.write_text("fn main() -> i32\n    let value: i64 = 40\n    let result = helper(value)\n    println(result)\n    println(value)\n    return 0\nend fn\n", newline='\n')

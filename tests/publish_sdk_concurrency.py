@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 from pathlib import Path
 from unittest.mock import patch
 
@@ -104,7 +105,7 @@ def wait_for_marker(marker: Path, process: subprocess.Popen[str]) -> None:
 def run_scenario(publisher: Path, with_previous_target: bool) -> None:
     scenario_name = "restore" if with_previous_target else "unlink"
     with tempfile.TemporaryDirectory(prefix="nil-sdk-publish-{}-".format(scenario_name)) as raw:
-        root = Path(raw)
+        root = Path(raw).resolve(strict=True)
         store = root / "store"
         store.mkdir()
         versions = store / "versions"
@@ -245,7 +246,7 @@ def run_restrictive_umask_scenario(publisher: Path) -> None:
         return
 
     with tempfile.TemporaryDirectory(prefix="nil-sdk-publish-umask-") as raw:
-        root = Path(raw)
+        root = Path(raw).resolve(strict=True)
         store = root / "store"
         store.mkdir()
         (store / "versions").mkdir()
@@ -316,7 +317,7 @@ def run_restrictive_umask_scenario(publisher: Path) -> None:
 
 def run_destination_replacement_race(publisher: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="nil-sdk-publish-destination-") as raw:
-        root = Path(raw)
+        root = Path(raw).resolve(strict=True)
         store = root / "store"
         store.mkdir()
         coordination = root / "coordination"
@@ -370,7 +371,7 @@ def run_destination_replacement_race(publisher: Path) -> None:
 
 def run_rollback_preserves_changed_destination(publisher: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="nil-sdk-publish-rollback-") as raw:
-        root = Path(raw)
+        root = Path(raw).resolve(strict=True)
         store = root / "store"
         store.mkdir()
         versions = store / "versions"
@@ -429,7 +430,7 @@ def run_rollback_preserves_changed_destination(publisher: Path) -> None:
 def run_atomic_reader_scenario(publisher) -> None:
     """Readers see complete old/new generations, including during replacement."""
     with tempfile.TemporaryDirectory(prefix="nil-sdk-publish-reader-") as raw:
-        root = Path(raw) / "space \u03bb"
+        root = Path(raw).resolve(strict=True) / "space \u03bb"
         root.mkdir()
         old, new = root / "old", root / "new"
         write_payload(old, "old")
@@ -452,8 +453,10 @@ def run_atomic_reader_scenario(publisher) -> None:
                     ready.set()
                     if data == new_bytes:
                         observed_new.set()
-                except BaseException as error:
-                    failures.append(error)
+                except BaseException:
+                    # Retain the failing operation and filename, not just an
+                    # errno repr, when a host rejects the concurrent read.
+                    failures.append(traceback.format_exc())
                     ready.set()
                     observed_new.set()
                     break
@@ -549,7 +552,7 @@ def main() -> int:
     # policy. Once links are available, the publisher's actual atomic primitive
     # must work: an implementation failure is not a reason to skip this test.
     with tempfile.TemporaryDirectory(prefix="nil-sdk-symlink-probe-") as raw:
-        root = Path(raw)
+        root = Path(raw).resolve(strict=True)
         target = root / "target"
         target.mkdir()
         link = root / "link"

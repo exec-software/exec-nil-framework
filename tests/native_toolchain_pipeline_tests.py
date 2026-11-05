@@ -24,7 +24,7 @@ SPEC.loader.exec_module(pipeline)
 class PipelineArtifactsTests(unittest.TestCase):
     def exercise(self, failure: str | None):
         with tempfile.TemporaryDirectory(prefix="ny-pipeline-artifact-test-") as temporary:
-            parent = Path(temporary)
+            parent = Path(temporary).resolve(strict=True)
             expected = parent / "expected.stdout"
             expected.write_text("ok\n", encoding="utf-8", newline='\n')
             args = argparse.Namespace(

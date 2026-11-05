@@ -35,17 +35,17 @@ endfunction()
 write_manifest("")
 run_project(rc output)
 if(NOT output MATCHES "REACHED-END")
-    message(FATAL_ERROR "a manifest with no edition must keep original semantics:\n${output}")
+    message(FATAL_ERROR "a manifest with no edition must keep original semantics (process result: ${rc}):\n${output}")
 endif()
 if(output MATCHES "out of bounds")
-    message(FATAL_ERROR "the original edition must not gain bounds faults:\n${output}")
+    message(FATAL_ERROR "the original edition must not gain bounds faults (process result: ${rc}):\n${output}")
 endif()
 
 # 2. Opting in changes the semantics.
 write_manifest("  edition is \"2026\"\n")
 run_project(rc output)
 if(NOT output MATCHES "out of bounds")
-    message(FATAL_ERROR "edition 2026 should fault on out-of-bounds access:\n${output}")
+    message(FATAL_ERROR "edition 2026 should fault on out-of-bounds access (process result: ${rc}):\n${output}")
 endif()
 
 # 3. An unknown edition is refused, never ignored.

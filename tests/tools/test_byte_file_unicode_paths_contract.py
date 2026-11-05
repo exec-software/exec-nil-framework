@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
+import unicodedata
 
 from byte_file_unicode_paths_contract import (
     NAMES, check_namespace, prepare_namespace, private_workspace, summarize_report,
@@ -75,6 +76,19 @@ class NamespaceOracleTests(unittest.TestCase):
         name = next(name for name in self.expected if name.endswith('.new.bin'))
         original = self.root / name
         original.rename(original.with_name(original.name.replace('caf\u00e9', 'caf\u00c3\u00a9')))
+        with self.assertRaisesRegex(AssertionError, 'namespace mismatch'):
+            check_namespace(self.root, self.expected)
+
+    def test_normalized_output_spelling_is_rejected(self):
+        name = next(name for name in self.expected
+                    if NAMES[3] in name and name.endswith('.new.bin'))
+        original = self.root / name
+        content = original.read_bytes()
+        original.unlink()
+        # Recreate instead of renaming: some hosts can treat an equivalent-name
+        # rename as a no-op. This deliberately changes the stored spelling.
+        normalized = original.with_name(unicodedata.normalize('NFC', original.name))
+        normalized.write_bytes(content)
         with self.assertRaisesRegex(AssertionError, 'namespace mismatch'):
             check_namespace(self.root, self.expected)
 

@@ -40,7 +40,7 @@ def sha(data: bytes) -> str:
 @contextmanager
 def private_workspace(report: dict):
     """Retain failures; remove only this newly allocated tree after success."""
-    root = Path(tempfile.mkdtemp(prefix='nil-byte-file-paths-'))
+    root = Path(tempfile.mkdtemp(prefix='nil-byte-file-paths-')).resolve(strict=True)
     report['work_directory'] = str(root)
     report['work_directory_retained'] = True
     try:
@@ -69,7 +69,10 @@ def prepare_namespace(root: Path) -> tuple[list[str], dict[str, bytes | None]]:
             payload = bytes((offset + item * 17) % 256 for offset in range(256))
             replacement = bytes([42]) + payload[1:255] + bytes([7])
             protected = b'independent no-clobber sentinel\0\xff' + bytes([item])
-            paths = [directory / (name + suffix) for suffix in
+            # Canonically equivalent spellings may share a filesystem identity
+            # (APFS). Keep cases distinct without normalizing the actual names;
+            # check_namespace still compares every stored spelling exactly.
+            paths = [directory / (str(index) + '-' + name + suffix) for suffix in
                      ('.input.bin', '.new.bin', '.protected.bin', '.replace.bin')]
             paths[0].write_bytes(payload)
             paths[2].write_bytes(protected)

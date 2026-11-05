@@ -83,8 +83,8 @@ class NamespaceTests(unittest.TestCase):
             self.assertEqual(Path(self.arguments[2*index]).is_absolute(), bool(index % 2))
             name = self.profiles[index]['seed']
             self.assertEqual((self.root / name).read_bytes(), bytes([index,10,13,128,255]))
-        self.assertNotEqual((self.root / 'normalization/café.seed').read_bytes(),
-                            (self.root / 'normalization/cafe\u0301.seed').read_bytes())
+        self.assertNotEqual((self.root / 'normalization-nfc/café.seed').read_bytes(),
+                            (self.root / 'normalization-nfd/cafe\u0301.seed').read_bytes())
 
     def test_missing_expected_file(self):
         (self.root / 'ascii-parent/plain.text').unlink()
@@ -99,9 +99,47 @@ class NamespaceTests(unittest.TestCase):
         self.assertIn('parent-café/café.text', result['missing'])
         self.assertIn('parent-café/cafÃ©.text', result['changed'])
 
-    def test_normalization_collapse_caught_by_distinct_seed_bytes(self):
-        (self.root / 'normalization/cafe\u0301.seed').write_bytes((self.root / 'normalization/café.seed').read_bytes())
-        self.assertIn('normalization/cafe\u0301.seed', M.check_namespace(self.root, self.expected)['changed'])
+    def test_cross_profile_seed_bytes_rejected(self):
+        (self.root / 'normalization-nfd/cafe\u0301.seed').write_bytes((self.root / 'normalization-nfc/café.seed').read_bytes())
+        self.assertIn('normalization-nfd/cafe\u0301.seed', M.check_namespace(self.root, self.expected)['changed'])
+
+    def test_normalized_output_spelling_rejected(self):
+        path = self.root / 'normalization-nfd/cafe\u0301.text'
+        content = path.read_bytes()
+        path.unlink()
+        (path.parent / 'café.text').write_bytes(content)
+        result = M.check_namespace(self.root, self.expected)
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertIn('normalization-nfd/cafe\u0301.text', result['missing'])
+
+    def test_host_equivalent_alias_never_overwrites_seed(self):
+        with tempfile.TemporaryDirectory(prefix='ordinary-equivalent-alias-') as folder:
+            root = Path(folder).resolve(strict=True)
+            intended = root / 'normalization-nfd/cafe\u0301.seed'
+            alias = root / 'normalization-nfd/café.seed'
+            original_exists, original_samefile = Path.exists, Path.samefile
+
+            def exists(path, *args, **kwargs):
+                return path == alias or original_exists(path, *args, **kwargs)
+
+            def samefile(path, other):
+                if path == alias and other == intended:
+                    return True
+                return original_samefile(path, other)
+
+            # Exercise the APFS-equivalence branch even on a filesystem where
+            # both spellings are distinct. Only host lookup identity is faked;
+            # all writes and byte checks use the actual private directory.
+            with patch.object(Path, 'exists', exists), patch.object(Path, 'samefile', samefile):
+                _, expected, profiles = M.prepare_files(root)
+            self.assertEqual(intended.read_bytes(), bytes([5,10,13,128,255]))
+            self.assertNotIn(alias.name, [path.name for path in alias.parent.iterdir()])
+            self.assertNotIn('normalization-nfd/café.seed', expected)
+            self.assertEqual(profiles[5]['host_equivalent_spellings'], ['café'])
+            for name, content in expected.items():
+                if content is not None:
+                    (root / name).write_bytes(content)
+            self.assertEqual(M.check_namespace(root, expected)['status'], 'PASS')
 
     def test_copy_or_temporary_orphan_is_rejected(self):
         (self.root / 'ascii-parent/plain.copy').write_bytes(b'orphan')

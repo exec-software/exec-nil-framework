@@ -120,9 +120,10 @@ def check_namespace(root, expected):
 
 
 def prepare_files(root):
+    root = root.resolve(strict=True)
     profiles = (('ascii-parent', 'plain'), ('parent-café', 'café'),
                 ('parent-日本語', '日本語'), ('parent-🦊', '🦊'),
-                ('normalization', 'café'), ('normalization', 'cafe\u0301'))
+                ('normalization-nfc', 'café'), ('normalization-nfd', 'cafe\u0301'))
     expected, arguments, profiles_report = {}, [], []
     for index, (directory_name, basename) in enumerate(profiles):
         directory = root / directory_name
@@ -142,14 +143,24 @@ def prepare_files(root):
         absolute = bool(index % 2)
         arguments.extend(str(path if absolute else path.relative_to(root)) for path in (seed, stem))
         profiles_report.append({'index': index, 'seed': seed.relative_to(root).as_posix(),
-                                'stem': stem.relative_to(root).as_posix(), 'absolute_argv': absolute})
-    # Seed plausible wrong spellings independently. NFC/NFD intended names
-    # coexist with distinct bytes; never overwrite an intended profile entry.
+                                'stem': stem.relative_to(root).as_posix(), 'absolute_argv': absolute,
+                                'host_equivalent_spellings': []})
+    # Seed plausible wrong spellings independently, but never overwrite the
+    # intended file through a filesystem-equivalent lookup (for example APFS
+    # NFC/NFD aliases). Separate parents keep the intended payloads distinct;
+    # the inventory still requires the exact spelling of every stored entry.
     for index, (directory_name, basename) in enumerate(profiles):
         aliases = {unicodedata.normalize('NFC', basename), unicodedata.normalize('NFD', basename),
                    basename.encode('utf-8').decode('latin1')}
         aliases.discard(basename)
         for alias in sorted(aliases):
+            seed = root / directory_name / (basename + '.seed')
+            alias_seed = root / directory_name / (alias + '.seed')
+            if alias_seed.exists() and alias_seed.samefile(seed):
+                require(unicodedata.normalize('NFC', alias) == unicodedata.normalize('NFC', basename),
+                        'Unexpected filesystem alias for independently named fixture')
+                profiles_report[index]['host_equivalent_spellings'].append(alias)
+                continue
             for suffix in ('.seed', '.text', '.bytes', '.moved', '.stream'):
                 name = (Path(directory_name) / (alias + suffix)).as_posix()
                 if name not in expected:
@@ -160,6 +171,7 @@ def prepare_files(root):
 
 
 def prepare_environment(root):
+    root = root.resolve(strict=True)
     target = root / 'cwd-café-日本語-🦊-cafe\u0301'
     target.mkdir()
     sentinel = b'independent cwd sentinel\0\xff'

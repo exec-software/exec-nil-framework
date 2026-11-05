@@ -29,7 +29,7 @@ def main() -> int:
     checks = 0
 
     with tempfile.TemporaryDirectory(prefix='niltest-source-') as directory:
-        work = Path(directory)
+        work = Path(directory).resolve(strict=True)
         base = [compiler, '--quiet', '--no-stdlib']
         routes = ['vm'] + (['native'] if args.llvm == 'ON' else [])
 

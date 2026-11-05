@@ -20,7 +20,7 @@ def main():
     compiler = str(pathlib.Path(args.compiler).resolve())
     checks = 0
     with tempfile.TemporaryDirectory(prefix='nil-completion-') as directory:
-        root = pathlib.Path(directory)
+        root = pathlib.Path(directory).resolve(strict=True)
 
         def query(marked, *, name='main.ny', dependencies=None, mode='workspace', status=1,
                   available=True, extra=(), offset=None, enabled=True):

@@ -22,7 +22,7 @@ def main():
     environment = {key: value for key, value in os.environ.items() if not key.startswith(('NIL_', 'NY_'))}
     checks = 0
     with tempfile.TemporaryDirectory(prefix='nil-switch-') as directory:
-        work = Path(directory)
+        work = Path(directory).resolve(strict=True)
 
         def run(command, status=0):
             result = subprocess.run(list(map(str, command)), cwd=work, env=environment,
