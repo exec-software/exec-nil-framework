@@ -1615,3 +1615,28 @@ presented as pre-load anchors. Thirteen controls and independent review pass;
 local evidence SHA is `4f4b19796bae6d3665240b269942cc8b13391d2df9ad2515451d5d5ea37af89f`
 under `macos-parity-20261105/darwin-ui-audit/local-controls/report.json`.
 Actual native UI prerequisite results remain pending.
+
+
+The first UI prerequisite run
+[41968381572](https://github.com/exec-software/exec-nil-framework/actions/runs/41968381572)
+completed at `7ad0f11` on both native hosts. Both have a logged-in on-console Aqua
+session; read-only input/accessibility capability queries report available.
+The owned window became visible and closed correctly, but its queued key did
+not reach the view, so event feasibility remains unproven. The dependency probe
+also stopped before linking because its constrained pkg-config directories
+omitted Apple SDK metadata for libffi, zlib, bzip2 and expat. Neither observation
+establishes a product runtime failure.
+
+Independent replay retained 36 owned phases and 72 raw streams per host, with
+all source/tool seals and cleanup verified. Reconciliation SHA is
+`3e4105c0ec42a3d557c2af29f2c5ab979d9530a536186c81e527ec41589af05b`
+under `macos-parity-20261105/ui-probe-run-41968381572/reconciliation.json`.
+The narrow correction adds the selected SDK's explicit pkg-config directory and
+seals those four metadata files without rebasing Homebrew paths. Cocoa now uses
+its real application run loop, a six-second owned timer, its own activation and
+a local event monitor. Initial active/running/key/first-responder state, app
+dispatch and view delivery are distinct observations. The timer closes/stops
+only this application; no direct send-to-view shortcut or global input is used.
+Fifteen controls and independent review pass; correction evidence SHA is
+`5eae3ceb3cdc0519afe66b855c19c42b4851bcf431f37789d10a50d3a4fa7ff0`.
+Native re-execution remains pending.

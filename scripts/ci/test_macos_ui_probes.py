@@ -24,7 +24,8 @@ class ProbeControls(unittest.TestCase):
     def cocoa(self):
         return dict(schema=1, qualification=False, main_thread=True, session=True, on_console=True,
                     login_done=True, post_event_access=False, ax_trusted=False, window_created=True,
-                    visible=True, event_queued=True, own_event_delivered=True, own_close_delivered=True,
+                    visible=True, event_ready=True, event_queued=True, own_event_delivered=True, own_close_delivered=True,
+                    dispatch_count=1, view_delivery_count=1, wrong_target=False,
                     exception=False, cleanup_verified=True)
 
     def test_own_queue_success_does_not_claim_external_input_permission(self):
@@ -35,10 +36,17 @@ class ProbeControls(unittest.TestCase):
         self.assertFalse(result['ax_trusted'])
 
     def test_missing_event_or_close_is_not_feasible(self):
-        for key in ('own_event_delivered', 'own_close_delivered', 'cleanup_verified', 'event_queued'):
+        for key in ('own_event_delivered', 'own_close_delivered', 'cleanup_verified', 'event_queued', 'event_ready'):
             with self.subTest(key=key):
                 value = self.cocoa(); value[key] = False
                 self.assertFalse(gate.cocoa_result(json.dumps(value).encode())['own_window_feasible'])
+
+    def test_queued_event_without_app_dispatch_or_view_delivery_is_insufficient(self):
+        for name, value in (('dispatch_count', 0), ('view_delivery_count', 0),
+                            ('dispatch_count', True), ('view_delivery_count', 2), ('wrong_target', True)):
+            with self.subTest(name=name, value=value):
+                report = self.cocoa(); report[name] = value
+                self.assertFalse(gate.cocoa_result(json.dumps(report).encode())['own_window_feasible'])
 
     def test_observation_flags_require_booleans(self):
         value = self.cocoa(); value['post_event_access'] = 1
@@ -91,6 +99,14 @@ class ProbeControls(unittest.TestCase):
             self.assertNotIn('PKG_CONFIG_PATH', result)
             self.assertEqual(os.environ['PATH'], '/bad')
             self.assertEqual(result['PKG_CONFIG_LIBDIR'], '/declared/lib/pkgconfig:/declared/share/pkgconfig')
+
+    def test_sdk_metadata_is_explicit_without_rebasing_homebrew_paths(self):
+        with mock.patch.dict(os.environ, {'PKG_CONFIG_SYSROOT_DIR': '/bad', 'SDKROOT': '/bad'}, clear=True):
+            actual = gate.environment(self.base, Path('/declared'), Path('/Apple SDK'))
+        self.assertEqual(actual['PKG_CONFIG_LIBDIR'],
+                         '/declared/lib/pkgconfig:/declared/share/pkgconfig:/Apple SDK/usr/lib/pkgconfig')
+        self.assertNotIn('PKG_CONFIG_SYSROOT_DIR', actual)
+        self.assertNotIn('SDKROOT', actual)
 
     def test_fresh_build_evidence_and_external_work_are_allowed(self):
         actual = gate.paths(self.repo/'build/evidence', self.base/'work', self.repo)

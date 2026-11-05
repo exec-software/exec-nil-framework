@@ -86,11 +86,13 @@ def paths(output, work, root=ROOT):
     return output, work
 
 
-def environment(work, prefix):
+def environment(work, prefix, sdk=None):
     values = {key: os.environ[key] for key in ('HOME', 'USER', 'LOGNAME', 'DEVELOPER_DIR') if key in os.environ}
     values.update(PATH=str(prefix/'bin') + ':/usr/bin:/bin:/usr/sbin:/sbin', LC_ALL='C',
                   TMPDIR=str(work/'tmp'), PYTHONDONTWRITEBYTECODE='1',
                   PKG_CONFIG_LIBDIR=str(prefix/'lib/pkgconfig') + ':' + str(prefix/'share/pkgconfig'))
+    if sdk is not None:
+        values['PKG_CONFIG_LIBDIR'] += ':' + str(sdk/'usr/lib/pkgconfig')
     return values
 
 
@@ -135,8 +137,11 @@ def cocoa_result(raw):
                  'ax_trusted', 'window_created', 'cleanup_verified'):
         require(type(value.get(name)) is bool, 'Missing Cocoa observation: ' + name)
     value['own_window_feasible'] = all(value.get(name) is True for name in
-        ('main_thread', 'session', 'login_done', 'window_created', 'visible', 'event_queued',
-         'own_event_delivered', 'own_close_delivered', 'cleanup_verified')) and value.get('exception') is False
+        ('main_thread', 'session', 'login_done', 'window_created', 'visible', 'event_ready', 'event_queued',
+         'own_event_delivered', 'own_close_delivered', 'cleanup_verified')) and value.get('exception') is False and (
+             type(value.get('dispatch_count')) is int and value['dispatch_count'] == 1 and
+             type(value.get('view_delivery_count')) is int and value['view_delivery_count'] == 1 and
+             value.get('wrong_target') is False)
     return value
 
 
@@ -212,6 +217,8 @@ def main():
         actual = checked('source-revision', ['/usr/bin/git', '-C', ROOT, 'rev-parse', 'HEAD'])
         require(actual == args.revision, 'Checkout revision mismatch')
         sdk = Path(checked('sdk', ['/usr/bin/xcrun', '--sdk', 'macosx', '--show-sdk-path']))
+        variables.update(environment(work, prefix, sdk))
+        report['pkg_config_directories'] = variables['PKG_CONFIG_LIBDIR'].split(':')
         compiler = Path(checked('compiler', ['/usr/bin/xcrun', '--find', 'clang++']))
         require(sdk.is_absolute() and compiler.is_absolute(), 'Nonabsolute toolchain selection')
         pkg = prefix/'bin/pkg-config'
@@ -231,6 +238,11 @@ def main():
             require(code in (0, 2) and (code == 0) == report['cocoa']['own_window_feasible'], 'Cocoa exit/report mismatch')
         else:
             report['problems'].append('Cocoa compilation failed; native feasibility is unknown')
+        for module in ('libffi', 'zlib', 'bzip2', 'expat'):
+            directory = Path(checked('sdk-pcdir-' + module, [pkg, '--variable=pcfiledir', module], 5))
+            require(directory.is_absolute() and sdk.resolve() in directory.resolve().parents,
+                    'System dependency metadata must come from selected Apple SDK')
+            seal(directory/(module + '.pc'))
         report['required_packages'] = {}
         all_present = True
         for module in REQUIRED:

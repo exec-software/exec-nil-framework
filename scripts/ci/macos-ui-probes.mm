@@ -35,12 +35,22 @@
 }
 @end
 
-static void pump(NSApplication *app) {
-  NSEvent *event = [app nextEventMatchingMask:NSEventMaskAny
-                                   untilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]
-                                      inMode:NSDefaultRunLoopMode dequeue:YES];
-  if (event) [app sendEvent:event];
-  [app updateWindows];
+static void stopOwnedLoop(NSApplication *app) {
+  [app stop:nil];
+  // stop: from a timer needs an event to wake NSApplication's event fetch.
+  // This wake stays in the same application's queue and targets no window.
+  NSEvent *wake = [NSEvent otherEventWithType:NSEventTypeApplicationDefined location:NSZeroPoint
+      modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:0
+      context:nil subtype:0 data1:0 data2:0];
+  [app postEvent:wake atStart:NO];
+}
+
+static void emit(NSDictionary *value) {
+  NSData *data = [NSJSONSerialization dataWithJSONObject:value options:0 error:nullptr];
+  if (data && data.length <= 8192) {
+    std::fwrite(data.bytes, 1, data.length, stdout);
+    std::fputc('\n', stdout);
+  }
 }
 
 int main() {
@@ -53,16 +63,19 @@ int main() {
     const bool onConsole = session && CFDictionaryGetValue(session, kCGSessionOnConsoleKey) == kCFBooleanTrue;
     const bool loginDone = session && CFDictionaryGetValue(session, kCGSessionLoginDoneKey) == kCFBooleanTrue;
     if (session) CFRelease(session);
-    if (!mainThread || !hasSession || !loginDone) {
-      std::printf("{\"schema\":1,\"qualification\":false,\"main_thread\":%s,\"session\":%s,\"on_console\":%s,\"login_done\":%s,\"post_event_access\":%s,\"ax_trusted\":%s,\"window_created\":false,\"cleanup_verified\":true}\n",
-          mainThread?"true":"false", hasSession?"true":"false", onConsole?"true":"false", loginDone?"true":"false", postAccess?"true":"false", axTrusted?"true":"false");
-      return 2;
-    }
+    NSMutableDictionary *result = [@{@"schema":@1, @"qualification":@NO, @"main_thread":@(mainThread),
+        @"session":@(hasSession), @"on_console":@(onConsole), @"login_done":@(loginDone),
+        @"post_event_access":@(postAccess), @"ax_trusted":@(axTrusted),
+        @"window_created":@NO, @"cleanup_verified":@YES} mutableCopy];
+    if (!mainThread || !hasSession || !loginDone) { emit(result); return 2; }
     NSWindow *window = nil;
     NyProbeView *view = nil;
     NyProbeDelegate *delegate = nil;
-    bool visible = false, queued = false, delivered = false, closeDelivered = false, cleaned = false;
-    bool exception = false;
+    NSTimer *timer = nil;
+    id monitor = nil;
+    __block bool queued = false, ready = false, closeAttempted = false;
+    __block NSUInteger dispatched = 0;
+    bool visible = false, delivered = false, closeDelivered = false, cleaned = false, exception = false;
     @try {
       NSApplication *app = [NSApplication sharedApplication];
       [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
@@ -80,27 +93,50 @@ int main() {
       [window makeFirstResponder:view];
       [window displayIfNeeded];
       visible = window.isVisible && window.windowNumber > 0;
-      // This event stays in this NSApplication's queue. No CGEventPost,
-      // CGEventPostToPid, Accessibility action, or system input injection.
-      if (visible && window.firstResponder == view) {
-        NSEvent *event = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSMakePoint(20, 20)
-            modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime
-            windowNumber:window.windowNumber context:nil characters:@"Ny"
-            charactersIgnoringModifiers:@"Ny" isARepeat:NO keyCode:0];
-        queued = event && event.window == window;
-        if (queued) [app postEvent:event atStart:NO];
-        const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-        while (view.received == 0 && !view.wrongTarget && std::chrono::steady_clock::now() < end) pump(app);
-        delivered = view.received == 1 && !view.wrongTarget;
-      }
-      [window performClose:nil];
-      const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-      while (delegate.closed == 0 && std::chrono::steady_clock::now() < end) pump(app);
-      closeDelivered = delegate.closeRequests == 1 && delegate.closed == 1 && !window.isVisible;
+      result[@"before_run_active"] = @(app.isActive);
+      result[@"before_run_running"] = @(app.isRunning);
+      result[@"before_run_key_window"] = @(window.isKeyWindow);
+      result[@"before_run_first_responder"] = @(window.firstResponder == view);
+      // Observe only this application's dispatch of our exact private event.
+      // Return every event unchanged; this is not a global event monitor.
+      monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *event) {
+        if (event.window == window && [event.characters isEqualToString:@"Ny"]) dispatched += 1;
+        return event;
+      }];
+      const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(6);
+      timer = [NSTimer timerWithTimeInterval:0.01 repeats:YES block:^(NSTimer *sender) {
+        if (!queued && app.isActive && app.isRunning && window.isKeyWindow && window.firstResponder == view) {
+          ready = true;
+          NSEvent *event = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSMakePoint(20, 20)
+              modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime
+              windowNumber:window.windowNumber context:nil characters:@"Ny"
+              charactersIgnoringModifiers:@"Ny" isARepeat:NO keyCode:0];
+          queued = event && event.window == window;
+          if (queued) [app postEvent:event atStart:NO];
+        }
+        if (view.received || view.wrongTarget || std::chrono::steady_clock::now() >= end) {
+          closeAttempted = true;
+          [window performClose:nil];
+          [sender invalidate];
+          stopOwnedLoop(app);
+        }
+      }];
+      [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
+      [app activate]; // Request activation only for this owned application.
+      [app run];
+      result[@"after_run_active"] = @(app.isActive);
+      result[@"after_run_running"] = @(app.isRunning);
+      result[@"dispatch_count"] = @(dispatched);
+      result[@"view_delivery_count"] = @(view.received);
+      result[@"wrong_target"] = @(view.wrongTarget);
+      delivered = dispatched == 1 && view.received == 1 && !view.wrongTarget;
+      closeDelivered = closeAttempted && delegate.closeRequests == 1 && delegate.closed == 1 && !window.isVisible;
     } @catch (NSException *error) {
-      (void)error; // Do not dump unrelated AppKit/session details.
+      (void)error;
       exception = true;
     } @finally {
+      [timer invalidate];
+      if (monitor) [NSEvent removeMonitor:monitor];
       if (window) {
         [window orderOut:nil];
         if (window.isVisible || delegate.closed == 0) [window close];
@@ -108,8 +144,10 @@ int main() {
         window.delegate = nil;
       } else cleaned = true;
     }
-    std::printf("{\"schema\":1,\"qualification\":false,\"main_thread\":true,\"session\":true,\"on_console\":%s,\"login_done\":true,\"post_event_access\":%s,\"ax_trusted\":%s,\"window_created\":%s,\"visible\":%s,\"event_queued\":%s,\"own_event_delivered\":%s,\"own_close_delivered\":%s,\"exception\":%s,\"cleanup_verified\":%s}\n",
-        onConsole?"true":"false", postAccess?"true":"false", axTrusted?"true":"false", window?"true":"false", visible?"true":"false", queued?"true":"false", delivered?"true":"false", closeDelivered?"true":"false", exception?"true":"false", cleaned?"true":"false");
-    return visible && queued && delivered && closeDelivered && cleaned && !exception ? 0 : 2;
+    [result addEntriesFromDictionary:@{@"window_created":@(window != nil), @"visible":@(visible),
+        @"event_ready":@(ready), @"event_queued":@(queued), @"own_event_delivered":@(delivered),
+        @"own_close_delivered":@(closeDelivered), @"exception":@(exception), @"cleanup_verified":@(cleaned)}];
+    emit(result);
+    return visible && ready && queued && delivered && closeDelivered && cleaned && !exception ? 0 : 2;
   }
 }
