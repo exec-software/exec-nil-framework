@@ -1,3 +1,3 @@
 Code generation warnings/errors:
-  line 2: inline assembly requires the explicit target 'x86_64' (use asm "x86_64", "template" (i64 inputs) -> local end asm)
+  line 2: inline assembly requires the explicit target 'x86_64' or 'aarch64' (use asm "x86_64" or asm "aarch64", followed by "template" (i64 inputs) -> local end asm)
 Code generation failed
