@@ -29,6 +29,8 @@ class ProbeControls(unittest.TestCase):
                     visible=True, event_ready=True, event_queued=True, own_event_delivered=True, own_close_delivered=True,
                     dispatch_count=1, view_delivery_count=1, wrong_target=False,
                     queued_event=dict(event), app_event=dict(event), view_event=dict(event),
+                    observer_subclass=True, view_during_owned_dispatch=True, local_monitor_count=0, source_marker_retained=False,
+                    app_unmatched=[], view_unmatched=[],
                     exception=False, cleanup_verified=True)
 
     def test_own_queue_success_does_not_claim_external_input_permission(self):
@@ -46,7 +48,8 @@ class ProbeControls(unittest.TestCase):
 
     def test_queued_event_without_app_dispatch_or_view_delivery_is_insufficient(self):
         for name, value in (('dispatch_count', 0), ('view_delivery_count', 0),
-                            ('dispatch_count', True), ('view_delivery_count', 2), ('wrong_target', True)):
+                            ('dispatch_count', True), ('view_delivery_count', 2), ('wrong_target', True),
+                            ('view_during_owned_dispatch', False), ('observer_subclass', False)):
             with self.subTest(name=name, value=value):
                 report = self.cocoa(); report[name] = value
                 self.assertFalse(gate.cocoa_result(json.dumps(report).encode())['own_window_feasible'])
@@ -65,6 +68,26 @@ class ProbeControls(unittest.TestCase):
             report = self.cocoa(); report['view_event']['characters'] = value
             with self.assertRaisesRegex(ValueError, 'exceeds bound'):
                 gate.cocoa_result(json.dumps(report).encode())
+
+    def test_unmatched_input_is_diagnostic_and_does_not_substitute_for_owned_delivery(self):
+        report = self.cocoa()
+        report['view_unmatched'] = [dict(published=False, type=10, window_number=17, key_code=0,
+            has_reference_time=False, time_delta_seconds=0, time_delta_clamped=False)]
+        self.assertTrue(gate.cocoa_result(json.dumps(report).encode())['own_window_feasible'])
+        report['view_delivery_count'] = 0
+        self.assertFalse(gate.cocoa_result(json.dumps(report).encode())['own_window_feasible'])
+
+    def test_unmatched_observations_reject_strings_unknown_fields_and_excess(self):
+        row = dict(published=True, type=10, window_number=17, key_code=0,
+                   has_reference_time=True, time_delta_seconds=0.5, time_delta_clamped=False)
+        bad = [dict(row, characters='private'), dict(row, key_code='n'), dict(row, time_delta_seconds=3601),
+               dict(row, time_delta_seconds=float('nan')), dict(row, published=False)]
+        for item in bad:
+            report = self.cocoa(); report['app_unmatched'] = [item]
+            with self.assertRaises(ValueError): gate.cocoa_result(json.dumps(report).encode())
+        report = self.cocoa(); report['app_unmatched'] = [row] * 5
+        with self.assertRaisesRegex(ValueError, 'count exceeds bound'):
+            gate.cocoa_result(json.dumps(report).encode())
 
     def test_observation_flags_require_booleans(self):
         value = self.cocoa(); value['post_event_access'] = 1

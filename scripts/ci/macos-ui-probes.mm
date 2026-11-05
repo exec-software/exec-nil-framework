@@ -4,14 +4,23 @@
 #include <pthread.h>
 #include <cstdio>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+
+static int64_t privateMarker = 0;
+static bool markerRetained = false;
 
 static bool sameSyntheticEvent(NSEvent *event, NSEvent *expected) {
-  return expected && (event == expected || event.timestamp == expected.timestamp);
+  if (!expected) return false;
+  if (event == expected || event.timestamp == expected.timestamp) return true;
+  CGEventRef quartz = markerRetained ? event.CGEvent : nullptr;
+  return quartz && CGEventGetIntegerValueField(quartz, kCGEventSourceUserData) == privateMarker;
 }
 
 static NSDictionary *observeSyntheticEvent(NSEvent *event, NSEvent *expected) {
-  // Never retain unrelated input. An AppKit copy must keep the exact timestamp
-  // of the event created by this process before any character data is observed.
+  // Character data is retained only for the owned event or a copy identified by
+  // its exact timestamp or the private marker verified on the queued NSEvent.
   if (!sameSyntheticEvent(event, expected)) return @{@"synthetic_identity_match":@NO};
   NSString *characters = event.characters ?: @"";
   NSString *unmodified = event.charactersIgnoringModifiers ?: @"";
@@ -28,17 +37,63 @@ static bool expectedKey(NSEvent *event, NSEvent *expected, NSWindow *window) {
       [event.characters isEqualToString:@"n"] && [event.charactersIgnoringModifiers isEqualToString:@"n"];
 }
 
+static void observeUnmatched(NSMutableArray *records, NSEvent *event, NSEvent *expected) {
+  if (records.count >= 4) return;
+  double delta = expected ? event.timestamp - expected.timestamp : 0;
+  const bool clamped = !std::isfinite(delta) || delta < -3600 || delta > 3600;
+  if (clamped) delta = 0;
+  [records addObject:@{@"published":@(expected != nil), @"type":@(event.type),
+      @"window_number":@(event.windowNumber), @"key_code":@(event.keyCode),
+      @"has_reference_time":@(expected != nil), @"time_delta_seconds":@(delta), @"time_delta_clamped":@(clamped)}];
+}
+
+@interface NyProbeApplication : NSApplication
+@property(nonatomic, strong) NSEvent *expectedEvent;
+@property(nonatomic, weak) NSWindow *expectedWindow;
+@property(nonatomic, strong) NSDictionary *observation;
+@property(nonatomic, strong) NSMutableArray *unmatched;
+@property(nonatomic) NSUInteger dispatched;
+@property(nonatomic) BOOL dispatchingOwned;
+@end
+@implementation NyProbeApplication
+- (void)sendEvent:(NSEvent *)event {
+  const BOOL previous = self.dispatchingOwned;
+  self.dispatchingOwned = event.type == NSEventTypeKeyDown && sameSyntheticEvent(event, self.expectedEvent);
+  @try {
+    if (event.type == NSEventTypeKeyDown) {
+      if (self.dispatchingOwned) {
+        if (!self.observation) self.observation = observeSyntheticEvent(event, self.expectedEvent);
+        if (expectedKey(event, self.expectedEvent, self.expectedWindow)) self.dispatched += 1;
+      } else observeUnmatched(self.unmatched, event, self.expectedEvent);
+    }
+  } @finally {
+    // Observe the real run-loop dispatch; never replace or bypass AppKit delivery.
+    @try { [super sendEvent:event]; }
+    @finally { self.dispatchingOwned = previous; }
+  }
+}
+@end
+
 @interface NyProbeView : NSView
 @property(nonatomic) NSUInteger received;
 @property(nonatomic) BOOL wrongTarget;
 @property(nonatomic, strong) NSEvent *expectedEvent;
 @property(nonatomic, strong) NSDictionary *observation;
+@property(nonatomic, strong) NSMutableArray *unmatched;
+@property(nonatomic, weak) NyProbeApplication *application;
+@property(nonatomic) BOOL receivedDuringDispatch;
 @end
 @implementation NyProbeView
 - (BOOL)acceptsFirstResponder { return YES; }
 - (void)keyDown:(NSEvent *)event {
+  if (!sameSyntheticEvent(event, self.expectedEvent)) {
+    observeUnmatched(self.unmatched, event, self.expectedEvent);
+    [super keyDown:event];
+    return;
+  }
   if (!self.observation) self.observation = observeSyntheticEvent(event, self.expectedEvent);
-  if (!expectedKey(event, self.expectedEvent, self.window))
+  self.receivedDuringDispatch = self.application.dispatchingOwned && self.application.dispatched == 1;
+  if (!self.receivedDuringDispatch || !expectedKey(event, self.expectedEvent, self.window))
     self.wrongTarget = YES;
   else
     self.received += 1;
@@ -98,13 +153,18 @@ int main() {
     NyProbeView *view = nil;
     NyProbeDelegate *delegate = nil;
     NSTimer *timer = nil;
+    NyProbeApplication *app = nil;
     id monitor = nil;
     __block bool queued = false, ready = false, closeAttempted = false;
-    __block NSUInteger dispatched = 0;
-    __block NSDictionary *appObservation = nil;
+    __block NSUInteger monitorCount = 0;
     bool visible = false, delivered = false, closeDelivered = false, cleaned = false, exception = false;
     @try {
-      NSApplication *app = [NSApplication sharedApplication];
+      NSApplication *shared = [NyProbeApplication sharedApplication];
+      result[@"observer_subclass"] = @([shared isKindOfClass:[NyProbeApplication class]]);
+      if (![shared isKindOfClass:[NyProbeApplication class]])
+        @throw [NSException exceptionWithName:@"NyProbeApplicationIdentity" reason:@"Owned dispatch observer not instantiated" userInfo:nil];
+      app = (NyProbeApplication *)shared;
+      app.unmatched = [NSMutableArray array];
       [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
       [app finishLaunching];
       window = [[NSWindow alloc] initWithContentRect:NSMakeRect(32, 32, 220, 100)
@@ -113,6 +173,9 @@ int main() {
       [window setReleasedWhenClosed:NO];
       window.title = @"Ny private host feasibility probe";
       view = [[NyProbeView alloc] initWithFrame:NSMakeRect(0, 0, 220, 100)];
+      view.unmatched = [NSMutableArray array];
+      view.application = app;
+      app.expectedWindow = window;
       delegate = [[NyProbeDelegate alloc] init];
       window.delegate = delegate;
       window.contentView = view;
@@ -128,8 +191,7 @@ int main() {
       // Return every event unchanged; this is not a global event monitor.
       monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *event) {
         if (sameSyntheticEvent(event, view.expectedEvent)) {
-          if (!appObservation) appObservation = observeSyntheticEvent(event, view.expectedEvent);
-          if (expectedKey(event, view.expectedEvent, window)) dispatched += 1;
+          if (expectedKey(event, view.expectedEvent, window)) monitorCount += 1;
         }
         return event;
       }];
@@ -143,12 +205,23 @@ int main() {
               charactersIgnoringModifiers:@"n" isARepeat:NO keyCode:45]; // ANSI N
           queued = event && event.window == window;
           if (queued) {
+            uint64_t randomMarker = 0;
+            arc4random_buf(&randomMarker, sizeof randomMarker);
+            privateMarker = static_cast<int64_t>(randomMarker & INT64_MAX);
+            if (!privateMarker) privateMarker = 1;
+            CGEventRef quartz = event.CGEvent;
+            if (quartz) {
+              CGEventSetIntegerValueField(quartz, kCGEventSourceUserData, privateMarker);
+              CGEventRef observed = event.CGEvent;
+              markerRetained = observed && CGEventGetIntegerValueField(observed, kCGEventSourceUserData) == privateMarker;
+            }
             view.expectedEvent = event;
+            app.expectedEvent = event;
             result[@"queued_event"] = observeSyntheticEvent(event, event);
             [app postEvent:event atStart:NO];
           }
         }
-        if (view.received || view.wrongTarget || std::chrono::steady_clock::now() >= end) {
+        if (view.received || std::chrono::steady_clock::now() >= end) {
           closeAttempted = true;
           [window performClose:nil];
           [sender invalidate];
@@ -165,12 +238,17 @@ int main() {
       [app run];
       result[@"after_run_active"] = @(app.isActive);
       result[@"after_run_running"] = @(app.isRunning);
-      result[@"dispatch_count"] = @(dispatched);
+      result[@"dispatch_count"] = @(app.dispatched);
+      result[@"local_monitor_count"] = @(monitorCount);
+      result[@"source_marker_retained"] = @(markerRetained);
+      result[@"view_during_owned_dispatch"] = @(view.receivedDuringDispatch);
       result[@"view_delivery_count"] = @(view.received);
       result[@"wrong_target"] = @(view.wrongTarget);
-      result[@"app_event"] = appObservation ?: @{};
+      result[@"app_event"] = app.observation ?: @{};
       result[@"view_event"] = view.observation ?: @{};
-      delivered = dispatched == 1 && view.received == 1 && !view.wrongTarget;
+      result[@"app_unmatched"] = app.unmatched;
+      result[@"view_unmatched"] = view.unmatched;
+      delivered = app.dispatched == 1 && view.received == 1 && view.receivedDuringDispatch && !view.wrongTarget;
       closeDelivered = closeAttempted && delegate.closeRequests == 1 && delegate.closed == 1 && !window.isVisible;
     } @catch (NSException *error) {
       (void)error;
@@ -179,6 +257,8 @@ int main() {
       [timer invalidate];
       if (monitor) [NSEvent removeMonitor:monitor];
       view.expectedEvent = nil;
+      app.expectedEvent = nil;
+      app.expectedWindow = nil;
       if (window) {
         [window orderOut:nil];
         if (window.isVisible || delegate.closed == 0) [window close];

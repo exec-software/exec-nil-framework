@@ -47,8 +47,9 @@ SQL casts where PostgreSQL cannot infer a parameter's type.
 
 `sqlite` accepts a filesystem path or `:memory:`. It opens read/write, creating a
 missing file. The SQLite URI option is not enabled. `postgresql` accepts libpq
-connection options with one numeric `hostaddr` on Linux and Windows, or one
-absolute Unix socket `host` on POSIX. DNS host lookup, multiple hosts, and `service` options are outside this
+connection options with one plain numeric IPv4/IPv6 `hostaddr`, or one
+absolute Unix socket `host` on POSIX. IPv6 scope suffixes (`%interface` or
+`%number`), DNS host lookup, multiple hosts, and `service` options are outside this
 first connection contract. TLS options can accompany a numeric `hostaddr` and a
 `host` used for certificate verification. Client encoding is UTF-8.
 
@@ -61,8 +62,8 @@ tools or a native program from starting. No server is bundled with the SDK.
 
 SQLite requires the `sqlite3_changes64`/`sqlite3_total_changes64` API.
 PostgreSQL requires libpq single-row retrieval support. Bounded connection and
-query waits use POSIX polling on Linux and Winsock polling on Windows. Both
-hosts have passed the six-route PostgreSQL matrix (text/binary interpreter,
+query waits use POSIX polling on Linux/macOS and Winsock polling on Windows.
+Linux and Windows have passed the six-route PostgreSQL matrix (text/binary interpreter,
 both bundles, LLVM JIT and native AOT) against disposable PostgreSQL 16 servers.
 On Windows, provide `libpq.dll` and its dependencies through the application's
 deployment environment; the SDK does not install PostgreSQL or change `PATH`.
@@ -141,5 +142,11 @@ Pass server binaries with `--postgres-bin` (or `NIL_TEST_POSTGRES_BIN`) and opti
 this optional test skips. It never uses an existing database. LLVM-enabled CTest
 requires all six routes; missing native routes cannot silently pass. Earlier
 Linux validation used PostgreSQL 18.6 and SQLite 3.46.1; the Windows development
-parity fixture uses PostgreSQL 16.15. These are recorded test combinations, not
+parity fixture uses PostgreSQL 16.15. The Apple Silicon development SDK at
+`2f5d695` also passes all six routes against each installed source and binary
+library root with a private PostgreSQL 16.15 provider. That local Unix-socket
+profile disables optional TLS/GSS and other integrations; it does not establish
+coverage of those deployments. A scoped-address validation failure found in its
+separate client test is fixed in newer source, with native verification pending;
+see the [platform status](../platform-support.md). These are recorded test combinations, not
 a guarantee for every client/server distribution.

@@ -1738,3 +1738,33 @@ matching metadata, own close and cleanup are all still required. Eighteen
 controls and independent review pass; correction evidence SHA is
 `bfafd63196cc2a2238d81cb7c38bc2a52a77204018b1862a31f97aeb01a59796`.
 This remains a prerequisite probe, not a GTK runtime port or parity declaration.
+
+## Direct AppKit dispatch diagnosis
+
+[Source validation at `0371661`](https://github.com/exec-software/exec-nil-framework/actions/runs/41970888960)
+passes the complete LLVM-ON and LLVM-OFF jobs and the VS Code extension after
+the PostgreSQL address correction.
+
+The fourth [UI prerequisite run](https://github.com/exec-software/exec-nil-framework/actions/runs/41970900224)
+again passes native dependency operations and all cleanup/seals on both hosts.
+The queued event has the expected window, `n`, key code 45 and no modifiers,
+but the view callback does not match its object/timestamp identity and the local
+monitor records no matching event. These observations do not prove whether the
+callback was unrelated or AppKit copied/transformed the synthetic event.
+Reconciliation SHA is
+`c001457a6688b9934ac0ab537066e67507255fffae49304f13af61e2b5828f95`.
+
+The next diagnostic observes the owned application's `sendEvent:` and always
+calls the superclass implementation. View delivery must occur during that real
+owned dispatch. A private CoreGraphics event marker is admitted only after
+readback from the actual queued NSEvent confirms it is retained. At most four
+unmatched numeric metadata records are retained at each observation point, with
+no unrelated character data; unmatched callbacks no longer end the bounded
+six-second loop early. Exact owned delivery, matching metadata and close/cleanup
+checks still determine success. Twenty controls and independent review pass.
+The instantiated observer subclass is also checked before use. Final local
+correction evidence SHA is
+`1c04f3cfdaf4ad7ee8bf181546390dcdfbc0d154035c2f24b629c14adfe3c036`.
+The retained primary references include Apple's
+[NSApplication dispatch contract](https://developer.apple.com/documentation/appkit/nsapplication/sendevent(_:))
+and [NSEvent/CoreGraphics correspondence](https://developer.apple.com/documentation/appkit/nsevent/cgevent).

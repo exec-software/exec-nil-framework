@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -167,6 +168,20 @@ def cocoa_result(raw):
         for key in ('characters', 'characters_ignoring_modifiers'):
             require(key not in event or (type(event[key]) is str and len(event[key].encode('utf-16-le')) <= 16),
                     'Cocoa event character observation exceeds bound')
+    for name in ('app_unmatched', 'view_unmatched'):
+        rows = value.get(name, [])
+        require(type(rows) is list and len(rows) <= 4, 'Unmatched event observation count exceeds bound')
+        for row in rows:
+            require(type(row) is dict and set(row) == {'published', 'type', 'window_number', 'key_code',
+                'has_reference_time', 'time_delta_seconds', 'time_delta_clamped'}, 'Unexpected unmatched event data')
+            require(all(type(row[key]) is bool for key in ('published', 'has_reference_time', 'time_delta_clamped')) and
+                    row['published'] == row['has_reference_time'], 'Invalid unmatched event phase')
+            require(type(row['type']) is int and row['type'] == 10 and
+                    type(row['window_number']) is int and abs(row['window_number']) < 2**31 and
+                    type(row['key_code']) is int and 0 <= row['key_code'] <= 65535, 'Invalid unmatched event numbers')
+            delta = row['time_delta_seconds']
+            require(type(delta) in (int, float) and math.isfinite(delta) and abs(delta) <= 3600 and
+                    (row['published'] or delta == 0), 'Unmatched event time delta exceeds bound')
     exact_event = (expected.get('synthetic_identity_match') is True and expected.get('strings_bounded') is True and
         type(expected.get('window_number')) is int and expected['window_number'] > 0 and
         all(type(expected.get(key)) is int and expected[key] == number for key, number in
@@ -174,11 +189,11 @@ def cocoa_result(raw):
         expected.get('characters') == expected.get('characters_ignoring_modifiers') == 'n' and
         expected == value.get('app_event') == value.get('view_event'))
     value['own_window_feasible'] = all(value.get(name) is True for name in
-        ('main_thread', 'session', 'login_done', 'window_created', 'visible', 'event_ready', 'event_queued',
+        ('main_thread', 'session', 'login_done', 'observer_subclass', 'window_created', 'visible', 'event_ready', 'event_queued',
          'own_event_delivered', 'own_close_delivered', 'cleanup_verified')) and value.get('exception') is False and (
              type(value.get('dispatch_count')) is int and value['dispatch_count'] == 1 and
              type(value.get('view_delivery_count')) is int and value['view_delivery_count'] == 1 and
-             value.get('wrong_target') is False and exact_event)
+             value.get('view_during_owned_dispatch') is True and value.get('wrong_target') is False and exact_event)
     return value
 
 
