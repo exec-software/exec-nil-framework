@@ -602,6 +602,11 @@ if(BUILD_TESTING)
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/interpreter/ai_checkpoint_contract.py"
                 --interpreter $<TARGET_FILE:nilinterpreter>)
         set_tests_properties(nilinterpreter.ai-checkpoint-contract PROPERTIES LABELS "tools;ipc;vm" TIMEOUT 60)
+        if(UNIX)
+            add_test(NAME nilinterpreter.ai-checkpoint-channel
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/interpreter/test_ai_checkpoint_channel.py")
+            set_tests_properties(nilinterpreter.ai-checkpoint-channel PROPERTIES LABELS "tools;ipc" TIMEOUT 15)
+        endif()
         add_test(NAME nildebugger.consumer-harness
             COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/validation/ny-3d/scripts/test_debugger_consumer.py")
@@ -1628,6 +1633,7 @@ if(BUILD_TESTING)
             --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/fault-managed-lifetime.stdout"
             --expected-exit 0
             --routes all
+            --timeout 30
             --compiler-arg=--sdk-path
             --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
         )

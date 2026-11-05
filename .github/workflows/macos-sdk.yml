@@ -36,6 +36,8 @@ jobs:
       PYTHONDONTWRITEBYTECODE: "1"
       HOMEBREW_NO_AUTO_UPDATE: "1"
       HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      # Apple's install-time ranlib must preserve the pre-test archive bytes.
+      ZERO_AR_DATE: "1"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

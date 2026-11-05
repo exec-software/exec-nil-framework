@@ -4527,8 +4527,17 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           constraints += ',';
         constraints += arm ? "~{memory},~{cc}"
                            : "~{memory},~{dirflag},~{fpsr},~{flags}";
+        std::string native_assembly = *assembly;
+        if (arm) {
+          // The validated Ny contract uses ';' as an instruction separator,
+          // but Darwin's AArch64 assembler treats it as a comment. Lower only
+          // the native copy to portable newlines; keep the NIL template intact.
+          for (char &character : native_assembly)
+            if (character == ';')
+              character = '\n';
+        }
         auto *inline_assembly = llvm::InlineAsm::get(
-            signature, *assembly, constraints, true, true,
+            signature, native_assembly, constraints, true, true,
             llvm::InlineAsm::AD_ATT);
         auto *result = impl_->builder->CreateCall(signature, inline_assembly,
                                                    arguments);

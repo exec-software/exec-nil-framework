@@ -1208,3 +1208,88 @@ extension all succeed in
 [run 41957858527](https://github.com/exec-software/exec-nil-framework/actions/runs/41957858527).
 This includes the corrected exact rejection diagnostic. Both failed `8517ad0`
 job logs remain retained; their sole failed CTest was that stale golden.
+
+
+## Native SDK failures and corrective pass
+
+ARM SDK retry
+[41957867092](https://github.com/exec-software/exec-nil-framework/actions/runs/41957867092)
+at exact `4181096` completed all 570 registrations: 561 passed, four failed,
+and five skipped. Besides the known incremental-reuse limitation, native Ny
+and Matrix assembly returned incorrect values, and the checkpoint client
+timed out writing its deliberate 62,000-character invalid field. Build, install
+and all documentation generation completed; package qualification rejected
+a changed static archive, so installed validation and consumers did not run.
+The 362-file evidence reconciliation is sealed as
+`1a92410d0c9daf8405c57757be01e7ec245974e8a77c013ed694717c155855ae`
+under `macos-parity-20261105/sdk-run-41957867092/arm64-reconciliation.json`.
+
+The ARM output identified a real lowering bug: Darwin's AArch64 assembler
+treats semicolons as comments. Seven multi-instruction fixture blocks executed
+only their first instruction. After contract validation, the native ARM copy
+now converts instruction separators to newlines, preserving the original NIL
+template and x86 behavior. Before/after disassembly of all 20 exact templates
+shows the corrected Mach-O instruction words match their ELF counterparts;
+ELF output is unchanged. Four focused Linux CTests still pass. Expected
+application output was not changed. Cross-target evidence is sealed as
+`003b01800923af1c68345e854448bd5b08b6d52f91f84096fc82e32a2c5db0cb`
+under `aarch64-inline-assembly/separator-fix/report.json`. Native ARM rerun
+remains required.
+
+The archive rejection also remained strict. All eleven installed tools and
+the shared runtime matched their pre-test bytes. Only the BSD archive-index
+timestamp changed; restoring those 12 bytes in an in-memory diagnostic copy
+reconstructs the pre-test SHA exactly. The workflow now uses Apple's
+`ZERO_AR_DATE=1` for both build and install. No artifact is rewritten after
+testing, and the exact-byte gate is unchanged. All 45 qualification controls
+pass; native installation must confirm stable bytes.
+
+The checkpoint test client had incorrectly reused its 0.1-second read-poll
+timeout for a complete socket write, while Windows pipes already used five
+seconds. Socket writes now use the same bounded frame budget and restore the
+read-poll timeout in `finally`. Real socket backpressure reproduces the old
+failure; delayed-reader, stalled-peer and closed-peer controls pass after the
+fix. The real Linux checkpoint contract and both focused CTests pass. The
+three channel controls are registered on UNIX hosts; production IPC is unchanged.
+All three fixes received independent review before the next native SDK run.
+
+## Completed native cache-detail observations
+
+[Run 41959228157](https://github.com/exec-software/exec-nil-framework/actions/runs/41959228157)
+at exact `4a888e26dc79ea0336e841b4c95bc64f2702180d` completed on both hosts.
+All 29 controls, 18 owned phases and source/cleanup seals pass per architecture.
+Independent replay verified all 46 retained files per host. Root/subcache
+UUID, VM-offset and API file-set correspondence passed for one ARM subcache
+and six Intel subcaches. Both runs observe 308 loaded images and 307 cached
+name/UUID matches; active backing and whole content identity remain incomplete.
+Selected nominal ranges cover 13 ARM and ten Intel segments without proving
+zero-fill/fixup coverage. Driver/child-linker traces also captured libLTO.
+
+For 128 MiB prefixes, scalar/CommonCrypto times were 1.34/0.07 seconds for
+the ARM root and 1.34/0.08 for its child; Intel measured 4.01/0.68 and 4.57/0.66.
+Each pair has equal digests, but scalar runs first and both measurements include
+I/O. Host OS builds differ (Intel 15.7.9/24G830; ARM 15.8.2/24H232), so these are
+observations rather than normalized benchmarks or whole-cache projections.
+No production cache eligibility changed.
+
+The independently reviewed reconciliation is sealed as
+`5baa141a685926b775575a5e393b4e5d3b799b77f5c5b2880b3e6b5e16b65060`
+under `macos-parity-20261105/cache-identity-probe/detail-run-41959228157`.
+
+
+The original Intel SDK run at `1cfe0bf` also completed: 563 passed, two failed
+and five skipped out of 570. All assembly contracts pass there. Besides the
+known incremental limitation, the fault-managed-lifetime fixture's direct
+text and binary interpreter routes hit their ten-second deadline. One had
+printed all nine expected lines; both bundled routes and both native routes
+passed, with bundled executions below one second. The large timing difference
+remains unexplained; it is not evidence of a corrected runtime defect. A
+fixture-specific 30-second retry budget preserves exact output and exit checks
+and leaves other route deadlines unchanged. The next native run must actually
+complete those routes; a further timeout remains a failure.
+
+The complete Intel evidence reconciliation is sealed as
+`7138470a3757efc0621d8588d9f6ec27704852971f3b2f07bed4873295c84664`
+under `macos-parity-20261105/sdk-run-41957412951/intel-reconciliation.json`.
+Its package step also failed before installed validation. No first-run SDK
+is accepted or substituted for the installed Linux/Windows baseline.

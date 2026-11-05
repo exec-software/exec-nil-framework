@@ -92,9 +92,10 @@ the complete admission rules.
   passes. See the [assembly contract](advanced/inline-assembly.md) for both profiles.
 - A separate [development SDK workflow](../.github/workflows/macos-sdk.yml) now
   implements native Darwin consumer admission, root install layout, pinned
-  documentation tooling, and staged dependency/relocation checks. Its first
-  native candidate results are pending; the recorded build baseline above
-  still consists of build products rather than an accepted installed SDK.
+  documentation tooling, and staged dependency/relocation checks. Initial runs
+  exposed an install-time archive timestamp change and ARM assembly lowering
+  errors; corrective native validation is in progress. The recorded baseline
+  above still consists of build products rather than an accepted installed SDK.
 - The GTK provider currently supports Linux and Windows. macOS UI/provider
   support and live desktop acceptance remain open.
 - Full debugger, editor, standard-library/provider and installed-package

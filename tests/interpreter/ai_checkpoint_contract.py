@@ -14,6 +14,8 @@ import subprocess
 import tempfile
 import time
 
+FRAME_WRITE_TIMEOUT = 5.0
+
 PROGRAM = '''module checkpoint_contract
 function main:
     PUSH_CONST 10
@@ -114,10 +116,18 @@ class Channel:
 
     def write(self, payload):
         if self.sock is not None:
-            self.sock.sendall(payload)
+            # The short receive-poll interval is not a whole-frame deadline.
+            # Darwin's socket buffer may require several writes for a valid
+            # near-limit frame; give sendall the same bounded budget as pipes.
+            polling_timeout = self.sock.gettimeout()
+            try:
+                self.sock.settimeout(FRAME_WRITE_TIMEOUT)
+                self.sock.sendall(payload)
+            finally:
+                self.sock.settimeout(polling_timeout)
             return
         from ctypes import wintypes as w
-        deadline, offset = time.monotonic() + 5, 0
+        deadline, offset = time.monotonic() + FRAME_WRITE_TIMEOUT, 0
         while offset < len(payload) and time.monotonic() < deadline:
             count = w.DWORD()
             # A NOWAIT pipe can accept zero bytes if a request is larger than
