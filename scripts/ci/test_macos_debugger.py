@@ -64,7 +64,7 @@ class BindingTests(unittest.TestCase):
         self.sources = {'scripts/exact.py': 'source-digest'}
         self.state = {'status': 'PASS', 'errors': [], 'anchor': 'origin file', 'sdk': str(self.sdk),
                       'manifest_sha256': 'anchor', 'origin_manifest_sha256': 'anchor',
-                      'baseline': {'source': {'revision': 'a'*40, 'dirty': False},
+                      'baseline': {'source': {'revision': 'a'*40, 'worktree_dirty': False},
                                    'host': {'system': 'Darwin', 'machine': 'arm64'}}}
         self.report = {'schema': 1, 'status': 'PASS', 'completed': True, 'counts': {'PASS': 146, 'FAIL': 0},
             'checks': [{'name': n, 'status': 'PASS'} for n in self.names], 'source_hashes_before': self.sources,
@@ -129,11 +129,26 @@ class BindingTests(unittest.TestCase):
         gate.verify_origin(self.state, self.sdk, 'a'*40, 'arm64')
         for mutate in (lambda s: s.update(anchor='self (no origin anchor)'),
                        lambda s: s['baseline']['source'].update(revision='b'*40),
-                       lambda s: s['baseline']['source'].update(dirty=True),
+                       lambda s: s['baseline']['source'].update(worktree_dirty=True),
                        lambda s: s['baseline']['host'].update(machine='x86_64')):
             with self.subTest(mutate=mutate):
                 state = copy.deepcopy(self.state); mutate(state)
                 with self.assertRaises(ValueError): gate.verify_origin(state, self.sdk, 'a'*40, 'arm64')
+
+    def test_origin_consumes_actual_integrity_manifest_source_schema(self):
+        # SDK manifests use worktree_dirty; pre-test snapshots use dirty.
+        manifest = {'source': {'revision': 'a'*40, 'worktree_dirty': False},
+                    'host': {'system': 'Darwin', 'machine': 'arm64'},
+                    'payload': {'file_count': 0, 'files': []}}
+        path = self.sdk / 'manifest.json'; path.write_text(json.dumps(manifest))
+        self.origin.write_text(json.dumps({'source_manifest_sha256': hashlib.sha256(path.read_bytes()).hexdigest()}))
+        integrity = gate.load(gate.PROJECT / 'scripts/sdk_integrity.py', 'manifest_schema_control')
+        observed = integrity.verify(self.sdk, self.origin)
+        self.assertEqual(observed['status'], 'PASS')
+        gate.verify_origin(observed, self.sdk, 'a'*40, 'arm64')
+        observed['baseline']['source'] = {'revision': 'a'*40, 'dirty': False}
+        with self.assertRaisesRegex(ValueError, 'exact clean requested revision'):
+            gate.verify_origin(observed, self.sdk, 'a'*40, 'arm64')
 
     def test_sdk_and_origin_symlinks_rejected_before_resolve(self):
         link = self.root / 'link'; link.symlink_to(self.sdk, target_is_directory=True)

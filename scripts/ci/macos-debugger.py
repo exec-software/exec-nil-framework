@@ -91,7 +91,7 @@ def verify_origin(state, sdk, revision, arch):
             state['sdk'] == str(sdk) and state['manifest_sha256'] == state['origin_manifest_sha256'],
             'SDK lacks the matching external manifest anchor')
     source = state['baseline']['source']
-    require(source['revision'] == revision and source['dirty'] is False,
+    require(source['revision'] == revision and source.get('worktree_dirty') is False,
             'SDK source does not match the exact clean requested revision')
     require(state['baseline']['host'] == {'system': 'Darwin', 'machine': arch}, 'SDK host mismatch')
 
