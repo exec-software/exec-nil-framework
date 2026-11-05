@@ -2,7 +2,7 @@
 
 - **Status:** Implemented within the documented inspection profile
 - **Amended:** 2026-11-02 — inspection profile extended to Windows PE/COFF
-- **Amended:** 2026-11-04 — thin Mach-O64 x86_64/arm64 implementation added; native hosted verification pending
+- **Amended:** 2026-11-04 — thin Mach-O64 x86_64/arm64 implemented and verified on native hosted runners
 - **Scope:** Shared NIL artifacts produced by Ny and Matrix
 - **Recorded:** 2026-10-16
 
@@ -19,8 +19,9 @@ name together. Textual and binary NIL preserve the same annotations. Native
 embedding is an explicit option. The bounded little-endian profile was Linux
 ELF64 on x86_64 when this was recorded. It now also covers Windows PE/COFF on
 x86_64 and thin Mach-O64 on x86_64/arm64, as an object or a linked executable.
-The Mach-O implementation is awaiting native hosted verification; it does not
-retroactively change the earlier platform acceptance records.
+Native Intel and Apple Silicon checks at `7e53828` verify Mach-O embedding,
+inspection, dead-strip retention and execution. These feature checks do not
+retroactively change earlier SDK acceptance or establish release qualification.
 Extending the container set does not change what is disclosed or the rule that
 inspection never executes the artifact.
 

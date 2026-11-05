@@ -27,8 +27,10 @@ inspector also accepts executable text and binary NIL without LLVM support. It
 does not execute libraries, resolve embedded source capsules, or interpret
 arbitrary native formats. Native files without the section report its
 absence.
-The Mach-O implementation is newer than the recorded `c123849` platform baseline;
-native acceptance of this addition is pending the next hosted run. Universal/fat,
+Native hosted checks at `7e53828` passed on Intel and Apple Silicon, including
+object/executable inspection, host-linker dead stripping and program execution.
+This is feature-level development evidence, not installed SDK or release qualification.
+Universal/fat,
 32-bit and big-endian Mach-O, dynamic libraries, other image kinds and images
 with encryption commands are outside this profile. Unsupported binary formats receive a bounded diagnostic rather than
 being interpreted as textual NIL. See the

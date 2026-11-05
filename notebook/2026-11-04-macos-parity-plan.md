@@ -698,3 +698,57 @@ synthetic SDK trees and preserves each failed observation while comparing
 replacement, swap/unlink, swap/retention and hardlink/retention primitives.
 The production publisher is unchanged: the APFS reader `EINVAL` is still open.
 These diagnostics neither publish an SDK nor qualify a release.
+
+
+## Native matrix and focused follow-up results
+
+[Run 41945225536](https://github.com/exec-software/exec-nil-framework/actions/runs/41945225536)
+completed at `7e53828e65444d1bd78213219e0e3fac65fcb66e`. All four build and
+backend-selection gates pass. Every inventory is complete, with no collector
+errors; failures and skips retain their actual status:
+
+| Host | LLVM | Pass | Fail | Skip | Registered |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Intel x86_64 | ON | 558 | 6 | 5 | 569 |
+| Intel x86_64 | OFF | 415 | 4 | 146 | 565 |
+| Apple Silicon arm64 | ON | 557 | 7 | 5 | 569 |
+| Apple Silicon arm64 | OFF | 413 | 6 | 146 | 565 |
+
+All fourteen canonical-path contracts pass on every profile. Both LLVM-ON
+profiles pass 3,592 executable-context assertions and 60 CLI checks with six
+native executions, including actual Darwin dead-strip linking. Intel native
+inline assembly passes; the ARM native inline-assembly profile remains open.
+All 44 archived tools have verified payload hashes, executable mode and matching
+Mach-O architecture. These are build archives, not qualified SDK packages.
+Linux source validation at the same source also passes all three CI jobs.
+
+The raw inventories and logs are retained under
+`/home/nathan/vm/nil-win11/artifacts/macos-parity-20261105/run-41945225536`.
+`native-test-reconciliation.json` is sealed as
+`d21f3f3c0a994327043522e8d909480726bc2fa21e06852041c132a30b7a378a`;
+`artifact-tool-inventory.json` is
+`17a035334821c0ef5a39cbe0b547eb9aa2bb2531175e8eb0c698e385e922c7b6`.
+
+[Focused run 41947789948](https://github.com/exec-software/exec-nil-framework/actions/runs/41947789948)
+at `f8ca6ccc1779fed7a51def8337d7d6d0960be248` passes all five host suites on
+both architectures: ordinary-I/O namespace controls, process oracle, process
+identity, debugger-consumer cleanup and the actual C++ parallel-process contract.
+All suites verify cleanup; all 54 captured evidence files match their recorded
+hashes and the tracked checkout is unchanged. The old full-run failures remain
+preserved; these focused results do not substitute for a new complete inventory.
+
+The publication diagnostic reproduces `EINVAL` during reader opens with the
+production replace primitive and swap followed by unlink on both hosts. Both
+swap-retain and hardlink-retain complete 5,000 replacements per host without a
+reader failure, preserving held old-generation bytes. Retention is therefore a
+concrete candidate for the APFS inode-lifetime problem; production publication
+acceptance remains open. The focused report is
+`host-probes-41947789948/reconciliation.json`, SHA-256
+`478eac1b385dbc236e60a124b2dc70c7d7de9f666f44d3d6a51b2c2baaa35059`.
+
+A separate cache audit found Darwin's compiler loaded-image identity is missing
+for VM reuse as well as the already-disabled native cache path. Source dependency
+hashes remain valuable and must not be discarded to represent this toolchain
+gap. An explicit completeness field can disable reuse while retaining input
+protection. Complete Darwin loaded-code and native link-input discovery remain
+work to do; no incremental-parity claim is made.
