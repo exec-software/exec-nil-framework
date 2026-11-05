@@ -16,6 +16,9 @@ import tarfile
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
+# SDK support modules use sibling imports; bind them to this exact checkout
+# rather than relying on the caller's working directory or PYTHONPATH.
+sys.path.insert(0, str(ROOT / "scripts"))
 VERSION = "16.15"
 VERSION_NUMBER = 160015
 ARCHIVE_NAME = f"postgresql-{VERSION}.tar.bz2"
@@ -298,24 +301,23 @@ def main():
     temporary, unpacked, build, prefix = [work / name for name in ("tmp", "source", "build", "prefix")]
     for path in (logs, temporary, unpacked, build):
         path.mkdir(mode=0o700)
-    support = load("postgres_provider_capture", "tests/tools/ordinary_io_parity_contract.py")
-    ownership = support.load_ownership(ROOT)
-    qualification = load("postgres_provider_source", "scripts/sdk_qualification.py")
-    pins = {name: record(ROOT / name) for name in INPUTS}
+    support = ownership = qualification = None
+    pins = {}
     phases = []
     report = {"schema": "nil.macos.postgresql-provider.v1", "status": "FAIL", "qualification": False,
               "scope": "Private build prerequisite only; no SDK qualification, cluster or service",
               "version": VERSION, "architecture": platform.machine(), "prefix": str(prefix),
               "work_dir": str(work), "work_directory_retained": True,
-              "source_before": pins, "phases": phases, "problems": [],
+              "source_before": pins, "phases": phases, "problems": [], "phase": "initialize",
               "release": {"url": SOURCE_URL, "sha256": SOURCE_SHA256},
               "limits": {"whole_seconds": WHOLE_SECONDS, "cleanup_reserve_seconds": CLEANUP_RESERVE,
-                         "parallel_jobs": 2, "output_bytes_per_phase": support.MAX_OUTPUT,
+                         "parallel_jobs": 2, "output_bytes_per_phase": MiB,
                          "archive_bytes": MAX_ARCHIVE, "expanded_bytes": MAX_EXPANDED},
               "profile": "C locale, private Unix socket; ICU/readline/zlib/TLS/GSS/LDAP/XML/LLVM/compression extras disabled"}
     env = provider_environment(temporary)
 
     def run(name, command, limit=30, *, cwd=work, variables=env, expected_exit=0):
+        report["phase"] = name
         row = support.run_process(ownership, [str(x) for x in command], cwd, variables, logs,
                                   name, remaining_timeout(deadline, limit))
         row["expected_exit_code"] = expected_exit
@@ -328,6 +330,11 @@ def main():
         return (logs / row["stdout"]).read_bytes()
 
     try:
+        pins.update({name: record(ROOT / name) for name in INPUTS})
+        support = load("postgres_provider_capture", "tests/tools/ordinary_io_parity_contract.py")
+        require(support.MAX_OUTPUT == MiB, "owned capture budget differs from declared bound")
+        ownership = support.load_ownership(ROOT)
+        qualification = load("postgres_provider_source", "scripts/sdk_qualification.py")
         report["repository"] = qualification.source_identity(ROOT)
         require(not report["repository"]["dirty"], "provider requires a clean source revision")
         if os.environ.get("GITHUB_SHA"):
@@ -391,6 +398,7 @@ def main():
         report["archive_unchanged"] = record(archive, MAX_ARCHIVE) == report["release"]["archive"]
         require(report["release_source_unchanged"] and report["provider_unchanged"] and report["archive_unchanged"],
                 "release or provider changed during verification")
+        report["phase"] = "complete"
         report["status"] = "PASS"
     except Exception as error:
         report["problems"].append(type(error).__name__ + ": " + str(error))
@@ -410,6 +418,7 @@ def main():
         try:
             report["source_after"] = {name: record(ROOT / name) for name in INPUTS}
             report["source_unchanged"] = pins == report["source_after"]
+            require(qualification is not None, "source identity dependency initialization failed")
             report["repository_after"] = qualification.source_identity(ROOT)
             require(report["repository_after"] == report.get("repository"), "repository identity changed")
         except Exception as error:

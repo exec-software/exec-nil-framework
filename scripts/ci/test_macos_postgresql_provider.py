@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Pure provider archive, identity and execution-bound controls; no native build."""
 import copy
+import contextlib
 import hashlib
 import importlib.util
 import io
@@ -8,6 +9,8 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -40,6 +43,39 @@ def archive(root, extra=None):
 
 
 class ProviderControls(unittest.TestCase):
+    def test_standalone_support_imports_without_repository_pythonpath(self):
+        helper = Path(provider.__file__).resolve(strict=True)
+        code = ('import importlib.util\n'
+                f'spec=importlib.util.spec_from_file_location("private_provider", {str(helper)!r})\n'
+                'module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)\n'
+                'support=module.load("private_qualification", "scripts/sdk_qualification.py")\n'
+                'assert callable(support.source_identity)\n'
+                'print("standalone SDK dependency import passed")\n')
+        with tempfile.TemporaryDirectory() as temporary:
+            result = subprocess.run([sys.executable, '-I', '-B', '-c', code], cwd=temporary,
+                                    capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+        self.assertEqual(result.stdout, b'standalone SDK dependency import passed\n')
+        self.assertEqual(result.stderr, b'')
+
+    def test_startup_dependency_failure_retains_failed_report_without_processes(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name).resolve(strict=True)
+            output, work = root / 'evidence', root / 'work'
+            argv = ['provider', '--output', str(output), '--work-dir', str(work)]
+            with mock.patch.object(sys, 'argv', argv), mock.patch.object(sys, 'platform', 'darwin'), \
+                 mock.patch.object(provider.platform, 'machine', return_value='arm64'), \
+                 mock.patch.object(provider, 'load', side_effect=ModuleNotFoundError('synthetic startup dependency')), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(provider.main(), 1)
+            report = json.loads((output / 'report.json').read_bytes())
+            self.assertEqual(report['status'], 'FAIL')
+            self.assertEqual(report['phase'], 'initialize')
+            self.assertEqual(report['phases'], [])
+            self.assertFalse(report['cleanup_verified'])
+            self.assertTrue(any('synthetic startup dependency' in error for error in report['problems']))
+            self.assertTrue(work.is_dir())
+
     def test_exact_archive_extracts_regular_files_and_executable_mode(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name).resolve(strict=True)

@@ -1511,3 +1511,36 @@ All 43 files per host, eighteen owned phases and 24 controls were independently
 replayed. Reconciliation SHA is
 `4633a9a752062d46f617d2bb65b8bb70dcdfe3f427ee9129cb532236f8df77b8`.
 No lifetime tests were admitted and no production allocator setting changed.
+
+
+## Expanded profile preflight corrections
+
+The initial private-provider SDK attempt at `1c9d361`
+([41965629303](https://github.com/exec-software/exec-nil-framework/actions/runs/41965629303))
+stopped in a pure debugger fixture on both hosts: expected temporary paths used
+`/var` while the production guard correctly returned canonical `/private/var`.
+The test-only `4ab43f1` correction adds an explicit parent-directory alias case
+and preserves the SDK-overlap rejection. Sixteen debugger controls now pass.
+Eight retained files per host reconcile to
+`e6552c065b75b89e6cea714f2f392fb88fd5017a11ac8199a9c3384e22a9d4d8`.
+No provider or framework build occurred in that attempt.
+
+The retry
+[41965922556](https://github.com/exec-software/exec-nil-framework/actions/runs/41965922556)
+passed all initial controls and pinned Pandoc preparation, then stopped before
+provider download/configure because the standalone provider helper had not bound
+`sdk_qualification`'s sibling Python imports. Reconciliation of sixteen files per
+host is sealed as `1a5e4922a0ad198c3372e0d7acc1e9337758242f0e8001557ce73aed98a7e65d`.
+The helper now resolves those modules from the exact checkout, with a fresh
+isolated-interpreter control from an unrelated working directory. Initialization
+also runs inside the failure-report boundary, retaining its actual phase and
+zero completed processes if a dependency import fails. Eighteen provider controls
+and independent review pass; native provider/build/installed outcomes remain pending.
+
+The earlier `2e098f1` Intel SDK has now independently reconciled to the same
+packaging/relocation/shared-loader progress as ARM: all 260 payload files plus
+manifest and all tested tool/runtime bytes match. Its only source failure remains
+incremental reuse, and the malformed-library negative oracle failed on the same
+already-corrected Darwin wording. Intel reconciliation SHA is
+`16f49141279985eec927b8860024041d6e8a00ee1f7ba182cfa018ce546c4396`.
+The full installed consumer campaign did not run on either `2e098f1` host.
