@@ -1563,3 +1563,55 @@ profile. Eighteen controls and independent review pass. Linux configure evidence
 SHA is `0944003c66c7738b40c24f9624d9f4a2c5c8daf5a2580697a44b228dd6401021`
 under `macos-parity-20261105/postgresql-provider-16.15/configure-linux-v1/report.json`.
 Native provider compilation and SDK consumers remain pending.
+
+
+## Native provider builds and UI prerequisites
+
+At `2f5d695`, [41966883934](https://github.com/exec-software/exec-nil-framework/actions/runs/41966883934)
+now completes the real PostgreSQL build/install, matching 160015 header/runtime
+and canonical loaded-library checks on both architectures. Framework builds and
+full CTest are underway; final artifacts and installed consumers still need
+reconciliation. Source validation
+[41966877165](https://github.com/exec-software/exec-nil-framework/actions/runs/41966877165)
+passes LLVM ON, LLVM OFF and the VS Code extension.
+
+A readiness review caught an installed-debugger helper field mismatch: SDK
+manifests use `source.worktree_dirty`, while pre-test snapshots use `source.dirty`.
+The helper now requires the actual manifest field, and a new control passes
+through `sdk_integrity.verify` rather than inventing its output shape. Seventeen
+controls and independent review pass; schema-fix evidence SHA is
+`d67a6bd424a194ad9345564d748795466fe88816011a3c6c7cb5ee7895715eeb`.
+The already-running SDK job retains its original source and may fail that helper
+safely before debugger execution. Its independent database/standard consumer
+phases can still run. Corrected debugger acceptance should replay the exact
+sealed candidate with distinct SDK/helper revisions, rather than silently
+changing a running checkout or assuming a newer compiler was tested.
+
+The remaining UI port needs an Apple library-loader branch, main-thread GTK
+initialization and a Quartz interaction harness; existing widget/event/lifetime
+logic can be reused. Current Apple CMake selection reaches the Xvfb harness and
+returns its explicit unsupported-platform skip. Retained runner inventories have
+GLib, Cairo, HarfBuzz and common image/font dependencies but lack FriBidi, Pango,
+GdkPixbuf, Graphene, libepoxy, GTK4 and Meson. GTK 4.18.6 requires libepoxy even
+when selecting its Cairo renderer; there is no supported OpenGL-disable option
+that removes that dependency. A later private build must account for the full
+graph rather than implicitly downloading missing packages.
+
+The first [UI prerequisite workflow](../.github/workflows/macos-ui-probes.yml)
+therefore performs only native installed-dependency and own-window Cocoa probes.
+It checks actual pkg-config headers/linking/runtime versions and loaded paths for
+GLib, Cairo-Quartz and HarfBuzz/CoreText, records missing future dependencies, and
+runs one owned NSApplication/NSWindow. The application queues its own keyboard
+event to its own view, invokes its own close action and verifies closure.
+Accessibility/input capability queries do not prompt or alter policy. No global
+or process-external input, screen capture, GTK build, runtime or CMake changes
+are involved. Event-loop feasibility does not establish external GTK interaction
+acceptance. All results retain `qualification: false`.
+
+The diagnostic is bounded to 180 seconds with a twenty-second cleanup reserve;
+each child has at most thirty seconds. Raw observations, source/tool bindings and
+load-origin hashes retain their observation phase; post-load hashes are not
+presented as pre-load anchors. Thirteen controls and independent review pass;
+local evidence SHA is `4f4b19796bae6d3665240b269942cc8b13391d2df9ad2515451d5d5ea37af89f`
+under `macos-parity-20261105/darwin-ui-audit/local-controls/report.json`.
+Actual native UI prerequisite results remain pending.
