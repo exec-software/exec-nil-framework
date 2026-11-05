@@ -2666,3 +2666,14 @@ checked on Windows at `0b2b884`: a private rebuild passed fresh x64 COFF output,
 same-file rejection, hardlink rejection and absent-input output preservation
 (4/4), reusing unchanged reference libraries. Checkout/SDK/input seals and owned
 cleanup passed; the report is linked from the macOS notebook.
+
+
+## 2026-11-04: subsequent compiler-identity source regression
+
+The common `compilerFilesComplete` change at `e087964` passed a private Windows
+Release build and four focused contracts (181 checks, zero skips), including
+real VM/native incremental reuse. Existing SDK/VSIX/checkout and settings were
+unchanged; the full paired SDK baseline remains `5630388`. Source/input/binary
+seals and owned cleanup were verified. See the
+[complete follow-up and retained setup failures](2026-11-04-macos-parity-plan.md#private-windows-compiler-identity-regression)
+for exact evidence and the process-local DIA/Release try-compile configuration.

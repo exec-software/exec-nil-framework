@@ -881,3 +881,79 @@ Findings are saved outside the repository as
 SHA-256 `4d37dc2550cc9984d4e2fbd3764e7742b5364e83432c95e2ef4c1954d3a1f0df`.
 No SDK builder, installation, provider setup or release action was performed
 for this audit.
+
+
+## Final four-profile source checkpoint at e087964
+
+[Run 41949698862](https://github.com/exec-software/exec-nil-framework/actions/runs/41949698862)
+completed all four profiles at `e08796410621ea06c821e57c167635e61661a985`.
+Every build and backend-selection gate passes; every registered test is observed
+with no inventory or tracked-source errors:
+
+| Host | LLVM | Pass | Fail | Skip | Registered |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Intel x86_64 | ON | 564 | 1 | 5 | 570 |
+| Intel x86_64 | OFF | 419 | 1 | 146 | 566 |
+| Apple Silicon arm64 | ON | 563 | 2 | 5 | 570 |
+| Apple Silicon arm64 | OFF | 419 | 1 | 146 | 566 |
+
+The sole common failure is the real positive incremental-reuse contract:
+Darwin now correctly rebuilds when compiler identity is incomplete. Its new
+33-check containment contract and 41-check module fingerprint test pass on all
+four profiles. The second ARM LLVM-ON failure is native assembly: the fixture
+requests x86_64 and the foreign target is correctly rejected. A bounded ARM
+instruction profile remains unimplemented. Intel native assembly JIT/AOT passes.
+
+Every prior path, ordinary-I/O namespace, process cleanup, parallel-process and
+SDK-publication failure is fixed in the full inventory. Both LLVM-ON profiles
+pass 3,592 context assertions plus 60 CLI checks with six native executions,
+including dead-strip retention. All four pass the 210-check execution checkpoint
+contract. All 44 archived tools pass independent hash, executable-mode and
+Mach-O CPU/header checks. Installed SDK, provider, desktop and release
+qualification remain separate; no active SDK or Lich artifact was changed.
+
+Source validation at documentation-only successors `8d906b7` and `9bdabd7`
+also passes LLVM ON, LLVM OFF and the VS Code extension:
+[runs 41950057671](https://github.com/exec-software/exec-nil-framework/actions/runs/41950057671)
+and [41951456562](https://github.com/exec-software/exec-nil-framework/actions/runs/41951456562).
+The intervening changes contain only documentation; runtime, compiler, tooling
+and test source are identical to `e087964`. The final documentation render
+builds all 67 SDK manual pages successfully.
+
+Retained evidence is under
+`/home/nathan/vm/nil-win11/artifacts/macos-parity-20261105/run-41949698862`.
+`native-test-reconciliation.json` is sealed as
+`3ed6c9a277a573ec9af85c6802d7cb0323b0a4a598e8753fbed7bcc380eaf3e8`;
+`artifact-tool-inventory.json` is
+`c4cd8d0c9cb6c6aee1a0a06de1d26e297de69943f0b1db41fdbd40fd0c57a9ca`.
+All four artifacts and raw job logs are retained alongside earlier failures.
+
+
+## Private Windows compiler-identity regression
+
+A private source/build tree at exact `e087964` compiled `nilcompiler`,
+`nilbuild`, `nilinterpreter` and the module fingerprint test with MSVC 14.44 and
+LLVM 18.1.8. Four focused CTests pass with no skips: 64 module-fingerprint checks,
+33 explicit compiler-identity/source-protection checks, 11 analysis-dependency
+checks and 73 real VM/native incremental checks (181 total). Configure and
+build took 4.62 and 62.88 seconds; the final test phase took 36.80 seconds.
+All owned-process cleanup and source/input/binary seals were verified. The
+existing checkout, accepted SDK, VSIX and machine/user settings were unchanged.
+
+Earlier private attempts are retained rather than relabeled. V1 omitted the
+existing explicit DIA-library override; v2/v3 configuration succeeded but the
+strict process check identified a remaining owned `mspdbsrv.exe`. Selecting
+`CMAKE_TRY_COMPILE_CONFIGURATION=Release` for this Release build resolved it
+without a cleanup exception. V4 built successfully; an extra diagnostic image
+observer encountered access denied on an exiting member. V5 reused sealed V4
+binaries and ran the actual contracts with the original strict ownership checks.
+There was no source fix, rebuild or ownership relaxation for that observer.
+
+Evidence is under
+`/home/nathan/vm/nil-win11/artifacts/macos-parity-20261105/windows-cache-e087964`.
+`windows-reconciliation.json` is sealed as
+`01b1b084824d3fb1e50b97d1869eb05eb6cccb63d62e5f056241e700146929af`;
+the final raw report is
+`7cdd5a8a55984130ce16f544771fd94c9855cc1f4b6e9c1537710d91f47e00e7`.
+This verifies the common cache-contract change on Windows, not a replacement
+for the complete paired `5630388` SDK acceptance.
