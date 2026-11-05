@@ -13,7 +13,7 @@ and editor tools for both languages.
 [Ny](ny/README.md) · [Matrix](matrix/MATRIX-GUIDE.md) ·
 [Contributing](CONTRIBUTING.md)
 
-[![Support us on Buy Me a Coffee](https://img.shields.io/badge/Support_us-Buy_Me_a_Coffee-FF5F5F?logo=buymeacoffee&logoColor=white)](https://www.buymeacoffee.com/execsoftware)
+[![Support us on Ko-fi](https://img.shields.io/badge/Support_us-Ko--fi-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/execsoftware)
 
 ## Ny and Matrix
 
@@ -282,10 +282,15 @@ Architectural decisions are recorded in the [design index](docs/design/README.md
 
 ## Support our work
 
-We run on your support and donations! Every contribution helps us continue
-building open-source software. Thank you for your continued support.
+Execute Software develops these projects in the open, and they stay free to
+use. If one of them has been useful to you, a contribution helps fund the time
+that goes into it. It is entirely optional, and it does not change what the
+project gives you or what the license permits.
 
-[Contribute through Buy Me a Coffee](https://www.buymeacoffee.com/execsoftware).
+[Support us on Ko-fi](https://ko-fi.com/execsoftware).
+
+For enterprise licensing and support, contact
+[admin@executesoftware.com](mailto:admin@executesoftware.com).
 
 ## License
 
