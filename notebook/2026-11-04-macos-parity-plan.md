@@ -1012,3 +1012,117 @@ under `/home/nathan/vm/nil-win11/artifacts/macos-parity-20261105/aarch64-inline-
 The test registration now selects the host's actual instruction profile and
 requires eight native executions when LLVM is enabled; no skip substitutes
 for a native route. Installed SDKs remain at the accepted `5630388` baseline.
+
+
+## Native cache-identity observations
+
+[Probe run 41955423846](https://github.com/exec-software/exec-nil-framework/actions/runs/41955423846)
+completed both native hosts at exact `2656d1664b7321f3fb5e1647befc45585094a891`.
+The workflow fails explicitly with `INCOMPLETE` observations on both CPUs;
+source, capture cleanup and all 72 retained file digests reconcile. All ten
+dynamically checked introspection entry points were available. Initial public
+loaded-image counts grow from 44 to 307 after initializing introspection. Each
+individual public capture is generation-stable, but the before/after graphs
+differ and 307 SPI images have null per-image backing paths. Missing
+paths are not evidence of complete cache membership.
+
+The active root-cache UUID matches the root file header. Full byte hashes were
+collected for two backing files on ARM (4,915,642,368 bytes in 30.39 seconds) and
+seven on Intel (4,979,867,648 bytes in 112.20 seconds). Subcache UUID-table
+correspondence is not yet established. These costs already make whole-cache
+hashing inappropriate for routine incremental checks, before considering the
+compiler's current scalar hash implementation. The follow-up investigates
+validated image membership/ranges, backing metadata and bounded hash cost;
+no production identity guard is relaxed.
+
+The actual native link records contain 80 input records representing 42 unique
+files on each host, with 194 failed searches on ARM and 278 on Intel. A couple
+of top-level SDK stubs cannot describe the full native input graph. Compiler,
+driver and linker loaded dependencies and selection inputs also need coverage.
+The original safe no-reuse result remains in force for both VM and native
+Darwin builds.
+
+Evidence is retained under
+`/home/nathan/vm/nil-win11/artifacts/macos-parity-20261105/cache-identity-probe/run-41955423846`;
+`reconciliation.json` is sealed as
+`7444bc72adf84e232cb1a4026e9d69118f0723f70e71d479bbc77e47620da4c8`.
+Its PASS describes raw-evidence replay only; both native diagnostic outcomes
+remain INCOMPLETE.
+
+The next bounded diagnostic is designed separately: positive cache-membership
+observations, root/subcache mapping and slide-table correspondence, selected
+on-disk image ranges with fixup/zero-fill distinctions, a 128 MiB scalar versus
+platform SHA comparison, and direct driver/linker loaded-library observations.
+Compiler-specific probes must also include the actual NIL runtime link inputs.
+A range identity would need its own explicit schema and complete before/after
+validation; it cannot be represented as an ordinary whole-file identity.
+The design remains outside production code until both completeness and cost
+are established.
+
+
+## Windows assembly regression at 8517ad0
+
+A private MSVC/LLVM build at exact
+`8517ad0288700187a3714042ea259f8cf5e67773` passes all four focused CTests:
+351 validator checks, eight native Ny/Matrix executions, four interpreted
+Matrix routes and two native Matrix routes. The complete ARM fixture also
+round-trips through both frontends and text/binary NIL with the expected
+interpreter rejection. Foreign ARM targets are rejected by x86 native routes
+while preserving existing destinations. This proves Windows regression and
+serialization behavior, not native ARM execution.
+
+The 12 owned phases verified process cleanup; the build took 63.5 seconds and
+the bounded run completed in 100.03 seconds. Exact source/input/tool seals and
+the accepted `5630388` SDK manifest plus all 13 tool/runtime payload hashes
+were unchanged. No active SDK, VSIX, guest checkout or settings were replaced.
+A failed initial multi-remote evidence copy is retained; separate file copies
+succeeded without rerunning the native tests.
+
+Evidence is retained under
+`/home/nathan/vm/nil-win11/artifacts/macos-parity-20261105/windows-asm-8517ad0`;
+`windows-reconciliation.json` is sealed as
+`3bcabc466559e1e2794a882adbc918bd33fb5358196b91978b7934323b5d3a00`.
+The reconciliation verifies 68 copied evidence files and 1,637 source files.
+
+
+## Isolated macOS development SDK pipeline
+
+The manual `macOS development SDK` workflow builds native LLVM-ON candidates
+on Intel and Apple Silicon. It selects a root tool layout, records an exact
+pre-CTest build snapshot, retains the complete test inventory, and uses the
+existing development-package rules without changing the Linux-only RC gate.
+A failing test still fails the job. Packaging and diagnostics can continue
+after a complete failed inventory so their results are available independently.
+
+Pandoc 3.13 comes from hash-pinned official per-architecture release assets.
+Build and installed Mach-O loader metadata are identical, so existing tested
+versus packaged byte-equality checks remain in force. Candidate validation is
+followed by relocation outside the checkout to a space/Unicode path, direct
+loader metadata observations, actual shared ABI and loader-path checks, and
+the full 1,184 source/binary-library consumer executions. A private conflicting
+sibling library supplies a negative loader control. Candidate bytes and modes
+are rechecked after use; partial failures remain diagnostic evidence.
+
+Darwin installed consumers now admit native x86_64 and arm64 development hosts.
+Their environment removes source/library overrides and Apple compiler/SDK
+selectors, and records the selected default toolchain. External Homebrew and
+Apple prerequisites remain explicit. This workflow neither activates an SDK
+nor publishes to Lich, and it does not establish a portable or release-qualified
+macOS package. Native results must be recorded separately from this pipeline
+implementation.
+
+The first full Linux source-validation run at `8517ad0` exposed one stale
+rejection golden: it expected the previous x86-only diagnostic. The expected
+stderr now matches the two-target diagnostic exactly. The focused route CTest
+and a direct compile-rejection/output-preservation check pass; the original
+full-suite failure log and before/after evidence remain retained under
+`aarch64-inline-assembly/rejection-golden`. No compiler behavior was weakened.
+
+The final staging workflow passed 12 host controls and 14 consumer controls,
+Python/YAML/shell checks and strict C++ syntax checking for its shared consumer.
+Independent reviews cover the actual loader-path/ABI control, environment
+selectors, external dylib aliases, failed-inventory retention and partial
+candidate evidence. The five-file validation report is sealed as
+`628e72b3816232679b8f0b415da6e151f87ccd195b66c69a66fcaee30eb20dd8`
+under `macos-parity-20261105/sdk-staging-workflow-controls/report-final.json`.
+These are workflow controls, not native SDK acceptance.

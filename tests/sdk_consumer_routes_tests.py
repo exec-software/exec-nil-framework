@@ -87,7 +87,7 @@ class ConsumerTests(unittest.TestCase):
         self.check(self.fixture())
 
     def test_platform_tools_and_exact_evidence(self):
-        for platform, suffix in (("linux", ""), ("win32", ".exe")):
+        for platform, suffix in (("linux", ""), ("win32", ".exe"), ("darwin", "")):
             with self.subTest(platform=platform), mock.patch.object(consumer.sys, "platform", platform):
                 for name in ("nilcompiler", "nilinterpreter", "nilassembler", "nillinker"):
                     self.assertEqual(consumer.sdk_tool(self.sdk, name), self.sdk / (name + suffix))
@@ -98,10 +98,12 @@ class ConsumerTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.check(report)
 
-    def test_windows_development_is_not_rc_qualification(self):
-        for platform in ("linux", "win32", "darwin"):
-            with self.subTest(platform=platform), mock.patch.object(consumer.sys, "platform", platform):
-                if platform in ("linux", "win32"):
+    def test_development_hosts_do_not_broaden_rc_qualification(self):
+        for platform in ("linux", "win32", "darwin", "freebsd13"):
+            with self.subTest(platform=platform), \
+                    mock.patch.object(consumer.sys, "platform", platform), \
+                    mock.patch.object(consumer.platform, "machine", return_value="arm64"):
+                if platform in ("linux", "win32", "darwin"):
                     consumer.require_supported_host(False)
                 else:
                     with self.assertRaises(ValueError):
@@ -111,6 +113,53 @@ class ConsumerTests(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(ValueError, "RC.*requires Linux"):
                         consumer.require_supported_host(True)
+
+    def test_darwin_admits_only_native_supported_architectures(self):
+        with mock.patch.object(consumer.sys, "platform", "darwin"):
+            for machine in ("x86_64", "arm64", "i386", "arm64e", "aarch64", ""):
+                with self.subTest(machine=machine), \
+                        mock.patch.object(consumer.platform, "machine", return_value=machine):
+                    if machine in ("x86_64", "arm64"):
+                        consumer.require_supported_host(False)
+                    else:
+                        with self.assertRaisesRegex(ValueError, "native x86_64 or arm64"):
+                            consumer.require_supported_host(False)
+
+    def test_darwin_consumer_removes_source_and_loader_overrides(self):
+        values = {"PATH": "/toolchain", "HOME": "/consumer", "NIL_LIBRARY_PATH": "/source",
+                  "NY_STDLIB_PATH": "/source", "DYLD_LIBRARY_PATH": "/build",
+                  "DYLD_FALLBACK_LIBRARY_PATH": "/provider", "DYLD_INSERT_LIBRARIES": "/inject",
+                  "CXX": "/foreign/compiler", "SDKROOT": "/foreign/sdk", "LIBRARY_PATH": "/build",
+                  "DEVELOPER_DIR": "/foreign/xcode", "TOOLCHAINS": "foreign",
+                  "COMPILER_PATH": "/foreign", "GCC_EXEC_PREFIX": "/foreign",
+                  "CCC_OVERRIDE_OPTIONS": "foreign"}
+        with mock.patch.dict(consumer.os.environ, values, clear=True):
+            for platform in ("linux", "win32", "darwin"):
+                with self.subTest(platform=platform), mock.patch.object(consumer.sys, "platform", platform):
+                    expected = {key: value for key, value in values.items()
+                                if not key.startswith(("NIL_", "NY_"))}
+                    if platform == "darwin":
+                        expected = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": "/consumer"}
+                    self.assertEqual(consumer.consumer_environment(), expected)
+
+    def test_explicit_consumer_work_retains_success_and_failure_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary).resolve(strict=True)
+            for failure in (False, True):
+                output = parent / str(failure)
+                try:
+                    with consumer.diagnostic_directory(output) as work:
+                        self.assertEqual(work, output)
+                        (work / "raw.json").write_text("partial or successful evidence")
+                        if failure:
+                            raise ValueError("fixture failed")
+                except ValueError as error:
+                    self.assertTrue(failure)
+                    self.assertIn(str(output), str(error))
+                self.assertEqual((output / "raw.json").read_text(), "partial or successful evidence")
+                with self.assertRaises(FileExistsError):
+                    with consumer.diagnostic_directory(output):
+                        self.fail("reused existing work directory")
 
     def test_report_publish_closes_temporary_before_replace(self):
         with tempfile.TemporaryDirectory() as temporary:

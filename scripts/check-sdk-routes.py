@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import shutil
 import subprocess
 import sys
@@ -83,8 +84,27 @@ def sdk_tool(sdk: Path, name: str) -> Path:
 def require_supported_host(require_rc: bool) -> None:
     if require_rc and sys.platform != "linux":
         raise ValueError("RC installed consumer qualification currently requires Linux")
-    if sys.platform not in ("linux", "win32"):
-        raise ValueError("installed consumer validation currently supports Linux and Windows")
+    if sys.platform not in ("linux", "win32", "darwin"):
+        raise ValueError("installed consumer validation supports Linux, Windows and native macOS")
+    if sys.platform == "darwin" and platform.machine() not in ("x86_64", "arm64"):
+        raise ValueError("macOS development consumers require native x86_64 or arm64")
+
+
+def consumer_environment() -> dict[str, str]:
+    """Keep source overrides and Darwin loader overrides out of installed proof."""
+    darwin_overrides = {"CC", "CXX", "SDKROOT", "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH",
+                        "LIBRARY_PATH", "LDFLAGS", "CPPFLAGS", "CFLAGS", "CXXFLAGS",
+                        "MACOSX_DEPLOYMENT_TARGET", "DEVELOPER_DIR", "TOOLCHAINS",
+                        "COMPILER_PATH", "GCC_EXEC_PREFIX", "CCC_OVERRIDE_OPTIONS"}
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("NY_", "NIL_")) and not
+                   (sys.platform == "darwin" and
+                    (key.startswith(("DYLD_", "LD_")) or key in darwin_overrides))}
+    if sys.platform == "darwin":
+        # Native consumers use the declared Apple command-line toolchain.
+        # Python and SDK tools are invoked by their explicit absolute paths.
+        environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    return environment
 
 
 def check_report(report: dict, source: Path, sdk: Path, library: Path,
@@ -149,14 +169,19 @@ def check_report(report: dict, source: Path, sdk: Path, library: Path,
 
 
 @contextmanager
-def diagnostic_directory():
-    root = Path(tempfile.mkdtemp(prefix="ny-installed-routes-")).resolve()
+def diagnostic_directory(retained: Path | None = None):
+    if retained is None:
+        root = Path(tempfile.mkdtemp(prefix="ny-installed-routes-")).resolve()
+    else:
+        retained.mkdir(parents=True, exist_ok=False)
+        root = retained.resolve(strict=True)
     try:
         yield root
     except Exception as error:
         raise ValueError("{}\nConsumer artifacts preserved for diagnosis: {}".format(error, root)) from error
     else:
-        shutil.rmtree(root)
+        if retained is None:
+            shutil.rmtree(root)
 
 
 def run(arguments: list[str], cwd: Path, environment: dict[str, str]) -> str:
@@ -171,16 +196,16 @@ def run(arguments: list[str], cwd: Path, environment: dict[str, str]) -> str:
     return process.stdout
 
 
-def run_contract(sdk: Path, revision: str, require_rc: bool) -> dict:
-    environment = {key: value for key, value in os.environ.items()
-                   if not key.startswith(("NY_", "NIL_"))}
+def run_contract(sdk: Path, revision: str, require_rc: bool,
+                 work_directory: Path | None = None) -> dict:
+    environment = consumer_environment()
     validator = ROOT / "scripts/validate-sdk.py"
     harness = ROOT / "tests/routes/ny_route_matrix.py"
     pipeline = ROOT / "tests/tools/native_toolchain_pipeline.py"
-    # Development consumer regression evidence is useful on Windows too. This
-    # does not broaden the Linux-only RC/release qualification contract.
+    # Native Windows/macOS development evidence does not broaden the
+    # Linux-only RC/release qualification contract.
     require_supported_host(require_rc)
-    with diagnostic_directory() as work:
+    with diagnostic_directory(work_directory) as work:
         validation = [sys.executable, str(validator), str(sdk),
                       "--expected-revision", revision]
         run(validation + (["--require-rc-checks"] if require_rc else []), work, environment)
@@ -266,13 +291,18 @@ def main() -> int:
     parser.add_argument("--require-rc-checks", action="store_true")
     parser.add_argument("--output", type=Path, required=True,
                         help="consumer evidence JSON outside the sealed SDK")
+    parser.add_argument("--work-dir", type=Path,
+                        help="fresh directory outside the SDK; retain all partial route evidence")
     args = parser.parse_args()
     try:
         sdk = args.sdk.resolve(strict=True)
         output = args.output.absolute()
         if output.is_symlink() or sdk == output.resolve() or sdk in output.resolve().parents:
             raise ValueError("consumer report must be outside the sealed SDK and not a symlink")
-        report = run_contract(sdk, args.expected_revision, args.require_rc_checks)
+        work = args.work_dir.absolute() if args.work_dir is not None else None
+        if work is not None and (work.is_symlink() or sdk == work.resolve() or sdk in work.resolve().parents):
+            raise ValueError("consumer work directory must be outside the sealed SDK and not a symlink")
+        report = run_contract(sdk, args.expected_revision, args.require_rc_checks, work)
         write_report(output, report)
         print("installed SDK consumer routes: {} passed (source and binary libraries)".format(
             report["execution_count"]))

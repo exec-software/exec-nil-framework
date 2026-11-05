@@ -1,0 +1,231 @@
+name: macOS development SDK
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-development-sdk-${{ github.ref }}
+  cancel-in-progress: false
+
+# Isolated development candidates only. Failed CTest cases stay failed; neither
+# a successful package nor consumer campaign activates or release-qualifies it.
+jobs:
+  candidate:
+    name: macOS ${{ matrix.host.arch }} development candidate
+    runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 210
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        host:
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: macos-15
+            arch: arm64
+    defaults:
+      run:
+        shell: bash
+    env:
+      NIL_CI_ARCH: ${{ matrix.host.arch }}
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Record exact source and native identity
+        timeout-minutes: 2
+        run: |
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = "$NIL_CI_ARCH"
+          python3 -B scripts/ci/macos-sdk.py identity
+      - name: Check staging and evidence controls
+        timeout-minutes: 2
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/test_macos_sdk.py -v 2>&1 | tee build/macos-sdk-evidence/staging-controls.log
+          python3 -B scripts/ci/test_macos_evidence.py -v 2>&1 | tee build/macos-sdk-evidence/inventory-controls.log
+          python3 -B tests/sdk_consumer_routes_tests.py -v 2>&1 | tee build/macos-sdk-evidence/consumer-controls.log
+      - name: Fetch hash-pinned official Pandoc
+        id: pandoc
+        timeout-minutes: 5
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-sdk.py pandoc 2>&1 | tee build/macos-sdk-evidence/pandoc.log
+      - name: Record installed toolchain and optional providers
+        id: toolchain
+        timeout-minutes: 3
+        run: |
+          command -v cmake
+          command -v ninja
+          nil_llvm_prefix="$(brew --prefix llvm@18)"
+          nil_llvm_version="$("$nil_llvm_prefix/bin/llvm-config" --version)"
+          test "${nil_llvm_version%%.*}" = 18
+          echo "LLVM_DIR=$nil_llvm_prefix/lib/cmake/llvm" >> "$GITHUB_ENV"
+          nil_macos_sdk="$(xcrun --sdk macosx --show-sdk-path)"
+          test -f "$nil_macos_sdk/usr/include/sqlite3.h"
+          echo "NIL_CI_SQLITE_INCLUDE=$nil_macos_sdk/usr/include" >> "$GITHUB_ENV"
+          echo "DYLD_FALLBACK_LIBRARY_PATH=/usr/local/lib:/usr/lib" >> "$GITHUB_ENV"
+          printf 'SQLite: Apple SDK headers at %s; system dylib\n' "$nil_macos_sdk/usr/include" > build/macos-sdk-evidence/providers.txt
+          if nil_pg_prefix="$(brew --prefix postgresql@16 2>/dev/null)" &&
+             test -x "$nil_pg_prefix/bin/pg_config" && test -x "$nil_pg_prefix/bin/initdb"; then
+            nil_pg_include="$("$nil_pg_prefix/bin/pg_config" --includedir)"
+            nil_pg_library="$("$nil_pg_prefix/bin/pg_config" --libdir)"
+            nil_pg_share="$("$nil_pg_prefix/bin/pg_config" --sharedir)"
+            test -f "$nil_pg_include/libpq-fe.h"
+            test -f "$nil_pg_library/libpq.dylib"
+            test -f "$nil_pg_share/postgres.bki"
+            {
+              echo "NIL_TEST_POSTGRES_BIN=$nil_pg_prefix/bin"
+              echo "NIL_TEST_POSTGRES_SHARE=$nil_pg_share"
+              echo "NIL_CI_PQ_INCLUDE=$nil_pg_include"
+              echo "DYLD_FALLBACK_LIBRARY_PATH=$nil_pg_library:/usr/local/lib:/usr/lib"
+            } >> "$GITHUB_ENV"
+            "$nil_pg_prefix/bin/pg_config" --version --includedir --libdir --sharedir >> build/macos-sdk-evidence/providers.txt
+          else
+            echo "NIL_CI_PQ_INCLUDE=OFF" >> "$GITHUB_ENV"
+            echo 'PostgreSQL: coherent installed provider absent; actual CTest skips/failures retained' >> build/macos-sdk-evidence/providers.txt
+          fi
+          {
+            echo 'GTK: macOS provider is not implemented'
+            echo 'Installed candidate checks: inherited DYLD/source/tool overrides removed; Apple toolchain PATH; system SQLite only'
+            echo 'Homebrew LLVM dependencies remain external development prerequisites, not bundled portable libraries'
+          } >> build/macos-sdk-evidence/providers.txt
+          {
+            printf 'ImageOS=%s\nImageVersion=%s\n' "$ImageOS" "$ImageVersion"
+            sw_vers
+            uname -a
+            brew list --versions
+            xcode-select -p
+            xcrun --sdk macosx --show-sdk-path
+            xcrun --sdk macosx --show-sdk-version
+            /usr/bin/clang++ --version
+            "$nil_llvm_prefix/bin/llvm-config" --version
+            cmake --version
+            ninja --version
+            python3 --version
+          } > build/macos-sdk-evidence/toolchain.txt
+      - name: Configure native root-layout SDK build
+        id: configure
+        timeout-minutes: 5
+        run: |
+          set -o pipefail
+          # Build and install use the same relative loader metadata. Preserve
+          # exact tested/staged byte equality; never rewrite a tested Mach-O.
+          cmake -S . -B build/ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=/usr/bin/clang \
+            -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
+            -DCMAKE_OSX_ARCHITECTURES="$NIL_CI_ARCH" \
+            -DCMAKE_OSX_SYSROOT="$(xcrun --sdk macosx --show-sdk-path)" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_INSTALL_BINDIR=. \
+            -DCMAKE_INSTALL_NAME_DIR=@rpath \
+            -DCMAKE_BUILD_WITH_INSTALL_NAME_DIR=ON \
+            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+            '-DCMAKE_INSTALL_RPATH=@loader_path/nillib/native;@loader_path;@loader_path/../lib' \
+            -DBUILD_TESTING=ON -DNIL_BUILD_EXPERIMENTAL_TOOLS=ON \
+            -DNIL_ENABLE_LLVM=ON -DLLVM_DIR="$LLVM_DIR" \
+            -DNILCOMPILER_SQLITE_INCLUDE_DIR="$NIL_CI_SQLITE_INCLUDE" \
+            -DNILCOMPILER_POSTGRESQL_INCLUDE_DIR="$NIL_CI_PQ_INCLUDE" \
+            2>&1 | tee build/macos-sdk-evidence/configure.log
+          ctest --test-dir build/ci --show-only=json-v1 > build/macos-sdk-evidence/registration.json
+      - name: Build every framework tool and test
+        id: build
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          cmake --build build/ci --parallel 2 -- -k 0 2>&1 | tee build/macos-sdk-evidence/build.log
+      - name: Record exact pre-test build snapshot
+        id: snapshot
+        if: steps.build.outcome == 'success'
+        timeout-minutes: 3
+        run: |
+          python3 -B scripts/sdk_qualification.py --repo-root . --build-dir build/ci \
+            --revision "$GITHUB_SHA" --tests ON --output build/macos-sdk-evidence/sdk-build-evidence.json
+      - name: Run full registered CTest inventory
+        id: ctest
+        if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
+        timeout-minutes: 20
+        run: |
+          set -o pipefail
+          ctest --test-dir build/ci --output-on-failure --parallel 2 --no-tests=error --timeout 360 \
+            --test-output-size-passed 16384 --test-output-size-failed 65536 \
+            --output-junit ctest-results.xml 2>&1 | tee build/macos-sdk-evidence/ctest.log
+      - name: Install isolated development stage
+        id: install
+        # A complete failed suite is still recorded, and still fails this job.
+        # Separate candidate mechanics may proceed without hiding that result.
+        if: ${{ !cancelled() && steps.snapshot.outcome == 'success' }}
+        timeout-minutes: 4
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-sdk.py install 2>&1 | tee build/macos-sdk-evidence/install.log
+      - name: Build candidate HTML documentation
+        id: docs
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.pandoc.outcome == 'success' }}
+        timeout-minutes: 6
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-sdk.py docs 2>&1 | tee build/macos-sdk-evidence/docs.log
+      - name: Package exact-source development candidate
+        id: package
+        if: ${{ !cancelled() && steps.docs.outcome == 'success' }}
+        timeout-minutes: 11
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-sdk.py package 2>&1 | tee build/macos-sdk-evidence/package.log
+      - name: Validate staged payload and execute shared/native smoke
+        id: staged
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        timeout-minutes: 12
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-sdk.py validate-stage 2>&1 | tee build/macos-sdk-evidence/validate-stage.log
+      - name: Relocate sealed candidate outside the checkout
+        id: relocate
+        if: ${{ !cancelled() && steps.staged.outcome == 'success' }}
+        timeout-minutes: 3
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-sdk.py relocate 2>&1 | tee build/macos-sdk-evidence/relocate.log
+      - name: Observe SDK loader metadata and external prerequisites
+        id: dependencies
+        if: ${{ !cancelled() && steps.relocate.outcome == 'success' }}
+        timeout-minutes: 8
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-sdk.py dependencies 2>&1 | tee build/macos-sdk-evidence/dependencies.log
+      - name: Revalidate relocated shared/native runtime
+        id: relocated
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        timeout-minutes: 15
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-sdk.py validate-relocated 2>&1 | tee build/macos-sdk-evidence/validate-relocated.log
+      - name: Run full installed source and binary consumer campaign
+        if: ${{ !cancelled() && steps.relocated.outcome == 'success' }}
+        timeout-minutes: 45
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-sdk.py consumers 2>&1 | tee build/macos-sdk-evidence/consumers.log
+      - name: Preserve candidate and all partial evidence
+        if: always()
+        timeout-minutes: 8
+        run: python3 -B scripts/ci/macos-sdk.py collect
+      - name: Upload development candidate evidence
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-development-sdk-${{ matrix.host.arch }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: build/macos-sdk-evidence/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 1
+          include-hidden-files: true
