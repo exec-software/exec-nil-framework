@@ -1,0 +1,166 @@
+name: macOS installed debugger replay
+
+"on":
+  workflow_dispatch:
+    inputs:
+      source_run:
+        description: Completed macOS development SDK workflow run ID
+        type: string
+        required: true
+      sdk_revision:
+        description: Exact forty-character SDK source commit
+        type: string
+        required: true
+      architecture:
+        description: Native SDK architecture to replay
+        type: choice
+        options: [both, x86_64, arm64]
+        default: both
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: macos-sdk-replay-${{ github.ref }}-${{ inputs.source_run }}-${{ inputs.architecture }}
+  cancel-in-progress: false
+
+# Test unchanged SDK artifacts with a separately identified acceptance helper.
+# This never rebuilds, activates, publishes or release-qualifies an SDK.
+jobs:
+  replay:
+    name: macOS ${{ matrix.host.arch }} installed debugger
+    runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        host: ${{ fromJSON(inputs.architecture == 'arm64' && '[{"runner":"macos-15","arch":"arm64"}]' || inputs.architecture == 'x86_64' && '[{"runner":"macos-15-intel","arch":"x86_64"}]' || '[{"runner":"macos-15-intel","arch":"x86_64"},{"runner":"macos-15","arch":"arm64"}]') }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      NIL_CI_ARCH: ${{ matrix.host.arch }}
+      NIL_SOURCE_RUN: ${{ inputs.source_run }}
+      NIL_SDK_REVISION: ${{ inputs.sdk_revision }}
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check replay and debugger controls
+        timeout-minutes: 2
+        run: |
+          mkdir -p build/macos-replay-evidence
+          set -o pipefail
+          python3 -B scripts/ci/test_macos_sdk_replay.py -v 2>&1 | tee build/macos-replay-evidence/replay-controls.log
+          python3 -B scripts/ci/test_macos_debugger.py -v 2>&1 | tee build/macos-replay-evidence/debugger-controls.log
+      - name: Retrieve exact SDK artifact and authenticated metadata
+        timeout-minutes: 7
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B - <<'PY'
+          import hashlib, importlib.util, json, os, platform, re, shutil, sys
+          from pathlib import Path
+          root = Path('.').resolve()
+          evidence = root / 'build/macos-replay-evidence'
+          source_run = os.environ['NIL_SOURCE_RUN']
+          revision = os.environ['NIL_SDK_REVISION']
+          arch = os.environ['NIL_CI_ARCH']
+          repository = os.environ['GITHUB_REPOSITORY']
+          assert re.fullmatch('[1-9][0-9]{0,19}', source_run)
+          assert re.fullmatch('[0-9a-f]{40}', revision)
+          assert repository == 'exec-software/exec-nil-framework'
+          assert platform.system() == 'Darwin' and platform.machine() == arch
+          gh = Path(shutil.which('gh')).resolve(strict=True)
+          spec = importlib.util.spec_from_file_location('replay_transport', root / 'tests/tools/ordinary_io_parity_contract.py')
+          capture = importlib.util.module_from_spec(spec); spec.loader.exec_module(capture)
+          owner = capture.load_ownership(root)
+          def run(name, argv, seconds):
+              result = capture.run_process(owner, [str(x) for x in argv], root, os.environ.copy(), evidence, name, seconds)
+              (evidence / (name + '.json')).write_text(json.dumps(result, indent=2) + '\n')
+              assert result['status'] == 'PASS' and result['cleanup_verified'], name
+              return (evidence / result['stdout']).read_bytes()
+          def api(name, endpoint):
+              return json.loads(run(name, [gh, 'api', endpoint], 30))
+          source = api('source-run', f'repos/{repository}/actions/runs/{source_run}')
+          assert source['id'] == int(source_run) and source['status'] == 'completed'
+          assert source['head_sha'] == revision and source['repository']['full_name'] == repository
+          assert source['path'] == '.github/workflows/macos-sdk.yml' and source['event'] == 'workflow_dispatch'
+          artifacts = api('source-artifacts', f'repos/{repository}/actions/runs/{source_run}/artifacts?per_page=100')
+          assert artifacts['total_count'] <= 100
+          name = f"macos-development-sdk-{arch}-{revision}-{source['run_attempt']}"
+          matches = [a for a in artifacts['artifacts'] if a['name'] == name and not a['expired']]
+          assert len(matches) == 1
+          artifact = matches[0]
+          assert type(artifact['id']) is int and artifact['id'] > 0
+          assert 0 < artifact['size_in_bytes'] <= 1024**3
+          assert re.fullmatch('sha256:[0-9a-f]{64}', artifact['digest'])
+          assert artifact['workflow_run']['id'] == int(source_run) and artifact['workflow_run']['head_sha'] == revision
+          (evidence / 'artifact-metadata.json').write_text(json.dumps({'artifact': artifact, 'run': source}, indent=2) + '\n')
+          archive = evidence / 'source-artifact.zip'
+          # Keep credentials only in the child's environment. Its regular-file
+          # stdout is bounded by an OS file-size limit; outer stderr/capture and
+          # process-group cleanup retain the existing owned-process contract.
+          wrapper = ('import os,resource,sys\n'
+                     'resource.setrlimit(resource.RLIMIT_FSIZE,(1024**3,1024**3))\n'
+                     'fd=os.open(sys.argv[1],os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)\n'
+                     'os.dup2(fd,1);os.close(fd)\n'
+                     'os.execv(sys.argv[2],sys.argv[2:])\n')
+          run('artifact-download', [sys.executable, '-I', '-B', '-c', wrapper, archive, gh,
+                                   'api', f"repos/{repository}/actions/artifacts/{artifact['id']}/zip"], 300)
+          digest = hashlib.sha256()
+          with archive.open('rb') as stream:
+              while block := stream.read(1024**2): digest.update(block)
+          assert archive.stat().st_size == artifact['size_in_bytes']
+          assert 'sha256:' + digest.hexdigest() == artifact['digest']
+          (evidence / 'transport.json').write_text(json.dumps({'bytes': archive.stat().st_size,
+              'sha256': digest.hexdigest(), 'artifact_id': artifact['id'], 'source_run': int(source_run)}, indent=2) + '\n')
+          PY
+      - name: Replay sealed installed debugger and execution checkpoints
+        timeout-minutes: 37
+        run: |
+          set -o pipefail
+          python3 -B scripts/ci/macos-sdk-replay.py \
+            --artifact-zip "$GITHUB_WORKSPACE/build/macos-replay-evidence/source-artifact.zip" \
+            --artifact-metadata "$GITHUB_WORKSPACE/build/macos-replay-evidence/artifact-metadata.json" \
+            --sdk-revision "$NIL_SDK_REVISION" --helper-revision "$GITHUB_SHA" --architecture "$NIL_CI_ARCH" \
+            --work-dir "$RUNNER_TEMP/nil-sdk-replay" \
+            --output "$GITHUB_WORKSPACE/build/macos-replay-evidence/replay" \
+            2>&1 | tee build/macos-replay-evidence/replay.log
+      - name: Seal complete or partial replay evidence
+        if: always()
+        timeout-minutes: 3
+        run: |
+          python3 -B - <<'PY'
+          import hashlib, json, stat, subprocess
+          from pathlib import Path
+          root = Path('build/macos-replay-evidence'); root.mkdir(parents=True, exist_ok=True)
+          files = {}
+          for path in sorted(root.rglob('*')):
+              mode = path.lstat().st_mode
+              assert stat.S_ISDIR(mode) or stat.S_ISREG(mode), str(path)
+              if stat.S_ISREG(mode):
+                  h = hashlib.sha256()
+                  with path.open('rb') as stream:
+                      while block := stream.read(1024**2): h.update(block)
+                  files[path.relative_to(root).as_posix()] = {'bytes': path.stat().st_size, 'sha256': h.hexdigest()}
+          dirty = subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'], text=True, timeout=15)
+          (root / 'evidence.json').write_text(json.dumps({'files': files, 'source_unchanged': not dirty,
+              'tracked_changes': dirty, 'qualification': False}, indent=2) + '\n')
+          assert not dirty
+          PY
+      - name: Upload replay evidence
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-sdk-replay-${{ matrix.host.arch }}-${{ inputs.sdk_revision }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: build/macos-replay-evidence/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 1

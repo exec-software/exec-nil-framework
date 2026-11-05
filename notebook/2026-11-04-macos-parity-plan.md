@@ -1655,5 +1655,22 @@ A retained reproduction using Apple's parser source passes fourteen controls,
 including five previously accepted scope forms rejected without parser calls.
 That reproduction is host execution of Apple source, not native Darwin proof.
 Linux evidence is `macos-parity-20261105/postgresql-numeric-host/linux-focused-report.json`,
-SHA `cf330267` (full digest in the retained report inventory). Independent review
+SHA `cf330267eb62bd7558adbf00a5109242b67cc64f1c692135226bfa4a3424d444`. Independent review
 passes; actual Windows and both native Mac regression checks remain pending.
+
+## Installed debugger replay
+
+The separate [replay workflow](../.github/workflows/macos-sdk-replay.yml) can run
+the corrected debugger/checkpoint acceptance against an unchanged development
+SDK artifact. It requires the completed source run, exact SDK and helper
+revisions, the official ZIP digest/size, original complete CTest results and
+original payload/pre-test tool hashes. Extraction, direct external prerequisites
+and all after-state checks are explicit; an original failed test stays failed.
+The original SDK source is never relabeled as the newer helper source.
+
+Eighteen replay controls and seventeen debugger controls pass, with independent
+review. Host-only extraction of the actual ARM artifact validates 813 evidence
+files and all 261 SDK files (260 payload files plus manifest); it executes no
+Darwin binaries and proves no current native prerequisite availability. Actual
+native debugger replay remains pending. The workflow neither rebuilds nor
+activates or publishes the SDK.
