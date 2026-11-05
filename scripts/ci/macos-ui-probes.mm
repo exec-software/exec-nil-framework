@@ -122,7 +122,12 @@ int main() {
         }
       }];
       [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
-      [app activate]; // Request activation only for this owned application.
+      // Match the GTK4.18 Quartz backend's activation of an unbundled app.
+      // This private diagnostic owns the only window it activates.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+      [app activateIgnoringOtherApps:YES];
+#pragma clang diagnostic pop
       [app run];
       result[@"after_run_active"] = @(app.isActive);
       result[@"after_run_running"] = @(app.isRunning);

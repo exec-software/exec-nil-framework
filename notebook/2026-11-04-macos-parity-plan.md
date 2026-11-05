@@ -1674,3 +1674,37 @@ files and all 261 SDK files (260 payload files plus manifest); it executes no
 Darwin binaries and proves no current native prerequisite availability. Actual
 native debugger replay remains pending. The workflow neither rebuilds nor
 activates or publishes the SDK.
+
+## ARM installed consumers and third UI prerequisite check
+
+The `2f5d695` Apple Silicon candidate completes its installed standard-library
+campaign with 1,184 reported passes: 888 retained executions independently
+replayed and 296 object/link routes checked by the pinned driver without retained
+child streams. Its private PostgreSQL provider passes in 167.78 seconds; installed
+`nilstd` and `nillib` each pass six routes with owned server shutdown verified.
+All payload, loader and original pre-test seals remain intact. The full source
+inventory records 566 passes, two failures (incremental reuse and numeric host
+validation) and three skips (UI and two lifetime bounds). The original debugger
+helper fails before acceptance execution on the known schema mismatch.
+
+Evidence is under `macos-parity-20261105/sdk-run-41966883934/arm64`.
+Core reconciliation SHA is `4fbdffce936721ca320ef77436d2e19d4a95e41ed23106b819d0a96e39e69bd4`;
+consumer reconciliation SHA is `7fe4755fa1cc3cb8376d399b1aeab8fa15d5b5209ab2802d793f0784143796c2`;
+PostgreSQL reconciliation SHA is `c59ce0aed2dcd8b1a1729e19b2e8ec52220e3e7a619131002e36bf1c8bc122a7`.
+The paired Intel run remains active.
+
+The second UI probe, [41969185706](https://github.com/exec-software/exec-nil-framework/actions/runs/41969185706),
+preserves another prerequisite failure: cooperative activation leaves the owned
+application inactive, and the selected Apple SDK has no usable `libffi.pc` in the
+probed directory. Neither is evidence of a working GTK provider. Reconciliation
+SHA is `35f0737a50b59edaee1359e4c0207f5c5976337729b4ed231fa10c9e67b6da30`.
+
+The third correction uses only pkgconf's observed Homebrew macOS 15 compatibility
+directory and overrides its explicit `homebrew_sdkroot` variable with the selected
+Apple SDK. Ordinary Homebrew library paths are not rebased. Own-application
+activation follows GTK 4.18's Quartz behavior; active/key-window readiness,
+actual application dispatch, view delivery and cleanup remain required. No
+global input or permission changes are made. Sixteen controls and independent
+reviews pass. Correction evidence SHA is
+`0e2460f61ece3b14579ab6827164d579f9128cf7ea6d98c91d79360e83a051b3`;
+native execution remains pending.

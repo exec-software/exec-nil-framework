@@ -252,8 +252,10 @@ Intel and Apple Silicon macOS have passing native build baselines with LLVM
 enabled and disabled, real interpreter/checkpoint execution, and representative
 LLVM JIT/AOT execution. Both macOS architectures also pass bounded native inline
 assembly and executable-context embedding, inspection and dead-strip retention
-checks. Installed SDK, debugger and database-provider acceptance is in progress;
-the full test inventories still expose parity gaps.
+checks. The Apple Silicon development SDK also passes its full installed
+standard-library campaign and isolated PostgreSQL application routes. Installed
+debugger verification, desktop UI and the remaining source-suite gaps are still
+being addressed; full platform parity is not yet established.
 The [platform support matrix](docs/platform-support.md) separates verified
 development behavior from remaining SDK, provider and release work.
 Windows and macOS release qualification remains pending. The

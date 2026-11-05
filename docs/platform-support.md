@@ -12,13 +12,14 @@ release boundary. A newer source checkout does not update an installed SDK.
 | Linux x86_64 | Reference host. The clean `5630388` SDK passed the full suite, installed consumer routes, shared runtime, debugger, Unicode/I/O, execution checkpoints and GTK checks. | The reviewed Ubuntu release toolchain is separate from this development SDK. New release binaries still require the release gates. |
 | Windows x86_64 | The same `5630388` source has paired Linux acceptance: interpreter/bundles, LLVM JIT/AOT, object/link routes, installed tooling, checkpoints, GTK and VS Code. | Development acceptance on the provisioned Windows VM; bare-host installation and Windows release qualification remain open. GTK and PostgreSQL require external runtimes. |
 | macOS 15 Intel x86_64 | At `e087964`, native builds with LLVM ON and OFF passed build/backend-selection gates. Compiler, textual/binary interpreter, Matrix, parser and checkpoint execution passed. LLVM ON also passed assembler/linker contracts, representative JIT/AOT routes and embedded Mach-O context, including dead-strip linking and execution. | The full inventory fails only its positive incremental-reuse contract. Installed SDK, debugger/editor desktop acceptance, providers and release qualification remain open. |
-| macOS 15 Apple Silicon arm64 | The `e087964` baseline includes native routes and embedded Mach-O context. At `f96f237`, the full LLVM-ON source suite also passes the new AArch64 assembly routes for Ny and Matrix: 565 passed, one failed and five skipped out of 571. | The remaining source-test failure is incremental reuse. SDK snapshot/package, provider, desktop and release acceptance remain separate. |
+| macOS 15 Apple Silicon arm64 | At `2f5d695`, the relocated development SDK passes its installed standard-library campaign and twelve isolated PostgreSQL source/binary routes. Native assembly and embedded context also pass. | Full source suite: 566 passed, two failed and three skipped out of 571. Incremental reuse and scoped-address validation fail; the latter is fixed in newer source pending native verification. Installed debugger, desktop and release acceptance remain open. |
 
 LLVM-OFF builds exercise frontend/interpreter behavior and rejection of disabled
 native operations. Their successful tests do not establish native execution.
 The macOS archives contain eleven executable tools per profile, verified as
-Mach-O files for the expected architecture; they are build products, not
-installed or release-qualified SDK packages.
+Mach-O files for the expected architecture. The initial bring-up archives were
+build products; the newer SDK workflow additionally stages, relocates and tests
+development packages. Neither archive type is a release-qualified SDK.
 
 The exact counts, failures, skips, host provisioning and source identities are
 retained in the [Windows/Linux closeout](../notebook/2026-11-02-windows-port.md)
@@ -49,6 +50,18 @@ an actual shared-runtime ABI/loader check. A diagnostic wording mismatch in the
 malformed-library negative control stopped the installed consumer campaign;
 full SDK acceptance is still pending.
 These source checks do not replace accepted SDK bytes or establish full parity.
+
+The subsequent `2f5d695` Apple Silicon SDK completes all 1,184 reported installed
+standard-library routes: 888 retained executions independently checked from raw
+evidence, plus 296 object/link routes checked by the pinned campaign driver.
+Its private PostgreSQL 16.15 provider passes build/install and canonical loader
+checks, followed by six routes each against installed source and binary roots.
+The full source inventory has 566 passes, two failures and three skips. The new
+failure exposed Darwin accepting scoped IPv6 text as a plain numeric host address;
+`8d1f65d` rejects scope suffixes before parsing. Native verification is pending.
+The installed debugger helper stopped before execution on a manifest-field
+mismatch; corrected acceptance will replay the original sealed SDK. The paired
+Intel SDK run remains in progress.
 
 A private Windows build at `e087964` also passes four focused compiler-identity,
 source-protection and real VM/native incremental contracts: 181 checks, no skips.
@@ -102,11 +115,11 @@ the complete admission rules.
 - A separate [development SDK workflow](../.github/workflows/macos-sdk.yml) now
   implements native Darwin consumer admission, root install layout, pinned
   documentation tooling, and staged dependency/relocation checks. The ARM
-  candidate now preserves all 260 payload files plus its manifest through
-  relocation. Full consumer acceptance and the new installed debugger/checkpoint
-  checks remain pending. An optional isolated PostgreSQL 16 profile adds a
-  coherent client/server prerequisite and installed source/binary library routes;
-  its native validation is also pending.
+  candidate preserves all 260 payload files plus its manifest through relocation
+  and passes the installed standard-library campaign. Installed debugger/checkpoint
+  checks remain pending. The optional isolated PostgreSQL 16 profile now passes
+  its coherent client/server and installed source/binary routes on Apple Silicon;
+  the scoped-address validation correction still needs native verification.
 - The two native lifetime stress tests still lack a demonstrated Darwin memory
   bound. Native diagnostics show that the fixed 96 MiB virtual-memory cap is
   rejected at process setup; larger diagnostic profiles do not replace it.

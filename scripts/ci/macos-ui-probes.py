@@ -86,14 +86,38 @@ def paths(output, work, root=ROOT):
     return output, work
 
 
-def environment(work, prefix, sdk=None):
+def environment(work, prefix, compatibility=None):
     values = {key: os.environ[key] for key in ('HOME', 'USER', 'LOGNAME', 'DEVELOPER_DIR') if key in os.environ}
     values.update(PATH=str(prefix/'bin') + ':/usr/bin:/bin:/usr/sbin:/sbin', LC_ALL='C',
                   TMPDIR=str(work/'tmp'), PYTHONDONTWRITEBYTECODE='1',
                   PKG_CONFIG_LIBDIR=str(prefix/'lib/pkgconfig') + ':' + str(prefix/'share/pkgconfig'))
-    if sdk is not None:
-        values['PKG_CONFIG_LIBDIR'] += ':' + str(sdk/'usr/lib/pkgconfig')
+    if compatibility is not None:
+        values['PKG_CONFIG_LIBDIR'] += ':' + str(compatibility)
     return values
+
+
+
+def compatibility_directory(raw, prefix, major):
+    require(major == '15', 'Only the observed macOS15 compatibility profile is admitted')
+    values = raw.split(':')
+    require(0 < len(values) <= 32 and '\0' not in raw and '\n' not in raw, 'Invalid compiled pkg-config path')
+    matches = {}
+    suffix = ('Library', 'Homebrew', 'os', 'mac', 'pkgconfig', major)
+    for value in values:
+        path = Path(value)
+        if path.parts[-len(suffix):] != suffix:
+            continue
+        require(path.is_absolute() and '..' not in path.parts and path.is_dir() and
+                prefix.resolve() in path.resolve().parents, 'Untrusted macOS compatibility path')
+        matches[path.resolve()] = path
+    require(len(matches) == 1, 'One matching installed macOS compatibility directory required')
+    return next(iter(matches.values()))
+
+
+def pkg_command(program, sdk):
+    # This variable exists only in Homebrew's Apple system compatibility files.
+    # Unlike PKG_CONFIG_SYSROOT_DIR or prefix, it does not rebase Homebrew paths.
+    return [program, '--define-variable=homebrew_sdkroot=' + str(sdk)]
 
 
 def record(path, deadline):
@@ -217,8 +241,6 @@ def main():
         actual = checked('source-revision', ['/usr/bin/git', '-C', ROOT, 'rev-parse', 'HEAD'])
         require(actual == args.revision, 'Checkout revision mismatch')
         sdk = Path(checked('sdk', ['/usr/bin/xcrun', '--sdk', 'macosx', '--show-sdk-path']))
-        variables.update(environment(work, prefix, sdk))
-        report['pkg_config_directories'] = variables['PKG_CONFIG_LIBDIR'].split(':')
         compiler = Path(checked('compiler', ['/usr/bin/xcrun', '--find', 'clang++']))
         require(sdk.is_absolute() and compiler.is_absolute(), 'Nonabsolute toolchain selection')
         pkg = prefix/'bin/pkg-config'
@@ -227,6 +249,12 @@ def main():
         report['toolchain'] = {'sdk': str(sdk), 'compiler': str(compiler), 'pkg_config': str(pkg),
                                'compiler_version': checked('compiler-version', [compiler, '--version']),
                                'pkg_config_version': checked('pkg-version', [pkg, '--version'])}
+        compiled_paths = checked('pkg-compiled-path', [pkg, '--variable=pc_path', 'pkg-config'], 5)
+        compatibility = compatibility_directory(compiled_paths, prefix, platform.mac_ver()[0].split('.')[0])
+        variables.update(environment(work, prefix, compatibility))
+        report['pkg_config_directories'] = variables['PKG_CONFIG_LIBDIR'].split(':')
+        report['pkg_config_compatibility'] = str(compatibility)
+        selected_pkg = pkg_command(pkg, sdk)
         executable = work/'cocoa-probe'
         code, _, _ = run('compile-cocoa', [compiler, '-std=c++17', '-fobjc-arc', '-Wall', '-Wextra', '-Werror',
             '-isysroot', sdk, '-mmacosx-version-min=15.0', input_paths[1], '-framework', 'AppKit',
@@ -239,24 +267,24 @@ def main():
         else:
             report['problems'].append('Cocoa compilation failed; native feasibility is unknown')
         for module in ('libffi', 'zlib', 'bzip2', 'expat'):
-            directory = Path(checked('sdk-pcdir-' + module, [pkg, '--variable=pcfiledir', module], 5))
-            require(directory.is_absolute() and sdk.resolve() in directory.resolve().parents,
-                    'System dependency metadata must come from selected Apple SDK')
+            directory = Path(checked('sdk-pcdir-' + module, [*selected_pkg, '--variable=pcfiledir', module], 5))
+            require(directory.is_absolute() and directory.resolve() == compatibility.resolve(),
+                    'System dependency metadata must come from selected Homebrew compatibility directory')
             seal(directory/(module + '.pc'))
         report['required_packages'] = {}
         all_present = True
         for module in REQUIRED:
-            code, raw, _ = run('pkg-' + module, [pkg, '--modversion', module], 5)
+            code, raw, _ = run('pkg-' + module, [*selected_pkg, '--modversion', module], 5)
             require(code in (0, 1), 'Unexpected pkg-config status')
             report['required_packages'][module] = {'available': code == 0, 'version': raw.decode('utf-8').strip() if code == 0 else None}
             all_present = all_present and code == 0
             if code == 0:
-                directory = Path(checked('pcdir-' + module, [pkg, '--variable=pcfiledir', module], 5))
+                directory = Path(checked('pcdir-' + module, [*selected_pkg, '--variable=pcfiledir', module], 5))
                 require(directory.is_absolute(), 'Nonabsolute pkg-config directory')
                 seal(directory/(module + '.pc'))
         report['future_packages'] = {}
         for module in FUTURE:
-            code, raw, _ = run('future-' + module, [pkg, '--modversion', module], 5)
+            code, raw, _ = run('future-' + module, [*selected_pkg, '--modversion', module], 5)
             require(code in (0, 1), 'Unexpected optional pkg-config status')
             report['future_packages'][module] = {'available': code == 0, 'version': raw.decode('utf-8').strip() if code == 0 else None}
         code, raw, _ = run('meson-availability', [sys.executable, '-I', '-m', 'mesonbuild.mesonmain', '--version'], 5)
@@ -270,7 +298,7 @@ def main():
             else:
                 report['glib_tools'][tool] = {'available': False}
         if all_present:
-            flags = shlex.split(checked('dependency-flags', [pkg, '--cflags', '--libs', *REQUIRED], 5))
+            flags = shlex.split(checked('dependency-flags', [*selected_pkg, '--cflags', '--libs', *REQUIRED], 5))
             require(len(flags) <= 256 and all('\0' not in f and '\n' not in f for f in flags), 'Invalid compiler flag inventory')
             source = work/'dependencies.cpp'; source.write_text(DEPENDENCY_SOURCE)
             seal(source)

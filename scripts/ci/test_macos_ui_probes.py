@@ -101,12 +101,26 @@ class ProbeControls(unittest.TestCase):
             self.assertEqual(result['PKG_CONFIG_LIBDIR'], '/declared/lib/pkgconfig:/declared/share/pkgconfig')
 
     def test_sdk_metadata_is_explicit_without_rebasing_homebrew_paths(self):
+        compatibility = Path('/declared/Library/Homebrew/os/mac/pkgconfig/15')
         with mock.patch.dict(os.environ, {'PKG_CONFIG_SYSROOT_DIR': '/bad', 'SDKROOT': '/bad'}, clear=True):
-            actual = gate.environment(self.base, Path('/declared'), Path('/Apple SDK'))
+            actual = gate.environment(self.base, Path('/declared'), compatibility)
         self.assertEqual(actual['PKG_CONFIG_LIBDIR'],
-                         '/declared/lib/pkgconfig:/declared/share/pkgconfig:/Apple SDK/usr/lib/pkgconfig')
+                         '/declared/lib/pkgconfig:/declared/share/pkgconfig:' + str(compatibility))
         self.assertNotIn('PKG_CONFIG_SYSROOT_DIR', actual)
         self.assertNotIn('SDKROOT', actual)
+        self.assertEqual(gate.pkg_command(Path('/declared/bin/pkg-config'), Path('/Apple SDK')),
+                         [Path('/declared/bin/pkg-config'), '--define-variable=homebrew_sdkroot=/Apple SDK'])
+
+    def test_compatibility_directory_is_observed_exactly_within_prefix(self):
+        prefix = self.base/'brew'; profile = prefix/'Library/Homebrew/os/mac/pkgconfig/15'
+        profile.mkdir(parents=True)
+        self.assertEqual(gate.compatibility_directory('/other:' + str(profile), prefix, '15'), profile)
+        for raw, root, major in ((str(profile), prefix, '14'), (str(profile), self.repo, '15'),
+                                  ('/missing', prefix, '15'), (str(profile) + '\n', prefix, '15')):
+            with self.subTest(raw=raw, root=root, major=major):
+                with self.assertRaises(ValueError): gate.compatibility_directory(raw, root, major)
+        duplicate = prefix/'Homebrew/Library/Homebrew/os/mac/pkgconfig/15'; duplicate.mkdir(parents=True)
+        with self.assertRaises(ValueError): gate.compatibility_directory(str(profile) + ':' + str(duplicate), prefix, '15')
 
     def test_fresh_build_evidence_and_external_work_are_allowed(self):
         actual = gate.paths(self.repo/'build/evidence', self.base/'work', self.repo)
