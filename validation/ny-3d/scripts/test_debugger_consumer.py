@@ -411,7 +411,10 @@ class DarwinGroupTests(unittest.TestCase):
                 owner = OwnedProcess.__new__(OwnedProcess)
                 owner.lock, owner.windows = threading.RLock(), False
                 owner.process = SimpleNamespace(pid=1234, returncode=None)
-                with patch.object(processes.sys, 'platform', platform), \
+                # This mocked POSIX path also runs on Windows, which has no
+                # SIGKILL constant. No native process receives this fixture signal.
+                with patch.object(processes.signal, 'SIGKILL', 9, create=True), \
+                        patch.object(processes.sys, 'platform', platform), \
                         patch.object(processes.os, 'killpg', side_effect=PermissionError(error, 'fixture'), create=True), \
                         patch.object(owner, 'poll', return_value=exited), \
                         patch.object(processes, '_darwin_group_exited', return_value=dead_group):

@@ -20,6 +20,11 @@ import process_contract_support as support
 class DarwinIdentityTests(unittest.TestCase):
     def setUp(self):
         support._darwin_api.cache_clear()
+        # These controls model Darwin even on Windows, whose signal module
+        # need not expose SIGKILL. Native controls below keep the real platform.
+        kill_signal = patch.object(support.signal, 'SIGKILL', 9, create=True)
+        kill_signal.start()
+        self.addCleanup(kill_signal.stop)
         self.pid, self.unique, self.version, self.state = 1234, 0x123456789, 0xf1234567, 2
         self.size, self.error, self.signal_error = 192, 0, 0
         self.tokens = []
@@ -38,7 +43,7 @@ class DarwinIdentityTests(unittest.TestCase):
             return self.size
 
         def send(token, number):
-            self.assertEqual(number, signal.SIGKILL)
+            self.assertEqual(number, 9)  # Darwin SIGKILL, supplied by the fixture.
             self.tokens.append(list(c.cast(token, c.POINTER(c.c_uint32 * 8)).contents))
             return self.signal_error
 
