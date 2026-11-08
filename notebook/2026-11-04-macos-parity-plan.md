@@ -2189,3 +2189,30 @@ and PostgreSQL checks. The source-test step is still failed; its exact inventory
 will be reconciled from the final artifact. Installed standard-library consumers
 remain in progress. Source CI at `207ac00` passes both LLVM profiles and extension
 checks in run `41978016377`.
+
+## Corrected Intel SDK campaign completes
+
+[Run 41976360302](https://github.com/exec-software/exec-nil-framework/actions/runs/41976360302)
+at `0c88d2f` completes the full inventory in 1,033.31 seconds with 567 passes,
+one failure and three skips out of 571. The sole failure is
+`nilbuild.incremental-contract`, which rebuilds the VM/native outputs instead of
+reporting them up to date. The numeric-address client test passes in 0.34 seconds.
+The skipped cases remain UI display and the two native memory-limit campaigns.
+
+Staged/relocated SDK validation, all 1,184 installed standard-library routes,
+twelve private PostgreSQL routes, 146 debugger assertions and live execution
+checkpoints pass. The standard-library replay independently checks 888 retained
+executions; the pinned campaign driver accounts for the additional 296 object/link
+routes. All recorded cleanup and source/SDK seals hold. The official artifact
+contains 920 evidence files. The SDK payload remains a development candidate;
+accepted Linux/Windows SDKs are unchanged.
+
+Reconciliations under `sdk-run-41976360302`:
+
+- Core: `cb17c60fad4bb78269e1c5c2b8c2596203b58649d6ff818e574eef82f0ce76e1`.
+- Standard consumers: `0acc8dc8e193e2039855ff331e86c233e9bdf646eaae5d6ca6f45beb6f2ca4a4`.
+- PostgreSQL: `bf968995d961113469637e22099d88a6d2f92a51234518baa31517680e492061`.
+- Debugger: `7e4b0d8be5965054bba977cc7e3db6919af1a52390498e3fa2612b0ff9f95587`.
+
+The new product GTK checkpoint is `11c7684`. Both native architectures are running
+provider/runtime/directed-child acceptance in run `41981658320`.

@@ -131,7 +131,7 @@ jobs:
             echo 'PostgreSQL: coherent installed provider absent; actual CTest skips/failures retained' >> build/macos-sdk-evidence/providers.txt
           fi
           {
-            echo 'GTK: macOS provider is not implemented'
+            echo 'GTK: explicit macOS provider available in source; this SDK campaign does not provision or qualify desktop use'
             echo 'Installed candidate checks: inherited DYLD/source/tool overrides removed; Apple toolchain PATH; system SQLite only'
             echo 'Private PostgreSQL installed checks use a separate explicitly declared provider environment'
             echo 'Homebrew LLVM dependencies remain external development prerequisites, not bundled portable libraries'

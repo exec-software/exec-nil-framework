@@ -11,7 +11,7 @@ release boundary. A newer source checkout does not update an installed SDK.
 | --- | --- | --- |
 | Linux x86_64 | Reference host. The clean `5630388` SDK passed the full suite, installed consumer routes, shared runtime, debugger, Unicode/I/O, execution checkpoints and GTK checks. | The reviewed Ubuntu release toolchain is separate from this development SDK. New release binaries still require the release gates. |
 | Windows x86_64 | The same `5630388` source has paired Linux acceptance: interpreter/bundles, LLVM JIT/AOT, object/link routes, installed tooling, checkpoints, GTK and VS Code. | Development acceptance on the provisioned Windows VM; bare-host installation and Windows release qualification remain open. GTK and PostgreSQL require external runtimes. |
-| macOS 15 Intel x86_64 | At `2f5d695`, the relocated development SDK passes its installed standard-library campaign, twelve isolated PostgreSQL source/binary routes, and installed debugger/checkpoints with the corrected acceptance helper. Earlier LLVM-ON/OFF, native assembly and embedded-context baselines also pass. | That source suite has 566 passes, two failures and three skips out of 571. Corrected numeric-address validation passes at `3414ce5`, but that full run timed out before packaging. Incremental reuse, desktop/editor and release acceptance remain open. |
+| macOS 15 Intel x86_64 | At `0c88d2f`, the relocated development SDK passes its installed standard-library campaign, twelve isolated PostgreSQL source/binary routes, installed debugger/checkpoints and corrected numeric-address validation. Earlier LLVM-ON/OFF, native assembly and embedded-context baselines also pass. | Full source suite: 567 passed, one failed and three skipped out of 571. Incremental reuse fails; UI and two native memory-limit tests skip. Desktop/editor and release acceptance remain open. |
 | macOS 15 Apple Silicon arm64 | At `3414ce5`, the relocated development SDK passes its installed standard-library campaign, twelve isolated PostgreSQL source/binary routes, installed debugger/checkpoints and corrected numeric-address validation. Native assembly and embedded context also pass. | Full source suite: 567 passed, one failed and three skipped out of 571. Incremental reuse fails; UI and two native memory-limit tests skip. Desktop/editor and release acceptance remain open. |
 
 LLVM-OFF builds exercise frontend/interpreter behavior and rejection of disabled
@@ -74,7 +74,11 @@ standard-library routes, twelve PostgreSQL routes, 146 debugger checks and the
 live checkpoint contract pass again. The matching Intel source-test step reached
 its twenty-minute workflow limit before producing a complete report. Packaging
 therefore could not start; the corrected numeric-address test did pass beforehand.
-The earlier passing Intel installed campaigns remain the recorded baseline.
+The Intel retry at `0c88d2f` subsequently completes in 17 minutes 14 seconds:
+567 source tests pass, with the same single incremental-reuse failure and three
+skips as Apple Silicon. All 1,184 installed standard-library routes, twelve
+PostgreSQL routes, 146 debugger checks and the live checkpoint contract pass.
+This corrects the Intel development baseline without replacing accepted SDKs.
 
 A private Windows build at `e087964` also passes four focused compiler-identity,
 source-protection and real VM/native incremental contracts: 181 checks, no skips.
