@@ -24,6 +24,7 @@ class Controls(unittest.TestCase):
     def ready(self):
         return dict(pid=123, window_number=17, active=True, key_window=True, gtk_entry_focused=True, main_thread=True,
                     base_seconds=12345, gtk_header='4.18.6', gtk_runtime='4.18.6',
+                    app_running=False, activation_policy=1,
                     origins={key:str(self.aliases[name]) for key,name in gate.ALIASES.items()})
 
     def typed(self):
@@ -43,10 +44,19 @@ class Controls(unittest.TestCase):
                     field_text_role=False, field_role_category='unavailable', field_window_error=-1,
                     field_window_element=False, field_window_pid_matches=False, field_window_matches=False)
 
+    def window(self):
+        # One owned, correctly titled window; AccessKit is absent either way.
+        return dict(app_role_error=0, app_role_application=True, attribute_names_error=0, attribute_names_count=12,
+                    windows_attribute_present=True, windows_error=0, windows_array=True, windows_count=1,
+                    owned_candidates=1, window_role_candidates=1, title_candidates=1, first_role_category='window',
+                    focused_window_error=0, focused_window_element=True, focused_window_pid_matches=True,
+                    focused_window_title_matches=True)
+
     def driver(self, phase):
         return dict(identity_verified=True, post_event_access=True, ax_trusted=True, own_window_selected=True,
                     focus_verified=True, timestamp_readback=phase=='keys', events_posted=20 if phase=='keys' else 0,
-                    close_action=phase=='close', success=True, focus_observation=self.focus(), base_seconds=12345)
+                    close_action=phase=='close', success=True, focus_observation=self.focus(),
+                    window_observation=self.window(), base_seconds=12345)
 
     def test_private_fresh_disjoint_paths(self):
         self.assertEqual(gate.paths(self.root/'build/evidence',self.base/'work',self.root),
@@ -83,6 +93,14 @@ class Controls(unittest.TestCase):
         gate.ready_frame(self.ready(),123,self.aliases)
         for key,value in (('pid',124),('pid',True),('window_number',0),('main_thread',False),
                           ('active',False),('key_window',False),('gtk_entry_focused',False)):
+            row=self.ready();row[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):gate.ready_frame(row,123,self.aliases)
+
+    def test_application_loop_observation_is_bounded_not_required(self):
+        for value in (True, False):
+            row=self.ready();row['app_running']=value;gate.ready_frame(row,123,self.aliases)
+        for key,value in (('app_running',1),('app_running',None),('activation_policy',True),
+                          ('activation_policy',3),('activation_policy',-1)):
             row=self.ready();row[key]=value
             with self.subTest(key=key),self.assertRaises(ValueError):gate.ready_frame(row,123,self.aliases)
 
@@ -177,8 +195,59 @@ class Controls(unittest.TestCase):
             for key in ('identity_verified','post_event_access','ax_trusted','own_window_selected','focus_verified'):
                 row=self.driver(phase);row[key]=False;row['success']=False
                 if key=='focus_verified':row['focus_observation']['app_window_matches']=False
+                if key=='own_window_selected':
+                    row['window_observation']['title_candidates']=0
+                    row['focus_verified']=False;row['focus_observation']={}
                 self.assertFalse(gate.driver_frame(row,phase,2,12345))
                 with self.assertRaises(ValueError):gate.driver_frame(row,phase,0,12345)
+
+    def test_absent_window_selection_is_diagnosed_not_claimed(self):
+        self.assertTrue(gate.window_proof(self.window()))
+        self.assertFalse(gate.window_proof({}))
+        # Each distinct cause the native diagnostic must now separate.
+        hierarchy=dict(self.window(),app_role_error=-25204,app_role_application=False,
+                       attribute_names_error=-25204,attribute_names_count=0,windows_attribute_present=False,
+                       windows_error=-25204,windows_array=False,windows_count=0,owned_candidates=0,
+                       window_role_candidates=0,title_candidates=0,first_role_category='unavailable',
+                       focused_window_error=-25204,focused_window_element=False,
+                       focused_window_pid_matches=False,focused_window_title_matches=False)
+        unsupported=dict(hierarchy,app_role_error=0,app_role_application=True,attribute_names_error=0,
+                         attribute_names_count=9)
+        empty=dict(unsupported,windows_attribute_present=True,windows_error=0,windows_array=True)
+        untitled=dict(empty,windows_count=1,owned_candidates=1,window_role_candidates=1)
+        other_role=dict(empty,windows_count=1,owned_candidates=1,first_role_category='other')
+        for row in (hierarchy,unsupported,empty,untitled,other_role):
+            with self.subTest(row=row['first_role_category']):self.assertFalse(gate.window_proof(row))
+        # A focused window alone is observed, never selection.
+        self.assertFalse(gate.window_proof(dict(empty,focused_window_error=0,focused_window_element=True,
+                                                focused_window_pid_matches=True,focused_window_title_matches=True)))
+
+    def test_ambiguous_or_unowned_windows_are_never_selected(self):
+        for row in (dict(self.window(),windows_count=2,owned_candidates=2,window_role_candidates=2,title_candidates=2),
+                    dict(self.window(),owned_candidates=0,window_role_candidates=0,title_candidates=0,
+                         first_role_category='unavailable')):
+            self.assertFalse(gate.window_proof(row))
+
+    def test_window_observations_bounded_and_internally_consistent(self):
+        for key,value in (('windows_count',True),('windows_error',-99999),('attribute_names_count',65),
+                          ('first_role_category','toplevel'),('observed_title','Ny GTK directed'),
+                          ('owned_candidates',-1)):
+            row=self.window();row[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):gate.window_proof(row)
+        for row in (dict(self.window(),title_candidates=2),
+                    dict(self.window(),windows_count=0,owned_candidates=0,window_role_candidates=0,
+                         title_candidates=0,first_role_category='window'),
+                    dict(self.window(),windows_error=-25205),
+                    dict(self.window(),windows_array=False,windows_error=0,windows_count=1,
+                         owned_candidates=0,window_role_candidates=0,title_candidates=0,
+                         first_role_category='unavailable')):
+            with self.assertRaises(ValueError):gate.window_proof(row)
+
+    def test_driver_summary_cannot_override_actual_window_selection(self):
+        row=self.driver('keys');row['window_observation']['title_candidates']=0
+        with self.assertRaises(ValueError):gate.driver_frame(row,'keys',0,12345)
+        row=self.driver('keys');del row['window_observation']
+        with self.assertRaises(ValueError):gate.driver_frame(row,'keys',0,12345)
 
     def test_timestamp_readback_and_final_driver_counts(self):
         for phase,key in (('keys','timestamp_readback'),('close','close_action')):

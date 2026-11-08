@@ -105,24 +105,88 @@ static bool stringAttribute(AXUIElementRef element, CFStringRef key, CFStringRef
   if (value) CFRelease(value);
   return ok;
 }
-static AXUIElementRef ownWindow(AXUIElementRef app, const Target &target) {
-  CFTypeRef value = attribute(app, kAXWindowsAttribute);
-  if (!value) return nullptr;
+static NSString *expectedTitle(const Target &target) {
+  return [@"Ny GTK directed " stringByAppendingString:[NSString stringWithUTF8String:target.nonce.c_str()]];
+}
+static NSNumber *bounded(CFIndex count) { return @(count < 0 ? 0 : count > 64 ? 64 : count); }
+// Bounded selection diagnostics. No inner-widget accessibility is claimed, but
+// an application's own window list is AppKit's own contract, so a failure to
+// select has to say which half is absent: the process has no AX hierarchy at
+// all, the attribute is unsupported, the list is empty, or a candidate differs
+// in owner, role or title. Every field is a count, an AXError or a bounded
+// category; no observed title or widget text is retained.
+static void windowDiagnostics(AXUIElementRef app, const Target &target, NSMutableDictionary *observed) {
+  AXError error = kAXErrorSuccess;
+  CFTypeRef role = attribute(app, kAXRoleAttribute, &error);
+  observed[@"app_role_error"] = @(error);
+  observed[@"app_role_application"] = @(role && CFGetTypeID(role) == CFStringGetTypeID() &&
+                                        CFEqual(role, kAXApplicationRole));
+  if (role) CFRelease(role);
+  CFArrayRef names = nullptr;
+  observed[@"attribute_names_error"] = @(AXUIElementCopyAttributeNames(app, &names));
+  const CFIndex total = names ? CFArrayGetCount(names) : 0;
+  observed[@"attribute_names_count"] = bounded(total);
+  bool present = false;
+  for (CFIndex i = 0; i < total; ++i) {
+    CFTypeRef item = CFArrayGetValueAtIndex(names, i);
+    if (item && CFGetTypeID(item) == CFStringGetTypeID() && CFEqual(item, kAXWindowsAttribute)) present = true;
+  }
+  observed[@"windows_attribute_present"] = @(present);
+  if (names) CFRelease(names);
+  // The application's focused window is a separate public attribute; it can be
+  // available when the window list is not, which would be a real alternative.
+  CFTypeRef focused = attribute(app, kAXFocusedWindowAttribute, &error);
+  const bool element = focused && CFGetTypeID(focused) == AXUIElementGetTypeID();
+  auto window = element ? static_cast<AXUIElementRef>(const_cast<void *>(focused)) : nullptr;
+  const bool samePid = window && owner(window, target.pid);
+  observed[@"focused_window_error"] = @(error);
+  observed[@"focused_window_element"] = @(element);
+  observed[@"focused_window_pid_matches"] = @(samePid);
+  observed[@"focused_window_title_matches"] = @(samePid &&
+      stringAttribute(window, kAXTitleAttribute, (__bridge CFStringRef)expectedTitle(target)));
+  if (focused) CFRelease(focused);
+}
+static AXUIElementRef ownWindow(AXUIElementRef app, const Target &target, NSMutableDictionary *observed) {
+  windowDiagnostics(app, target, observed);
+  AXError error = kAXErrorSuccess;
+  CFTypeRef value = attribute(app, kAXWindowsAttribute, &error);
+  const bool array = value && CFGetTypeID(value) == CFArrayGetTypeID();
+  const CFIndex count = array ? CFArrayGetCount(static_cast<CFArrayRef>(value)) : 0;
+  observed[@"windows_error"] = @(error);
+  observed[@"windows_array"] = @(array);
+  observed[@"windows_count"] = bounded(count);
+  observed[@"first_role_category"] = @"unavailable";
+  unsigned owned = 0, windowRoles = 0, titled = 0;
   AXUIElementRef result = nullptr;
-  if (CFGetTypeID(value) == CFArrayGetTypeID() && CFArrayGetCount(static_cast<CFArrayRef>(value)) <= 8) {
-    NSString *title = [@"Ny GTK directed " stringByAppendingString:[NSString stringWithUTF8String:target.nonce.c_str()]];
-    for (CFIndex i = 0; i < CFArrayGetCount(static_cast<CFArrayRef>(value)); ++i) {
+  if (array && count <= 8) {
+    NSString *title = expectedTitle(target);
+    for (CFIndex i = 0; i < count; ++i) {
       CFTypeRef item = CFArrayGetValueAtIndex(static_cast<CFArrayRef>(value), i);
-      if (CFGetTypeID(item) != AXUIElementGetTypeID()) continue;
+      if (!item || CFGetTypeID(item) != AXUIElementGetTypeID()) continue;
       auto window = static_cast<AXUIElementRef>(const_cast<void *>(item));
-      if (owner(window, target.pid) && stringAttribute(window, kAXRoleAttribute, kAXWindowRole) &&
-          stringAttribute(window, kAXTitleAttribute, (__bridge CFStringRef)title)) {
-        if (result) { CFRelease(result); result = nullptr; break; }
-        CFRetain(window); result = window;
-      }
+      if (!owner(window, target.pid)) continue;
+      ++owned;
+      CFTypeRef role = attribute(window, kAXRoleAttribute);
+      const bool string = role && CFGetTypeID(role) == CFStringGetTypeID();
+      const bool windowRole = string && CFEqual(role, kAXWindowRole);
+      if (owned == 1)
+        observed[@"first_role_category"] = !string ? @"unavailable" : windowRole ? @"window" :
+            CFEqual(role, kAXSheetRole) ? @"sheet" : @"other";
+      if (role) CFRelease(role);
+      if (!windowRole) continue;
+      ++windowRoles;
+      if (!stringAttribute(window, kAXTitleAttribute, (__bridge CFStringRef)title)) continue;
+      ++titled;
+      if (!result) { CFRetain(window); result = window; }
     }
   }
-  CFRelease(value); return result;
+  observed[@"owned_candidates"] = @(owned);
+  observed[@"window_role_candidates"] = @(windowRoles);
+  observed[@"title_candidates"] = @(titled);
+  // Exactly one verified child window may ever be selected.
+  if (titled != 1 && result) { CFRelease(result); result = nullptr; }
+  if (value) CFRelease(value);
+  return result;
 }
 static bool focusedField(AXUIElementRef app, AXUIElementRef window, const Target &target,
                          NSMutableDictionary *observed) {
@@ -182,10 +246,12 @@ static int driver(const char *mode, const Target &target) {
   bool selected = false, focused = false, exactTimestamps = false, pressed = false;
   unsigned posted = 0;
   NSMutableDictionary *focusObservation = [NSMutableDictionary dictionary];
+  NSMutableDictionary *windowObservation = [NSMutableDictionary dictionary];
   AXUIElementRef app = nullptr, window = nullptr; CFTypeRef button = nullptr;
   if (identity && post && ax) {
     app = AXUIElementCreateApplication(target.pid);
-    if (app && AXUIElementSetMessagingTimeout(app, 1.0f) == kAXErrorSuccess) window = ownWindow(app, target);
+    if (app && AXUIElementSetMessagingTimeout(app, 1.0f) == kAXErrorSuccess)
+      window = ownWindow(app, target, windowObservation);
     selected = window != nullptr;
     if (selected) {
       focused = AXUIElementSetMessagingTimeout(window, 1.0f) == kAXErrorSuccess &&
@@ -228,7 +294,7 @@ static int driver(const char *mode, const Target &target) {
   emit(@{@"schema": @1, @"phase": [NSString stringWithUTF8String:mode], @"qualification": @NO,
       @"identity_verified": @(identity), @"post_event_access": @(post), @"ax_trusted": @(ax),
       @"own_window_selected": @(selected), @"focus_verified": @(focused), @"timestamp_readback": @(exactTimestamps),
-      @"focus_observation": focusObservation,
+      @"focus_observation": focusObservation, @"window_observation": windowObservation,
       @"base_seconds": @(target.baseSeconds), @"events_posted": @(posted), @"close_action": @(pressed), @"success": @(success)});
   return success ? 0 : 2;
 }
@@ -345,6 +411,12 @@ static int gtkTarget(const char *nonce) {
           emit(@{@"schema": @1, @"phase": @"ready", @"qualification": @NO, @"pid": @(getpid()),
             @"window_number": @(native.windowNumber), @"main_thread": @YES, @"gtk_entry_focused": @YES,
             @"active": @YES, @"key_window": @YES, @"base_seconds": @(state.baseSeconds),
+            // Read-only: GTK drives its own GLib loop rather than -[NSApplication run],
+            // and AppKit services accessibility requests from the main run loop.
+            // BOOL is signed char on x86_64 and bool on arm64; box a C++ bool so the
+            // frame carries JSON true/false on both hosts rather than 1/0 on one.
+            @"app_running": @(static_cast<bool>(NSApp.running)),
+            @"activation_policy": @(static_cast<long>(NSApp.activationPolicy)),
             @"gtk_header": [NSString stringWithFormat:@"%u.%u.%u", GTK_MAJOR_VERSION, GTK_MINOR_VERSION, GTK_MICRO_VERSION],
             @"gtk_runtime": [NSString stringWithFormat:@"%u.%u.%u", gtk_get_major_version(), gtk_get_minor_version(), gtk_get_micro_version()],
             @"origins": @{@"gtk": loadedOrigin(reinterpret_cast<const void *>(&gtk_init_check)),

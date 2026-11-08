@@ -89,6 +89,10 @@ def ready_frame(value, pid, aliases):
     require(type(value.get('base_seconds')) is int and 0 < value['base_seconds'] <= 2**32,
             'Bounded exact timestamp origin required')
     require(value.get('gtk_header') == value.get('gtk_runtime') == '4.18.6', 'GTK version differs')
+    # Observations, not requirements: GTK runs its own loop, and whether AppKit
+    # is running one is exactly what a selection failure has to be read against.
+    require(type(value.get('app_running')) is bool and type(value.get('activation_policy')) is int and
+            0 <= value['activation_policy'] <= 2, 'Bounded target application loop observation required')
     require(value.get('origins') == {key: str(aliases[name]) for key, name in ALIASES.items()},
             'Actual GTK/GLib/GObject/GIO origins differ from validated provider')
 
@@ -146,6 +150,29 @@ def focus_proof(value):
         ('app_window_element', 'app_window_pid_matches', 'app_window_matches'))
 
 
+def window_proof(value):
+    require(type(value) is dict, 'Missing bounded window observations')
+    if not value: return False
+    errors = ('app_role_error', 'attribute_names_error', 'windows_error', 'focused_window_error')
+    flags = ('app_role_application', 'windows_attribute_present', 'windows_array',
+             'focused_window_element', 'focused_window_pid_matches', 'focused_window_title_matches')
+    counts = ('attribute_names_count', 'windows_count', 'owned_candidates',
+              'window_role_candidates', 'title_candidates')
+    require(set(value) == set(errors + flags + counts + ('first_role_category',)) and
+            all(type(value[k]) is int and -26000 <= value[k] <= 0 for k in errors) and
+            all(type(value[k]) is bool for k in flags) and
+            all(type(value[k]) is int and 0 <= value[k] <= 64 for k in counts), 'Malformed window observation')
+    require(value['first_role_category'] in ('unavailable', 'window', 'sheet', 'other') and
+            value['windows_count'] >= value['owned_candidates'] >= value['window_role_candidates'] >=
+            value['title_candidates'], 'Inconsistent bounded window candidates')
+    require((not value['windows_array'] or value['windows_error'] == 0) and
+            (value['windows_count'] == 0 or value['windows_array']), 'Inconsistent window list observation')
+    require(value['owned_candidates'] or value['first_role_category'] == 'unavailable',
+            'Role category without an owned candidate')
+    # Exactly one owned, correctly titled window of the verified child.
+    return value['title_candidates'] == 1
+
+
 def driver_frame(value, phase, code, base):
     require(code in (0, 2), 'Unexpected driver exit')
     common = ('identity_verified', 'post_event_access', 'ax_trusted', 'own_window_selected', 'focus_verified')
@@ -154,6 +181,8 @@ def driver_frame(value, phase, code, base):
     require(type(value.get('events_posted')) is int and 0 <= value['events_posted'] <= 20, 'Unbounded event count')
     require(type(value.get('base_seconds')) is int and value['base_seconds'] == base, 'Driver timestamp origin differs')
     require(value['focus_verified'] == focus_proof(value.get('focus_observation')), 'Focus proof/summary mismatch')
+    require(value['own_window_selected'] == window_proof(value.get('window_observation')),
+            'Window proof/summary mismatch')
     success = all(value[key] for key in common) and (
         value['timestamp_readback'] and value['events_posted'] == 20 and not value['close_action'] if phase == 'keys'
         else value['close_action'] and value['events_posted'] == 0 and not value['timestamp_readback'])
