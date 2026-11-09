@@ -51,6 +51,12 @@ set(NILCOMPILER_CORE_SOURCES
 # exactly one of them is ever compiled into the runtime.
 if(WIN32)
     set(NIL_UI_PROVIDER_SOURCE src/ui_runtime_win32.cpp)
+elseif(APPLE)
+    enable_language(OBJCXX)
+    set(NIL_UI_PROVIDER_SOURCE src/ui_runtime_appkit.mm)
+    # ARC owns the toolkit objects the provider stores in its node table.
+    set_source_files_properties(src/ui_runtime_appkit.mm PROPERTIES
+        COMPILE_OPTIONS "-fobjc-arc")
 else()
     set(NIL_UI_PROVIDER_SOURCE src/ui_runtime.cpp)
 endif()
@@ -86,6 +92,11 @@ foreach(nil_runtime_target IN ITEMS nilruntime nilruntime_shared)
         # The Win32 desktop provider calls USER32 and GDI32 directly, unlike
         # the dynamically loaded GTK provider, so those travel the same way.
         target_link_libraries(${nil_runtime_target} PUBLIC ws2_32 user32 gdi32)
+    endif()
+    if(APPLE)
+        # The AppKit desktop provider calls Cocoa and CoreGraphics directly,
+        # so both travel to every consumer of the runtime.
+        target_link_libraries(${nil_runtime_target} PUBLIC "-framework Cocoa" "-framework CoreGraphics")
     endif()
     set_target_properties(${nil_runtime_target} PROPERTIES
         CXX_EXTENSIONS OFF

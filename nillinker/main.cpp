@@ -1559,6 +1559,14 @@ bool Linker::link(const fs::path &requested_output) {
 #if defined(__linux__)
   arguments.push_back("-ldl");
 #endif
+#if defined(__APPLE__)
+  // The runtime's AppKit desktop provider is part of nil.a, so every program
+  // linked against it needs the frameworks that provider calls.
+  arguments.push_back("-framework");
+  arguments.push_back("Cocoa");
+  arguments.push_back("-framework");
+  arguments.push_back("CoreGraphics");
+#endif
 #endif
 
   const auto process = ny::linker_detail::run_process(

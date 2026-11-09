@@ -2362,6 +2362,10 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
 #if defined(__linux__)
         cmd += " -ldl";
 #endif
+#if defined(__APPLE__)
+        // As above: nil.a carries the AppKit provider on Darwin.
+        cmd += " -framework Cocoa -framework CoreGraphics";
+#endif
         for (const auto &lib : link_libraries) {
           cmd += " " + quote_posix_shell_argument(lib);
         }

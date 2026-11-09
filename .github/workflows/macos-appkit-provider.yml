@@ -1,0 +1,68 @@
+name: macOS AppKit provider checks
+
+"on":
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: Host architecture to check
+        type: choice
+        options: [both, x86_64, arm64]
+        default: both
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-appkit-provider-${{ github.ref }}-${{ inputs.architecture }}
+  cancel-in-progress: false
+
+# Build and exercise the AppKit desktop provider only. LLVM is off and no SDK
+# is configured, qualified or published, so a cycle here costs minutes rather
+# than a full source campaign.
+jobs:
+  provider:
+    name: macOS ${{ matrix.host.arch }} AppKit provider
+    runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        host: ${{ fromJSON(inputs.architecture == 'arm64' && '[{"runner":"macos-15","arch":"arm64"}]' || inputs.architecture == 'x86_64' && '[{"runner":"macos-15-intel","arch":"x86_64"}]' || '[{"runner":"macos-15-intel","arch":"x86_64"},{"runner":"macos-15","arch":"arm64"}]') }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Official v5 tag commit, matching the other workflows in this repository.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Report the desktop session
+        timeout-minutes: 2
+        run: |
+          echo "runner arch: $(uname -m)"
+          # A provider that cannot reach a window server can still build, so
+          # record the session before anything is interpreted as a provider
+          # fault.
+          /usr/bin/python3 -c "
+          import ctypes, ctypes.util
+          core = ctypes.CDLL(ctypes.util.find_library('CoreGraphics'))
+          core.CGMainDisplayID.restype = ctypes.c_uint32
+          print('CGMainDisplayID:', core.CGMainDisplayID())
+          "
+      - name: Configure without LLVM
+        timeout-minutes: 8
+        run: |
+          cmake -S . -B build/ci \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DNIL_ENABLE_LLVM=OFF
+      - name: Build the AppKit provider and its fixture
+        timeout-minutes: 20
+        run: cmake --build build/ci --target nil_ui_runtime_appkit_tests --parallel 3
+      - name: Availability without opening a display
+        timeout-minutes: 2
+        run: ./build/ci/bin/nil_ui_runtime_appkit_tests --provider-present
+      - name: Provider contract against a real session
+        timeout-minutes: 5
+        run: ./build/ci/bin/nil_ui_runtime_appkit_tests --display

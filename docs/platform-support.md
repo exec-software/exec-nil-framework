@@ -103,12 +103,13 @@ or standard-library test fails. Four shared contracts fail only when the suite
 runs as `SYSTEM`: that account reports `TEMP` cased `C:\WINDOWS\TEMP`, the
 toolchain reports paths in their on-disk casing, and the affected assertions
 compare the two strings exactly; the same four pass unchanged under an ordinary
-user account. The Windows-only SDK preflight cannot run while the machine
-execution policy is `Restricted`, the Windows client default, because it invokes
-`powershell.exe -File` deliberately without a bypass and every subtest therefore
-observes a policy refusal instead of a preflight diagnostic. Two display tests
-skip for want of an interactive desktop session and both PostgreSQL tests skip
-without a server. This supplements the recorded Windows baseline; it neither
+user account. The Windows-only SDK preflight needs a machine execution
+policy that permits local scripts, because it invokes `powershell.exe -File`
+deliberately without a bypass; under the Windows client default of `Restricted`
+every subtest observes a policy refusal instead of a preflight diagnostic, and
+it passes once the policy is `RemoteSigned`. Two display tests skip for want of
+an interactive desktop session and both PostgreSQL tests skip without a
+server. This supplements the recorded Windows baseline; it neither
 replaces the accepted SDK nor qualifies a new one.
 
 ## Native executable context
