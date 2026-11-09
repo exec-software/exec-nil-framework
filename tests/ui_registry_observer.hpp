@@ -77,7 +77,17 @@ public:
 #if defined(__linux__)
   unsigned count() const { return size_(list_()); }
 #elif defined(__APPLE__)
-  unsigned count() const { return static_cast<unsigned>(NSApp ? NSApp.windows.count : 0); }
+  unsigned count() const {
+    // AppKit completes window teardown on the run loop, so a window the
+    // provider has already released is still listed if it is counted in the
+    // same turn. Give the loop one bounded, nonblocking turn first; this is
+    // the observer accommodating AppKit's bookkeeping, not the provider
+    // holding anything.
+    @autoreleasepool {
+      [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate distantPast]];
+    }
+    return static_cast<unsigned>(NSApp ? NSApp.windows.count : 0);
+  }
 #elif defined(_WIN32)
   unsigned count() const {
     unsigned total = 0;
