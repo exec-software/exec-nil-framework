@@ -39,6 +39,21 @@ if(APPLE)
     enable_language(OBJCXX)
 endif()
 
+# The native runtime ABI for targets with no operating system. Built for
+# every host because the sources are portable; only its link test is ELF.
+add_library(nilruntime_freestanding STATIC
+    nilruntime-freestanding/freestanding_runtime.cpp)
+target_compile_features(nilruntime_freestanding PRIVATE cxx_std_17)
+set_target_properties(nilruntime_freestanding PROPERTIES
+    CXX_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON)
+if(NOT MSVC)
+    # No hosted assumptions, no unwinder, no type information: a kernel or
+    # loader links this archive without providing any of them.
+    target_compile_options(nilruntime_freestanding PRIVATE
+        -ffreestanding -fno-exceptions -fno-rtti)
+endif()
+
 add_subdirectory(nilcompiler)
 add_subdirectory(nilinterpreter)
 add_subdirectory(nillsp)
@@ -694,6 +709,17 @@ if(BUILD_TESTING)
                     --compiler $<TARGET_FILE:nilcompiler> --assembler $<TARGET_FILE:nilassembler>)
             set_tests_properties(nil.native-symbol-surface PROPERTIES
                 LABELS "native;abi;rc" SKIP_RETURN_CODE 77 TIMEOUT 180)
+        endif()
+        # Prove the freestanding boundary closes: object plus runtime, linked
+        # with no C library and its own entry, actually runs.
+        if(NIL_ENABLE_LLVM AND NOT MSVC)
+            add_test(NAME nil.freestanding-runtime
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/freestanding_runtime_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler> --assembler $<TARGET_FILE:nilassembler>
+                    --archive $<TARGET_FILE:nilruntime_freestanding>
+                    --cxx "${CMAKE_CXX_COMPILER}")
+            set_tests_properties(nil.freestanding-runtime PROPERTIES
+                LABELS "native;abi;runtime;rc" SKIP_RETURN_CODE 77 TIMEOUT 300)
         endif()
         add_test(NAME nil.ui-models
             COMMAND $<TARGET_FILE:niltest> run
