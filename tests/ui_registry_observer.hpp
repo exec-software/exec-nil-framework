@@ -113,9 +113,21 @@ public:
   // than only that the numbers differed.
   std::string detail() const {
 #if defined(__APPLE__)
-    unsigned shown = 0;
-    for (NSWindow *window in NSApp.windows) if (window.visible) ++shown;
-    return " (listed " + std::to_string(listed()) + ", of those visible " + std::to_string(shown) + ")";
+    // Name every window still listed, with how many references are holding
+    // it, so a lingering one says whether the toolkit or an owner is keeping
+    // it alive. The fixture is compiled without ARC, so the count is readable.
+    std::string report = " (listed " + std::to_string(listed()) + ")";
+    for (NSWindow *window in NSApp.windows) {
+      const char *title = window.title.length ? window.title.UTF8String : "<untitled>";
+      const char *content = window.contentView
+          ? NSStringFromClass([window.contentView class]).UTF8String : "<none>";
+      report += std::string("\n    still listed: \"") + (title ? title : "?") + "\" content=" +
+                (content ? content : "?") +
+                " visible=" + (window.visible ? "1" : "0") +
+                " released_when_closed=" + (window.releasedWhenClosed ? "1" : "0") +
+                " refs=" + std::to_string(CFGetRetainCount((__bridge CFTypeRef)window));
+    }
+    return report;
 #else
     return " (observed " + std::to_string(count()) + ")";
 #endif

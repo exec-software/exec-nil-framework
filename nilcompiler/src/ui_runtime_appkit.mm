@@ -468,7 +468,10 @@ void Context::clear() noexcept {
   if (!impl_) return;
   auto old = std::move(impl_);
   old->active.store(false);
-  if (old->owner == std::this_thread::get_id() && pthread_main_np()) old->dispose();
+  // A context can only be used on the main thread, so an owning thread that
+  // matches is already the main thread; testing for it again only risked
+  // deferring a disposal the other providers perform immediately.
+  if (old->owner == std::this_thread::get_id()) old->dispose();
   else if (!old->nodes.empty()) {
     try { std::lock_guard<std::mutex> lock(Impl::deferred_mutex()); Impl::deferred().push_back(std::move(old)); }
     catch (...) { /* Callbacks hold no owning reference; a failed defer may leak windows, never free twice. */ }
