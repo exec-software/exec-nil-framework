@@ -169,8 +169,13 @@ the complete admission rules.
   bound. Native diagnostics show that the fixed 96 MiB virtual-memory cap is
   rejected at process setup; larger diagnostic profiles do not replace it.
   Successful lifetime execution routes remain covered by the ordinary suite.
-- The GTK provider currently supports Linux and Windows. macOS UI/provider
-  support and live desktop acceptance remain open. Both hosted Mac architectures
+- Desktop UI now uses one provider per platform: GTK on Linux and Win32 on
+  Windows. The Windows provider passes the full desktop contract on a real
+  interactive session -- provider contract, lifecycle release observation, the
+  Matrix desktop suite and the interaction suite that drives real keyboard
+  input -- while a session without an interactive window station still skips.
+  macOS UI/provider support and live desktop acceptance remain open; AppKit
+  replaces the retired GTK-on-macOS work. Both hosted Mac architectures
   now pass the prerequisite GLib, Cairo-Quartz and HarfBuzz/CoreText compile,
   link and runtime checks, plus exact own-process AppKit key dispatch, view
   delivery and window closure. Directed keyboard input to a verified child and

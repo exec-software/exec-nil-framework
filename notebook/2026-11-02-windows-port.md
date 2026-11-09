@@ -2744,3 +2744,54 @@ GTK process returning `kAXErrorCannotComplete`, including the application
 element's own role and attribute names, because GTK pumps GLib and never runs
 `-[NSApplication run]` while AppKit services those requests from the main run
 loop. Win32 is implemented first, since it can be exercised on a local VM.
+
+
+## 2026-11-09: the Win32 desktop provider passes the full UI contract
+
+`nil.ui-display` passes on Windows against the Win32 provider in an interactive
+console session: the provider contract, the lifecycle fixture, the Matrix
+desktop suite and the interaction suite that posts real keyboard input. The
+headless suite is unchanged at 573 registered, with `nil.ui-display` and
+`nilagent.window-discovery` skipping for want of a session.
+
+**Per-platform fixtures, not just a per-platform provider.** `ui_runtime_tests`
+inspects loaded GTK modules, dlopen symbol origins and GTK's top-level
+registry, so it describes GTK and cannot speak for Win32; Windows builds its
+own fixture. The lifecycle observer was the same story in miniature. Its
+purpose -- prove a window was really released rather than merely invalidated --
+is platform-neutral, so only the mechanism moved: GTK is asked for its
+registry, Windows counts this process's live top-level windows of the
+provider's class. The assertions did not change and it still reports exactly
+the 235 checks the display contract demands, so that constant stayed put.
+
+**Three defects the desktop found that a headless suite could not.** First,
+`WM_COMMAND` is delivered to a control's immediate parent, which inside a row,
+column or grid is that container rather than the window; only windows carried
+the context pointer, so every button, checkbox and entry notification was
+dropped and no event reached `poll`. Second, Tab order is the dialog manager's
+work on Win32, so the pump needs `IsDialogMessageW` and containers need
+`WS_EX_CONTROLPARENT` or Tab cannot reach a nested control. Third, and the real
+one: Windows delivers keystrokes straight to the focused control, so a top
+level only sees keys posted to it deliberately -- which is exactly how the
+contract drives a window it has not typed into, because GTK routes such input
+through the toplevel. The pump now retargets that input to the focused control
+before the dialog manager sees it. Forwarding inside the window procedure was
+tried first and could not work, because `IsDialogMessageW` consumed the message
+before the procedure ran.
+
+**Diagnosis needed a probe, not another guess.** Two rebuild-and-run cycles
+produced only a thirty-second deadline. A `--input-probe` mode that posts the
+contract's own key sequence and reports what arrives printed
+`direct_to_edit=1` with nothing arriving through the top level, which named the
+fault at once. That coverage now runs inside `--display` as well, so the next
+regression reports which event went missing rather than timing out.
+
+**A Windows-only flake worth knowing.** `nilbuild.incremental-contract` failed
+once during a full suite with `cannot read build input` on a compiler the test
+had just copied. `file_digest` finds the path is a regular file and then fails
+to open it, which is a sharing violation rather than a missing input; Defender
+real-time scanning is enabled on the VM and the failure landed immediately
+after a full rebuild had produced many unscanned binaries. It does not
+reproduce -- three consecutive repeats pass -- and nothing in this work touches
+nilbuild. A bounded open retry would make the digest robust against scanners,
+but that changes a build-identity function and is a maintainer's decision.
