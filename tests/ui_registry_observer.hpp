@@ -78,16 +78,27 @@ public:
 #if defined(__linux__)
   unsigned count() const { return size_(list_()); }
 #elif defined(__APPLE__)
+  unsigned listed() const { return static_cast<unsigned>(NSApp ? NSApp.windows.count : 0); }
+  // AppKit drops a closed window from the application's list when it
+  // deallocates, which happens on the run loop and takes more than one turn:
+  // a window counted immediately after close is still listed, while the
+  // fixture's own bootstrap window is long gone by the time the baseline is
+  // taken. So let the count settle, bounded, and report whatever it settles
+  // on -- a window that is genuinely leaked settles too, and is still caught.
   unsigned count() const {
-    // AppKit completes window teardown on the run loop, so a window the
-    // provider has already released is still listed if it is counted in the
-    // same turn. Give the loop one bounded, nonblocking turn first; this is
-    // the observer accommodating AppKit's bookkeeping, not the provider
-    // holding anything.
-    @autoreleasepool {
-      [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate distantPast]];
+    unsigned current = listed();
+    unsigned unchanged = 0;
+    for (int turn = 0; turn < 50 && current; ++turn) {
+      @autoreleasepool {
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
+                                 beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+      }
+      const unsigned settled = listed();
+      unchanged = settled == current ? unchanged + 1 : 0;
+      current = settled;
+      if (unchanged >= 3) break;
     }
-    return static_cast<unsigned>(NSApp ? NSApp.windows.count : 0);
+    return current;
   }
 #elif defined(_WIN32)
   unsigned count() const {
@@ -104,7 +115,7 @@ public:
 #if defined(__APPLE__)
     unsigned shown = 0;
     for (NSWindow *window in NSApp.windows) if (window.visible) ++shown;
-    return " (listed " + std::to_string(count()) + ", of those visible " + std::to_string(shown) + ")";
+    return " (listed " + std::to_string(listed()) + ", of those visible " + std::to_string(shown) + ")";
 #else
     return " (observed " + std::to_string(count()) + ")";
 #endif
