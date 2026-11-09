@@ -8,6 +8,11 @@ name: macOS AppKit provider checks
         type: choice
         options: [both, x86_64, arm64]
         default: both
+      scope:
+        description: provider contract only, or the language-level display contract
+        type: choice
+        options: [provider, display]
+        default: provider
 
 permissions:
   contents: read
@@ -21,6 +26,7 @@ concurrency:
 # than a full source campaign.
 jobs:
   provider:
+    if: ${{ inputs.scope == 'provider' }}
     name: macOS ${{ matrix.host.arch }} AppKit provider
     runs-on: ${{ matrix.host.runner }}
     timeout-minutes: 30
@@ -66,3 +72,46 @@ jobs:
       - name: Provider contract against a real session
         timeout-minutes: 5
         run: ./build/ci/bin/nil_ui_runtime_appkit_tests --display
+
+  display:
+    if: ${{ inputs.scope == 'display' }}
+    name: macOS ${{ matrix.host.arch }} AppKit display contract
+    runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        host: ${{ fromJSON(inputs.architecture == 'arm64' && '[{"runner":"macos-15","arch":"arm64"}]' || inputs.architecture == 'x86_64' && '[{"runner":"macos-15-intel","arch":"x86_64"}]' || '[{"runner":"macos-15-intel","arch":"x86_64"},{"runner":"macos-15","arch":"arm64"}]') }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Report the desktop session
+        timeout-minutes: 2
+        run: |
+          /usr/bin/python3 -c "
+          import ctypes, ctypes.util
+          core = ctypes.CDLL(ctypes.util.find_library('CoreGraphics'))
+          core.CGMainDisplayID.restype = ctypes.c_uint32
+          print('CGMainDisplayID:', core.CGMainDisplayID())
+          "
+      # The language-level contract needs the compiler, interpreter and test
+      # runner as well as the provider, so this is a whole build; LLVM stays
+      # off to keep it to one route rather than a full source campaign.
+      - name: Configure without LLVM
+        timeout-minutes: 8
+        run: |
+          cmake -S . -B build/ci \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DNIL_ENABLE_LLVM=OFF
+      - name: Build
+        timeout-minutes: 40
+        run: cmake --build build/ci --parallel 3
+      - name: Language-level desktop contract
+        timeout-minutes: 15
+        run: ctest --test-dir build/ci -R 'nil.ui' --output-on-failure
