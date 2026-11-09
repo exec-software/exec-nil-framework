@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Exercise the optional UI provider on a private, authenticated X11 display."""
+"""Exercise the desktop UI provider: a private X11 display on Linux, the
+ambient window server session on macOS."""
 from __future__ import annotations
 
 import argparse
@@ -244,6 +245,43 @@ def checked(command, env, timeout=180):
         if process.stderr: process.stderr.close()
 
 
+def darwin(args):
+    """The AppKit contract. macOS has no detachable display to create, so the
+    runner's own window server session is used; without one there is nothing
+    to test and the contract skips rather than reporting a provider fault."""
+    core = c.CDLL(ctypes.util.find_library('CoreGraphics'))
+    core.CGMainDisplayID.restype = c.c_uint32
+    if not core.CGMainDisplayID():
+        print('SKIP: macOS display contracts need a window server session')
+        return 77
+    if args.probe:
+        print('macOS window server session present')
+        return 0
+    assert all((args.tester, args.compiler, args.interpreter, args.sdk, args.source))
+    env = dict(os.environ)
+    if args.provider_test:
+        checked([args.provider_test.resolve(), '--display'], env)
+    if args.lifecycle_test:
+        checked([args.lifecycle_test.resolve(), '--display'], env)
+    base = [args.tester.resolve(), 'run', '--compiler', args.compiler.resolve(),
+            '--interpreter', args.interpreter.resolve(), '--sdk-path', args.sdk.resolve(),
+            '--format', 'json', '--jobs', '1', '--timeout', '30']
+    desktop = checked([*base, '--target', 'all' if args.llvm == 'ON' else 'vm',
+                       '--filter', 'nil.std.ui.gtk.desktop', args.source.resolve()], env)
+    report = json.loads(desktop.stdout)
+    assert report['tests'] and not report['errors'], report
+    assert all(test['status'] == 'passed' for test in report['tests']), report
+    # The interaction suite is deliberately not run here. It needs keystrokes
+    # delivered to another process, and on macOS posting events to a different
+    # process requires accessibility trust that a hosted runner does not grant.
+    # Real input is covered in-process instead, by the provider fixture's own
+    # input probe, so this is a limit of cross-process injection rather than of
+    # the provider. Saying so beats quietly reporting a narrower contract.
+    print(f'macOS desktop contract passed: {len(report["tests"])} language cases, '
+          'interaction suite not covered (cross-process input needs accessibility trust)')
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--xvfb', default=shutil.which('Xvfb'))
@@ -258,6 +296,8 @@ def main():
     parser.add_argument('--lifecycle-test', type=Path)
     parser.add_argument('--llvm', choices=('ON', 'OFF'), default='OFF')
     args = parser.parse_args()
+    if sys.platform == 'darwin':
+        return darwin(args)
     if sys.platform != 'linux' or not args.xvfb or not Path(args.xvfb).is_file() or not shutil.which('xauth'):
         print('SKIP: GTK display contracts need Linux, Xvfb and xauth')
         return 77

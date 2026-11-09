@@ -2216,3 +2216,45 @@ Reconciliations under `sdk-run-41976360302`:
 
 The new product GTK checkpoint is `11c7684`. Both native architectures are running
 provider/runtime/directed-child acceptance in run `41981658320`.
+
+
+## 2026-11-09: AppKit becomes the macOS provider and GTK-on-macOS is retired
+
+The AppKit provider passes its published contract against a real window server
+session on both hosted architectures, 93 checks each, on its first CI run:
+`42552736762` on arm64 and `42552857408` on `macos-15-intel`, both reporting a
+live `CGMainDisplayID`. The provider is
+`nilcompiler/src/ui_runtime_appkit.mm`, its fixture is
+`tests/ui_runtime_appkit_tests.mm`, and
+`.github/workflows/macos-appkit-provider.yml` builds only that target with LLVM
+off so a cycle costs minutes rather than a full source campaign.
+
+**Why it passed first time.** There is no Mac here, so the first compile is a
+CI run and a careless file costs cycles. Reading it again before spending one
+found three defects that each would have cost a round trip: `Context::Impl` is
+private to `Context`, so an Objective-C class outside that scope cannot name it
+-- the delegate carries a block built inside `Impl` instead, which closes over
+a weak reference and takes the access with it; `sizeThatFits:` is UIKit, not
+AppKit, so natural sizes come from `NSView fittingSize`; and Objective-C
+pointer downcasts are not C++ class casts. The Windows experience also
+transferred directly: because the provider calls Cocoa and CoreGraphics rather
+than loading them, both were declared on the runtime targets, in nillinker's
+POSIX arguments and in the compiler's Darwin link command before the first run,
+instead of being rediscovered through failures in tests whose names mention
+nothing about linking.
+
+**GTK on macOS is retired.** The justification is the directed-input evidence
+at `8aa60d2`: every accessibility query against a GTK process returned
+`kAXErrorCannotComplete`, including the application element's own role and
+attribute names, because GTK pumps GLib and never runs `-[NSApplication run]`
+while AppKit services those requests from the main run loop. That is
+structural, not a probe fault, and it means such a process is invisible to
+assistive technology. Removed: the macOS half of the GTK provider, the private
+provider build, runtime and directed-probe scripts with their control tests,
+the provider lock file and `macos-gtk-provider.yml`. `ui_runtime.cpp` is now
+the Linux provider only and carries no platform conditionals, since CMake
+selects Win32 on Windows and AppKit on macOS.
+
+`docs/standard-library/ui.md` no longer tells macOS users to supply
+`NIL_UI_GTK_DIRECTORY` and a GTK runtime. Linux is unchanged at 572 registered,
+0 failed and 3 environment skips.

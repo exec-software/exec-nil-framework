@@ -6,12 +6,10 @@
 #include <cwchar>
 #include <iterator>
 #include <stdexcept>
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(__linux__)
 #include <dlfcn.h>
-#if defined(__APPLE__)
-#include <cstdlib>
-#include <filesystem>
-#endif
+#elif defined(__APPLE__)
+#import <AppKit/AppKit.h>
 #elif defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -21,34 +19,19 @@
 
 // Test-only, independent observation of the toolkit's real live top-level
 // windows, so a lifecycle test can tell an actually released window from a
-// merely invalidated handle. GTK is asked for its registry; Win32 has no such
-// registry, so this counts the operating system's own top-level windows.
+// merely invalidated handle. The question is the same on every platform and
+// only the answerer differs. GTK is asked for its registry. AppKit is asked
+// for the application's windows, which, like that registry, counts them
+// whether or not they are on screen. Win32 has no registry at all, so the
+// operating system's own top-level windows are counted instead.
+//
+// On macOS this header is Objective-C++, so whatever includes it is compiled
+// as Objective-C++ too.
 class UiRegistryObserver {
-#if !defined(_WIN32)
+#if defined(__linux__)
   void *(*list_)() = nullptr;
   unsigned (*size_)(void *) = nullptr;
-#endif
-#if defined(__linux__) || defined(__APPLE__)
   void *library_ = nullptr;
-#if defined(__APPLE__)
-  void *gio_ = nullptr;
-  int (*initialized_)() = nullptr;
-  static std::filesystem::path selected(const char *name) {
-    const char *directory = std::getenv("NIL_UI_GTK_DIRECTORY");
-    if (!directory || !*directory || !std::filesystem::path(directory).is_absolute())
-      throw std::runtime_error("GTK registry observer requires an absolute selected provider");
-    auto file = std::filesystem::canonical(std::filesystem::path(directory) / name);
-    if (!std::filesystem::is_regular_file(file)) throw std::runtime_error("GTK registry dependency is not a regular file");
-    return file;
-  }
-  static bool matches(void *symbol, const std::filesystem::path &file) {
-    Dl_info info{};
-    std::error_code error;
-    return symbol && dladdr(symbol, &info) && info.dli_fname &&
-        std::filesystem::path(info.dli_fname).is_absolute() &&
-        std::filesystem::equivalent(file, info.dli_fname, error) && !error;
-  }
-#endif
 #elif defined(_WIN32)
   // The provider's own window class, which must match window_class in
   // nilcompiler/src/ui_runtime_win32.cpp. Counting by class keeps the console
@@ -72,59 +55,36 @@ public:
     if (!library_) throw std::runtime_error("load GTK registry observer");
     list_ = reinterpret_cast<decltype(list_)>(dlsym(library_, "gtk_window_get_toplevels"));
     size_ = reinterpret_cast<decltype(size_)>(dlsym(library_, "g_list_model_get_n_items"));
-#elif defined(__APPLE__)
-    const auto gtk = selected("libgtk-4.1.dylib");
-    const auto gio = selected("libgio-2.0.0.dylib");
-    // Test-only GIO alias must identify GTK's already loaded dependency. Never
-    // introduce another provider while trying to independently count windows.
-    library_ = dlopen(gtk.c_str(), RTLD_NOLOAD | RTLD_NOW | RTLD_LOCAL);
-    gio_ = dlopen(gio.c_str(), RTLD_NOLOAD | RTLD_NOW | RTLD_LOCAL);
-    if (library_ && gio_) {
-      auto list = dlsym(library_, "gtk_window_get_toplevels");
-      auto size = dlsym(gio_, "g_list_model_get_n_items");
-      auto initialized = dlsym(library_, "gtk_is_initialized");
-      if (matches(list, gtk) && matches(initialized, gtk) && matches(size, gio) &&
-          matches(dlsym(library_, "g_list_model_get_n_items"), gio)) {
-        list_ = reinterpret_cast<decltype(list_)>(list);
-        size_ = reinterpret_cast<decltype(size_)>(size);
-        initialized_ = reinterpret_cast<decltype(initialized_)>(initialized);
-      }
-    }
-#endif
-#if !defined(_WIN32)
     if (!list_ || !size_) {
-#if defined(__linux__) || defined(__APPLE__)
-      if (library_) dlclose(library_);
+      dlclose(library_);
       library_ = nullptr;
-#if defined(__APPLE__)
-      if (gio_) dlclose(gio_);
-      gio_ = nullptr;
-#endif
-#endif
       throw std::runtime_error("GTK registry observer symbols unavailable");
     }
+#elif defined(__APPLE__)
+    // The provider creates the shared application before any window, so a nil
+    // NSApp means nothing has been observed yet rather than an empty registry.
+    if (!NSApp)
+      throw std::runtime_error("AppKit registry observer requires an initialized application");
 #endif
   }
   ~UiRegistryObserver() {
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(__linux__)
     if (library_) dlclose(library_);
-#if defined(__APPLE__)
-    if (gio_) dlclose(gio_);
-#endif
 #endif
   }
   UiRegistryObserver(const UiRegistryObserver &) = delete;
   UiRegistryObserver &operator=(const UiRegistryObserver &) = delete;
-#if defined(_WIN32)
+#if defined(__linux__)
+  unsigned count() const { return size_(list_()); }
+#elif defined(__APPLE__)
+  unsigned count() const { return static_cast<unsigned>(NSApp ? NSApp.windows.count : 0); }
+#elif defined(_WIN32)
   unsigned count() const {
     unsigned total = 0;
     EnumWindows(&tally, reinterpret_cast<LPARAM>(&total));
     return total;
   }
 #else
-  unsigned count() const { return size_(list_()); }
-#endif
-#if defined(__APPLE__)
-  bool initialized() const { return initialized_() != 0; }
+  unsigned count() const { throw std::runtime_error("no registry observer for this platform"); }
 #endif
 };

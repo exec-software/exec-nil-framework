@@ -279,6 +279,12 @@ if(BUILD_TESTING)
     add_executable(nil_ui_lifecycle_tests tests/ui_lifecycle_tests.cpp)
     target_link_libraries(nil_ui_lifecycle_tests PRIVATE nilcompiler_core nilruntime ${CMAKE_DL_LIBS})
     target_compile_features(nil_ui_lifecycle_tests PRIVATE cxx_std_17)
+    if(APPLE)
+        # Its registry observer asks AppKit for the application's windows, so
+        # the fixture is Objective-C++ on Darwin. Cocoa arrives with nilruntime.
+        set_source_files_properties(tests/ui_lifecycle_tests.cpp PROPERTIES
+            COMPILE_OPTIONS "-x;objective-c++")
+    endif()
 
     add_executable(ny_native_owned_tests tests/native_owned_tests.cpp)
     target_link_libraries(ny_native_owned_tests PRIVATE nilruntime Threads::Threads)

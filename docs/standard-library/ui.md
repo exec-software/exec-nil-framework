@@ -57,23 +57,28 @@ prove a desktop is usable. Win32 supplies no box or grid container, so the
 provider owns the layout pass for rows, columns and grids; sizes therefore come
 from measuring text with the system message font rather than from the toolkit.
 
-The macOS source provider requires `NIL_UI_GTK_DIRECTORY` to name an existing
-absolute trusted directory containing `libgtk-4.1.dylib`,
-`libgobject-2.0.0.dylib` and `libglib-2.0.0.dylib`. Curated symlinks may point to
-the selected external runtime files. Resolved symbols and GTK's direct core
-dependency lookups must match those selected files. There is no implicit
-current-directory or `PATH` lookup, and the provider does not change loader
-settings. GTK remains an external prerequisite; this does not create a portable
-GTK bundle or validate every transitive dependency of an embedding host.
+macOS needs no external toolkit either. The provider is AppKit, so
+`available with nothing` is always true there and GTK is neither used nor
+loaded; `NIL_UI_GTK_DIRECTORY` has no meaning on macOS. Window creation
+requires a window server session and returns a display error without one.
+Because the provider calls Cocoa and CoreGraphics directly, every linked
+program carries those frameworks, which is why they appear in the Darwin link
+lines alongside the runtime.
 
-On macOS, creation and polling must run on the process main thread, including
-the first GTK initialization. The provider requires the native Macos/Quartz
-display backend. Ordinary interpreter, JIT and native entry routes use the main
-thread; UI behavior through these routes still needs the desktop acceptance
-campaign. DAP currently executes the debuggee on a worker, so DAP with macOS UI
-is outside this port. Pausing a text/JSON debug session also does not automatically
-pump window events. The recorded private toolkit profile uses Cairo rendering;
-other renderer and accessibility configurations remain unqualified.
+GTK is no longer a macOS provider. A GTK process on macOS never runs
+`-[NSApplication run]`, and AppKit answers accessibility requests from the main
+run loop, so such a process has no accessibility hierarchy at all: every
+accessibility query against it fails, including the application element's own
+role, which makes it invisible to assistive technology and to directed input.
+
+On macOS, creation and polling must run on the process main thread, which is
+where AppKit requires its windows to be used. Ordinary interpreter, JIT and
+native entry routes use the main thread; UI behaviour through these routes
+still needs the desktop acceptance campaign. DAP currently executes the
+debuggee on a worker, so DAP with macOS UI is outside this port, and pausing a
+text or JSON debug session does not automatically pump window events. AppKit
+supplies no box or grid container, so, as on Win32, the provider owns the
+layout pass and sizes come from each control's fitting size.
 
 ## Windows and widgets
 
