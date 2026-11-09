@@ -79,26 +79,26 @@ public:
   unsigned count() const { return size_(list_()); }
 #elif defined(__APPLE__)
   unsigned listed() const { return static_cast<unsigned>(NSApp ? NSApp.windows.count : 0); }
-  // AppKit drops a closed window from the application's list when it
-  // deallocates, which happens on the run loop and takes more than one turn:
-  // a window counted immediately after close is still listed, while the
-  // fixture's own bootstrap window is long gone by the time the baseline is
-  // taken. So let the count settle, bounded, and report whatever it settles
-  // on -- a window that is genuinely leaked settles too, and is still caught.
+  // AppKit keeps a closed window in the application's list -- one observed
+  // here was still held by twenty-four references long after close -- and
+  // the lifecycle fixture never orders its window in, so neither the list
+  // nor isVisible separates a live window from a released one the way GTK's
+  // toplevel registry does.
+  //
+  // The provider leaves a marker that does: it installs a delegate when it
+  // creates a window and clears it when it closes one. Counting its own
+  // content views with a live delegate therefore asks exactly what the
+  // fixture means -- has the provider let this window go -- while staying
+  // independent of the provider's handle map, which is the thing a stale
+  // handle could otherwise hide.
   unsigned count() const {
-    unsigned current = listed();
-    unsigned unchanged = 0;
-    for (int turn = 0; turn < 50 && current; ++turn) {
-      @autoreleasepool {
-        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
-                                 beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
-      }
-      const unsigned settled = listed();
-      unchanged = settled == current ? unchanged + 1 : 0;
-      current = settled;
-      if (unchanged >= 3) break;
+    unsigned owned = 0;
+    for (NSWindow *window in NSApp.windows) {
+      if (!window.contentView) continue;
+      if (![NSStringFromClass([window.contentView class]) isEqualToString:@"NyUiContainer"]) continue;
+      if (window.delegate) ++owned;
     }
-    return current;
+    return owned;
   }
 #elif defined(_WIN32)
   unsigned count() const {
