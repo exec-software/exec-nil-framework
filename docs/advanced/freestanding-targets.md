@@ -104,6 +104,50 @@ request. Generated code checks for `NULL` and reports it through `nyrt_fail`,
 so an allocator with nothing to give fails the program rather than being
 allowed to lie.
 
+## Reaching a symbol the host supplies
+
+A freestanding consumer's own call boundary — its system calls, its trap or
+interrupt gate, its rights model — belongs to that consumer, and is usually
+unstable while it is being designed. It must not enter the standard library.
+What NIL supplies is the ability to reach it:
+
+```ny
+@interop("host")
+fn anomalous_rite_console_write(message: text) -> i64
+end fn
+```
+
+`host` is the one library name that names no library. It means the declared Ny
+function **is** an external symbol of exactly that name, called with the
+platform's ordinary C convention, and whoever links the object defines it. The
+object imports that name and nothing else; a declaration nobody calls imports
+nothing at all.
+
+The symbol name is the declared name, so it is visible in the source and in
+the object's import surface, where a reader and the symbol-surface test can
+both see it. Names beginning `nyrt_` or `__ny_` are refused, because the
+native runtime ABI is NIL's.
+
+**Nothing checks the host's signature.** No part of the toolchain can see the
+definition, so the type profile is deliberately narrow and anything outside it
+is refused rather than guessed:
+
+| Ny type | Passed as |
+| --- | --- |
+| `i64` | a 64-bit integer |
+| `f64` | a double |
+| `text` | a pointer to NUL-terminated bytes |
+
+A function may return one of those or no value. Aggregates, arrays and
+anything else are rejected with a diagnostic naming the profile. The `text`
+representation is the one a Ny string already has natively; a host receives the
+bytes in place and must not assume it may write to them or that they outlive
+the call.
+
+This is native-only. The interpreter refuses a `host` call by name rather than
+searching for a library, because a machine that happened to have one would bind
+an unrelated symbol.
+
 ## The runtime NIL ships
 
 `nilruntime_freestanding` (`libnilruntime_freestanding.a`) implements all
@@ -227,8 +271,9 @@ and the toolchain disagree.
   to that system and stays in its repository, particularly while it is
   unstable. What NIL supplies is the capability to express it: freestanding
   objects, exact record layout through
-  [owned scalar buffers](owned-buffers.md) and the
-  [native register assembly](inline-assembly.md) profile, and no imports a
-  consumer did not ask for.
+  [owned scalar buffers](owned-buffers.md), the
+  [native register assembly](inline-assembly.md) profile, `@interop("host")`
+  for reaching a symbol the consumer defines, and no imports a consumer did not
+  ask for.
 - **No threads, TLS, unwinding or hosted I/O.** None of these are emitted for
   a freestanding target, and none are supplied by the shipped runtime.

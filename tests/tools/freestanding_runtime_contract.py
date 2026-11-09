@@ -57,6 +57,25 @@ reached_user_code_exit = 93
 reported_failure_exit = 23
 failure_without_message_exit = 24
 
+# A program that reaches a symbol its consumer defines. The driver below
+# supplies it, inspects what Ny passed, and returns a value Ny returns in
+# turn, so the check covers the whole round trip rather than the link alone.
+host_symbol = 'anomalous_probe_emit'
+host_message = 'from ny'
+host_program = (
+    'module host_probe\n\n'
+    '@interop("host")\n'
+    f'fn {host_symbol}(message: text) -> i64\n'
+    'end fn\n\n'
+    'fn main() -> i64 {\n'
+    f'    let greeting: text = "{host_message}";\n'
+    f'    return {host_symbol}(greeting);\n'
+    '}\n'
+)
+
+# Distinct from every other exit above.
+wrong_text_exit = 71
+
 concat_program = (
     'fn main() -> i64 {\n'
     '    let a: text = "left";\n'
@@ -148,6 +167,35 @@ extern "C" void __ny_host_fail(const char *message) {{
 extern "C" [[noreturn]] void _start() {{
   __ny_entry();
   leave({reached_user_code_exit});
+}}
+"""
+
+
+# Defines the symbol Ny declared. Nothing in Ny checked this signature; the
+# contract is the documented one -- a text argument arrives as a pointer to
+# NUL-terminated bytes -- so the driver verifies the bytes it was handed and
+# returns a length Ny passes back as its own result.
+host_driver_source = f"""
+extern "C" int __ny_entry();
+
+[[noreturn]] static void leave(long code) {{
+  asm volatile("syscall" :: "a"(60L), "D"(code) : "rcx", "r11", "memory");
+  __builtin_unreachable();
+}}
+
+extern "C" long {host_symbol}(const char *message) {{
+  static const char expected[] = "{host_message}";
+  if (message == nullptr) leave({wrong_text_exit});
+  unsigned long index = 0;
+  for (; expected[index] != '\\0'; ++index) {{
+    if (message[index] != expected[index]) leave({wrong_text_exit});
+  }}
+  if (message[index] != '\\0') leave({wrong_text_exit});
+  return static_cast<long>(index);
+}}
+
+extern "C" [[noreturn]] void _start() {{
+  leave(__ny_entry());
 }}
 """
 
@@ -318,6 +366,23 @@ def main() -> int:
         assert result.returncode == reported_failure_exit, (
             'allocating with no region installed must report through nyrt_fail; '
             f'got {result.returncode}, stderr: {result.stderr!r}')
+        checks += 1
+
+        # A host symbol, linked and called. Ny returns what the host returned,
+        # so the exit status is the message's length and proves both that the
+        # pointer was a real NUL-terminated string and that the result came
+        # back through Ny's own return.
+        reaching = build(args.compiler, args.assembler, args.archive, args.cxx,
+                         root, 'host', host_driver_source,
+                         program_source=host_program)
+        checks += 1
+        result = run([reaching], timeout=60)
+        assert result.returncode != wrong_text_exit, (
+            'the host symbol must receive the exact NUL-terminated bytes Ny '
+            'passed')
+        assert result.returncode == len(host_message), (
+            'Ny must return what the host symbol returned; expected '
+            f'{len(host_message)}, got {result.returncode}')
         checks += 1
 
     print(f'Freestanding runtime: {checks} checks passed')

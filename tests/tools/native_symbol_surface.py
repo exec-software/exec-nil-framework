@@ -246,6 +246,42 @@ def main() -> int:
             f'unexpected: {sorted(free - runtime_abi)}')
         checks += 1
 
+        # A symbol the consumer supplies. The declared name is the symbol, so
+        # it must appear in the import surface exactly as written and nothing
+        # else may arrive with it -- and a declaration nobody calls must add
+        # no import at all, or every consumer would owe a definition for a
+        # capability the program did not use.
+        host_symbol = 'anomalous_probe_emit'
+        declaration = ('module host_probe\n\n'
+                       '@interop("host")\n'
+                       f'fn {host_symbol}(message: text) -> i64\n'
+                       'end fn\n\n')
+        unused, _ = emit(args.compiler, args.assembler, root, 'host_unused',
+                         declaration + 'fn main() -> i64 {\n    return 0;\n}\n',
+                         freestanding=True)
+        assert host_symbol not in unused, (
+            'a host symbol that is never called must not be imported; '
+            f'imports: {sorted(unused)}')
+        checks += 1
+        called, _ = emit(args.compiler, args.assembler, root, 'host_called',
+                         declaration + 'fn main() -> i64 {\n'
+                         '    let greeting: text = "from ny";\n'
+                         f'    return {host_symbol}(greeting);\n'
+                         '}\n',
+                         freestanding=True)
+        assert host_symbol in called, (
+            'a called host symbol must be imported under exactly its declared '
+            f'name; imports: {sorted(called)}')
+        checks += 1
+        assert called <= runtime_abi | {host_symbol}, (
+            'reaching a host symbol must not widen the import surface '
+            f'further; unexpected: {sorted(called - runtime_abi - {host_symbol})}')
+        checks += 1
+        assert not (called & concat_imports), (
+            'reaching a host symbol must not import a libc name; '
+            f'present: {sorted(called & concat_imports)}')
+        checks += 1
+
         # Where the object may be linked. The default small model puts every
         # address in a 32-bit absolute relocation, which a consumer placing
         # user code above 4 GiB cannot satisfy -- its link fails over the
