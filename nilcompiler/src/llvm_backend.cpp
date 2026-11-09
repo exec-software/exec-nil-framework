@@ -1196,6 +1196,7 @@ struct NativeCodegen::Impl {
   MemoryMode memory_mode = MemoryMode::UNSAFE_MANUAL;
   bool embed_context = false;
   bool freestanding_entry = false;
+  bool disable_red_zone = false;
   llvm::Function *current_function = nullptr;
 
   // State matching generateModule usage
@@ -1371,6 +1372,27 @@ void NativeCodegen::setEmbedContext(bool enabled) {
 
 void NativeCodegen::setFreestandingEntry(bool enabled) {
   impl_->freestanding_entry = enabled;
+}
+
+void NativeCodegen::setDisableRedZone(bool enabled) {
+  impl_->disable_red_zone = enabled;
+}
+
+bool NativeCodegen::emitLlvmIr(const std::string &path) {
+  if (!impl_->module) {
+    std::cerr << "[NativeCodegen] no module to write\n";
+    return false;
+  }
+  std::error_code code;
+  llvm::raw_fd_ostream out(path, code, llvm::sys::fs::OF_Text);
+  if (code) {
+    std::cerr << "[NativeCodegen] could not write LLVM IR: " << code.message()
+              << '\n';
+    return false;
+  }
+  impl_->module->print(out, nullptr);
+  out.flush();
+  return !out.has_error();
 }
 
 bool NativeCodegen::initialize() {
@@ -9005,6 +9027,13 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                              : target.isOSBinFormatCOFF() ? ".nyctx" : ".ny.context");
     manifest->setAlignment(llvm::Align(1));
     llvm::appendToUsed(*impl_->module, {manifest});
+  }
+
+  if (impl_->disable_red_zone) {
+    for (auto &function : *impl_->module) {
+      if (function.isDeclaration()) continue;
+      function.addFnAttr(llvm::Attribute::NoRedZone);
+    }
   }
 
   std::string err;

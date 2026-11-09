@@ -82,8 +82,31 @@ def undefined_symbols(path: Path) -> set[str]:
     return undefined, exported
 
 
+def definitions_without_noredzone(ir: Path) -> list[str]:
+    """Definitions in the IR whose attribute group lacks noredzone.
+
+    Checked through the attribute groups the definitions actually reference,
+    because the bare word appearing somewhere in the file would also be true
+    if a single function carried it.
+    """
+    groups_with: set[str] = set()
+    definitions: list[tuple[str, str]] = []
+    for line in ir.read_text().splitlines():
+        if line.startswith('attributes #'):
+            name = line.split('=')[0].strip().removeprefix('attributes ')
+            if 'noredzone' in line:
+                groups_with.add(name)
+        elif line.startswith('define'):
+            head = line.split('{')[0].split()
+            group = next((piece for piece in head if piece.startswith('#')), '')
+            definitions.append((line.split('(')[0].split()[-1], group))
+    assert definitions, f'no definitions found in {ir}'
+    return [name for name, group in definitions if group not in groups_with]
+
+
 def emit(compiler: Path, assembler: Path, root: Path, name: str, source: str,
-         freestanding: bool = False):
+         freestanding: bool = False, no_red_zone: bool = False,
+         ir: Path | None = None):
     path = root / f'{name}.ny'
     path.write_text(source, newline='\n')
     nil = root / f'{name}.nil'
@@ -91,6 +114,10 @@ def emit(compiler: Path, assembler: Path, root: Path, name: str, source: str,
     assemble = [assembler, '--unmanaged']
     if freestanding:
         assemble.append('--freestanding')
+    if no_red_zone:
+        assemble.append('--no-red-zone')
+    if ir is not None:
+        assemble += ['--emit-llvm', str(ir)]
     for command in ([compiler, '--no-stdlib', '--no-bundle', '--unmanaged', '-o', nil, path],
                     assemble + ['-o', obj, nil]):
         result = subprocess.run(list(map(str, command)), stdin=subprocess.DEVNULL,
@@ -153,6 +180,23 @@ def main() -> int:
         assert free <= runtime_abi, (
             'the freestanding entry must not widen the import surface; '
             f'unexpected: {sorted(free - runtime_abi)}')
+        checks += 1
+
+        # The red zone is a separate decision from the entry shape: a target
+        # whose interrupt entry switches stacks keeps it, a kernel-reentrant
+        # one cannot. So it is its own option and is checked on its own.
+        hosted_ir = root / 'hosted.ll'
+        emit(args.compiler, args.assembler, root, 'hosted_ir', trivial, ir=hosted_ir)
+        assert definitions_without_noredzone(hosted_ir), (
+            'the red zone stays available unless it is turned off')
+        checks += 1
+        guarded_ir = root / 'guarded.ll'
+        emit(args.compiler, args.assembler, root, 'guarded_ir', trivial,
+             freestanding=True, no_red_zone=True, ir=guarded_ir)
+        missing = definitions_without_noredzone(guarded_ir)
+        assert not missing, (
+            'every generated definition must carry noredzone when it is requested; '
+            f'without it: {missing}')
         checks += 1
 
     print(f'Native symbol surface: {checks} checks passed')
