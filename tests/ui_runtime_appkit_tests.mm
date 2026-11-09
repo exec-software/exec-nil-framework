@@ -19,6 +19,7 @@
 #include <iostream>
 #include <string>
 
+#import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
 
 namespace {
@@ -158,6 +159,83 @@ void contract() {
   rejected(context.close(window), "handle", "closing twice is an error");
 }
 
+// Real keyboard input, delivered in process. macOS requires accessibility
+// trust to post events to another process, which a hosted runner does not
+// grant, so the language-level contract cannot drive the interaction suite
+// there; posting into this process needs no such permission, and the provider
+// pump is still what has to route it.
+void input_probe(bool verbose) {
+  @autoreleasepool {
+    ny::ui::Context context;
+    const auto window = ok(context.window("NIL AppKit input probe", 420, 240), "create probe window");
+    const auto column = ok(context.widget("column", window, ""), "create probe column");
+    const auto entry = ok(context.widget("entry", column, ""), "create probe entry");
+    const auto box = ok(context.widget("checkbox", column, "Enable setting"), "create probe checkbox");
+    const auto button = ok(context.widget("button", column, "Finish probe"), "create probe button");
+    ok(context.set_number(window, "visible", 1), "show probe window");
+    ok(context.set_number(entry, "focus", 1), "focus probe entry");
+
+    NSWindow *top = nil;
+    for (NSWindow *candidate in NSApp.windows)
+      if ([candidate.title isEqualToString:@"NIL AppKit input probe"]) { top = candidate; break; }
+    require(top != nil, "probe window is discoverable among the application windows");
+    // Key events reach the key window's responder chain, so the application
+    // has to be active for AppKit to route them at all.
+    [NSApp activateIgnoringOtherApps:YES];
+    if (verbose)
+      std::cout << "input probe: active=" << (NSApp.active ? 1 : 0)
+                << " key=" << (top.keyWindow ? 1 : 0)
+                << " responder=" << (top.firstResponder
+                        ? [NSStringFromClass([top.firstResponder class]) UTF8String] : "none")
+                << "\n";
+
+    const auto post = [&](NSString *characters, unsigned short code) {
+      for (NSEventType type : {NSEventTypeKeyDown, NSEventTypeKeyUp}) {
+        NSEvent *event = [NSEvent keyEventWithType:type
+                                          location:NSZeroPoint
+                                     modifierFlags:0
+                                         timestamp:[[NSProcessInfo processInfo] systemUptime]
+                                      windowNumber:top.windowNumber
+                                           context:nil
+                                        characters:characters
+                       charactersIgnoringModifiers:characters
+                                         isARepeat:NO
+                                           keyCode:code];
+        if (event) [NSApp postEvent:event atStart:NO];
+      }
+    };
+    for (NSString *character in @[@"M", @"a", @"t", @"r", @"i", @"x"]) post(character, 0);
+    post(@"\t", 48);  // kVK_Tab
+    post(@" ", 49);   // kVK_Space
+    post(@"\t", 48);
+    post(@" ", 49);
+
+    bool saw_text = false, saw_toggle = false, saw_click = false;
+    std::string observed;
+    for (int attempt = 0; attempt < 400 && !saw_click; ++attempt) {
+      const auto polled = context.poll(window);
+      if (!polled) break;
+      if (!polled.number) { [NSThread sleepForTimeInterval:0.01]; continue; }
+      const auto kind = ok(context.event_number(polled.number, "kind"), "probe event kind");
+      const auto target = ok(context.event_number(polled.number, "target"), "probe event target");
+      if (kind == 2 && target == entry) {
+        observed = context.event_text(polled.number).text;
+        if (observed == "Matrix") saw_text = true;
+      } else if (kind == 3 && target == box &&
+                 ok(context.event_number(polled.number, "checked"), "probe checked") == 1) saw_toggle = true;
+      else if (kind == 1 && target == button) saw_click = true;
+      ok(context.release_event(polled.number), "release probe event");
+    }
+    if (verbose)
+      std::cout << "input probe: text=" << saw_text << " toggle=" << saw_toggle
+                << " click=" << saw_click << " entry=\"" << observed << "\"\n";
+    ok(context.close(window), "close probe window");
+    require(saw_text, "posted characters reach the focused entry");
+    require(saw_toggle, "Tab then Space reaches the checkbox");
+    require(saw_click, "Tab then Space reaches the button");
+  }
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -168,6 +246,12 @@ int main(int argc, char **argv) {
     return 0;
   }
   const bool desktop = window_server();
+  if (mode == "--input-probe") {
+    require(desktop, "--input-probe requires a window server session");
+    input_probe(true);
+    std::cout << "UI runtime: " << checks << " checks passed (--input-probe)\n";
+    return 0;
+  }
   if (mode == "--display") {
     require(desktop, "--display requires a window server session");
     contract();

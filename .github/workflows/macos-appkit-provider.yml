@@ -72,6 +72,11 @@ jobs:
       - name: Provider contract against a real session
         timeout-minutes: 5
         run: ./build/ci/bin/nil_ui_runtime_appkit_tests --display
+      # Cross-process input needs accessibility trust a runner does not grant,
+      # so real keyboard input is exercised inside the process instead.
+      - name: Real keyboard input, in process
+        timeout-minutes: 5
+        run: ./build/ci/bin/nil_ui_runtime_appkit_tests --input-probe
 
   display:
     if: ${{ inputs.scope == 'display' }}
