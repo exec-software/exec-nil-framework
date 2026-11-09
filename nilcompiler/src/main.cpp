@@ -2244,8 +2244,8 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
         // otherwise only ever inline - without it a generated call to printf
         // is an unresolved external.
         const std::vector<std::string> windows_crt_libraries = {
-            "kernel32.lib", "ws2_32.lib", "msvcrt.lib", "ucrt.lib", "vcruntime.lib",
-            "legacy_stdio_definitions.lib"};
+            "kernel32.lib", "ws2_32.lib", "user32.lib", "gdi32.lib", "msvcrt.lib",
+            "ucrt.lib", "vcruntime.lib", "legacy_stdio_definitions.lib"};
         const auto manifest_path = *private_output_workspace / "utf8.manifest";
         const auto manifest_publish = ny::detail::write_file_atomic(
             manifest_path,
@@ -2315,6 +2315,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
             std::vector<std::string> arguments = {
                 driver->u8string(), "-o", link_output_path.u8string(),
                 obj_path.u8string(), native_runtime->u8string(), "ws2_32.lib",
+                "user32.lib", "gdi32.lib",
                 "-Xlinker", "/MANIFEST:EMBED", "-Xlinker", manifest_argument};
             arguments.insert(arguments.end(), link_libraries.begin(),
                              link_libraries.end());
@@ -2360,6 +2361,10 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
                quote_posix_shell_argument(native_runtime->string());
 #if defined(__linux__)
         cmd += " -ldl";
+#endif
+#if defined(__APPLE__)
+        // As above: nil.a carries the AppKit provider on Darwin.
+        cmd += " -framework Cocoa -framework CoreGraphics";
 #endif
         for (const auto &lib : link_libraries) {
           cmd += " " + quote_posix_shell_argument(lib);

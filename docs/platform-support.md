@@ -92,6 +92,26 @@ tests after the numeric-address correction, including IPv4/IPv6 timeout and
 socket-close checks. The original checkout, installed SDK and provider DLLs
 remain unchanged.
 
+A private Windows build at `8aa60d2` records the first complete local suite since
+the port closeout: 574 registered tests against 572 on the Linux reference. The
+two inventories share 569 tests. Five are Windows-only: console UTF-8,
+unmanifested UTF-8 file paths, the GTK loader, the native memory-limit self-test
+and the SDK preflight. Three are Linux-only: toolchain inputs, POSIX process
+semantics and a socket-backpressure check of the Python test client rather than
+of a product surface. No language, frontend, type-checker, IR, interpreter, LLVM
+or standard-library test fails. Four shared contracts fail only when the suite
+runs as `SYSTEM`: that account reports `TEMP` cased `C:\WINDOWS\TEMP`, the
+toolchain reports paths in their on-disk casing, and the affected assertions
+compare the two strings exactly; the same four pass unchanged under an ordinary
+user account. The Windows-only SDK preflight needs a machine execution
+policy that permits local scripts, because it invokes `powershell.exe -File`
+deliberately without a bypass; under the Windows client default of `Restricted`
+every subtest observes a policy refusal instead of a preflight diagnostic, and
+it passes once the policy is `RemoteSigned`. Two display tests skip for want of
+an interactive desktop session and both PostgreSQL tests skip without a
+server. This supplements the recorded Windows baseline; it neither
+replaces the accepted SDK nor qualifies a new one.
+
 ## Native executable context
 
 Thin Mach-O64 x86_64 and arm64 objects and executables support bounded inspection
@@ -150,8 +170,13 @@ the complete admission rules.
   bound. Native diagnostics show that the fixed 96 MiB virtual-memory cap is
   rejected at process setup; larger diagnostic profiles do not replace it.
   Successful lifetime execution routes remain covered by the ordinary suite.
-- The GTK provider currently supports Linux and Windows. macOS UI/provider
-  support and live desktop acceptance remain open. Both hosted Mac architectures
+- Desktop UI now uses one provider per platform: GTK on Linux and Win32 on
+  Windows. The Windows provider passes the full desktop contract on a real
+  interactive session -- provider contract, lifecycle release observation, the
+  Matrix desktop suite and the interaction suite that drives real keyboard
+  input -- while a session without an interactive window station still skips.
+  macOS UI/provider support and live desktop acceptance remain open; AppKit
+  replaces the retired GTK-on-macOS work. Both hosted Mac architectures
   now pass the prerequisite GLib, Cairo-Quartz and HarfBuzz/CoreText compile,
   link and runtime checks, plus exact own-process AppKit key dispatch, view
   delivery and window closure. Directed keyboard input to a verified child and

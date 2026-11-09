@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "ui_runtime.hpp"
+#include "ui_runtime_shared.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -22,12 +23,6 @@
 #include <filesystem>
 #include <pthread.h>
 #endif
-#elif defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <filesystem>
 #endif
 
 namespace ny::ui {
@@ -42,91 +37,6 @@ using Callback = void (*)();
 using ClosureNotify = void (*)(void *, GClosure *);
 enum ConnectFlags { connect_default = 0 };
 
-#if defined(_WIN32)
-// Windows has no system GTK installation convention. Select exactly one
-// explicitly trusted runtime directory, or the application's own directory.
-// Neither the current directory nor PATH participates, and the provider never
-// changes process-wide DLL search settings or the caller's environment.
-std::filesystem::path gtk_directory() {
-  constexpr DWORD limit = 32768;
-  SetLastError(ERROR_SUCCESS);
-  const DWORD required = GetEnvironmentVariableW(L"NIL_UI_GTK_DIRECTORY", nullptr, 0);
-  std::wstring directory;
-  if (required) {
-    if (required > limit) return {};
-    directory.resize(required);
-    const DWORD length = GetEnvironmentVariableW(L"NIL_UI_GTK_DIRECTORY", directory.data(), required);
-    if (!length || length >= required) return {};
-    directory.resize(length);
-  } else {
-    // An explicitly empty setting is invalid, not permission to fall back.
-    if (GetLastError() != ERROR_ENVVAR_NOT_FOUND) return {};
-    directory.resize(limit);
-    const DWORD length = GetModuleFileNameW(nullptr, directory.data(), limit);
-    if (!length || length >= limit) return {};
-    directory.resize(length);
-    directory = std::filesystem::path(directory).parent_path().native();
-  }
-  std::filesystem::path result(directory);
-  std::error_code error;
-  if (!result.is_absolute() || !std::filesystem::is_directory(result, error) || error) return {};
-  return result.make_preferred();
-}
-
-std::filesystem::path gtk_library(const std::filesystem::path &directory, const wchar_t *name) {
-  // GTK builds use either the MSVC or MinGW DLL naming convention. Resolve
-  // each component within the one directory; ambiguous names are rejected.
-  std::filesystem::path selected;
-  for (const auto &filename : {std::wstring(name), L"lib" + std::wstring(name)}) {
-    const auto candidate = directory / filename;
-    std::error_code error;
-    if (!std::filesystem::is_regular_file(candidate, error) || error) continue;
-    if (!selected.empty()) return {};
-    selected = candidate;
-  }
-  return selected;
-}
-
-bool gtk_library_matches(HMODULE library, const std::filesystem::path &file) {
-  std::wstring actual(32768, L'\0');
-  const DWORD length = GetModuleFileNameW(library, actual.data(), static_cast<DWORD>(actual.size()));
-  if (!length || length >= actual.size()) return false;
-  actual.resize(length);
-  std::error_code error;
-  return std::filesystem::equivalent(file, std::filesystem::path(actual), error) && !error;
-}
-
-HMODULE load_gtk_library(const std::filesystem::path &file) {
-  // A dependency may bind to an already loaded basename before consulting
-  // search directories. Refuse a different installation before loading more
-  // of the selected stack, as well as checking the returned module identity.
-  if (const auto existing = GetModuleHandleW(file.filename().c_str());
-      existing && !gtk_library_matches(existing, file)) return nullptr;
-  const HMODULE library = LoadLibraryExW(file.c_str(), nullptr,
-      LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
-  return library && gtk_library_matches(library, file) ? library : nullptr;
-}
-
-bool interactive_window_station() noexcept {
-  // GTK's Win32 backend can report successful initialization on a service
-  // window station, then fault while constructing its first GtkWindow. Refuse
-  // that unsupported environment before calling any GTK initialization API.
-  // GTK already loads User32. Resolve these read-only queries from that module
-  // instead of adding a new static dependency or changing station/desktop state.
-  const HMODULE user = GetModuleHandleW(L"user32.dll");
-  if (!user) return false;
-  using Station = HWINSTA (WINAPI *)();
-  using Information = BOOL (WINAPI *)(HANDLE, int, PVOID, DWORD, LPDWORD);
-  const auto station = reinterpret_cast<Station>(GetProcAddress(user, "GetProcessWindowStation"));
-  const auto information = reinterpret_cast<Information>(GetProcAddress(user, "GetUserObjectInformationW"));
-  if (!station || !information) return false;
-  const HWINSTA current = station(); // Borrowed handle; never close it.
-  USEROBJECTFLAGS flags{};
-  DWORD required = 0;
-  return current && information(current, UOI_FLAGS, &flags, sizeof(flags), &required) &&
-      required <= sizeof(flags) && (flags.dwFlags & WSF_VISIBLE) != 0;
-}
-#endif
 
 #if defined(__APPLE__)
 // Darwin has no ambient GTK runtime. A trusted provider directory names the
@@ -306,106 +216,12 @@ struct Api {
       loaded = gtk_get_major_version() == 4;
       if (!loaded) unavailable = "GTK 4 provider is unavailable: the selected dylib does not provide GTK major version 4";
     } catch (...) { /* Optional provider failures must not terminate the host. */ }
-#elif defined(_WIN32)
-    unavailable = "GTK 4 provider is unavailable; set NIL_UI_GTK_DIRECTORY to an absolute trusted GTK 4 runtime bin directory, or place the runtime beside the executable";
-    try {
-      const auto directory = gtk_directory();
-      if (directory.empty()) {
-        unavailable = "GTK 4 provider is unavailable: NIL_UI_GTK_DIRECTORY must name an existing absolute directory";
-        return;
-      }
-      const auto gtk_path = gtk_library(directory, L"gtk-4-1.dll");
-      const auto object_path = gtk_library(directory, L"gobject-2.0-0.dll");
-      const auto glib_path = gtk_library(directory, L"glib-2.0-0.dll");
-      if (gtk_path.empty() || object_path.empty() || glib_path.empty()) {
-        unavailable = "GTK 4 provider is unavailable: the selected directory must contain one unambiguous GTK 4, GObject and GLib DLL set";
-        return;
-      }
-      // Load dependencies first, before GTK can bind to a different stack.
-      // As on Linux, retain modules for process lifetime even on an incomplete
-      // load: toolkit global types/caches must never outlive their code.
-      const HMODULE glib = load_gtk_library(glib_path);
-      if (!glib) {
-        unavailable = "GTK 4 provider is unavailable: the selected GLib DLL or its dependencies could not load from the selected directory and System32";
-        return;
-      }
-      const HMODULE object = load_gtk_library(object_path);
-      if (!object) {
-        unavailable = "GTK 4 provider is unavailable: the selected GObject DLL or its dependencies could not load from the selected directory and System32";
-        return;
-      }
-      const HMODULE gtk = load_gtk_library(gtk_path);
-      if (!gtk) {
-        unavailable = "GTK 4 provider is unavailable: the selected GTK DLL or its dependencies could not load from the selected directory and System32";
-        return;
-      }
-#define LOAD_SYMBOL(result, name, arguments) \
-      name = reinterpret_cast<decltype(name)>(GetProcAddress(gtk, #name)); \
-      if (!name) name = reinterpret_cast<decltype(name)>(GetProcAddress(object, #name)); \
-      if (!name) name = reinterpret_cast<decltype(name)>(GetProcAddress(glib, #name)); \
-      if (!name) { unavailable = "GTK 4 provider is unavailable: missing symbol " #name; return; }
-      UI_SYMBOLS(LOAD_SYMBOL)
-#undef LOAD_SYMBOL
-      loaded = gtk_get_major_version() == 4;
-      if (!loaded) unavailable = "GTK 4 provider is unavailable: the selected DLL does not provide GTK major version 4";
-    } catch (...) { /* Optional provider failures must not terminate the host. */ }
 #endif
   }
 #undef UI_SYMBOLS
 };
 
 Api &api() { static Api *value = new Api; return *value; }
-constexpr std::size_t max_widgets = 4096, max_windows = 64;
-constexpr std::size_t max_events = 4096, max_snapshots = 4096;
-constexpr std::size_t max_text_bytes = 1024 * 1024;
-constexpr std::size_t max_event_text_bytes = 16 * 1024 * 1024;
-constexpr std::size_t max_entry_characters = 16384;
-std::atomic<std::int64_t> next_handle{1};
-std::int64_t fresh_handle() {
-  auto value = next_handle.load(std::memory_order_relaxed);
-  for (;;) {
-    if (value <= 0 || value == std::numeric_limits<std::int64_t>::max()) return 0;
-    if (next_handle.compare_exchange_weak(value, value + 1, std::memory_order_relaxed)) return value;
-  }
-}
-Result failure(const std::string &message) { return {0, {}, "ui: " + message}; }
-Result success(std::int64_t value = 1) { return {value, {}, {}}; }
-
-bool valid_text(const std::string &text) {
-  if (text.size() > max_text_bytes) return false;
-  // Validate scalar-value UTF-8, reject embedded NUL and overlong encodings.
-  for (std::size_t index = 0; index < text.size();) {
-    const auto first = static_cast<unsigned char>(text[index++]);
-    if (!first) return false;
-    if (first < 0x80) continue;
-    unsigned count, scalar, minimum;
-    if (first >= 0xc2 && first <= 0xdf) { count = 1; scalar = first & 31; minimum = 0x80; }
-    else if (first >= 0xe0 && first <= 0xef) { count = 2; scalar = first & 15; minimum = 0x800; }
-    else if (first >= 0xf0 && first <= 0xf4) { count = 3; scalar = first & 7; minimum = 0x10000; }
-    else return false;
-    if (count > text.size() - index) return false;
-    while (count--) {
-      auto byte = static_cast<unsigned char>(text[index++]);
-      if ((byte & 0xc0) != 0x80) return false;
-      scalar = (scalar << 6) | (byte & 63);
-    }
-    if (scalar < minimum || scalar > 0x10ffff || (scalar >= 0xd800 && scalar <= 0xdfff)) return false;
-  }
-  return true;
-}
-const char *text_error = "text must be valid UTF-8 without NUL, at most 1048576 bytes";
-bool entry_text_fits(const std::string &text) {
-  return static_cast<std::size_t>(std::count_if(text.begin(), text.end(),
-      [](unsigned char byte) { return (byte & 0xc0) != 0x80; })) <= max_entry_characters;
-}
-enum class Kind { window = 0, column = 1, row = 2, grid = 3, label = 4, button = 5, entry = 6, checkbox = 7 };
-bool container(Kind kind) { return kind == Kind::window || kind == Kind::column || kind == Kind::row || kind == Kind::grid; }
-struct Event { std::int64_t kind, target, window, checked; std::string text; };
-struct Placement { std::int64_t column = 0, row = 0, columns = 1, rows = 1; };
-bool overlaps(const Placement &a, const Placement &b) {
-  return a.column < b.column + b.columns && b.column < a.column + a.columns &&
-         a.row < b.row + b.rows && b.row < a.row + a.rows;
-}
 } // namespace
 
 struct Context::Impl : std::enable_shared_from_this<Impl> {
@@ -470,14 +286,8 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
         return failure("GTK must be used on the process UI thread");
       return success();
     }
-#if defined(_WIN32)
-    if (!interactive_window_station())
-      return failure("GTK could not open a display; an interactive Windows window station is required (noninteractive service and SSH desktops are unsupported)");
-#endif
     if (!a.gtk_init_check()) {
-#if defined(_WIN32)
-      return failure("GTK could not open a display; a working Windows desktop session is required");
-#elif defined(__APPLE__)
+#if defined(__APPLE__)
       return failure("GTK could not open a display; a working macOS Quartz desktop session is required");
 #else
       return failure("GTK could not open a display; a working Wayland or X11 session is required");

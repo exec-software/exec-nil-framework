@@ -34,6 +34,11 @@ if(MSVC)
         "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/cmake/utf8.manifest")
 endif()
 
+if(APPLE)
+    # The macOS desktop provider and its fixture are Objective-C++.
+    enable_language(OBJCXX)
+endif()
+
 add_subdirectory(nilcompiler)
 add_subdirectory(nilinterpreter)
 add_subdirectory(nillsp)
@@ -247,11 +252,29 @@ if(BUILD_TESTING)
     add_test(NAME nil.etp-codec COMMAND $<TARGET_FILE:nil_etp_codec_tests>)
     set_tests_properties(nil.etp-codec PROPERTIES LABELS "tools;ipc;etp" TIMEOUT 30)
 
-    add_executable(nil_ui_runtime_tests tests/ui_runtime_tests.cpp)
-    target_link_libraries(nil_ui_runtime_tests PRIVATE nilruntime Threads::Threads)
-    target_include_directories(nil_ui_runtime_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
-    target_compile_features(nil_ui_runtime_tests PRIVATE cxx_std_17)
-    add_test(NAME nil.ui-runtime COMMAND $<TARGET_FILE:nil_ui_runtime_tests>)
+    # The provider fixture follows the provider: tests/ui_runtime_tests.cpp
+    # inspects loaded GTK modules and symbol origins, so it describes the GTK
+    # provider and cannot speak for Win32.
+    if(WIN32)
+        add_executable(nil_ui_runtime_win32_tests tests/ui_runtime_win32_tests.cpp)
+        target_link_libraries(nil_ui_runtime_win32_tests PRIVATE nilruntime Threads::Threads)
+        target_include_directories(nil_ui_runtime_win32_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+        target_compile_features(nil_ui_runtime_win32_tests PRIVATE cxx_std_17)
+        set(NIL_UI_PROVIDER_TEST nil_ui_runtime_win32_tests)
+    elseif(APPLE)
+        add_executable(nil_ui_runtime_appkit_tests tests/ui_runtime_appkit_tests.mm)
+        target_link_libraries(nil_ui_runtime_appkit_tests PRIVATE nilruntime Threads::Threads)
+        target_include_directories(nil_ui_runtime_appkit_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+        target_compile_features(nil_ui_runtime_appkit_tests PRIVATE cxx_std_17)
+        set(NIL_UI_PROVIDER_TEST nil_ui_runtime_appkit_tests)
+    else()
+        add_executable(nil_ui_runtime_tests tests/ui_runtime_tests.cpp)
+        target_link_libraries(nil_ui_runtime_tests PRIVATE nilruntime Threads::Threads)
+        target_include_directories(nil_ui_runtime_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+        target_compile_features(nil_ui_runtime_tests PRIVATE cxx_std_17)
+        set(NIL_UI_PROVIDER_TEST nil_ui_runtime_tests)
+    endif()
+    add_test(NAME nil.ui-runtime COMMAND $<TARGET_FILE:${NIL_UI_PROVIDER_TEST}>)
     set_tests_properties(nil.ui-runtime PROPERTIES LABELS "ui;runtime" TIMEOUT 30)
     add_executable(nil_ui_lifecycle_tests tests/ui_lifecycle_tests.cpp)
     target_link_libraries(nil_ui_lifecycle_tests PRIVATE nilcompiler_core nilruntime ${CMAKE_DL_LIBS})
@@ -629,10 +652,6 @@ if(BUILD_TESTING)
         if(WIN32)
             set(NIL_UI_DISPLAY_CONTRACT "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/windows_ui_display_contract.py")
             set(NIL_UI_DISPLAY_TIMEOUT 660)
-            add_test(NAME nil.ui-windows-loader
-                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/windows_ui_loader_contract.py"
-                    --probe $<TARGET_FILE:nil_ui_runtime_tests>)
-            set_tests_properties(nil.ui-windows-loader PROPERTIES LABELS "ui;runtime;windows" TIMEOUT 180)
         endif()
         add_test(NAME nil.ui-display
             COMMAND "${Python3_EXECUTABLE}" "${NIL_UI_DISPLAY_CONTRACT}"
@@ -642,7 +661,7 @@ if(BUILD_TESTING)
                 --sdk "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
                 --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/ui/gtk_desktop.matrix"
                 --interaction-source "${CMAKE_CURRENT_SOURCE_DIR}/tests/ui/gtk_interaction.matrix"
-                --provider-test $<TARGET_FILE:nil_ui_runtime_tests>
+                --provider-test $<TARGET_FILE:${NIL_UI_PROVIDER_TEST}>
                 --lifecycle-test $<TARGET_FILE:nil_ui_lifecycle_tests>
                 --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(nil.ui-display PROPERTIES LABELS "ui;routes" SKIP_RETURN_CODE 77 TIMEOUT "${NIL_UI_DISPLAY_TIMEOUT}")

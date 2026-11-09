@@ -2677,3 +2677,121 @@ unchanged; the full paired SDK baseline remains `5630388`. Source/input/binary
 seals and owned cleanup were verified. See the
 [complete follow-up and retained setup failures](2026-11-04-macos-parity-plan.md#private-windows-compiler-identity-regression)
 for exact evidence and the process-local DIA/Release try-compile configuration.
+
+
+## 2026-11-08: complete local suite and the per-platform provider decision
+
+The first complete Windows suite since the port closeout ran on the provisioned
+VM at `8aa60d2`, against a same-commit Linux reference of 572 registered tests,
+zero failures and three environment skips.
+
+**Inventory.** Windows registers 574 tests to Linux's 572; the two share 569.
+Windows adds console UTF-8, unmanifested UTF-8 file paths, the GTK loader, a
+native memory-limit self-test and the SDK preflight. Linux keeps toolchain
+inputs, POSIX process semantics and `nilinterpreter.ai-checkpoint-channel`. The
+last of those is worth naming precisely because a Linux-only interpreter test
+reads like a missing Windows feature and is not one: it drives
+`socket.socketpair()` backpressure in the Python acceptance client, while the
+product-level `nilinterpreter.ai-checkpoint-contract` is registered and passes on
+both hosts. The Windows-only memory-limit entry is likewise additive, a self-test
+of the launcher Windows needs because Linux obtains the same bound from
+`setrlimit`. An earlier estimate of 571 Windows tests was wrong: it assumed
+platform gating only subtracts from the reference inventory.
+
+**No language gap.** Nothing in the language, frontend, type checker, IR,
+interpreter, LLVM backend or standard library fails. Of the five reported
+failures, four are an artifact of the harness rather than of the product. The
+scheduled task had been registered `/ru SYSTEM`, and that account reports `TEMP`
+as `C:\WINDOWS\TEMP`; `tempfile` propagates that casing into the paths handed to
+the tools, the tools report paths in their on-disk casing `C:\Windows\Temp`, and
+`matrix.annotations`, `matrix.execution`, `nil.bugpass-lexer-contract` and
+`nilbuild.compiler-identity-contract` each assert an exact `path:line` substring.
+All four pass unchanged when the same binaries are re-run under an ordinary user
+account, where the environment variable, `tempfile` and the directory on disk
+agree. Earlier green runs used a user account, so this was never product drift.
+
+**A genuine platform difference, recorded rather than fixed.** The tools report a
+canonicalized path on Windows, so a caller can receive a different string from
+the one it passed; Linux echoes the argument verbatim. Normal accounts never
+observe this, but exact-match consumers such as editor and LSP clients would.
+
+**Two environment prerequisites the repository does not state.**
+`nil.windows-sdk-preflight` invokes `powershell.exe -File scripts/build-sdk.ps1`
+deliberately without a bypass, so all eleven subtests observe
+"running scripts is disabled on this system" while the machine execution policy
+is `Restricted` — the Windows client default. `nil.ui-display` and
+`nilagent.window-discovery` self-skip for want of an interactive desktop session,
+which SSH does not provide; Win32 UI acceptance will need a console or RDP
+session on the VM rather than the headless path used for the language suite.
+
+**Harness faults worth remembering.** A `call vcvars64.bat` redirected into the
+same log the rest of a batch script appends to leaves a background Visual Studio
+process holding that inherited handle; every following `>>` then fails with a
+sharing violation, cmd reports it on the console rather than in the log, skips
+the redirected command outright and sets errorlevel 1. Under `schtasks` the
+console is discarded, so an entire configure/build/test script can appear to hang
+at the vcvars banner while nothing after it has run. Give vcvars its own file.
+Separately, the prebuilt LLVM 18.1.8 package hardcodes a VS2019 Professional DIA
+SDK path from its build machine; `cmake/NilLlvmDia.cmake` detects this and
+declines to guess a replacement, so the configure needs
+`-DNIL_LLVM_DIA_LIBRARY` pointed at the installed `diaguids.lib`.
+
+**Decision.** With core language parity established on Windows, desktop UI moves
+to one provider per platform: GTK remains the Linux provider, Win32 becomes the
+Windows provider and AppKit the macOS provider. GTK on macOS is retired; the
+directed-input evidence at `8aa60d2` showed every accessibility query against a
+GTK process returning `kAXErrorCannotComplete`, including the application
+element's own role and attribute names, because GTK pumps GLib and never runs
+`-[NSApplication run]` while AppKit services those requests from the main run
+loop. Win32 is implemented first, since it can be exercised on a local VM.
+
+
+## 2026-11-09: the Win32 desktop provider passes the full UI contract
+
+`nil.ui-display` passes on Windows against the Win32 provider in an interactive
+console session: the provider contract, the lifecycle fixture, the Matrix
+desktop suite and the interaction suite that posts real keyboard input. The
+headless suite is unchanged at 573 registered, with `nil.ui-display` and
+`nilagent.window-discovery` skipping for want of a session.
+
+**Per-platform fixtures, not just a per-platform provider.** `ui_runtime_tests`
+inspects loaded GTK modules, dlopen symbol origins and GTK's top-level
+registry, so it describes GTK and cannot speak for Win32; Windows builds its
+own fixture. The lifecycle observer was the same story in miniature. Its
+purpose -- prove a window was really released rather than merely invalidated --
+is platform-neutral, so only the mechanism moved: GTK is asked for its
+registry, Windows counts this process's live top-level windows of the
+provider's class. The assertions did not change and it still reports exactly
+the 235 checks the display contract demands, so that constant stayed put.
+
+**Three defects the desktop found that a headless suite could not.** First,
+`WM_COMMAND` is delivered to a control's immediate parent, which inside a row,
+column or grid is that container rather than the window; only windows carried
+the context pointer, so every button, checkbox and entry notification was
+dropped and no event reached `poll`. Second, Tab order is the dialog manager's
+work on Win32, so the pump needs `IsDialogMessageW` and containers need
+`WS_EX_CONTROLPARENT` or Tab cannot reach a nested control. Third, and the real
+one: Windows delivers keystrokes straight to the focused control, so a top
+level only sees keys posted to it deliberately -- which is exactly how the
+contract drives a window it has not typed into, because GTK routes such input
+through the toplevel. The pump now retargets that input to the focused control
+before the dialog manager sees it. Forwarding inside the window procedure was
+tried first and could not work, because `IsDialogMessageW` consumed the message
+before the procedure ran.
+
+**Diagnosis needed a probe, not another guess.** Two rebuild-and-run cycles
+produced only a thirty-second deadline. A `--input-probe` mode that posts the
+contract's own key sequence and reports what arrives printed
+`direct_to_edit=1` with nothing arriving through the top level, which named the
+fault at once. That coverage now runs inside `--display` as well, so the next
+regression reports which event went missing rather than timing out.
+
+**A Windows-only flake worth knowing.** `nilbuild.incremental-contract` failed
+once during a full suite with `cannot read build input` on a compiler the test
+had just copied. `file_digest` finds the path is a regular file and then fails
+to open it, which is a sharing violation rather than a missing input; Defender
+real-time scanning is enabled on the VM and the failure landed immediately
+after a full rebuild had produced many unscanned binaries. It does not
+reproduce -- three consecutive repeats pass -- and nothing in this work touches
+nilbuild. A bounded open retry would make the digest robust against scanners,
+but that changes a build-identity function and is a maintainer's decision.

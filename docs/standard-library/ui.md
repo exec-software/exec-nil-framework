@@ -2,11 +2,13 @@
 
 `read nil.std.ui` provides a Matrix desktop library with typed windows, widgets,
 events and explicit model bindings. Ny programs can import the same module.
-The VM and native compiler use the same checked GTK4 provider on Linux and
+The VM and native compiler use one desktop provider per platform, each behind
+the same checked boundary: a GTK4 provider on Linux and a Win32 provider on
 Windows. Windows remains a development target, not a qualified release platform.
-The macOS provider is being integrated. Its private GTK stack and toolkit
-window/event checks pass on Intel and Apple Silicon; product and language-level
-desktop acceptance remain in progress. See [platform support](../platform-support.md).
+The macOS provider is being integrated; AppKit replaces the earlier GTK-on-macOS
+work, because a GTK process on macOS never runs the AppKit event loop and is
+therefore invisible to the accessibility APIs that assistive technology and
+directed input depend on. See [platform support](../platform-support.md).
 Examples display the framework generation as **NIL²**, with **NIL^2** as the
 plain-text spelling. This presentation does not change numeric release or
 artifact identities in `VERSION`.
@@ -41,20 +43,19 @@ symbols can load; it does not connect to a display. Window creation returns
 `Result.Error` if the graphical session cannot be initialized. There is no
 headless widget simulation or automatic package installation.
 
-On Windows, deploy a compatible x64 GTK4 runtime with its dependencies and
-runtime data. Set `NIL_UI_GTK_DIRECTORY` to its absolute DLL directory, or place
-the DLLs beside the executable. An explicitly empty, relative or invalid setting
-fails closed rather than falling back. The loader accepts the `libgtk-4-1.dll`
-or `gtk-4-1.dll` naming family and corresponding GLib/GObject names; ambiguous
-duplicates are rejected. It uses wide paths and scoped DLL search flags, without
-changing process-wide DLL policy or searching the current directory or `PATH`.
-Already-loaded direct GTK/GLib/GObject modules must match the selected files.
-This does not establish isolation from every transitive DLL already loaded by
-an embedding host. GTK is an optional external dependency, not bundled in the SDK.
+Windows needs no external toolkit. The provider is Win32 itself, so
+`available with nothing` is always true there and no runtime has to be deployed
+or configured; GTK is neither used nor loaded on Windows. Because USER32 and
+GDI32 are called directly rather than loaded on demand, every linked program
+imports them, which is why `user32.lib` and `gdi32.lib` join `ws2_32.lib` in the
+Windows link lines and in the incremental build's toolchain identity.
 
-Windows window creation requires an interactive, visible window station.
-Service-session requests return a display error before GTK initialization;
-successful provider availability alone does not prove a desktop is usable.
+Windows window creation still requires an interactive, visible window station.
+A service session, or an SSH session with no desktop, returns a display error
+before any window is created; successful provider availability alone does not
+prove a desktop is usable. Win32 supplies no box or grid container, so the
+provider owns the layout pass for rows, columns and grids; sizes therefore come
+from measuring text with the system message font rather than from the toolkit.
 
 The macOS source provider requires `NIL_UI_GTK_DIRECTORY` to name an existing
 absolute trusted directory containing `libgtk-4.1.dylib`,
@@ -97,7 +98,7 @@ second window or widget.
 | `set-expansion(widget, horizontal, vertical)` | Set the two layout expansion flags. The writes are sequential, not transactional. |
 | `attach-grid(grid, child, column, row, column-span, row-span)` | Reposition an existing child of that grid; it cannot reparent a widget. |
 | `focus-widget(widget)` | Request keyboard focus, normally after showing the window. |
-| `activate-widget(widget)` | Request GTK activation of an enabled button or checkbox. |
+| `activate-widget(widget)` | Request the provider's real activation of an enabled button or checkbox. |
 | `widget-width(widget)`, `widget-height(widget)` | `Result<number,text>`; current allocation in pixels, which can be zero before layout. |
 
 Mutation operations return `Result<boolean,text>` with `yes` on success unless
@@ -139,7 +140,7 @@ when a field cannot be read. A retained event therefore describes the original
 event even after another mutation or window close. Its copied target handle
 can still become stale.
 
-Polling is nonblocking and processes a bounded batch of GTK work. An ordinary
+Polling is nonblocking and processes a bounded batch of provider work. An ordinary
 event loop sleeps briefly when it receives `Option.None`; the example uses
 16 milliseconds. Call UI operations from the context's creation thread and use
 one UI thread in the process. Worker jobs should return application data for
