@@ -685,6 +685,16 @@ if(BUILD_TESTING)
         if(NIL_ENABLE_LLVM)
             set(NIL_UI_TEST_ROUTES all)
         endif()
+        # What a native object is allowed to import. A freestanding or kernel
+        # consumer has to supply every undefined symbol deliberately, so this
+        # boundary widens only on purpose.
+        if(NIL_ENABLE_LLVM)
+            add_test(NAME nil.native-symbol-surface
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_symbol_surface.py"
+                    --compiler $<TARGET_FILE:nilcompiler> --assembler $<TARGET_FILE:nilassembler>)
+            set_tests_properties(nil.native-symbol-surface PROPERTIES
+                LABELS "native;abi;rc" SKIP_RETURN_CODE 77 TIMEOUT 180)
+        endif()
         add_test(NAME nil.ui-models
             COMMAND $<TARGET_FILE:niltest> run
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>

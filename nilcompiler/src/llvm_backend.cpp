@@ -1548,7 +1548,15 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
 
   // Generate __ny_string_concat(i8* s1, i8* s2) -> i8*
   //    (Helper for string concatenation)
-  {
+  //
+  // Built on first use, not on every module. The helper calls strlen, memcpy
+  // and calloc, so emitting it unconditionally left those three undefined in
+  // the object of a program that never concatenates a string -- which a
+  // freestanding or kernel target then has to satisfy with stubs it should
+  // never need.
+  auto get_string_concat_function = [&]() -> llvm::Function * {
+    if (auto *existing = impl_->module->getFunction("__ny_string_concat"))
+      return existing;
     llvm::FunctionType *concat_type = llvm::FunctionType::get(
         llvm::PointerType::getUnqual(ctx),
         {llvm::PointerType::getUnqual(ctx), llvm::PointerType::getUnqual(ctx)},
@@ -1672,7 +1680,8 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
 
     if (saved_ip)
       impl_->builder->SetInsertPoint(saved_ip);
-  }
+    return concat_fn;
+  };
 
   auto coerce_to_native_size = [&](llvm::Value *value) -> llvm::Value * {
     if (!value || !value->getType()->isIntegerTy())
@@ -8319,7 +8328,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                     << fn.name << "'\n";
           return false;
         }
-        auto *concat = impl_->module->getFunction("__ny_string_concat");
+        auto *concat = get_string_concat_function();
         if (!concat) {
           std::cerr << "[NativeCodegen] internal string concat helper is "
                        "missing in function '"
