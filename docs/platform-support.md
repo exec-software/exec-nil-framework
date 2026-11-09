@@ -175,11 +175,16 @@ the complete admission rules.
   interactive session -- provider contract, lifecycle release observation, the
   Matrix desktop suite and the interaction suite that drives real keyboard
   input -- while a session without an interactive window station still skips.
-  On macOS the provider is AppKit: its published contract passes against a
-  real window server session on both hosted architectures, 93 checks each.
-  Language-level macOS desktop acceptance remains open. GTK on macOS is
-  retired, because a GTK process there never runs the AppKit event loop and so
-  has no accessibility hierarchy at all. Both hosted Mac architectures
+  On macOS the provider is AppKit. Its published contract passes against a
+  real window server session on both hosted architectures, 93 checks each,
+  and `nil.ui-display` now passes there too: the provider fixture, the
+  lifecycle fixture and the Matrix desktop suite. Real keyboard input is
+  covered in process, because macOS requires accessibility trust to post
+  events to another process and a hosted runner does not grant it; that is a
+  limit of cross-process injection, not of the provider, so the interaction
+  suite is Linux and Windows only. GTK on macOS is retired, because a GTK
+  process there never runs the AppKit event loop and so has no accessibility
+  hierarchy at all. Both hosted Mac architectures
   now pass the prerequisite GLib, Cairo-Quartz and HarfBuzz/CoreText compile,
   link and runtime checks, plus exact own-process AppKit key dispatch, view
   delivery and window closure. Directed keyboard input to a verified child and

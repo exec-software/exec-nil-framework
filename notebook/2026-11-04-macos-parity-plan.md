@@ -2258,3 +2258,56 @@ selects Win32 on Windows and AppKit on macOS.
 `docs/standard-library/ui.md` no longer tells macOS users to supply
 `NIL_UI_GTK_DIRECTORY` and a GTK runtime. Linux is unchanged at 572 registered,
 0 failed and 3 environment skips.
+
+
+## 2026-11-09: macOS reaches language-level desktop acceptance
+
+`nil.ui-display` passes on macOS against the AppKit provider on both hosted
+architectures: the provider fixture, the lifecycle fixture and the Matrix
+desktop suite, run against the runner's own window server session. The only
+remaining failure in that job is the long-recorded Darwin incremental-reuse
+one, which predates this work.
+
+**Real input, in process.** The interaction suite drives keystrokes into
+another process, and macOS requires accessibility trust to post events across
+processes, which a hosted runner does not grant. Posting into this process
+needs no permission, so the provider fixture gained an `--input-probe` that
+types through the provider's own pump: text, toggle and click all arrive with
+the entry reading "Matrix". The first attempt also showed `active=0 key=0`,
+with Tab inserted as text rather than moving focus -- the key-view loop is
+AppKit's and wants an active application, which an accessory app on a hosted
+runner never becomes. Tab navigation is not provider behaviour, so the probe
+moves focus through the provider and sends space to each control, which is
+what has to work.
+
+**The lifecycle check took three attempts, and only evidence ended it.** It
+failed with "VM normal completion must release its toolkit window". The first
+guess was that AppKit had not finished teardown, so the observer took a run
+loop turn; that changed nothing. The second was a bounded settle of up to half
+a second; the count never moved. Only then did the observer print what it
+actually saw: `content=NyUiContainer visible=0 released_when_closed=0
+refs=24`. The window was closed and the provider had let go -- AppKit was
+holding it through twenty-four references and was never going to drop it.
+
+The metric was wrong, not the provider. Two AppKit facts break the GTK-shaped
+question: a closed window stays in the application's window list until it
+deallocates, which AppKit defers indefinitely, and this fixture never orders
+its window in, so `isVisible` reads false for a live window as well. The
+provider does leave a usable marker -- it installs a window delegate on create
+and clears it on every release path, close, dispose and the creation rollback
+-- so the observer counts its own content views that still have a delegate.
+That asks exactly what the fixture means, and stays independent of the
+provider's handle map, which is what a stale handle could otherwise hide.
+
+The lesson is the one the Win32 input bug already taught: after two failed
+theories, stop proposing and start printing. A `Context::clear()` condition
+removed along the way (`pthread_main_np()` alongside a matching owning thread)
+was redundant rather than causal, and the counts are what proved it.
+
+**Runs.** arm64 `42562937990` and Intel `42563290601`/`42564081057` for the
+display contract, `42559401447` and `42563304602` for the provider and input
+probe. Intel's first display run also failed
+`nilbuild.parallel-process-contract` on `assert process_alive(identity)` after
+0.14 seconds; it passes in 11.6 seconds on a re-run, so that is a startup race
+on a loaded runner rather than a result. It was checked rather than assumed,
+as the Defender-induced Windows failure was.
