@@ -27,27 +27,28 @@ void require(bool condition, const std::string &message) {
 }
 
 #if defined(__linux__) || defined(_WIN32) || defined(__APPLE__)
-// Inspect the toolkit's real window registry, independently of the provider's
-// handle map. A stale-handle rejection alone would not prove GTK was released.
+// Inspect the toolkit's real live windows, independently of the provider's
+// handle map. A stale-handle rejection alone would not prove the window was
+// released. The observer is per platform; the assertions here are not.
 struct Windows {
-  std::unique_ptr<GtkRegistryObserver> registry;
+  std::unique_ptr<UiRegistryObserver> registry;
   unsigned baseline = 0;
 
   Windows() {
-    require(ny::ui::available(), "GTK 4 is required for lifecycle --display tests");
+    require(ny::ui::available(), "a desktop provider is required for lifecycle --display tests");
     ny::ui::Context bootstrap;
     const auto window = bootstrap.window("UI lifecycle initialization", 100, 100);
     require(static_cast<bool>(window), window.error);
     require(static_cast<bool>(bootstrap.close(window.number)), "close initialization window");
-    registry = std::make_unique<GtkRegistryObserver>();
+    registry = std::make_unique<UiRegistryObserver>();
     baseline = count();
   }
   unsigned count() const { return registry->count(); }
   void live(const std::string &operation) const {
-    require(count() == baseline + 1, operation + " must keep exactly one GTK window live");
+    require(count() == baseline + 1, operation + " must keep exactly one toolkit window live");
   }
   void empty(const std::string &operation) const {
-    require(count() == baseline, operation + " must release its GTK window");
+    require(count() == baseline, operation + " must release its toolkit window");
   }
 };
 
@@ -226,7 +227,7 @@ int main(int argc, char **argv) {
     std::cout << "UI lifecycle: " << checks << " checks passed\n";
     return 0;
 #else
-    std::cerr << "SKIP: GTK UI lifecycle tests require Linux, Windows or macOS\n";
+    std::cerr << "SKIP: UI lifecycle tests require Linux, Windows or macOS\n";
     return 77;
 #endif
   } catch (const std::exception &error) {

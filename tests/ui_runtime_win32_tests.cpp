@@ -194,6 +194,108 @@ void contract() {
   rejected(context.close(window), "handle", "closing twice is an error");
 }
 
+// Posts the display contract's own key sequence to the top level and reports
+// which events arrive. The contract drives a window it has not brought to the
+// foreground, so this isolates provider routing from the rest of that
+// pipeline, where the only symptom is a deadline.
+void input_probe(bool verbose) {
+  ny::ui::Context context;
+  const auto window = ok(context.window("NIL Win32 input probe", 420, 240), "create probe window");
+  const auto column = ok(context.widget("column", window, ""), "create probe column");
+  const auto entry = ok(context.widget("entry", column, ""), "create probe entry");
+  const auto box = ok(context.widget("checkbox", column, "Enable setting"), "create probe checkbox");
+  const auto button = ok(context.widget("button", column, "Finish probe"), "create probe button");
+  ok(context.set_number(window, "visible", 1), "show probe window");
+  ok(context.set_number(entry, "focus", 1), "focus probe entry");
+
+  HWND top = nullptr;
+  struct Search { DWORD process; const wchar_t *title; HWND found; } search{GetCurrentProcessId(), L"NIL Win32 input probe", nullptr};
+  EnumWindows([](HWND candidate, LPARAM parameter) -> BOOL {
+    auto *state = reinterpret_cast<Search *>(parameter);
+    DWORD process = 0;
+    GetWindowThreadProcessId(candidate, &process);
+    if (process != state->process) return TRUE;
+    wchar_t title[128] = {};
+    if (GetWindowTextW(candidate, title, 128) && !wcscmp(title, state->title)) {
+      state->found = candidate;
+      return FALSE;
+    }
+    return TRUE;
+  }, reinterpret_cast<LPARAM>(&search));
+  top = search.found;
+  require(top != nullptr, "probe window is discoverable by title");
+
+  // Locate the EDIT so routing can be told apart from the control refusing
+  // the message, and report whether the system focus agrees with ours.
+  struct Child { HWND edit; } child{nullptr};
+  EnumChildWindows(top, [](HWND candidate, LPARAM parameter) -> BOOL {
+    wchar_t name[64] = {};
+    if (GetClassNameW(candidate, name, 64) && !_wcsicmp(name, L"EDIT")) {
+      reinterpret_cast<Child *>(parameter)->edit = candidate;
+      return FALSE;
+    }
+    return TRUE;
+  }, reinterpret_cast<LPARAM>(&child));
+  if (verbose)
+    std::cout << "input probe: edit=" << (child.edit ? "found" : "missing")
+              << " system_focus_is_edit=" << (child.edit && GetFocus() == child.edit)
+              << " focus_null=" << (GetFocus() == nullptr)
+              << " foreground_is_probe=" << (GetForegroundWindow() == top) << "\n";
+
+  const UINT key_down = 0x100, key_up = 0x101, character = 0x102;
+  const WPARAM packet = 0xE7, tab = 0x09, space = 0x20;
+
+  // Direct delivery first: if the control accepts this but not the same
+  // message posted to the top level, the gap is routing and nothing else.
+  if (child.edit) {
+    PostMessageW(child.edit, character, static_cast<WPARAM>('Z'), 1);
+    bool direct = false;
+    for (int attempt = 0; attempt < 50 && !direct; ++attempt) {
+      const auto polled = context.poll(window);
+      if (!polled) break;
+      if (!polled.number) { Sleep(10); continue; }
+      if (ok(context.event_number(polled.number, "kind"), "direct kind") == 2) direct = true;
+      ok(context.release_event(polled.number), "release direct event");
+    }
+    if (verbose) std::cout << "input probe: direct_to_edit=" << direct << "\n";
+    ok(context.set_text(entry, ""), "reset probe entry");
+  }
+  for (const char *c = "Matrix"; *c; ++c) {
+    PostMessageW(top, key_down, packet, 1);
+    PostMessageW(top, character, static_cast<WPARAM>(*c), 1);
+    PostMessageW(top, key_up, packet, 0xC0000001);
+  }
+  for (WPARAM key : {tab, space, tab, space}) {
+    const LPARAM flags = 1 | static_cast<LPARAM>(MapVirtualKeyW(static_cast<UINT>(key), 0)) << 16;
+    PostMessageW(top, key_down, key, flags);
+    PostMessageW(top, key_up, key, flags | 0xC0000000);
+  }
+
+  bool saw_text = false, saw_toggle = false, saw_click = false;
+  std::string observed;
+  for (int attempt = 0; attempt < 400 && !saw_click; ++attempt) {
+    const auto polled = context.poll(window);
+    if (!polled) break;
+    if (!polled.number) { Sleep(10); continue; }
+    const auto kind = ok(context.event_number(polled.number, "kind"), "probe event kind");
+    const auto target = ok(context.event_number(polled.number, "target"), "probe event target");
+    if (kind == 2 && target == entry) {
+      observed = context.event_text(polled.number).text;
+      if (observed == "Matrix") saw_text = true;
+    } else if (kind == 3 && target == box &&
+               ok(context.event_number(polled.number, "checked"), "probe checked") == 1) saw_toggle = true;
+    else if (kind == 1 && target == button) saw_click = true;
+    ok(context.release_event(polled.number), "release probe event");
+  }
+  if (verbose)
+    std::cout << "input probe: text=" << saw_text << " toggle=" << saw_toggle
+              << " click=" << saw_click << " entry=\"" << observed << "\"\n";
+  ok(context.close(window), "close probe window");
+  require(saw_text, "posted characters reach the focused entry");
+  require(saw_toggle, "Tab then Space reaches the checkbox");
+  require(saw_click, "Tab then Space reaches the button");
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -204,9 +306,16 @@ int main(int argc, char **argv) {
     return 0;
   }
   const bool desktop = interactive_station();
+  if (mode == "--input-probe") {
+    require(desktop, "--input-probe requires an interactive window station");
+    input_probe(true);
+    std::cout << "UI runtime: " << checks << " checks passed (--input-probe)\n";
+    return 0;
+  }
   if (mode == "--display") {
     require(desktop, "--display requires an interactive window station");
     contract();
+    input_probe(false);
     std::cout << "UI runtime: " << checks << " checks passed (--display)\n";
     return 0;
   }

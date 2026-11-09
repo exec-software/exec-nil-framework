@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: MIT
  */
 #pragma once
+#include <cwchar>
+#include <iterator>
 #include <stdexcept>
 #if defined(__linux__) || defined(__APPLE__)
 #include <dlfcn.h>
@@ -17,11 +19,15 @@
 #include <windows.h>
 #endif
 
-// Test-only, independent observation of GTK's real top-level registry. The
-// provider must already be loaded; Windows never performs a second DLL search.
-class GtkRegistryObserver {
+// Test-only, independent observation of the toolkit's real live top-level
+// windows, so a lifecycle test can tell an actually released window from a
+// merely invalidated handle. GTK is asked for its registry; Win32 has no such
+// registry, so this counts the operating system's own top-level windows.
+class UiRegistryObserver {
+#if !defined(_WIN32)
   void *(*list_)() = nullptr;
   unsigned (*size_)(void *) = nullptr;
+#endif
 #if defined(__linux__) || defined(__APPLE__)
   void *library_ = nullptr;
 #if defined(__APPLE__)
@@ -44,14 +50,23 @@ class GtkRegistryObserver {
   }
 #endif
 #elif defined(_WIN32)
-  static HMODULE loaded(const wchar_t *msvc, const wchar_t *mingw) {
-    const auto first = GetModuleHandleW(msvc), second = GetModuleHandleW(mingw);
-    if (first && second) throw std::runtime_error("ambiguous loaded GTK registry dependency");
-    return first ? first : second;
+  // The provider's own window class, which must match window_class in
+  // nilcompiler/src/ui_runtime_win32.cpp. Counting by class keeps the console
+  // window and any other process window out of the tally.
+  static constexpr const wchar_t *provider_class = L"NyUi.Window";
+  static BOOL CALLBACK tally(HWND window, LPARAM parameter) {
+    DWORD process = 0;
+    GetWindowThreadProcessId(window, &process);
+    if (process != GetCurrentProcessId()) return TRUE;
+    wchar_t name[64] = {};
+    const int length = GetClassNameW(window, name, static_cast<int>(std::size(name)));
+    if (length > 0 && std::wcscmp(name, provider_class) == 0)
+      ++*reinterpret_cast<unsigned *>(parameter);
+    return TRUE;
   }
 #endif
 public:
-  GtkRegistryObserver() {
+  UiRegistryObserver() {
 #if defined(__linux__)
     library_ = dlopen("libgtk-4.so.1", RTLD_NOW | RTLD_LOCAL);
     if (!library_) throw std::runtime_error("load GTK registry observer");
@@ -75,12 +90,8 @@ public:
         initialized_ = reinterpret_cast<decltype(initialized_)>(initialized);
       }
     }
-#elif defined(_WIN32)
-    const auto gtk = loaded(L"gtk-4-1.dll", L"libgtk-4-1.dll");
-    const auto gio = loaded(L"gio-2.0-0.dll", L"libgio-2.0-0.dll");
-    if (gtk) list_ = reinterpret_cast<decltype(list_)>(GetProcAddress(gtk, "gtk_window_get_toplevels"));
-    if (gio) size_ = reinterpret_cast<decltype(size_)>(GetProcAddress(gio, "g_list_model_get_n_items"));
 #endif
+#if !defined(_WIN32)
     if (!list_ || !size_) {
 #if defined(__linux__) || defined(__APPLE__)
       if (library_) dlclose(library_);
@@ -92,8 +103,9 @@ public:
 #endif
       throw std::runtime_error("GTK registry observer symbols unavailable");
     }
+#endif
   }
-  ~GtkRegistryObserver() {
+  ~UiRegistryObserver() {
 #if defined(__linux__) || defined(__APPLE__)
     if (library_) dlclose(library_);
 #if defined(__APPLE__)
@@ -101,9 +113,17 @@ public:
 #endif
 #endif
   }
-  GtkRegistryObserver(const GtkRegistryObserver &) = delete;
-  GtkRegistryObserver &operator=(const GtkRegistryObserver &) = delete;
+  UiRegistryObserver(const UiRegistryObserver &) = delete;
+  UiRegistryObserver &operator=(const UiRegistryObserver &) = delete;
+#if defined(_WIN32)
+  unsigned count() const {
+    unsigned total = 0;
+    EnumWindows(&tally, reinterpret_cast<LPARAM>(&total));
+    return total;
+  }
+#else
   unsigned count() const { return size_(list_()); }
+#endif
 #if defined(__APPLE__)
   bool initialized() const { return initialized_() != 0; }
 #endif

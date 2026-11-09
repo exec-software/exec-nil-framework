@@ -139,7 +139,7 @@ void preload_mixed_provider() {
 
 void worker_first() {
   require(ny::ui::available(), "real provider is required for worker-first initialization test");
-  GtkRegistryObserver registry;
+  UiRegistryObserver registry;
   require(!registry.initialized(), "symbol-only availability must not initialize GTK");
   ny::ui::Result result;
   std::thread worker([&] {
@@ -426,7 +426,7 @@ void display_tests() {
 
 #if defined(__linux__) || defined(_WIN32) || defined(__APPLE__)
   // Observe GTK's actual top-level registry across normal and deferred teardown.
-  GtkRegistryObserver registry;
+  UiRegistryObserver registry;
   const auto baseline = registry.count();
   for (int index = 0; index < 8; ++index) {
     auto owner = std::make_unique<ny::ui::Context>();

@@ -544,6 +544,12 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
 
 namespace {
 
+bool keyboard_message(UINT message) {
+  return message == WM_KEYDOWN || message == WM_KEYUP || message == WM_CHAR ||
+         message == WM_SYSKEYDOWN || message == WM_SYSKEYUP || message == WM_SYSCHAR ||
+         message == WM_DEADCHAR || message == WM_SYSDEADCHAR;
+}
+
 bool focusable(Kind kind) { return kind == Kind::button || kind == Kind::entry || kind == Kind::checkbox; }
 
 } // namespace
@@ -590,7 +596,8 @@ Result Context::window(const std::string &title, std::int64_t width, std::int64_
                                 frame.bottom - frame.top, nullptr, nullptr,
                                 GetModuleHandleW(nullptr), nullptr);
   if (!node.object) return failure("Win32 could not create a window");
-  node.root = CreateWindowExW(0, container_class, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+  node.root = CreateWindowExW(WS_EX_CONTROLPARENT, container_class, L"",
+                              WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
                               0, 0, static_cast<int>(width), static_cast<int>(height), node.object,
                               nullptr, GetModuleHandleW(nullptr), nullptr);
   if (!node.root) {
@@ -638,10 +645,12 @@ Result Context::widget(const std::string &kind, std::int64_t parent, const std::
   const HINSTANCE instance = GetModuleHandleW(nullptr);
   if (kind == "column" || kind == "row") {
     node.kind = kind == "column" ? Kind::column : Kind::row;
-    node.object = CreateWindowExW(0, container_class, L"", common | WS_CLIPCHILDREN, 0, 0, 0, 0, host, nullptr, instance, nullptr);
+    node.object = CreateWindowExW(WS_EX_CONTROLPARENT, container_class, L"",
+                                  common | WS_CLIPCHILDREN, 0, 0, 0, 0, host, nullptr, instance, nullptr);
   } else if (kind == "grid") {
     node.kind = Kind::grid;
-    node.object = CreateWindowExW(0, container_class, L"", common | WS_CLIPCHILDREN, 0, 0, 0, 0, host, nullptr, instance, nullptr);
+    node.object = CreateWindowExW(WS_EX_CONTROLPARENT, container_class, L"",
+                                  common | WS_CLIPCHILDREN, 0, 0, 0, 0, host, nullptr, instance, nullptr);
   } else if (kind == "label") {
     node.kind = Kind::label;
     node.object = CreateWindowExW(0, L"STATIC", wide.c_str(), common | SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, host, nullptr, instance, nullptr);
@@ -886,6 +895,21 @@ Result Context::poll(std::int64_t window) {
   MSG message;
   for (unsigned count = 0; count < 128; ++count) {
     if (!PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) break;
+    // Real keystrokes are delivered by the system straight to the focused
+    // control, so that is what the dialog manager and the control each expect
+    // to see. Input addressed to the top level instead -- which is how a
+    // caller drives a window it does not type into -- is retargeted here to
+    // the focused control, because GTK routes such input through the toplevel
+    // and the contract is written against that behaviour.
+    if (keyboard_message(message.message) && message.hwnd == node->object) {
+      const auto target = impl_->focus_targets.find(window);
+      if (target != impl_->focus_targets.end())
+        if (auto *focused = impl_->find(target->second); focused && focused->object)
+          message.hwnd = focused->object;
+    }
+    // Tab order, arrow groups and the activations that go with them are the
+    // dialog manager's work on Win32, where GTK does it inside the toolkit.
+    if (IsDialogMessageW(node->object, &message)) continue;
     TranslateMessage(&message);
     DispatchMessageW(&message);
   }
