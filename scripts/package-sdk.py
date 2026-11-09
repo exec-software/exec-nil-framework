@@ -27,12 +27,14 @@ from sdk_artifact_validation import (
 )
 from sdk_qualification import TOOLS, collect_qualification, qualification_errors, source_identity
 from sdk_sources import is_source, module_declarations, module_artifact_path
-from sdk_runtime import STATIC_NAMES, SHARED_NAMES, RUNTIME_PAIRS, shared_library_valid
+from sdk_runtime import (STATIC_NAMES, SHARED_NAMES, RUNTIME_PAIRS,
+                         FREESTANDING_STATIC_NAMES, shared_library_valid)
 
 
 REQUIRED_TOOLS = TOOLS
 MANIFEST_NAME = "manifest.json"
 NATIVE_RUNTIME_ARCHIVE_NAMES = STATIC_NAMES
+FREESTANDING_RUNTIME_ARCHIVE_NAMES = FREESTANDING_STATIC_NAMES
 
 
 def arguments() -> argparse.Namespace:
@@ -167,9 +169,27 @@ def validate_stage_input(stage_dir: Path) -> tuple[Path, Path]:
             "staged native runtime fails supported archive framing and required "
             "symbol-index offset validation: {}".format(runtime_source)
         )
+    freestanding_names = sorted(
+        set(FREESTANDING_RUNTIME_ARCHIVE_NAMES).intersection(actual_files)
+    )
+    if len(freestanding_names) != 1:
+        raise SystemExit(
+            "staged SDK must contain exactly one freestanding runtime archive "
+            "from {}: found {}".format(
+                list(FREESTANDING_RUNTIME_ARCHIVE_NAMES), freestanding_names
+            )
+        )
+    freestanding_source = stage_dir / freestanding_names[0]
+    if not is_static_archive(freestanding_source):
+        raise SystemExit(
+            "staged freestanding runtime fails supported archive framing and "
+            "required symbol-index offset validation: {}".format(
+                freestanding_source
+            )
+        )
     expected_files = {executable_name(name) for name in REQUIRED_TOOLS} | {
         "LICENSE",
-        runtime_source.name, shared_source.name,
+        runtime_source.name, shared_source.name, freestanding_source.name,
     }
     missing_files = sorted(expected_files - actual_files)
     extra_files = sorted(actual_files - expected_files)
@@ -188,7 +208,7 @@ def validate_stage_input(stage_dir: Path) -> tuple[Path, Path]:
         tool = stage_dir / executable_name(name)
         if os.name != "nt" and not os.access(tool, os.X_OK):
             raise SystemExit("staged SDK tool is not executable: {}".format(tool))
-    return runtime_source, shared_source
+    return runtime_source, shared_source, freestanding_source
 
 
 def logical_module_name(source: Path, nilstd: Path) -> str:
@@ -223,7 +243,7 @@ def logical_module_name(source: Path, nilstd: Path) -> str:
 
 def compile_standard_library(
     compiler: Path, nilstd: Path, stage_dir: Path, runtime_source: Path,
-    shared_source: Path | None = None
+    shared_source: Path | None = None, freestanding_source: Path | None = None
 ) -> tuple[list[dict[str, Any]], int]:
     sources = sorted((path for path in nilstd.rglob("*") if path.is_file() and is_source(path)),
                      key=lambda path: path.relative_to(nilstd).as_posix())
@@ -245,6 +265,9 @@ def compile_standard_library(
         shutil.copyfile(runtime_source, runtime_destination)
         if shared_source is not None:
             shutil.copyfile(shared_source, runtime_directory / shared_source.name)
+        if freestanding_source is not None:
+            shutil.copyfile(freestanding_source,
+                            runtime_directory / freestanding_source.name)
         artifact_paths: set[str] = set()
         for module_name in sorted(groups):
             module_sources = groups[module_name]
@@ -358,6 +381,8 @@ def compile_standard_library(
         runtime_source.unlink()
         if shared_source is not None:
             shared_source.unlink()
+        if freestanding_source is not None:
+            freestanding_source.unlink()
 
     return modules, len(sources)
 
@@ -396,7 +421,7 @@ def main() -> int:
             "explicitly pass --allow-dirty-source for a development SDK"
         )
 
-    runtime_source, shared_source = validate_stage_input(stage_dir)
+    runtime_source, shared_source, freestanding_source = validate_stage_input(stage_dir)
     nilstd = stage_dir / "nilstd"
     docs = stage_dir / "docs"
     compiler = stage_dir / executable_name("nilcompiler")
@@ -411,10 +436,14 @@ def main() -> int:
         raise SystemExit("compiled SDK documentation is missing from {}".format(docs))
 
     modules, source_file_count = compile_standard_library(
-        compiler, nilstd, stage_dir, runtime_source, shared_source
+        compiler, nilstd, stage_dir, runtime_source, shared_source,
+        freestanding_source
     )
     packaged_runtime = stage_dir / "nillib" / "native" / runtime_source.name
     packaged_shared = stage_dir / "nillib" / "native" / shared_source.name
+    packaged_freestanding = (
+        stage_dir / "nillib" / "native" / freestanding_source.name
+    )
     tools = []
     for name in REQUIRED_TOOLS:
         path = stage_dir / executable_name(name)
@@ -471,6 +500,14 @@ def main() -> int:
             "path": packaged_shared.relative_to(stage_dir).as_posix(),
             "bytes": packaged_shared.stat().st_size,
             "sha256": sha256(packaged_shared),
+        },
+        # Recorded separately from the hosted runtime because a consumer
+        # chooses one or the other, and a freestanding consumer must be able to
+        # pin the archive it links by content rather than by trusting a path.
+        "native_freestanding_runtime": {
+            "path": packaged_freestanding.relative_to(stage_dir).as_posix(),
+            "bytes": packaged_freestanding.stat().st_size,
+            "sha256": sha256(packaged_freestanding),
         },
         "standard_library": {
             "format": nil_library_format({

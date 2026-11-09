@@ -121,6 +121,11 @@ Consequences worth knowing before depending on it:
 - **There is no free.** A bump region is released as a whole. `nyrt_context_end`
   returns it to empty, which is sound because everything allocated inside it
   came from generated code whose lifetime ended with the context.
+- **Ending the context resets the pointer; it does not scrub the bytes.** The
+  region belongs to the host, so what is written in it stays the host's to
+  read after `__ny_entry` returns. A host that wants the bytes a program
+  produced reads them then; a host that wants them gone clears the region
+  itself, because only the host knows whether they were sensitive.
 - **With no region installed, allocation fails.** `nyrt_alloc` returns `NULL`
   and the program stops through `nyrt_fail`. A program that never allocates
   never needs a region; one that does cannot silently proceed without it.

@@ -83,6 +83,13 @@ void nyrt_context_end() noexcept {
   // The region belongs to the host and may outlive the context, but nothing
   // allocated inside it does: every pointer handed out came from generated
   // code whose lifetime ended with the context.
+  //
+  // Only the pointer is reset. The bytes are deliberately left, because the
+  // region is the host's and what a program wrote into it is the host's to
+  // read once the program has returned -- for many freestanding hosts that is
+  // the only channel out of a Ny object, which exports nothing but its entry.
+  // A host that needs them gone clears the region, since only it knows
+  // whether they were sensitive.
   heap_used = 0;
 }
 

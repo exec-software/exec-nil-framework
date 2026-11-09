@@ -12,6 +12,21 @@ Running it then proves the entry sequence itself works -- runtime ABI check,
 context begin, user main, context end -- because the process exit status is
 the value Ny returned.
 
+The archive is also required to use general registers only. It has no floating
+point of its own, but at -O2 the compiler vectorizes its zero and copy loops
+into SSE, and a kernel profile that denies inherited x87/SIMD state faults on
+the first such instruction -- a consumer cannot opt out of what is already in
+the archive. The compile flag is the guarantee; the check below is the
+tripwire, and it needs a disassembler, so it reports rather than skips the
+whole test when none is installed.
+
+A freestanding consumer links at a fixed address with no dynamic linker, so
+the link is `-no-pie` and the result must contain no global offset table. That
+is not cosmetic: under PIC the weak host failure hook is reached through a GOT,
+and a GOT is a section a kernel or vessel profile rejects outright, so an
+archive that quietly became position-independent would link here and be
+refused by the consumer it exists for.
+
 Allocation is checked the same way: by running it. The host owns the memory,
 so the driver installs its own array and afterwards reads the concatenated
 bytes back out of it, which no amount of symbol inspection could show. The
@@ -22,6 +37,9 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import re
+import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -158,9 +176,60 @@ def build(compiler, assembler, archive, cxx, root: Path, name: str, driver: str,
     driver_path = root / f'{name}_driver.cpp'
     driver_path.write_text(driver, newline='\n')
     program = root / name
-    checked([cxx, '-nostdlib', '-static', '-fno-exceptions', '-fno-rtti',
-             '-o', program, driver_path, obj, archive])
+    checked([cxx, '-nostdlib', '-static', '-no-pie', '-fno-exceptions',
+             '-fno-rtti', '-o', program, driver_path, obj, archive])
     return program
+
+
+def indirection_sections(program: Path) -> list[str]:
+    """Names of any GOT/PLT sections in a linked ELF program.
+
+    Read from the section header table directly, so the check needs no
+    binutils where an SDK is built.
+    """
+    data = program.read_bytes()
+    if data[:4] != b'\x7fELF' or data[4] != 2 or data[5] != 1:
+        raise SystemExit(f'expected a little-endian 64-bit program: {program}')
+    section_offset, = struct.unpack_from('<Q', data, 0x28)
+    section_size, section_count, names_index = struct.unpack_from('<HHH', data, 0x3a)
+
+    def name_offset(index: int) -> int:
+        return struct.unpack_from('<I', data, section_offset + index * section_size)[0]
+
+    names_base, = struct.unpack_from(
+        '<Q', data, section_offset + names_index * section_size + 0x18)
+
+    def text(index: int) -> str:
+        start = names_base + name_offset(index)
+        end = data.index(b'\0', start)
+        return data[start:end].decode('utf-8', 'replace')
+
+    found = []
+    for index in range(section_count):
+        section = text(index)
+        if section.startswith('.got') or section.startswith('.plt') or section == '.iplt':
+            found.append(section)
+    return found
+
+
+def non_general_register_instructions(archive: Path) -> list[str] | None:
+    """Disassembled lines using x87, MMX or SIMD registers, or None.
+
+    None means no disassembler was available, which is reported rather than
+    treated as a pass.
+    """
+    for tool in ('objdump', 'llvm-objdump'):
+        executable = shutil.which(tool)
+        if executable is None:
+            continue
+        result = run([executable, '-d', archive], timeout=120)
+        if result.returncode != 0:
+            continue
+        pattern = re.compile(r'%(?:x|y|z)mm[0-9]|%mm[0-7]|\b(?:f[il]?(?:ld|st|add|mul|div|sub)'
+                             r'|emms|femms)\b')
+        return [line.strip() for line in result.stdout.splitlines()
+                if pattern.search(line)]
+    return None
 
 
 def main() -> int:
@@ -186,6 +255,26 @@ def main() -> int:
         assert result.returncode == expected_exit, (
             'the freestanding program must run and return what Ny returned; '
             f'got {result.returncode}, stderr: {result.stderr!r}')
+        checks += 1
+
+        # General registers only, so a profile that denies inherited x87 and
+        # SIMD state can run what this archive contains.
+        simd = non_general_register_instructions(args.archive)
+        if simd is None:
+            print('NOTE: no disassembler found; the general-register-only '
+                  'guarantee rests on the compile flag alone')
+        else:
+            assert not simd, (
+                'the freestanding runtime must use general registers only; '
+                f'found {len(simd)}: {simd[:4]}')
+            checks += 1
+
+        # No GOT, no PLT. A consumer that forbids those sections is the reason
+        # this archive exists, so the absence is pinned rather than assumed.
+        indirections = indirection_sections(program)
+        assert not indirections, (
+            'a freestanding program must link with no indirection tables; '
+            f'found: {indirections}')
         checks += 1
 
         # The failure reporter is weak so the archive links alone, and

@@ -15,6 +15,12 @@ SHARED_NAMES = ("libnil.so", "libnil.dylib", "nil.dll")
 # static-default/DLL pair. Neither platform permits shipping both archives.
 RUNTIME_PAIRS = {"libnil.so": ("libnil.a",), "libnil.dylib": ("libnil.a",),
                  "nil.dll": ("nil.lib", "libnil.a")}
+# The runtime for a target with no operating system. Shipped beside the hosted
+# one rather than instead of it: a consumer with no C library links this, and
+# an object emitted with --freestanding has no other way to resolve its hooks
+# than reaching into a build tree, which a pinned generation cannot do.
+FREESTANDING_STATIC_NAMES = ("libnilruntime_freestanding.a",
+                             "nilruntime_freestanding.lib")
 
 
 def shared_library_valid(path: Path) -> bool:

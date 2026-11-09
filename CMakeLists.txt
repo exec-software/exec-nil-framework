@@ -44,15 +44,38 @@ endif()
 add_library(nilruntime_freestanding STATIC
     nilruntime-freestanding/freestanding_runtime.cpp)
 target_compile_features(nilruntime_freestanding PRIVATE cxx_std_17)
+# Deliberately not position-independent. Every consumer of this archive links
+# at a fixed address with no dynamic linker, and under PIC the weak host
+# failure hook has to be reached through a GOT -- which is a section a kernel
+# or vessel profile rejects outright. The link test pins that the resulting
+# program has no GOT at all.
 set_target_properties(nilruntime_freestanding PROPERTIES
     CXX_EXTENSIONS OFF
-    POSITION_INDEPENDENT_CODE ON)
+    POSITION_INDEPENDENT_CODE OFF)
 if(NOT MSVC)
     # No hosted assumptions, no unwinder, no type information: a kernel or
     # loader links this archive without providing any of them.
+    # -fno-pic is explicit because POSITION_INDEPENDENT_CODE OFF only stops
+    # CMake adding -fPIC; a host whose compiler defaults to PIE (Ubuntu's does)
+    # would still emit GOT-indirect code without it.
     target_compile_options(nilruntime_freestanding PRIVATE
-        -ffreestanding -fno-exceptions -fno-rtti)
+        -ffreestanding -fno-exceptions -fno-rtti -fno-pic -fno-pie)
+    # General registers only. The runtime has no floating point of its own, but
+    # at -O2 the compiler vectorizes its zero and copy loops into SSE, and a
+    # kernel profile that denies inherited x87/SIMD state -- by leaving CR0.TS
+    # set, which is the ordinary way to do it -- faults on the first such
+    # instruction. A consumer cannot opt out of what is already in the archive,
+    # so the archive gives up the registers it does not need.
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag(-mgeneral-regs-only NIL_GENERAL_REGS_ONLY)
+    if(NIL_GENERAL_REGS_ONLY)
+        target_compile_options(nilruntime_freestanding PRIVATE -mgeneral-regs-only)
+    endif()
 endif()
+
+# Shipped in the SDK beside the hosted runtime. A freestanding consumer has no
+# other way to resolve the hooks an emitted object imports.
+install(TARGETS nilruntime_freestanding ARCHIVE DESTINATION ".")
 
 add_subdirectory(nilcompiler)
 add_subdirectory(nilinterpreter)
