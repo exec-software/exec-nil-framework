@@ -45,10 +45,12 @@ struct Windows {
   }
   unsigned count() const { return registry->count(); }
   void live(const std::string &operation) const {
-    require(count() == baseline + 1, operation + " must keep exactly one toolkit window live");
+    require(count() == baseline + 1, operation + " must keep exactly one toolkit window live"
+                                    " from baseline " + std::to_string(baseline) + registry->detail());
   }
   void empty(const std::string &operation) const {
-    require(count() == baseline, operation + " must release its toolkit window");
+    require(count() == baseline, operation + " must release its toolkit window"
+                                " to baseline " + std::to_string(baseline) + registry->detail());
   }
 };
 
