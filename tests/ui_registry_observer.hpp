@@ -4,6 +4,7 @@
  */
 #pragma once
 #include <cwchar>
+#include <string>
 #include <iterator>
 #include <stdexcept>
 #if defined(__linux__)
@@ -97,4 +98,15 @@ public:
 #else
   unsigned count() const { throw std::runtime_error("no registry observer for this platform"); }
 #endif
+  // Named in failures so a mismatch reports what was actually seen rather
+  // than only that the numbers differed.
+  std::string detail() const {
+#if defined(__APPLE__)
+    unsigned shown = 0;
+    for (NSWindow *window in NSApp.windows) if (window.visible) ++shown;
+    return " (listed " + std::to_string(count()) + ", of those visible " + std::to_string(shown) + ")";
+#else
+    return " (observed " + std::to_string(count()) + ")";
+#endif
+  }
 };
