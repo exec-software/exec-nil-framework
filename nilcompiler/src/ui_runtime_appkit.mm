@@ -81,10 +81,27 @@ Platform &platform() { static Platform *value = new Platform; return *value; }
 - (BOOL)isFlipped { return YES; }
 @end
 
+// The delivery block is built inside Context::Impl, which is private to
+// Context; a block carries that access, where naming the type here could not.
+typedef void (^NyUiDeliver)(id sender, long long kind);
+
 @interface NyUiTarget : NSObject <NSWindowDelegate, NSTextFieldDelegate>
-@property(nonatomic, assign) void *owner;
+@property(nonatomic, copy) NyUiDeliver deliver;
 - (void)buttonAction:(id)sender;
 - (void)checkAction:(id)sender;
+@end
+
+@implementation NyUiTarget
+- (void)buttonAction:(id)sender { if (self.deliver) self.deliver(sender, 1); }
+- (void)checkAction:(id)sender { if (self.deliver) self.deliver(sender, 3); }
+- (void)controlTextDidChange:(NSNotification *)notification {
+  if (self.deliver) self.deliver(notification.object, 2);
+}
+- (BOOL)windowShouldClose:(NSWindow *)sender {
+  if (self.deliver) self.deliver(sender, 4);
+  // Matrix decides when to close; AppKit must not destroy a live handle.
+  return NO;
+}
 @end
 
 namespace ny::ui {
@@ -208,11 +225,11 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
       if (!node || node->suppress || tearing_down) return;
       Event event{kind, handle, node->window, 0, {}};
       if (kind == 2) {
-        auto *field = static_cast<NSTextField *>(node->view);
+        auto *field = ((NSTextField *)node->view);
         if (!from_ns(field.stringValue, event.text)) { mark_failure(); return; }
         if (!valid_text(event.text)) { mark_failure(); return; }
       } else if (kind == 3) {
-        auto *button = static_cast<NSButton *>(node->view);
+        auto *button = ((NSButton *)node->view);
         event.checked = button.state == NSControlStateValueOn ? 1 : 0;
       }
       if (events.size() >= max_events || event.text.size() > max_event_text_bytes - event_bytes) {
@@ -246,8 +263,7 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
     case Kind::button:
     case Kind::checkbox:
     case Kind::entry: {
-      auto *control = static_cast<NSControl *>(node->view);
-      size = [control sizeThatFits:NSMakeSize(0, 0)];
+      size = node->view.fittingSize;
       if (node->kind == Kind::entry) size.width = std::max(size.width, minimum_entry_width);
       size.width += control_padding;
       size.height += control_padding;
@@ -406,6 +422,20 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
     place(window, NSMakeRect(0, 0, content.size.width, content.size.height));
   }
 
+  // Built here so the block closes over a weak reference with full access to
+  // Impl; the target itself never names the private type.
+  NyUiTarget *make_target() {
+    NyUiTarget *created = [[NyUiTarget alloc] init];
+    std::weak_ptr<Impl> weak = weak_from_this();
+    created.deliver = ^(id sender, long long kind) {
+      auto impl = weak.lock();
+      if (!impl || !impl->active.load() || impl->tearing_down) return;
+      const auto handle = impl->handle_of((__bridge void *)sender);
+      if (handle) impl->enqueue(handle, static_cast<std::int64_t>(kind));
+    };
+    return created;
+  }
+
   void dispose() noexcept {
     active.store(false);
     tearing_down = true;
@@ -418,7 +448,7 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
         }
       for (auto &entry : nodes) entry.second.view = nil;
     }
-    if (target) { target.owner = nullptr; target = nil; }
+    if (target) { target.deliver = nil; target = nil; }
     nodes.clear(); handles.clear(); focus_targets.clear();
     events.clear(); snapshots.clear();
     event_bytes = snapshot_bytes = text_bytes = 0;
@@ -426,35 +456,6 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
   }
 };
 
-} // namespace ny::ui
-
-@implementation NyUiTarget
-- (ny::ui::Context::Impl *)impl {
-  return static_cast<ny::ui::Context::Impl *>(self.owner);
-}
-- (void)deliver:(id)sender kind:(std::int64_t)kind {
-  auto *impl = [self impl];
-  if (!impl || !impl->active.load() || impl->tearing_down) return;
-  const auto handle = impl->handle_of((__bridge void *)sender);
-  if (handle) impl->enqueue(handle, kind);
-}
-- (void)buttonAction:(id)sender { [self deliver:sender kind:1]; }
-- (void)checkAction:(id)sender { [self deliver:sender kind:3]; }
-- (void)controlTextDidChange:(NSNotification *)notification {
-  [self deliver:notification.object kind:2];
-}
-- (BOOL)windowShouldClose:(NSWindow *)sender {
-  auto *impl = [self impl];
-  if (impl && impl->active.load() && !impl->tearing_down) {
-    const auto handle = impl->handle_of((__bridge void *)sender);
-    if (handle) impl->enqueue(handle, 4);
-  }
-  // Matrix decides when to close; AppKit must not destroy a live handle.
-  return NO;
-}
-@end
-
-namespace ny::ui {
 
 // AppKit is part of the operating system, so unlike the optional GTK provider
 // there is nothing to locate or verify. Reporting availability must still not
@@ -504,10 +505,7 @@ Result Context::window(const std::string &title, std::int64_t width, std::int64_
         initWithFrame:NSMakeRect(0, 0, static_cast<CGFloat>(width), static_cast<CGFloat>(height))];
     if (!root) return failure("AppKit could not create the root layout");
     window.contentView = root;
-    if (!impl_->target) {
-      impl_->target = [[NyUiTarget alloc] init];
-      impl_->target.owner = impl_.get();
-    }
+    if (!impl_->target) impl_->target = impl_->make_target();
     window.delegate = impl_->target;
     node.window_object = window;
     node.view = root;
@@ -652,9 +650,9 @@ Result Context::set_text(std::int64_t handle, const std::string &text) {
     switch (node->kind) {
     case Kind::window: node->window_object.title = value; break;
     case Kind::label:
-    case Kind::entry: static_cast<NSTextField *>(node->view).stringValue = value; break;
+    case Kind::entry: ((NSTextField *)node->view).stringValue = value; break;
     case Kind::button:
-    case Kind::checkbox: static_cast<NSButton *>(node->view).title = value; break;
+    case Kind::checkbox: ((NSButton *)node->view).title = value; break;
     default: break;
     }
     --node->suppress;
@@ -673,7 +671,7 @@ Result Context::read_text(std::int64_t handle) {
   Result result;
   @autoreleasepool {
     if (node->kind == Kind::entry) {
-      if (!from_ns(static_cast<NSTextField *>(node->view).stringValue, result.text))
+      if (!from_ns(((NSTextField *)node->view).stringValue, result.text))
         return failure("AppKit returned invalid text");
     } else result.text = node->text;
   }
@@ -720,10 +718,10 @@ Result Context::set_number(std::int64_t handle, const std::string &property, std
         impl_->relayout(node->window);
       }
     } else if (property == "sensitive") {
-      if (!container(node->kind)) static_cast<NSControl *>(node->view).enabled = value ? YES : NO;
+      if (!container(node->kind)) ((NSControl *)node->view).enabled = value ? YES : NO;
     } else if (property == "checked") {
       ++node->suppress;
-      static_cast<NSButton *>(node->view).state = value ? NSControlStateValueOn : NSControlStateValueOff;
+      ((NSButton *)node->view).state = value ? NSControlStateValueOn : NSControlStateValueOff;
       --node->suppress;
     } else if (size) {
       NSRect frame = node->window_object.frame;
@@ -745,7 +743,7 @@ Result Context::read_number(std::int64_t handle, const std::string &property) {
   if (property == "parent") return success(node->parent);
   if (property == "checked") {
     if (node->kind != Kind::checkbox) return failure("checked requires a checkbox");
-    return success(static_cast<NSButton *>(node->view).state == NSControlStateValueOn ? 1 : 0);
+    return success(((NSButton *)node->view).state == NSControlStateValueOn ? 1 : 0);
   }
   if (property == "visible") {
     if (node->kind == Kind::window) return success(node->window_object.visible ? 1 : 0);
@@ -757,7 +755,7 @@ Result Context::read_number(std::int64_t handle, const std::string &property) {
       auto found = node->properties.find("sensitive");
       return success(found == node->properties.end() || found->second ? 1 : 0);
     }
-    return success(static_cast<NSControl *>(node->view).enabled ? 1 : 0);
+    return success(((NSControl *)node->view).enabled ? 1 : 0);
   }
   if (property == "effective_sensitive") return success(impl_->effective_sensitive(*node) ? 1 : 0);
   if (property == "focus") {
@@ -808,7 +806,7 @@ Result Context::activate(std::int64_t handle) {
   @autoreleasepool {
     // performClick: is the real activation path: it toggles a switch button
     // and sends the action exactly as a user click does.
-    [static_cast<NSButton *>(node->view) performClick:nil];
+    [((NSButton *)node->view) performClick:nil];
   }
   return success();
 }
