@@ -56,6 +56,17 @@ public:
   // initialisation, user main, context end -- is unchanged.
   void setFreestandingEntry(bool enabled);
 
+  // Mark every generated definition `noredzone`, so no leaf function uses
+  // the 128 bytes below the stack pointer. A kernel or interrupt-reentrant
+  // target needs that; a user-space target whose interrupt entry switches
+  // stacks does not, so this stays independent of the freestanding entry
+  // rather than being implied by it.
+  void setDisableRedZone(bool enabled);
+
+  // Write the generated LLVM IR, so what the backend produced can be
+  // inspected and asserted rather than inferred from an object.
+  bool emitLlvmIr(const std::string &path);
+
   // Opt in to a retained, read-only context manifest on supported native
   // targets. Annotation contents are embedded verbatim; the default is off.
   void setEmbedContext(bool enabled);

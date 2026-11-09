@@ -42,18 +42,22 @@ struct command_line {
   bool version = false;
   bool unmanaged = false;
   bool freestanding = false;
+  bool no_red_zone = false;
+  std::string emit_llvm;
   bool embed_context = false;
 };
 
 void print_usage(std::ostream &stream) {
   stream
       << "Usage: nilassembler [-o <output.o>] [--unmanaged] [--freestanding]"
-         " [--embed-context] <input.nil>\n"
+         " [--no-red-zone] [--emit-llvm <ir.ll>] [--embed-context] <input.nil>\n"
       << "\n"
       << "Options:\n"
       << "  -o, --output <path>  Write the host relocatable object to <path>\n"
       << "  --unmanaged          Use manual native memory management\n"
       << "  --freestanding       Emit the entry as __ny_entry() with no C main wrapper\n"
+      << "  --no-red-zone        Mark generated definitions noredzone\n"
+      << "  --emit-llvm <path>   Also write the generated LLVM IR\n"
       << "  --embed-context      Retain AI annotations in x86_64 ELF/COFF or x86_64/arm64 Mach-O objects\n"
       << "  --version            Show the nilassembler version\n"
       << "  -h, --help           Show this help\n";
@@ -65,6 +69,8 @@ bool parse_command_line(int argc, char **argv, command_line &result,
   bool output_seen = false;
   bool unmanaged_seen = false;
   bool freestanding_seen = false;
+  bool no_red_zone_seen = false;
+  bool emit_llvm_seen = false;
   bool embed_context_seen = false;
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index];
@@ -106,6 +112,32 @@ bool parse_command_line(int argc, char **argv, command_line &result,
       result.freestanding = true;
       continue;
     }
+    if (options && argument == "--no-red-zone") {
+      if (no_red_zone_seen) {
+        error = "the no-red-zone option was provided more than once";
+        return false;
+      }
+      no_red_zone_seen = true;
+      result.no_red_zone = true;
+      continue;
+    }
+    if (options && argument == "--emit-llvm") {
+      if (emit_llvm_seen) {
+        error = "the emit-llvm option was provided more than once";
+        return false;
+      }
+      if (++index >= argc) {
+        error = "missing IR path after " + argument;
+        return false;
+      }
+      result.emit_llvm = argv[index];
+      if (result.emit_llvm.empty()) {
+        error = "the IR path must not be empty";
+        return false;
+      }
+      emit_llvm_seen = true;
+      continue;
+    }
     if (options && argument == "--embed-context") {
       if (embed_context_seen) {
         error = "the embed-context option was provided more than once";
@@ -145,7 +177,8 @@ bool parse_command_line(int argc, char **argv, command_line &result,
 
   if (result.help || result.version) {
     if (!result.input.empty() || output_seen || unmanaged_seen ||
-        freestanding_seen || embed_context_seen ||
+        freestanding_seen || no_red_zone_seen || emit_llvm_seen ||
+        embed_context_seen ||
         (result.help && result.version)) {
       error = "--help and --version must be used without input or output paths";
       return false;
@@ -415,6 +448,7 @@ int run_assembler(const command_line &arguments) {
   native.setMemoryMode(arguments.unmanaged ? ny::MemoryMode::UNSAFE_MANUAL
                                            : ny::MemoryMode::SAFE_GC);
   native.setFreestandingEntry(arguments.freestanding);
+  native.setDisableRedZone(arguments.no_red_zone);
   native.setEmbedContext(arguments.embed_context);
   if (!native.initialize()) {
     std::cerr << "nilassembler: failed to initialize the LLVM target\n";
@@ -422,6 +456,10 @@ int run_assembler(const command_line &arguments) {
   }
   if (!native.generateModule(*module)) {
     std::cerr << "nilassembler: native lowering failed\n";
+    return 1;
+  }
+  if (!arguments.emit_llvm.empty() && !native.emitLlvmIr(arguments.emit_llvm)) {
+    std::cerr << "nilassembler: could not write LLVM IR\n";
     return 1;
   }
   if (!native.emitObjectFile(workspace->object().string())) {
