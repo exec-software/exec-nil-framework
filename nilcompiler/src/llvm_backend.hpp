@@ -48,6 +48,14 @@ public:
   void setMemoryMode(MemoryMode mode);
   MemoryMode getMemoryMode() const;
 
+  // Emit the entry sequence under the documented freestanding symbol
+  // `__ny_entry`, with no arguments, instead of the hosted C `main(int,
+  // char **)`. A target without a C runtime then has one named entry to call
+  // rather than a wrapper it has to recognise and feed argc/argv. The
+  // sequence itself -- runtime ABI check, context begin, global
+  // initialisation, user main, context end -- is unchanged.
+  void setFreestandingEntry(bool enabled);
+
   // Opt in to a retained, read-only context manifest on supported native
   // targets. Annotation contents are embedded verbatim; the default is off.
   void setEmbedContext(bool enabled);

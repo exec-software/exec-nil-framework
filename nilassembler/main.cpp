@@ -41,16 +41,19 @@ struct command_line {
   bool help = false;
   bool version = false;
   bool unmanaged = false;
+  bool freestanding = false;
   bool embed_context = false;
 };
 
 void print_usage(std::ostream &stream) {
   stream
-      << "Usage: nilassembler [-o <output.o>] [--unmanaged] [--embed-context] <input.nil>\n"
+      << "Usage: nilassembler [-o <output.o>] [--unmanaged] [--freestanding]"
+         " [--embed-context] <input.nil>\n"
       << "\n"
       << "Options:\n"
       << "  -o, --output <path>  Write the host relocatable object to <path>\n"
       << "  --unmanaged          Use manual native memory management\n"
+      << "  --freestanding       Emit the entry as __ny_entry() with no C main wrapper\n"
       << "  --embed-context      Retain AI annotations in x86_64 ELF/COFF or x86_64/arm64 Mach-O objects\n"
       << "  --version            Show the nilassembler version\n"
       << "  -h, --help           Show this help\n";
@@ -61,6 +64,7 @@ bool parse_command_line(int argc, char **argv, command_line &result,
   bool options = true;
   bool output_seen = false;
   bool unmanaged_seen = false;
+  bool freestanding_seen = false;
   bool embed_context_seen = false;
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index];
@@ -91,6 +95,15 @@ bool parse_command_line(int argc, char **argv, command_line &result,
       }
       unmanaged_seen = true;
       result.unmanaged = true;
+      continue;
+    }
+    if (options && argument == "--freestanding") {
+      if (freestanding_seen) {
+        error = "the freestanding option was provided more than once";
+        return false;
+      }
+      freestanding_seen = true;
+      result.freestanding = true;
       continue;
     }
     if (options && argument == "--embed-context") {
@@ -132,7 +145,7 @@ bool parse_command_line(int argc, char **argv, command_line &result,
 
   if (result.help || result.version) {
     if (!result.input.empty() || output_seen || unmanaged_seen ||
-        embed_context_seen ||
+        freestanding_seen || embed_context_seen ||
         (result.help && result.version)) {
       error = "--help and --version must be used without input or output paths";
       return false;
@@ -401,6 +414,7 @@ int run_assembler(const command_line &arguments) {
   ny::NativeCodegen native;
   native.setMemoryMode(arguments.unmanaged ? ny::MemoryMode::UNSAFE_MANUAL
                                            : ny::MemoryMode::SAFE_GC);
+  native.setFreestandingEntry(arguments.freestanding);
   native.setEmbedContext(arguments.embed_context);
   if (!native.initialize()) {
     std::cerr << "nilassembler: failed to initialize the LLVM target\n";

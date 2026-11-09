@@ -61,6 +61,7 @@ def undefined_symbols(path: Path) -> set[str]:
         return data[table_offset + index:end].decode('utf-8', 'replace')
 
     undefined: set[str] = set()
+    exported: set[str] = set()
     for index in range(section_count):
         header = section(index)
         if text(names['offset'], header['name']) != '.symtab':
@@ -70,20 +71,28 @@ def undefined_symbols(path: Path) -> set[str]:
             raise SystemExit('symbol table has no entry size')
         for position in range(header['offset'], header['offset'] + header['size'],
                               header['entry_size']):
-            name_index, _info, _other, shndx = struct.unpack_from('<IBBH', data, position)
-            if shndx != 0 or not name_index:   # SHN_UNDEF with a name
+            name_index, info, _other, shndx = struct.unpack_from('<IBBH', data, position)
+            if not name_index:
                 continue
-            undefined.add(text(strings['offset'], name_index))
-    return undefined
+            name = text(strings['offset'], name_index)
+            if shndx == 0:                     # SHN_UNDEF with a name
+                undefined.add(name)
+            elif info >> 4 == 1:               # STB_GLOBAL and defined here
+                exported.add(name)
+    return undefined, exported
 
 
-def emit(compiler: Path, assembler: Path, root: Path, name: str, source: str) -> set[str]:
+def emit(compiler: Path, assembler: Path, root: Path, name: str, source: str,
+         freestanding: bool = False):
     path = root / f'{name}.ny'
     path.write_text(source, newline='\n')
     nil = root / f'{name}.nil'
     obj = root / f'{name}.o'
+    assemble = [assembler, '--unmanaged']
+    if freestanding:
+        assemble.append('--freestanding')
     for command in ([compiler, '--no-stdlib', '--no-bundle', '--unmanaged', '-o', nil, path],
-                    [assembler, '--unmanaged', '-o', obj, nil]):
+                    assemble + ['-o', obj, nil]):
         result = subprocess.run(list(map(str, command)), stdin=subprocess.DEVNULL,
                                 capture_output=True, text=True, timeout=120)
         assert result.returncode == 0, (command, result.returncode, result.stdout, result.stderr)
@@ -102,8 +111,8 @@ def main() -> int:
     checks = 0
     with tempfile.TemporaryDirectory(prefix='nil-symbol-surface-') as directory:
         root = Path(directory)
-        plain = emit(args.compiler, args.assembler, root, 'plain',
-                     'fn main() -> i64 {\n    let total: i64 = 0;\n    return total;\n}\n')
+        trivial = 'fn main() -> i64 {\n    let total: i64 = 0;\n    return total;\n}\n'
+        plain, plain_exports = emit(args.compiler, args.assembler, root, 'plain', trivial)
         assert plain <= runtime_abi, (
             'an object that uses no hosted facility imports only the native runtime ABI; '
             f'unexpected: {sorted(plain - runtime_abi)}')
@@ -115,7 +124,7 @@ def main() -> int:
 
         # The helper still has to exist when a program actually concatenates,
         # or the first assertion would pass for the wrong reason.
-        concat = emit(args.compiler, args.assembler, root, 'concat',
+        concat, _ = emit(args.compiler, args.assembler, root, 'concat',
                       'fn main() -> i64 {\n    let a: text = "left";\n'
                       '    let b: text = "right";\n    let joined: text = a + b;\n'
                       '    return 0;\n}\n')
@@ -126,6 +135,24 @@ def main() -> int:
         assert concat <= runtime_abi | concat_imports, (
             'concatenation must not widen the import surface further; '
             f'unexpected: {sorted(concat - runtime_abi - concat_imports)}')
+        checks += 1
+
+        # A hosted object is entered through the C runtime's main; a
+        # freestanding one is entered through a named symbol instead, because
+        # a target with no C runtime has nothing to call main for it and
+        # should not have to recognise a wrapper by its shape.
+        assert 'main' in plain_exports and '__ny_entry' not in plain_exports, (
+            f'a hosted object is entered through main; exports: {sorted(plain_exports)}')
+        checks += 1
+        free, free_exports = emit(args.compiler, args.assembler, root, 'free',
+                                  trivial, freestanding=True)
+        assert '__ny_entry' in free_exports and 'main' not in free_exports, (
+            'a freestanding object is entered through __ny_entry and defines no C main; '
+            f'exports: {sorted(free_exports)}')
+        checks += 1
+        assert free <= runtime_abi, (
+            'the freestanding entry must not widen the import surface; '
+            f'unexpected: {sorted(free - runtime_abi)}')
         checks += 1
 
     print(f'Native symbol surface: {checks} checks passed')

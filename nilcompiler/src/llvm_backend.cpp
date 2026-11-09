@@ -1195,6 +1195,7 @@ struct NativeCodegen::Impl {
 
   MemoryMode memory_mode = MemoryMode::UNSAFE_MANUAL;
   bool embed_context = false;
+  bool freestanding_entry = false;
   llvm::Function *current_function = nullptr;
 
   // State matching generateModule usage
@@ -1366,6 +1367,10 @@ MemoryMode NativeCodegen::getMemoryMode() const { return impl_->memory_mode; }
 
 void NativeCodegen::setEmbedContext(bool enabled) {
   impl_->embed_context = enabled;
+}
+
+void NativeCodegen::setFreestandingEntry(bool enabled) {
+  impl_->freestanding_entry = enabled;
 }
 
 bool NativeCodegen::initialize() {
@@ -8818,32 +8823,47 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
 
   auto *i32_type = llvm::Type::getInt32Ty(ctx);
   auto *opaque_pointer_type = llvm::PointerType::getUnqual(ctx);
+  const bool freestanding = impl_->freestanding_entry;
+  // Freestanding callers have no argument vector to pass and no C runtime to
+  // name the entry for them, so the entry takes none and is called
+  // `__ny_entry`. Everything after this point is the same sequence.
   auto *platform_main_type =
-      llvm::FunctionType::get(i32_type, {i32_type, opaque_pointer_type}, false);
-  auto *platform_main = llvm::Function::Create(platform_main_type,
-                                               llvm::Function::ExternalLinkage,
-                                               "main", *impl_->module);
-  auto argument = platform_main->arg_begin();
-  llvm::Value *argc_value = &*argument++;
-  llvm::Value *argv_value = &*argument;
-  argc_value->setName("argc");
-  argv_value->setName("argv");
-
-  auto *entry = llvm::BasicBlock::Create(ctx, "entry", platform_main);
-  impl_->builder->SetInsertPoint(entry);
+      freestanding
+          ? llvm::FunctionType::get(i32_type, {}, false)
+          : llvm::FunctionType::get(i32_type, {i32_type, opaque_pointer_type},
+                                    false);
+  auto *platform_main = llvm::Function::Create(
+      platform_main_type, llvm::Function::ExternalLinkage,
+      freestanding ? "__ny_entry" : "main", *impl_->module);
   auto *zero = llvm::ConstantInt::get(i32_type, 0);
   auto *one = llvm::ConstantInt::get(i32_type, 1);
   auto *null_argv = llvm::ConstantPointerNull::get(opaque_pointer_type);
-  auto *has_program_name = impl_->builder->CreateAnd(
-      impl_->builder->CreateICmpSGT(argc_value, zero),
-      impl_->builder->CreateICmpNE(argv_value, null_argv));
-  auto *program_argc = impl_->builder->CreateSelect(
-      has_program_name, impl_->builder->CreateSub(argc_value, one), zero,
-      "ny.argc");
-  auto *argv_after_program_name = impl_->builder->CreateGEP(
-      opaque_pointer_type, argv_value, one, "ny.argv.after_program_name");
-  auto *program_argv = impl_->builder->CreateSelect(
-      has_program_name, argv_after_program_name, null_argv, "ny.argv");
+  llvm::Value *argc_value = zero;
+  llvm::Value *argv_value = null_argv;
+  if (!freestanding) {
+    auto argument = platform_main->arg_begin();
+    argc_value = &*argument++;
+    argv_value = &*argument;
+    argc_value->setName("argc");
+    argv_value->setName("argv");
+  }
+
+  auto *entry = llvm::BasicBlock::Create(ctx, "entry", platform_main);
+  impl_->builder->SetInsertPoint(entry);
+  llvm::Value *program_argc = zero;
+  llvm::Value *program_argv = null_argv;
+  if (!freestanding) {
+    auto *has_program_name = impl_->builder->CreateAnd(
+        impl_->builder->CreateICmpSGT(argc_value, zero),
+        impl_->builder->CreateICmpNE(argv_value, null_argv));
+    program_argc = impl_->builder->CreateSelect(
+        has_program_name, impl_->builder->CreateSub(argc_value, one), zero,
+        "ny.argc");
+    auto *argv_after_program_name = impl_->builder->CreateGEP(
+        opaque_pointer_type, argv_value, one, "ny.argv.after_program_name");
+    program_argv = impl_->builder->CreateSelect(
+        has_program_name, argv_after_program_name, null_argv, "ny.argv");
+  }
 
   auto begin_context = impl_->module->getOrInsertFunction(
       "nyrt_context_begin",
