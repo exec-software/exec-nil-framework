@@ -26,7 +26,9 @@ from sdk_artifact_validation import (
 )
 from sdk_qualification import LEGACY_TOOLS, APERTURE_TOOLS, TOOLS, qualification_errors
 from sdk_sources import is_source, module_artifact_path, canonical_std_namespace
-from sdk_runtime import STATIC_NAMES, SHARED_NAMES, RUNTIME_PAIRS, shared_library_valid, shared_runtime_smoke
+from sdk_runtime import (STATIC_NAMES, SHARED_NAMES, RUNTIME_PAIRS,
+                         FREESTANDING_STATIC_NAMES, shared_library_valid,
+                         shared_runtime_smoke)
 
 
 REQUIRED_TOOLS = TOOLS
@@ -42,6 +44,12 @@ NATIVE_RUNTIME_PATHS = tuple(
     "nillib/native/" + name for name in NATIVE_RUNTIME_ARCHIVE_NAMES
 )
 SHARED_RUNTIME_PATHS = tuple("nillib/native/" + name for name in SHARED_NAMES)
+FREESTANDING_RUNTIME_PATHS = tuple(
+    "nillib/native/" + name for name in FREESTANDING_STATIC_NAMES
+)
+# Synthesised by the linker rather than supplied by anyone, so its presence
+# says nothing about what the archive needs from a host.
+LINKER_SYNTHESISED_SYMBOLS = frozenset({"_GLOBAL_OFFSET_TABLE_"})
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 REVISION_PATTERN = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 MODULE_PATTERN = re.compile(
@@ -319,6 +327,7 @@ def validate_exact_layout(
             key.startswith("nillib/")
             and not key.endswith(".nil")
             and key not in NATIVE_RUNTIME_PATHS + SHARED_RUNTIME_PATHS
+                           + FREESTANDING_RUNTIME_PATHS
         ):
             errors.append("nillib contains a non-NIL artifact: {}".format(key))
         if (key.startswith("docs/") and not key.endswith(".html")
@@ -358,6 +367,7 @@ def validate_manifest_metadata(manifest: dict[str, Any], errors: list[str]) -> N
         "tools",
         "native_runtime",
         "native_shared_runtime",
+        "native_freestanding_runtime",
         "standard_library",
         "documentation",
         "payload",
@@ -465,6 +475,117 @@ def validate_native_runtime(
                 runtime_paths[0]
             )
         )
+
+
+def validate_freestanding_runtime(
+    value: Any, files: dict[str, Path], errors: list[str]
+) -> None:
+    """The archive a consumer with no C library links against.
+
+    Validated like the hosted archive, and additionally required to import
+    nothing but the weak host failure hook: an archive that had picked up a
+    libc dependency would link on a hosted build host and fail on the target
+    it exists for, which is the drift this record is here to catch.
+    """
+    key = validate_file_record(value, "native_freestanding_runtime", files, errors)
+    if key is None:
+        return
+    if key not in FREESTANDING_RUNTIME_PATHS:
+        errors.append(
+            "native_freestanding_runtime.path must be one of {}".format(
+                list(FREESTANDING_RUNTIME_PATHS)
+            )
+        )
+        return
+    archive = files.get(key)
+    if archive is not None and not is_static_archive(archive):
+        errors.append(
+            "native_freestanding_runtime fails supported archive framing and "
+            "required symbol-index offset validation: {}".format(key)
+        )
+        return
+    if archive is not None:
+        unexpected = sorted(
+            freestanding_archive_imports(archive) - LINKER_SYNTHESISED_SYMBOLS
+        )
+        if unexpected:
+            errors.append(
+                "native_freestanding_runtime must import nothing but the weak "
+                "host failure hook; found: {}".format(unexpected)
+            )
+
+
+def freestanding_archive_imports(archive: Path) -> set[str]:
+    """Undefined, non-weak symbol names in an ELF static archive.
+
+    The ELF symbol tables are read directly rather than through nm, so the
+    check does not depend on binutils being installed where an SDK is
+    validated. A non-ELF archive returns nothing: the import surface is
+    pinned on ELF hosts by the repository's own tests, and this record must
+    not fail a Windows or macOS package for lacking a reader.
+    """
+    try:
+        data = archive.read_bytes()
+    except OSError:
+        return set()
+    if not data.startswith(b"!<arch>\n"):
+        return set()
+    undefined: set[str] = set()
+    offset = 8
+    while offset + 60 <= len(data):
+        header = data[offset:offset + 60]
+        if header[58:60] != b"`\n":
+            break
+        try:
+            size = int(header[48:58].decode("ascii").strip() or "0")
+        except ValueError:
+            break
+        body = data[offset + 60:offset + 60 + size]
+        offset += 60 + size + (size & 1)
+        if body[:4] != b"\x7fELF" or body[4] != 2 or body[5] != 1:
+            continue
+        undefined |= elf_undefined_symbols(body)
+    return undefined
+
+
+def elf_undefined_symbols(data: bytes) -> set[str]:
+    """Named SHN_UNDEF symbols in one little-endian 64-bit ELF object."""
+    try:
+        section_offset = int.from_bytes(data[0x28:0x30], "little")
+        section_size = int.from_bytes(data[0x3a:0x3c], "little")
+        section_count = int.from_bytes(data[0x3c:0x3e], "little")
+        names_index = int.from_bytes(data[0x3e:0x40], "little")
+
+        def section(index: int) -> tuple[int, int, int, int, int]:
+            base = section_offset + index * section_size
+            name = int.from_bytes(data[base:base + 4], "little")
+            offset = int.from_bytes(data[base + 0x18:base + 0x20], "little")
+            size = int.from_bytes(data[base + 0x20:base + 0x28], "little")
+            link = int.from_bytes(data[base + 0x28:base + 0x2c], "little")
+            entry = int.from_bytes(data[base + 0x38:base + 0x40], "little")
+            return name, offset, size, link, entry
+
+        def text(table: int, index: int) -> str:
+            end = data.index(b"\0", table + index)
+            return data[table + index:end].decode("utf-8", "replace")
+
+        names_offset = section(names_index)[1]
+        undefined: set[str] = set()
+        for index in range(section_count):
+            name, offset, size, link, entry = section(index)
+            if text(names_offset, name) != ".symtab" or not entry:
+                continue
+            strings = section(link)[1]
+            for position in range(offset, offset + size, entry):
+                name_index = int.from_bytes(data[position:position + 4], "little")
+                info = data[position + 4]
+                shndx = int.from_bytes(data[position + 6:position + 8], "little")
+                # STB_WEAK is a host-supplied hook, not a requirement.
+                if name_index and shndx == 0 and info >> 4 != 2:
+                    undefined.add(text(strings, name_index))
+        return undefined
+    except (IndexError, ValueError):
+        return set()
 
 
 def validate_shared_runtime(value: Any, files: dict[str, Path], errors: list[str]) -> None:
@@ -1257,6 +1378,9 @@ def main() -> int:
         validate_tools(manifest.get("tools"), files, errors)
         validate_native_runtime(manifest.get("native_runtime"), files, errors)
         validate_shared_runtime(manifest.get("native_shared_runtime"), files, errors)
+        validate_freestanding_runtime(
+            manifest.get("native_freestanding_runtime"), files, errors
+        )
         module_count = validate_standard_library(
             manifest.get("standard_library"), files, errors
         )

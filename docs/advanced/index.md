@@ -48,6 +48,14 @@ function annotations in v3, with class ancestry and method metadata added in
 class-bearing v4 artifacts. Legacy v1 inputs still fail
 explicitly when their omitted metadata is required.
 
+[Freestanding native targets](freestanding-targets.md) records the boundary a
+consumer with no C library links against: `nilassembler --freestanding` emits
+`__ny_entry()` and no C `main`, `--no-red-zone` and `--emit-llvm` are separate
+options answering separate questions, and `nilruntime_freestanding` supplies
+the runtime hooks without libc, a kernel or a heap of its own. Memory is the
+host's: it installs a region and the runtime bumps through it. Freestanding
+targets are a capability and not a qualified release target.
+
 The first [native register assembly](inline-assembly.md) profile has explicit
 x86_64 targeting, checked `i64` operands, preserved NIL instructions, and a
 bounded straight-line instruction set. It is native-only; interpreter routes

@@ -508,11 +508,24 @@ class RuntimeLayoutTests(unittest.TestCase):
         header[54:56] = (56).to_bytes(2, "little")
         header[56:58] = (1).to_bytes(2, "little")
         self.shared.write_bytes(header)
+        # A staged SDK carries the freestanding runtime beside the hosted pair.
+        # A consumer with no C library links this one and nothing else.
+        self.freestanding = self.root / "libnilruntime_freestanding.a"
+        self.freestanding.write_bytes(sysv_archive())
 
     def test_both_runtime_forms_required_and_returned(self):
-        self.assertEqual(self.package.validate_stage_input(self.root), (self.static, self.shared))
+        self.assertEqual(self.package.validate_stage_input(self.root),
+                         (self.static, self.shared, self.freestanding))
         self.shared.unlink()
         with self.assertRaisesRegex(SystemExit, "matching shared native runtime"):
+            self.package.validate_stage_input(self.root)
+
+    def test_freestanding_runtime_is_required_and_must_be_an_archive(self):
+        self.freestanding.unlink()
+        with self.assertRaisesRegex(SystemExit, "freestanding runtime archive"):
+            self.package.validate_stage_input(self.root)
+        self.freestanding.write_bytes(b"not an archive")
+        with self.assertRaisesRegex(SystemExit, "freestanding runtime fails supported archive framing"):
             self.package.validate_stage_input(self.root)
 
     def test_new_packages_require_executable_aperture(self):
@@ -545,6 +558,7 @@ class RuntimeLayoutTests(unittest.TestCase):
         native.mkdir(parents=True)
         self.static.rename(native / self.static.name)
         self.shared.rename(native / self.shared.name)
+        self.freestanding.rename(native / self.freestanding.name)
         (self.root / "manifest.json").write_text("{}", newline='\n')
 
         def records(names):
@@ -627,9 +641,11 @@ class RuntimeLayoutTests(unittest.TestCase):
         header[150:152] = (0x2000).to_bytes(2, "little")  # IMAGE_FILE_DLL.
         header[152:154] = (0x20b).to_bytes(2, "little")  # PE32+.
         self.shared.write_bytes(header)
-        self.assertEqual(self.package.validate_stage_input(self.root), (self.static, self.shared))
+        self.assertEqual(self.package.validate_stage_input(self.root),
+                         (self.static, self.shared, self.freestanding))
         msvc_static = self.static.rename(self.root / "nil.lib")
-        self.assertEqual(self.package.validate_stage_input(self.root), (msvc_static, self.shared))
+        self.assertEqual(self.package.validate_stage_input(self.root),
+                         (msvc_static, self.shared, self.freestanding))
         self.static.write_bytes(msvc_static.read_bytes())
         with self.assertRaisesRegex(SystemExit, "exactly one native runtime archive"):
             self.package.validate_stage_input(self.root)

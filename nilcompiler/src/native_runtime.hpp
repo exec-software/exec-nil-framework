@@ -115,6 +115,13 @@ std::int32_t nyrt_any_v1_is_type(const void *box, const char *type,
 void *nyrt_alloc(std::uint64_t size) noexcept;
 std::int32_t nyrt_free(void *pointer) noexcept;
 
+// What a freestanding object calls instead of memcpy and strlen, because it
+// has no libc to call. Defined here as well as in the freestanding runtime so
+// that which runtime such an object links against stays the host's choice.
+void *nyrt_mem_copy(void *destination, const void *source,
+                    std::uint64_t size) noexcept;
+std::uint64_t nyrt_str_length(const char *text) noexcept;
+
 // Each address names an initialized, live eight-byte word. Frames are LIFO
 // and remain registered until the generated function returns. This internal
 // ABI is for compiler/embedding code, not arbitrary Ny pointer values.

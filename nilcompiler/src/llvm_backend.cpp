@@ -1197,6 +1197,7 @@ struct NativeCodegen::Impl {
   bool embed_context = false;
   bool freestanding_entry = false;
   bool disable_red_zone = false;
+  NativeCodegen::CodeModel code_model = NativeCodegen::CodeModel::host;
   llvm::Function *current_function = nullptr;
 
   // State matching generateModule usage
@@ -1378,6 +1379,8 @@ void NativeCodegen::setDisableRedZone(bool enabled) {
   impl_->disable_red_zone = enabled;
 }
 
+void NativeCodegen::setCodeModel(CodeModel model) { impl_->code_model = model; }
+
 bool NativeCodegen::emitLlvmIr(const std::string &path) {
   if (!impl_->module) {
     std::cerr << "[NativeCodegen] no module to write\n";
@@ -1420,9 +1423,25 @@ bool NativeCodegen::initialize() {
 #else
   const auto &target_spec = target_triple;
 #endif
+  // An absent code model leaves the target's own default, which on x86-64 is
+  // the small model: every address is materialized as a 32-bit absolute, so an
+  // object linked above 4 GiB fails with truncated relocations. A consumer
+  // whose kernel places user code high asks for `large` instead.
+  std::optional<llvm::CodeModel::Model> code_model;
+  switch (impl_->code_model) {
+  case CodeModel::small:
+    code_model = llvm::CodeModel::Small;
+    break;
+  case CodeModel::large:
+    code_model = llvm::CodeModel::Large;
+    break;
+  case CodeModel::host:
+    break;
+  }
   auto target_machine = std::unique_ptr<llvm::TargetMachine>(
       target->createTargetMachine(target_spec, "generic", "", target_options,
-                                  std::optional<llvm::Reloc::Model>()));
+                                  std::optional<llvm::Reloc::Model>(),
+                                  code_model));
   if (!target_machine) {
     std::cerr << "[NativeCodegen] Failed to create target machine for '"
               << target_triple << "'" << std::endl;
@@ -1576,11 +1595,19 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
   // Generate __ny_string_concat(i8* s1, i8* s2) -> i8*
   //    (Helper for string concatenation)
   //
-  // Built on first use, not on every module. The helper calls strlen, memcpy
-  // and calloc, so emitting it unconditionally left those three undefined in
-  // the object of a program that never concatenates a string -- which a
-  // freestanding or kernel target then has to satisfy with stubs it should
-  // never need.
+  // Built on first use, not on every module. The helper needs a length, a
+  // copy and an allocation, so emitting it unconditionally left those three
+  // undefined in the object of a program that never concatenates a string --
+  // which a freestanding or kernel target then has to satisfy with stubs it
+  // should never need.
+  //
+  // Which three it calls depends on the target. A hosted object calls strlen,
+  // memcpy and calloc. A freestanding one has no libc to call, so it goes
+  // through nyrt_str_length, nyrt_mem_copy and nyrt_alloc, which the
+  // freestanding runtime implements over a region its host installs. The
+  // shape of the emitted helper is otherwise identical, including the null
+  // check: an allocator with no region returns null exactly as a hosted one
+  // does under pressure, and the same failure path reports it.
   auto get_string_concat_function = [&]() -> llvm::Function * {
     if (auto *existing = impl_->module->getFunction("__ny_string_concat"))
       return existing;
@@ -1599,16 +1626,21 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
     auto *s1 = concat_fn->getArg(0);
     auto *s2 = concat_fn->getArg(1);
 
-    // Declare dependencies
-    auto *strlen_fn = impl_->module->getFunction("strlen");
+    // Declare dependencies, under the names this target can resolve.
+    const bool freestanding = impl_->freestanding_entry;
+    const char *const length_name =
+        freestanding ? "nyrt_str_length" : "strlen";
+    const char *const copy_name = freestanding ? "nyrt_mem_copy" : "memcpy";
+
+    auto *strlen_fn = impl_->module->getFunction(length_name);
     if (!strlen_fn) {
       auto *ft = llvm::FunctionType::get(
           native_size_type, {llvm::PointerType::getUnqual(ctx)}, false);
       strlen_fn = llvm::Function::Create(ft, llvm::Function::ExternalLinkage,
-                                         "strlen", *impl_->module);
+                                         length_name, *impl_->module);
     }
 
-    auto *memcpy_fn = impl_->module->getFunction("memcpy");
+    auto *memcpy_fn = impl_->module->getFunction(copy_name);
     if (!memcpy_fn) {
       // void* memcpy(void* dest, const void* src, size_t n)
       auto *ft = llvm::FunctionType::get(llvm::PointerType::getUnqual(ctx),
@@ -1617,7 +1649,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                                           native_size_type},
                                          false);
       memcpy_fn = llvm::Function::Create(ft, llvm::Function::ExternalLinkage,
-                                         "memcpy", *impl_->module);
+                                         copy_name, *impl_->module);
     }
 
     // len1 = strlen(s1)
@@ -1648,7 +1680,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
     impl_->builder->SetInsertPoint(length_success);
 
     llvm::Value *new_str = nullptr;
-    if (impl_->memory_mode == MemoryMode::SAFE_GC) {
+    if (impl_->memory_mode == MemoryMode::SAFE_GC || freestanding) {
       auto *runtime_type =
           llvm::FunctionType::get(llvm::PointerType::getUnqual(ctx),
                                   {llvm::Type::getInt64Ty(ctx)}, false);
@@ -7240,6 +7272,171 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           return false;
         }
 
+        // A symbol the consumer supplies. `host` is the one library name that
+        // names no library: it means the declared Ny function *is* an external
+        // symbol of exactly that name, called with the platform's ordinary C
+        // convention, and whoever links the object defines it.
+        //
+        // This is the capability a freestanding consumer needs and the one
+        // thing it could not express. A kernel's own call boundary is its own
+        // and is usually unstable, so it must not enter the standard library;
+        // what belongs here is the ability to reach it. The object imports the
+        // name and nothing else, and the name is written in the source where a
+        // reader and the symbol-surface test can both see it.
+        //
+        // Deliberately unverified: nothing here can check the host's
+        // signature, so the type profile is kept narrow -- i64, f64 and text
+        // parameters, those or no value returned -- and anything outside it is
+        // refused rather than guessed. `text` is a pointer to NUL-terminated
+        // bytes, which is already how a Ny string is represented natively.
+        if (lib_name == "host") {
+          const std::string encoded_count =
+              minstr.args.size() >= 3 ? minstr.args[2] : std::string{};
+          if (encoded_count.empty() ||
+              encoded_count.find_first_not_of("0123456789") !=
+                  std::string::npos ||
+              minstr.args.size() < 4) {
+            std::cerr << "[NativeCodegen] host symbol '" << func_name
+                      << "' has no declared argument count and return type in "
+                         "function '"
+                      << fn.name << "'\n";
+            return false;
+          }
+          const std::size_t declared_count =
+              static_cast<std::size_t>(std::stoull(encoded_count));
+          // The call site encodes only the count and the return type; the
+          // declaration also carries the parameter types. Accept either, and
+          // require any parameter list to match the count exactly.
+          const bool has_parameter_types = minstr.args.size() > 4;
+          if (has_parameter_types && minstr.args.size() != declared_count + 4) {
+            std::cerr << "[NativeCodegen] host symbol '" << func_name
+                      << "' declares " << declared_count
+                      << " arguments and a parameter list of a different "
+                         "length in function '"
+                      << fn.name << "'\n";
+            return false;
+          }
+          if (func_name.empty() ||
+              (!std::isalpha(static_cast<unsigned char>(func_name.front())) &&
+               func_name.front() != '_') ||
+              func_name.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                          "abcdefghijklmnopqrstuvwxyz"
+                                          "0123456789_") !=
+                  std::string::npos) {
+            std::cerr << "[NativeCodegen] host symbol '" << func_name
+                      << "' is not a valid external symbol name in function '"
+                      << fn.name << "'\n";
+            return false;
+          }
+          // The runtime ABI is ours; a host symbol must not shadow it.
+          if (func_name.rfind("__ny_", 0) == 0 ||
+              func_name.rfind("nyrt_", 0) == 0) {
+            std::cerr << "[NativeCodegen] host symbol '" << func_name
+                      << "' is reserved by the native runtime ABI in function '"
+                      << fn.name << "'\n";
+            return false;
+          }
+          auto host_kind = [](const std::string &type) -> std::string {
+            const std::string normalized = normalize_nil_type(type);
+            if (normalized == "text" || normalized == "string")
+              return "text";
+            if (normalized == "i64" || normalized == "f64")
+              return normalized;
+            return {};
+          };
+          auto host_type = [&](const std::string &kind) -> llvm::Type * {
+            if (kind == "text")
+              return llvm::PointerType::getUnqual(ctx);
+            if (kind == "f64")
+              return llvm::Type::getDoubleTy(ctx);
+            return llvm::Type::getInt64Ty(ctx);
+          };
+          const std::string declared_return = normalize_nil_type(minstr.args[3]);
+          const bool returns_value =
+              declared_return != "void" && !declared_return.empty();
+          const std::string return_kind =
+              returns_value ? host_kind(declared_return) : std::string{"void"};
+          if (return_kind.empty()) {
+            std::cerr << "[NativeCodegen] host symbol '" << func_name
+                      << "' returns '" << minstr.args[3]
+                      << "', which is outside the supported host profile of "
+                         "i64, f64, text or no value, in function '"
+                      << fn.name << "'\n";
+            return false;
+          }
+          std::vector<std::string> parameter_kinds(declared_count, "i64");
+          if (has_parameter_types) {
+            for (std::size_t index = 0; index < declared_count; ++index) {
+              parameter_kinds[index] = host_kind(minstr.args[4 + index]);
+              if (parameter_kinds[index].empty()) {
+                std::cerr << "[NativeCodegen] host symbol '" << func_name
+                          << "' takes '" << minstr.args[4 + index]
+                          << "', which is outside the supported host profile "
+                             "of i64, f64 and text, in function '"
+                          << fn.name << "'\n";
+                return false;
+              }
+            }
+          }
+          // Operands were pushed left to right, so they come back in reverse.
+          std::vector<llvm::Value *> call_arguments(declared_count, nullptr);
+          for (std::size_t position = declared_count; position-- > 0;) {
+            llvm::Value *value = impl_->popValue();
+            if (value == nullptr) {
+              std::cerr << "[NativeCodegen] host symbol '" << func_name
+                        << "' is missing an operand in function '" << fn.name
+                        << "'\n";
+              return false;
+            }
+            const std::string actual = host_kind(impl_->nilType(value));
+            const std::string &expected = parameter_kinds[position];
+            // Without a declared parameter list the operand's own kind is the
+            // only statement available, and it must still be one this profile
+            // admits.
+            if (actual.empty() ||
+                (has_parameter_types && actual != expected)) {
+              std::cerr << "[NativeCodegen] host symbol '" << func_name
+                        << "' received an operand of type '"
+                        << impl_->nilType(value) << "' where '"
+                        << (has_parameter_types ? expected : std::string{"i64, f64 or text"})
+                        << "' was required in function '"
+                        << fn.name << "'\n";
+              return false;
+            }
+            if (!has_parameter_types)
+              parameter_kinds[position] = actual;
+            call_arguments[position] =
+                parameter_kinds[position] == "i64"
+                    ? impl_->coerceToI64(value)
+                    : value;
+          }
+          std::vector<llvm::Type *> parameter_types;
+          parameter_types.reserve(declared_count);
+          for (const std::string &kind : parameter_kinds)
+            parameter_types.push_back(host_type(kind));
+          auto *host_function_type = llvm::FunctionType::get(
+              returns_value ? host_type(return_kind)
+                            : llvm::Type::getVoidTy(ctx),
+              parameter_types, false);
+          if (auto *existing = impl_->module->getFunction(func_name)) {
+            if (existing->getFunctionType() != host_function_type) {
+              std::cerr << "[NativeCodegen] host symbol '" << func_name
+                        << "' is used with two different signatures in "
+                           "function '"
+                        << fn.name << "'\n";
+              return false;
+            }
+          }
+          auto host_callee =
+              impl_->module->getOrInsertFunction(func_name, host_function_type);
+          auto *result = impl_->builder->CreateCall(
+              host_function_type, host_callee.getCallee(), call_arguments);
+          if (returns_value)
+            impl_->pushValue(result, return_kind == "text" ? "text"
+                                                           : return_kind);
+          break;
+        }
+
         // External interop still lacks a declared, versioned native ABI and
         // the former generic path guessed argument layouts while ignoring the
         // encoded library. That could silently bind an unrelated host symbol.
@@ -9157,6 +9354,8 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_any_v1_is_type", &nyrt_any_v1_is_type);
   expose_runtime_symbol("nyrt_alloc", &nyrt_alloc);
   expose_runtime_symbol("nyrt_free", &nyrt_free);
+  expose_runtime_symbol("nyrt_mem_copy", &nyrt_mem_copy);
+  expose_runtime_symbol("nyrt_str_length", &nyrt_str_length);
   expose_runtime_symbol("nyrt_arg_count", &nyrt_arg_count);
   expose_runtime_symbol("nyrt_arg", &nyrt_arg);
   expose_runtime_symbol("nyrt_exit", &nyrt_exit);

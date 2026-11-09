@@ -35,6 +35,11 @@ runtime_abi = {
 # absence elsewhere proves it is generated on demand.
 concat_imports = {'strlen', 'memcpy', 'calloc'}
 
+# What the same helper calls on a target with no libc. The host owns the
+# memory and installs it; the runtime bumps through it. These are the only
+# names allocation is allowed to add, and no libc name may appear beside them.
+freestanding_concat_imports = {'nyrt_str_length', 'nyrt_mem_copy', 'nyrt_alloc'}
+
 
 def undefined_symbols(path: Path) -> set[str]:
     data = path.read_bytes()
@@ -104,8 +109,40 @@ def definitions_without_noredzone(ir: Path) -> list[str]:
     return [name for name, group in definitions if group not in groups_with]
 
 
+def absolute_relocation_count(obj: Path) -> int:
+    """Number of 32-bit absolute relocations in an ELF relocatable object.
+
+    These are what confine an object to the low 4 GiB: the linker has nowhere
+    to put a higher address, so the link fails rather than the program
+    misbehaving. Read from the section headers directly, so the check needs no
+    binutils.
+    """
+    data = obj.read_bytes()
+    if data[:4] != b'\x7fELF' or data[4] != 2 or data[5] != 1:
+        raise SystemExit(f'expected a little-endian 64-bit object: {obj}')
+    section_offset, = struct.unpack_from('<Q', data, 0x28)
+    section_size, section_count, _ = struct.unpack_from('<HHH', data, 0x3a)
+    r_x86_64_32, r_x86_64_32s = 10, 11
+    total = 0
+    for index in range(section_count):
+        base = section_offset + index * section_size
+        kind, = struct.unpack_from('<I', data, base + 4)
+        if kind != 4:                      # SHT_RELA
+            continue
+        offset, size = struct.unpack_from('<QQ', data, base + 0x18)
+        entry_size, = struct.unpack_from('<Q', data, base + 0x38)
+        if not entry_size:
+            continue
+        for position in range(offset, offset + size, entry_size):
+            info, = struct.unpack_from('<Q', data, position + 8)
+            if info & 0xffffffff in (r_x86_64_32, r_x86_64_32s):
+                total += 1
+    return total
+
+
 def emit(compiler: Path, assembler: Path, root: Path, name: str, source: str,
          freestanding: bool = False, no_red_zone: bool = False,
+         code_model: str | None = None,
          ir: Path | None = None):
     path = root / f'{name}.ny'
     path.write_text(source, newline='\n')
@@ -116,6 +153,8 @@ def emit(compiler: Path, assembler: Path, root: Path, name: str, source: str,
         assemble.append('--freestanding')
     if no_red_zone:
         assemble.append('--no-red-zone')
+    if code_model is not None:
+        assemble += ['--code-model', code_model]
     if ir is not None:
         assemble += ['--emit-llvm', str(ir)]
     for command in ([compiler, '--no-stdlib', '--no-bundle', '--unmanaged', '-o', nil, path],
@@ -151,10 +190,12 @@ def main() -> int:
 
         # The helper still has to exist when a program actually concatenates,
         # or the first assertion would pass for the wrong reason.
+        concatenating = ('fn main() -> i64 {\n    let a: text = "left";\n'
+                         '    let b: text = "right";\n'
+                         '    let joined: text = a + b;\n'
+                         '    return 0;\n}\n')
         concat, _ = emit(args.compiler, args.assembler, root, 'concat',
-                      'fn main() -> i64 {\n    let a: text = "left";\n'
-                      '    let b: text = "right";\n    let joined: text = a + b;\n'
-                      '    return 0;\n}\n')
+                         concatenating)
         assert concat_imports <= concat, (
             'a concatenating program must still import the helper dependencies; '
             f'missing: {sorted(concat_imports - concat)}')
@@ -162,6 +203,29 @@ def main() -> int:
         assert concat <= runtime_abi | concat_imports, (
             'concatenation must not widen the import surface further; '
             f'unexpected: {sorted(concat - runtime_abi - concat_imports)}')
+        checks += 1
+
+        # The same program with no libc to call. Allocation is the one place
+        # generated code needs memory, and on a freestanding target it asks
+        # the runtime rather than the C library: the helper's three
+        # dependencies become runtime hooks, and no libc name may survive --
+        # a freestanding consumer satisfying calloc at all is the reverse-
+        # engineered-shim problem this exists to remove.
+        free_concat, _ = emit(args.compiler, args.assembler, root,
+                              'free_concat', concatenating, freestanding=True)
+        assert freestanding_concat_imports <= free_concat, (
+            'a freestanding concatenating program must reach memory through the '
+            'runtime hooks; missing: '
+            f'{sorted(freestanding_concat_imports - free_concat)}')
+        checks += 1
+        assert not (free_concat & concat_imports), (
+            'a freestanding object must import no libc symbol at all; '
+            f'present: {sorted(free_concat & concat_imports)}')
+        checks += 1
+        assert free_concat <= runtime_abi | freestanding_concat_imports, (
+            'freestanding concatenation must not widen the import surface '
+            'further; unexpected: '
+            f'{sorted(free_concat - runtime_abi - freestanding_concat_imports)}')
         checks += 1
 
         # A hosted object is entered through the C runtime's main; a
@@ -180,6 +244,63 @@ def main() -> int:
         assert free <= runtime_abi, (
             'the freestanding entry must not widen the import surface; '
             f'unexpected: {sorted(free - runtime_abi)}')
+        checks += 1
+
+        # A symbol the consumer supplies. The declared name is the symbol, so
+        # it must appear in the import surface exactly as written and nothing
+        # else may arrive with it -- and a declaration nobody calls must add
+        # no import at all, or every consumer would owe a definition for a
+        # capability the program did not use.
+        host_symbol = 'anomalous_probe_emit'
+        declaration = ('module host_probe\n\n'
+                       '@interop("host")\n'
+                       f'fn {host_symbol}(message: text) -> i64\n'
+                       'end fn\n\n')
+        unused, _ = emit(args.compiler, args.assembler, root, 'host_unused',
+                         declaration + 'fn main() -> i64 {\n    return 0;\n}\n',
+                         freestanding=True)
+        assert host_symbol not in unused, (
+            'a host symbol that is never called must not be imported; '
+            f'imports: {sorted(unused)}')
+        checks += 1
+        called, _ = emit(args.compiler, args.assembler, root, 'host_called',
+                         declaration + 'fn main() -> i64 {\n'
+                         '    let greeting: text = "from ny";\n'
+                         f'    return {host_symbol}(greeting);\n'
+                         '}\n',
+                         freestanding=True)
+        assert host_symbol in called, (
+            'a called host symbol must be imported under exactly its declared '
+            f'name; imports: {sorted(called)}')
+        checks += 1
+        assert called <= runtime_abi | {host_symbol}, (
+            'reaching a host symbol must not widen the import surface '
+            f'further; unexpected: {sorted(called - runtime_abi - {host_symbol})}')
+        checks += 1
+        assert not (called & concat_imports), (
+            'reaching a host symbol must not import a libc name; '
+            f'present: {sorted(called & concat_imports)}')
+        checks += 1
+
+        # Where the object may be linked. The default small model puts every
+        # address in a 32-bit absolute relocation, which a consumer placing
+        # user code above 4 GiB cannot satisfy -- its link fails over the
+        # string constants of a program that never asked to be low. The large
+        # model removes them, and the first assertion keeps the second from
+        # passing because the program had no addresses to materialize.
+        emit(args.compiler, args.assembler, root, 'small', concatenating,
+             freestanding=True)
+        small_absolutes = absolute_relocation_count(root / 'small.o')
+        assert small_absolutes > 0, (
+            'the default code model is expected to use 32-bit absolute '
+            'relocations; this check would otherwise prove nothing')
+        checks += 1
+        emit(args.compiler, args.assembler, root, 'large', concatenating,
+             freestanding=True, code_model='large')
+        large_absolutes = absolute_relocation_count(root / 'large.o')
+        assert large_absolutes == 0, (
+            'an object emitted for the large code model must have no 32-bit '
+            f'absolute relocations; found {large_absolutes}')
         checks += 1
 
         # The red zone is a separate decision from the entry shape: a target

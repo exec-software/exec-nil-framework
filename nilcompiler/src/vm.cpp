@@ -2700,6 +2700,17 @@ void VM::executeInstruction(const Instruction &instr) {
     // Dynamically dispatch to native function
     std::string lib_name = instr.args[0];
     std::string fn_name = instr.args[1];
+    // `host` means a symbol the consumer supplies at link time, which exists
+    // only in a native object. Refuse it here rather than letting the dynamic
+    // loader look for a library called `host`: a machine that happened to have
+    // one would bind an unrelated symbol, and this route cannot satisfy the
+    // contract in any case.
+    if (lib_name == "host") {
+      throw std::runtime_error(
+          "INTEROP_CALL: '" + fn_name +
+          "' is a host-supplied symbol, which only a native object can "
+          "resolve; this route has no host to supply it");
+    }
     int arg_count = std::stoi(instr.args[2]);
     if (arg_count < 0)
       throw std::runtime_error("INTEROP_CALL: argument count must not be negative");

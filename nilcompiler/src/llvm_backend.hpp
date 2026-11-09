@@ -62,6 +62,13 @@ public:
   // stacks does not, so this stays independent of the freestanding entry
   // rather than being implied by it.
   void setDisableRedZone(bool enabled);
+  // Selects the code model generated code assumes. The default keeps the
+  // host's small model, in which an address is reachable as a 32-bit absolute.
+  // A freestanding consumer that places an object above 4 GiB needs `large`,
+  // because the small model's R_X86_64_32 relocations cannot reach there and
+  // fail at link time rather than at run time.
+  enum class CodeModel { host, small, large };
+  void setCodeModel(CodeModel model);
 
   // Write the generated LLVM IR, so what the backend produced can be
   // inspected and asserted rather than inferred from an object.
