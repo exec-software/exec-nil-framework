@@ -677,8 +677,13 @@ Result Context::widget(const std::string &kind, std::int64_t parent, const std::
     }
     const HWND object = node.object;
     const bool track_focus = focusable(node.kind);
+    const bool is_container = container(node.kind);
     impl_->nodes.emplace(handle, std::move(node));
     impl_->handles.emplace(object, handle);
+    // A control's WM_COMMAND is delivered to its immediate parent, which for
+    // anything inside a row, column or grid is that container rather than the
+    // window. Without the context here those notifications are dropped.
+    if (is_container) SetWindowLongPtrW(object, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(impl_.get()));
     if (track_focus) {
       // Keep the original procedure in the control's user data; the provider
       // only needs WM_SETFOCUS, and every other message stays untouched.
