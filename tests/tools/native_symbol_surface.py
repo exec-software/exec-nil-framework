@@ -35,6 +35,11 @@ runtime_abi = {
 # absence elsewhere proves it is generated on demand.
 concat_imports = {'strlen', 'memcpy', 'calloc'}
 
+# What the same helper calls on a target with no libc. The host owns the
+# memory and installs it; the runtime bumps through it. These are the only
+# names allocation is allowed to add, and no libc name may appear beside them.
+freestanding_concat_imports = {'nyrt_str_length', 'nyrt_mem_copy', 'nyrt_alloc'}
+
 
 def undefined_symbols(path: Path) -> set[str]:
     data = path.read_bytes()
@@ -151,10 +156,12 @@ def main() -> int:
 
         # The helper still has to exist when a program actually concatenates,
         # or the first assertion would pass for the wrong reason.
+        concatenating = ('fn main() -> i64 {\n    let a: text = "left";\n'
+                         '    let b: text = "right";\n'
+                         '    let joined: text = a + b;\n'
+                         '    return 0;\n}\n')
         concat, _ = emit(args.compiler, args.assembler, root, 'concat',
-                      'fn main() -> i64 {\n    let a: text = "left";\n'
-                      '    let b: text = "right";\n    let joined: text = a + b;\n'
-                      '    return 0;\n}\n')
+                         concatenating)
         assert concat_imports <= concat, (
             'a concatenating program must still import the helper dependencies; '
             f'missing: {sorted(concat_imports - concat)}')
@@ -162,6 +169,29 @@ def main() -> int:
         assert concat <= runtime_abi | concat_imports, (
             'concatenation must not widen the import surface further; '
             f'unexpected: {sorted(concat - runtime_abi - concat_imports)}')
+        checks += 1
+
+        # The same program with no libc to call. Allocation is the one place
+        # generated code needs memory, and on a freestanding target it asks
+        # the runtime rather than the C library: the helper's three
+        # dependencies become runtime hooks, and no libc name may survive --
+        # a freestanding consumer satisfying calloc at all is the reverse-
+        # engineered-shim problem this exists to remove.
+        free_concat, _ = emit(args.compiler, args.assembler, root,
+                              'free_concat', concatenating, freestanding=True)
+        assert freestanding_concat_imports <= free_concat, (
+            'a freestanding concatenating program must reach memory through the '
+            'runtime hooks; missing: '
+            f'{sorted(freestanding_concat_imports - free_concat)}')
+        checks += 1
+        assert not (free_concat & concat_imports), (
+            'a freestanding object must import no libc symbol at all; '
+            f'present: {sorted(free_concat & concat_imports)}')
+        checks += 1
+        assert free_concat <= runtime_abi | freestanding_concat_imports, (
+            'freestanding concatenation must not widen the import surface '
+            'further; unexpected: '
+            f'{sorted(free_concat - runtime_abi - freestanding_concat_imports)}')
         checks += 1
 
         # A hosted object is entered through the C runtime's main; a

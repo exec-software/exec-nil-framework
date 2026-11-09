@@ -55,6 +55,9 @@ do not assume every documented combination is accepted by every backend yet.
 ## Architecture and design
 
 - [Advanced implementation topics](advanced/index.md)
+- [Freestanding native targets](advanced/freestanding-targets.md) — the contract
+  a target with no C library links against: the entry, the runtime hooks, who
+  owns memory, and what is not qualified.
 - [Design documents](design/README.md)
 - [NIL-0006: AI control module](design/NIL-0006-ai-module.md)
 - [nypm package-manager proposal](design/nypm.md)

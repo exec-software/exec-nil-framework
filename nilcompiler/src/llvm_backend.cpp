@@ -1576,11 +1576,19 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
   // Generate __ny_string_concat(i8* s1, i8* s2) -> i8*
   //    (Helper for string concatenation)
   //
-  // Built on first use, not on every module. The helper calls strlen, memcpy
-  // and calloc, so emitting it unconditionally left those three undefined in
-  // the object of a program that never concatenates a string -- which a
-  // freestanding or kernel target then has to satisfy with stubs it should
-  // never need.
+  // Built on first use, not on every module. The helper needs a length, a
+  // copy and an allocation, so emitting it unconditionally left those three
+  // undefined in the object of a program that never concatenates a string --
+  // which a freestanding or kernel target then has to satisfy with stubs it
+  // should never need.
+  //
+  // Which three it calls depends on the target. A hosted object calls strlen,
+  // memcpy and calloc. A freestanding one has no libc to call, so it goes
+  // through nyrt_str_length, nyrt_mem_copy and nyrt_alloc, which the
+  // freestanding runtime implements over a region its host installs. The
+  // shape of the emitted helper is otherwise identical, including the null
+  // check: an allocator with no region returns null exactly as a hosted one
+  // does under pressure, and the same failure path reports it.
   auto get_string_concat_function = [&]() -> llvm::Function * {
     if (auto *existing = impl_->module->getFunction("__ny_string_concat"))
       return existing;
@@ -1599,16 +1607,21 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
     auto *s1 = concat_fn->getArg(0);
     auto *s2 = concat_fn->getArg(1);
 
-    // Declare dependencies
-    auto *strlen_fn = impl_->module->getFunction("strlen");
+    // Declare dependencies, under the names this target can resolve.
+    const bool freestanding = impl_->freestanding_entry;
+    const char *const length_name =
+        freestanding ? "nyrt_str_length" : "strlen";
+    const char *const copy_name = freestanding ? "nyrt_mem_copy" : "memcpy";
+
+    auto *strlen_fn = impl_->module->getFunction(length_name);
     if (!strlen_fn) {
       auto *ft = llvm::FunctionType::get(
           native_size_type, {llvm::PointerType::getUnqual(ctx)}, false);
       strlen_fn = llvm::Function::Create(ft, llvm::Function::ExternalLinkage,
-                                         "strlen", *impl_->module);
+                                         length_name, *impl_->module);
     }
 
-    auto *memcpy_fn = impl_->module->getFunction("memcpy");
+    auto *memcpy_fn = impl_->module->getFunction(copy_name);
     if (!memcpy_fn) {
       // void* memcpy(void* dest, const void* src, size_t n)
       auto *ft = llvm::FunctionType::get(llvm::PointerType::getUnqual(ctx),
@@ -1617,7 +1630,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                                           native_size_type},
                                          false);
       memcpy_fn = llvm::Function::Create(ft, llvm::Function::ExternalLinkage,
-                                         "memcpy", *impl_->module);
+                                         copy_name, *impl_->module);
     }
 
     // len1 = strlen(s1)
@@ -1648,7 +1661,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
     impl_->builder->SetInsertPoint(length_success);
 
     llvm::Value *new_str = nullptr;
-    if (impl_->memory_mode == MemoryMode::SAFE_GC) {
+    if (impl_->memory_mode == MemoryMode::SAFE_GC || freestanding) {
       auto *runtime_type =
           llvm::FunctionType::get(llvm::PointerType::getUnqual(ctx),
                                   {llvm::Type::getInt64Ty(ctx)}, false);
@@ -9157,6 +9170,8 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_any_v1_is_type", &nyrt_any_v1_is_type);
   expose_runtime_symbol("nyrt_alloc", &nyrt_alloc);
   expose_runtime_symbol("nyrt_free", &nyrt_free);
+  expose_runtime_symbol("nyrt_mem_copy", &nyrt_mem_copy);
+  expose_runtime_symbol("nyrt_str_length", &nyrt_str_length);
   expose_runtime_symbol("nyrt_arg_count", &nyrt_arg_count);
   expose_runtime_symbol("nyrt_arg", &nyrt_arg);
   expose_runtime_symbol("nyrt_exit", &nyrt_exit);

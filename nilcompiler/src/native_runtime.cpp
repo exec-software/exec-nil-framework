@@ -1025,6 +1025,24 @@ std::uint64_t nyrt_any_v1_unbox(const void *box, const char *type,
 
 void *nyrt_alloc(std::uint64_t size) noexcept { return allocate_owned(size); }
 
+// A freestanding object reaches its length and copy through the runtime
+// rather than libc, so the hosted runtime answers to those names too. Without
+// them, an object emitted with --freestanding could only ever be linked
+// against the freestanding archive, and the choice of runtime would stop
+// being the host's.
+void *nyrt_mem_copy(void *destination, const void *source,
+                    std::uint64_t size) noexcept {
+  if (destination == nullptr || source == nullptr || size == 0)
+    return destination;
+  return std::memcpy(destination, source, static_cast<std::size_t>(size));
+}
+
+std::uint64_t nyrt_str_length(const char *text) noexcept {
+  if (text == nullptr)
+    return 0;
+  return static_cast<std::uint64_t>(std::strlen(text));
+}
+
 std::int32_t nyrt_free(void *pointer) noexcept {
   if (pointer == nullptr)
     return 1;
