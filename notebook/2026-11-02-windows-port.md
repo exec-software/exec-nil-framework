@@ -2677,3 +2677,70 @@ unchanged; the full paired SDK baseline remains `5630388`. Source/input/binary
 seals and owned cleanup were verified. See the
 [complete follow-up and retained setup failures](2026-11-04-macos-parity-plan.md#private-windows-compiler-identity-regression)
 for exact evidence and the process-local DIA/Release try-compile configuration.
+
+
+## 2026-11-08: complete local suite and the per-platform provider decision
+
+The first complete Windows suite since the port closeout ran on the provisioned
+VM at `8aa60d2`, against a same-commit Linux reference of 572 registered tests,
+zero failures and three environment skips.
+
+**Inventory.** Windows registers 574 tests to Linux's 572; the two share 569.
+Windows adds console UTF-8, unmanifested UTF-8 file paths, the GTK loader, a
+native memory-limit self-test and the SDK preflight. Linux keeps toolchain
+inputs, POSIX process semantics and `nilinterpreter.ai-checkpoint-channel`. The
+last of those is worth naming precisely because a Linux-only interpreter test
+reads like a missing Windows feature and is not one: it drives
+`socket.socketpair()` backpressure in the Python acceptance client, while the
+product-level `nilinterpreter.ai-checkpoint-contract` is registered and passes on
+both hosts. The Windows-only memory-limit entry is likewise additive, a self-test
+of the launcher Windows needs because Linux obtains the same bound from
+`setrlimit`. An earlier estimate of 571 Windows tests was wrong: it assumed
+platform gating only subtracts from the reference inventory.
+
+**No language gap.** Nothing in the language, frontend, type checker, IR,
+interpreter, LLVM backend or standard library fails. Of the five reported
+failures, four are an artifact of the harness rather than of the product. The
+scheduled task had been registered `/ru SYSTEM`, and that account reports `TEMP`
+as `C:\WINDOWS\TEMP`; `tempfile` propagates that casing into the paths handed to
+the tools, the tools report paths in their on-disk casing `C:\Windows\Temp`, and
+`matrix.annotations`, `matrix.execution`, `nil.bugpass-lexer-contract` and
+`nilbuild.compiler-identity-contract` each assert an exact `path:line` substring.
+All four pass unchanged when the same binaries are re-run under an ordinary user
+account, where the environment variable, `tempfile` and the directory on disk
+agree. Earlier green runs used a user account, so this was never product drift.
+
+**A genuine platform difference, recorded rather than fixed.** The tools report a
+canonicalized path on Windows, so a caller can receive a different string from
+the one it passed; Linux echoes the argument verbatim. Normal accounts never
+observe this, but exact-match consumers such as editor and LSP clients would.
+
+**Two environment prerequisites the repository does not state.**
+`nil.windows-sdk-preflight` invokes `powershell.exe -File scripts/build-sdk.ps1`
+deliberately without a bypass, so all eleven subtests observe
+"running scripts is disabled on this system" while the machine execution policy
+is `Restricted` — the Windows client default. `nil.ui-display` and
+`nilagent.window-discovery` self-skip for want of an interactive desktop session,
+which SSH does not provide; Win32 UI acceptance will need a console or RDP
+session on the VM rather than the headless path used for the language suite.
+
+**Harness faults worth remembering.** A `call vcvars64.bat` redirected into the
+same log the rest of a batch script appends to leaves a background Visual Studio
+process holding that inherited handle; every following `>>` then fails with a
+sharing violation, cmd reports it on the console rather than in the log, skips
+the redirected command outright and sets errorlevel 1. Under `schtasks` the
+console is discarded, so an entire configure/build/test script can appear to hang
+at the vcvars banner while nothing after it has run. Give vcvars its own file.
+Separately, the prebuilt LLVM 18.1.8 package hardcodes a VS2019 Professional DIA
+SDK path from its build machine; `cmake/NilLlvmDia.cmake` detects this and
+declines to guess a replacement, so the configure needs
+`-DNIL_LLVM_DIA_LIBRARY` pointed at the installed `diaguids.lib`.
+
+**Decision.** With core language parity established on Windows, desktop UI moves
+to one provider per platform: GTK remains the Linux provider, Win32 becomes the
+Windows provider and AppKit the macOS provider. GTK on macOS is retired; the
+directed-input evidence at `8aa60d2` showed every accessibility query against a
+GTK process returning `kAXErrorCannotComplete`, including the application
+element's own role and attribute names, because GTK pumps GLib and never runs
+`-[NSApplication run]` while AppKit services those requests from the main run
+loop. Win32 is implemented first, since it can be exercised on a local VM.

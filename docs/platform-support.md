@@ -92,6 +92,25 @@ tests after the numeric-address correction, including IPv4/IPv6 timeout and
 socket-close checks. The original checkout, installed SDK and provider DLLs
 remain unchanged.
 
+A private Windows build at `8aa60d2` records the first complete local suite since
+the port closeout: 574 registered tests against 572 on the Linux reference. The
+two inventories share 569 tests. Five are Windows-only: console UTF-8,
+unmanifested UTF-8 file paths, the GTK loader, the native memory-limit self-test
+and the SDK preflight. Three are Linux-only: toolchain inputs, POSIX process
+semantics and a socket-backpressure check of the Python test client rather than
+of a product surface. No language, frontend, type-checker, IR, interpreter, LLVM
+or standard-library test fails. Four shared contracts fail only when the suite
+runs as `SYSTEM`: that account reports `TEMP` cased `C:\WINDOWS\TEMP`, the
+toolchain reports paths in their on-disk casing, and the affected assertions
+compare the two strings exactly; the same four pass unchanged under an ordinary
+user account. The Windows-only SDK preflight cannot run while the machine
+execution policy is `Restricted`, the Windows client default, because it invokes
+`powershell.exe -File` deliberately without a bypass and every subtest therefore
+observes a policy refusal instead of a preflight diagnostic. Two display tests
+skip for want of an interactive desktop session and both PostgreSQL tests skip
+without a server. This supplements the recorded Windows baseline; it neither
+replaces the accepted SDK nor qualifies a new one.
+
 ## Native executable context
 
 Thin Mach-O64 x86_64 and arm64 objects and executables support bounded inspection

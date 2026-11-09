@@ -70,7 +70,8 @@ void closure(const fs::path &root) {
   write(runtime, "NIL runtime archive");
   for (const auto *name : {"msvcrt.lib", "vcruntime.lib", "legacy_stdio_definitions.lib",
                           "msvcprt.lib", "oldnames.lib"}) write(vc / name, name);
-  for (const auto *name : {"kernel32.lib", "ws2_32.lib", "ucrt.lib", "uuid.lib"}) write(sdk / name, name);
+  for (const auto *name : {"kernel32.lib", "ws2_32.lib", "user32.lib", "gdi32.lib",
+                          "ucrt.lib", "uuid.lib"}) write(sdk / name, name);
   write(ambient / "ambient.lib", "ambient library");
   std::map<fs::path, std::string> directives;
   directives[runtime] = " /DEFAULTLIB:msvcprt /DEFAULTLIB:oldnames\n";

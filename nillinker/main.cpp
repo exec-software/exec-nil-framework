@@ -1506,6 +1506,9 @@ bool Linker::link(const fs::path &requested_output) {
   arguments.push_back("legacy_stdio_definitions.lib");
   // The runtime's PostgreSQL provider uses bounded Winsock readiness waits.
   arguments.push_back("ws2_32.lib");
+  // The runtime's Win32 desktop provider creates windows and measures text.
+  arguments.push_back("user32.lib");
+  arguments.push_back("gdi32.lib");
   // A linked program gets exactly one C runtime, and nil.lib decides which:
   // it is built /MD, so every reference it makes is an import (__imp_*) that
   // only the dynamic CRT satisfies. `cl /c` defaults to the *static* CRT,
@@ -1546,6 +1549,8 @@ bool Linker::link(const fs::path &requested_output) {
   // A clang-style driver must forward these as separate linker arguments;
   // in particular a manifest path containing spaces or commas is one token.
   arguments.push_back("ws2_32.lib");
+  arguments.push_back("user32.lib");
+  arguments.push_back("gdi32.lib");
   arguments.push_back("-Xlinker");
   arguments.push_back("/MANIFEST:EMBED");
   arguments.push_back("-Xlinker");

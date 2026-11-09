@@ -45,6 +45,16 @@ set(NILCOMPILER_CORE_SOURCES
     src/executable_context.cpp
 )
 
+# One desktop provider per platform: GTK is the Linux (and macOS) provider,
+# Win32 is the Windows provider. Both implement the same ui.v1 contract and
+# share its toolkit-independent half through src/ui_runtime_shared.hpp, so
+# exactly one of them is ever compiled into the runtime.
+if(WIN32)
+    set(NIL_UI_PROVIDER_SOURCE src/ui_runtime_win32.cpp)
+else()
+    set(NIL_UI_PROVIDER_SOURCE src/ui_runtime.cpp)
+endif()
+
 # Compile the runtime once as PIC so both the portable SDK shared library and
 # the static companion use the same implementation and versioned C ABI.
 add_library(nilruntime_objects OBJECT
@@ -53,7 +63,7 @@ add_library(nilruntime_objects OBJECT
     src/owned_runtime.cpp
     src/secure_file_io.cpp
     src/database_runtime.cpp
-    src/ui_runtime.cpp
+    ${NIL_UI_PROVIDER_SOURCE}
     src/pattern_engine.cpp
     src/nildata.cpp
 )
@@ -73,7 +83,9 @@ foreach(nil_runtime_target IN ITEMS nilruntime nilruntime_shared)
     if(WIN32)
         # PostgreSQL's bounded socket wait and numeric-address validation use
         # Winsock; propagate it to static build-tree consumers as well as DLLs.
-        target_link_libraries(${nil_runtime_target} PUBLIC ws2_32)
+        # The Win32 desktop provider calls USER32 and GDI32 directly, unlike
+        # the dynamically loaded GTK provider, so those travel the same way.
+        target_link_libraries(${nil_runtime_target} PUBLIC ws2_32 user32 gdi32)
     endif()
     set_target_properties(${nil_runtime_target} PROPERTIES
         CXX_EXTENSIONS OFF

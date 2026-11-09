@@ -629,10 +629,6 @@ if(BUILD_TESTING)
         if(WIN32)
             set(NIL_UI_DISPLAY_CONTRACT "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/windows_ui_display_contract.py")
             set(NIL_UI_DISPLAY_TIMEOUT 660)
-            add_test(NAME nil.ui-windows-loader
-                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/windows_ui_loader_contract.py"
-                    --probe $<TARGET_FILE:nil_ui_runtime_tests>)
-            set_tests_properties(nil.ui-windows-loader PROPERTIES LABELS "ui;runtime;windows" TIMEOUT 180)
         endif()
         add_test(NAME nil.ui-display
             COMMAND "${Python3_EXECUTABLE}" "${NIL_UI_DISPLAY_CONTRACT}"
