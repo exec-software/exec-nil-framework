@@ -78,8 +78,9 @@ extern "C" [[noreturn]] void _start() {
 }
 """
 
-# Linking succeeds with the weak default in place; this one replaces it, which
-# is how a host reports a failure instead of stopping silently.
+# Linking succeeds with the archive's weak definition in place; this one
+# replaces it with a strong definition, which is how a host reports a failure
+# instead of stopping silently.
 host_fail_source = """
 extern "C" int __ny_entry();
 extern "C" void __ny_host_fail(const char *message) { (void)message; }

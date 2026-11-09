@@ -24,9 +24,20 @@ nilassembler --unmanaged --freestanding --no-red-zone -o program.o program.nil
 | --- | --- |
 | `--freestanding` | Emits the entry as `__ny_entry()` and defines no C `main`. |
 | `--no-red-zone` | Marks every generated definition `noredzone`. |
+| `--code-model <small\|large>` | The code model generated code assumes. The default keeps the target's own, which on x86-64 is `small`. |
 | `--emit-llvm <path>` | Writes the generated LLVM IR, so an attribute that does not survive into an object can still be inspected. |
 
-The three are independent. `--no-red-zone` is separate from `--freestanding`
+**Where the object may be linked.** The small model materializes every address
+as a 32-bit absolute, so an object linked above 4 GiB fails with truncated
+relocations rather than misbehaving at run time. A consumer whose kernel places
+user code high — above the 512 GiB boundary, for instance, because its own
+branch of the page tables occupies the first entry — passes
+`--code-model large`. Code and read-only data then arrive in `.ltext` and
+`.lrodata`, which a linker script must name, and the object links at any
+address. The shipped runtime archive needs no such option: it reaches its own
+statics relative to the instruction pointer and imports nothing.
+
+The options are independent. `--no-red-zone` is separate from `--freestanding`
 because they answer different questions: a target whose interrupt entry
 switches stacks can keep the red zone in its userspace code, while a
 kernel-reentrant one cannot, and that is the consumer's call rather than a
@@ -138,15 +149,24 @@ Consequences worth knowing before depending on it:
   so this is a limit of the shipped runtime rather than of the contract: a
   host that needs concurrent allocation implements `nyrt_alloc` itself.
 
-Failures are reported through a weak hook the host may define:
+Failures are reported through a hook the host may replace:
 
 ```c
 void __ny_host_fail(const char *message);
 ```
 
-Linking the archive alone produces a complete program: the default is weak, and
-`nyrt_fail` stops the caller when no host reporter exists or when one returns
-anyway. A host that wants to print, log or panic defines this symbol.
+The archive carries a weak definition that does nothing, so linking it alone
+produces a complete program, and a host's own strong definition replaces it. A
+host that wants to print, log or panic defines this symbol. Either way
+`nyrt_fail` stops the caller afterwards, because the default does nothing and a
+host's reporter may return anyway.
+
+It is a weak definition rather than a weak declaration on purpose. A weak
+declaration leaves an undefined symbol that generated code calls through a
+32-bit PC-relative relocation to an address the linker resolves to zero, which
+cannot be represented once the consumer links above 4 GiB — so the link fails
+over a symbol nobody intended to use. With a definition the archive imports
+nothing at all.
 
 ## A minimal host
 

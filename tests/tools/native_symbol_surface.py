@@ -109,8 +109,40 @@ def definitions_without_noredzone(ir: Path) -> list[str]:
     return [name for name, group in definitions if group not in groups_with]
 
 
+def absolute_relocation_count(obj: Path) -> int:
+    """Number of 32-bit absolute relocations in an ELF relocatable object.
+
+    These are what confine an object to the low 4 GiB: the linker has nowhere
+    to put a higher address, so the link fails rather than the program
+    misbehaving. Read from the section headers directly, so the check needs no
+    binutils.
+    """
+    data = obj.read_bytes()
+    if data[:4] != b'\x7fELF' or data[4] != 2 or data[5] != 1:
+        raise SystemExit(f'expected a little-endian 64-bit object: {obj}')
+    section_offset, = struct.unpack_from('<Q', data, 0x28)
+    section_size, section_count, _ = struct.unpack_from('<HHH', data, 0x3a)
+    r_x86_64_32, r_x86_64_32s = 10, 11
+    total = 0
+    for index in range(section_count):
+        base = section_offset + index * section_size
+        kind, = struct.unpack_from('<I', data, base + 4)
+        if kind != 4:                      # SHT_RELA
+            continue
+        offset, size = struct.unpack_from('<QQ', data, base + 0x18)
+        entry_size, = struct.unpack_from('<Q', data, base + 0x38)
+        if not entry_size:
+            continue
+        for position in range(offset, offset + size, entry_size):
+            info, = struct.unpack_from('<Q', data, position + 8)
+            if info & 0xffffffff in (r_x86_64_32, r_x86_64_32s):
+                total += 1
+    return total
+
+
 def emit(compiler: Path, assembler: Path, root: Path, name: str, source: str,
          freestanding: bool = False, no_red_zone: bool = False,
+         code_model: str | None = None,
          ir: Path | None = None):
     path = root / f'{name}.ny'
     path.write_text(source, newline='\n')
@@ -121,6 +153,8 @@ def emit(compiler: Path, assembler: Path, root: Path, name: str, source: str,
         assemble.append('--freestanding')
     if no_red_zone:
         assemble.append('--no-red-zone')
+    if code_model is not None:
+        assemble += ['--code-model', code_model]
     if ir is not None:
         assemble += ['--emit-llvm', str(ir)]
     for command in ([compiler, '--no-stdlib', '--no-bundle', '--unmanaged', '-o', nil, path],
@@ -210,6 +244,27 @@ def main() -> int:
         assert free <= runtime_abi, (
             'the freestanding entry must not widen the import surface; '
             f'unexpected: {sorted(free - runtime_abi)}')
+        checks += 1
+
+        # Where the object may be linked. The default small model puts every
+        # address in a 32-bit absolute relocation, which a consumer placing
+        # user code above 4 GiB cannot satisfy -- its link fails over the
+        # string constants of a program that never asked to be low. The large
+        # model removes them, and the first assertion keeps the second from
+        # passing because the program had no addresses to materialize.
+        emit(args.compiler, args.assembler, root, 'small', concatenating,
+             freestanding=True)
+        small_absolutes = absolute_relocation_count(root / 'small.o')
+        assert small_absolutes > 0, (
+            'the default code model is expected to use 32-bit absolute '
+            'relocations; this check would otherwise prove nothing')
+        checks += 1
+        emit(args.compiler, args.assembler, root, 'large', concatenating,
+             freestanding=True, code_model='large')
+        large_absolutes = absolute_relocation_count(root / 'large.o')
+        assert large_absolutes == 0, (
+            'an object emitted for the large code model must have no 32-bit '
+            f'absolute relocations; found {large_absolutes}')
         checks += 1
 
         # The red zone is a separate decision from the entry shape: a target

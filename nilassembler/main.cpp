@@ -43,6 +43,7 @@ struct command_line {
   bool unmanaged = false;
   bool freestanding = false;
   bool no_red_zone = false;
+  std::string code_model;
   std::string emit_llvm;
   bool embed_context = false;
 };
@@ -50,13 +51,17 @@ struct command_line {
 void print_usage(std::ostream &stream) {
   stream
       << "Usage: nilassembler [-o <output.o>] [--unmanaged] [--freestanding]"
-         " [--no-red-zone] [--emit-llvm <ir.ll>] [--embed-context] <input.nil>\n"
+         " [--no-red-zone] [--code-model <model>] [--emit-llvm <ir.ll>]"
+         " [--embed-context] <input.nil>\n"
       << "\n"
       << "Options:\n"
       << "  -o, --output <path>  Write the host relocatable object to <path>\n"
       << "  --unmanaged          Use manual native memory management\n"
       << "  --freestanding       Emit the entry as __ny_entry() with no C main wrapper\n"
       << "  --no-red-zone        Mark generated definitions noredzone\n"
+      << "  --code-model <model> Code model to generate for: small or large.\n"
+      << "                       The default keeps the target's own. A target\n"
+      << "                       placing this object above 4 GiB needs large.\n"
       << "  --emit-llvm <path>   Also write the generated LLVM IR\n"
       << "  --embed-context      Retain AI annotations in x86_64 ELF/COFF or x86_64/arm64 Mach-O objects\n"
       << "  --version            Show the nilassembler version\n"
@@ -70,6 +75,7 @@ bool parse_command_line(int argc, char **argv, command_line &result,
   bool unmanaged_seen = false;
   bool freestanding_seen = false;
   bool no_red_zone_seen = false;
+  bool code_model_seen = false;
   bool emit_llvm_seen = false;
   bool embed_context_seen = false;
   for (int index = 1; index < argc; ++index) {
@@ -119,6 +125,23 @@ bool parse_command_line(int argc, char **argv, command_line &result,
       }
       no_red_zone_seen = true;
       result.no_red_zone = true;
+      continue;
+    }
+    if (options && argument == "--code-model") {
+      if (code_model_seen) {
+        error = "the code-model option was provided more than once";
+        return false;
+      }
+      if (++index >= argc) {
+        error = "missing model after " + argument;
+        return false;
+      }
+      result.code_model = argv[index];
+      if (result.code_model != "small" && result.code_model != "large") {
+        error = "the code model must be small or large";
+        return false;
+      }
+      code_model_seen = true;
       continue;
     }
     if (options && argument == "--emit-llvm") {
@@ -177,8 +200,8 @@ bool parse_command_line(int argc, char **argv, command_line &result,
 
   if (result.help || result.version) {
     if (!result.input.empty() || output_seen || unmanaged_seen ||
-        freestanding_seen || no_red_zone_seen || emit_llvm_seen ||
-        embed_context_seen ||
+        freestanding_seen || no_red_zone_seen || code_model_seen ||
+        emit_llvm_seen || embed_context_seen ||
         (result.help && result.version)) {
       error = "--help and --version must be used without input or output paths";
       return false;
@@ -449,6 +472,11 @@ int run_assembler(const command_line &arguments) {
                                            : ny::MemoryMode::SAFE_GC);
   native.setFreestandingEntry(arguments.freestanding);
   native.setDisableRedZone(arguments.no_red_zone);
+  if (arguments.code_model == "small") {
+    native.setCodeModel(ny::NativeCodegen::CodeModel::small);
+  } else if (arguments.code_model == "large") {
+    native.setCodeModel(ny::NativeCodegen::CodeModel::large);
+  }
   native.setEmbedContext(arguments.embed_context);
   if (!native.initialize()) {
     std::cerr << "nilassembler: failed to initialize the LLVM target\n";

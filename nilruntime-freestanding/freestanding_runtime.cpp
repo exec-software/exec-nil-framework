@@ -62,9 +62,19 @@ constexpr std::uint64_t heap_alignment = 16;
 
 extern "C" {
 
-// A host that can report a failure defines this. The default below is weak so
-// linking the archive alone still produces a complete program.
-__attribute__((weak)) void __ny_host_fail(const char *message) noexcept;
+// A host that can report a failure defines this. The definition here is weak,
+// so linking the archive alone still produces a complete program and a host's
+// own strong definition replaces it.
+//
+// A weak *definition* rather than a weak declaration, deliberately. A weak
+// declaration leaves an undefined symbol that generated code must call
+// through a 32-bit PC-relative relocation to an address the linker resolves
+// to zero -- which cannot be represented once the consumer links above 4 GiB,
+// and fails the link for a symbol nobody intended to use. A definition is
+// always reachable and needs no null check.
+__attribute__((weak)) void __ny_host_fail(const char *message) noexcept {
+  (void)message;
+}
 
 // Must equal the version the generated entry checks for; a mismatch makes the
 // entry call nyrt_fail before running any user code.
@@ -104,9 +114,10 @@ void nyrt_profile_site(const char *file, const char *function,
 }
 
 [[noreturn]] void nyrt_fail(const char *message) noexcept {
-  if (__ny_host_fail) __ny_host_fail(message);
-  // No host reporter, or one that returned anyway: a failed program must not
-  // continue. Stop here rather than unwinding into broken state.
+  __ny_host_fail(message);
+  // The default reporter does nothing, and a host's may return anyway: either
+  // way a failed program must not continue. Stop here rather than unwinding
+  // into broken state.
   for (;;) {
   }
 }

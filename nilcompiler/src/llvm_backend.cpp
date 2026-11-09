@@ -1197,6 +1197,7 @@ struct NativeCodegen::Impl {
   bool embed_context = false;
   bool freestanding_entry = false;
   bool disable_red_zone = false;
+  NativeCodegen::CodeModel code_model = NativeCodegen::CodeModel::host;
   llvm::Function *current_function = nullptr;
 
   // State matching generateModule usage
@@ -1378,6 +1379,8 @@ void NativeCodegen::setDisableRedZone(bool enabled) {
   impl_->disable_red_zone = enabled;
 }
 
+void NativeCodegen::setCodeModel(CodeModel model) { impl_->code_model = model; }
+
 bool NativeCodegen::emitLlvmIr(const std::string &path) {
   if (!impl_->module) {
     std::cerr << "[NativeCodegen] no module to write\n";
@@ -1420,9 +1423,25 @@ bool NativeCodegen::initialize() {
 #else
   const auto &target_spec = target_triple;
 #endif
+  // An absent code model leaves the target's own default, which on x86-64 is
+  // the small model: every address is materialized as a 32-bit absolute, so an
+  // object linked above 4 GiB fails with truncated relocations. A consumer
+  // whose kernel places user code high asks for `large` instead.
+  std::optional<llvm::CodeModel::Model> code_model;
+  switch (impl_->code_model) {
+  case CodeModel::small:
+    code_model = llvm::CodeModel::Small;
+    break;
+  case CodeModel::large:
+    code_model = llvm::CodeModel::Large;
+    break;
+  case CodeModel::host:
+    break;
+  }
   auto target_machine = std::unique_ptr<llvm::TargetMachine>(
       target->createTargetMachine(target_spec, "generic", "", target_options,
-                                  std::optional<llvm::Reloc::Model>()));
+                                  std::optional<llvm::Reloc::Model>(),
+                                  code_model));
   if (!target_machine) {
     std::cerr << "[NativeCodegen] Failed to create target machine for '"
               << target_triple << "'" << std::endl;
