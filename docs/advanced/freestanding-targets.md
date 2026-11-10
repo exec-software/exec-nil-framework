@@ -104,6 +104,26 @@ request. Generated code checks for `NULL` and reports it through `nyrt_fail`,
 so an allocator with nothing to give fails the program rather than being
 allowed to lie.
 
+One more, **only if the program compares text**:
+
+```c
+int32_t   nyrt_str_compare(const char *left, const char *right);
+```
+
+This replaces `strcmp`. Only the sign of the result is defined: generated code
+compares it against zero and reads nothing else into it. The order is
+unsigned-byte lexicographic, which is what a text comparison in Ny means by
+it, and native text is NUL-free so the order matches the interpreter's.
+
+A null is not a text value. Rather than read through one, the shipped runtime
+orders a null before any non-null and calls two nulls equal, which keeps the
+comparison total for inputs generated code should never produce.
+
+Comparison needs no allocation, so a program may import this without the three
+names above. Each of the four conditional hooks is required only by the
+construct that uses it, so the import surface states what the program does
+rather than what the language can do.
+
 ## Reaching a symbol the host supplies
 
 A freestanding consumer's own call boundary — its system calls, its trap or
@@ -247,16 +267,21 @@ and the toolchain disagree.
   the ELF symbol table directly and pins the import surface: that a
   non-allocating object imports only the five hooks, that an allocating
   freestanding one adds exactly the three allocation hooks and no libc name,
-  that a hosted object is entered through `main` and a freestanding one
-  through `__ny_entry` with no `main`, and that `noredzone` reaches every
-  generated definition when it is requested.
+  that a comparing one adds exactly `nyrt_str_compare` where a hosted object
+  reaches `strcmp`, that a hosted object is entered through `main` and a
+  freestanding one through `__ny_entry` with no `main`, and that `noredzone`
+  reaches every generated definition when it is requested.
 - `nil.freestanding-runtime`
   (`tests/tools/freestanding_runtime_contract.py`) links object and archive
   with `-nostdlib` and its own `_start` and runs the result, requiring the
   exit status to be what Ny returned. For allocation it installs a region,
   then reads the concatenated bytes back out of that region afterwards, and
   separately requires that the same program with no region installed stops
-  through `nyrt_fail` with a message instead of continuing.
+  through `nyrt_fail` with a message instead of continuing. For comparison it
+  checks the answers rather than the link: a comparison that collapsed
+  everything to equal would link and satisfy any symbol check, so the program
+  distinguishes unequal from equal and requires `"beta"` to order after
+  `"alpha"`.
 
 ## What this does not provide
 
