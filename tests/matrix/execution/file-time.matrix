@@ -1,0 +1,53 @@
+!!! When a file was last written.
+!!!
+!!! nil.std.io had a size and no timestamp, which left two ordinary jobs
+!!! unreachable: a cache could not tell whether what it held was still
+!!! current without re-reading the file, and an HTTP server could not send
+!!! Last-Modified or answer If-Modified-Since.
+!!!
+!!! Nothing here can assert a particular instant. What it asserts is that the
+!!! answer is a plausible epoch time in milliseconds, that writing again
+!!! moves it forward rather than back, and that an absent file is reported
+!!! rather than given a zero that a comparison would read as 1970.
+
+book matrix.file-time
+
+read nil.std.core
+read nil.std.io.file
+
+stamp-of receives path as text returns number begin paragraph
+    value found is nil.std.io::modified_at with path being path
+    consider found
+        when Result.Ok holding stamped then give stamped
+        otherwise give 0 minus 1
+    end consider
+end paragraph
+
+main returns number begin paragraph
+    value path is "matrix-file-time-fixture.txt"
+    evaluate nil.std.io::write_text with path being path, content being "first"
+    value first-stamp is stamp-of with path being path
+
+    !!! Milliseconds since the Unix epoch, so any real file is well past the
+    !!! start of 2020 and well short of the year 2200. A seconds-based answer
+    !!! would fail the lower bound, which is the mistake worth catching.
+    say (first-stamp is greater than 1577836800000) becomes text
+    say (first-stamp is less than 7258118400000) becomes text
+
+    evaluate nil.std.io::write_text with path being path, content being "second and longer"
+    value second-stamp is stamp-of with path being path
+    say (second-stamp is at least first-stamp) becomes text
+
+    !!! The size moved too, which is what a validator pairs with the time.
+    value measured is nil.std.io::size with path being path
+    consider measured
+        when Result.Ok holding width then say width
+        otherwise say 0 minus 1
+    end consider
+
+    evaluate nil.std.io::delete with path being path
+    !!! An absent file is reported, not given a zero that a comparison would
+    !!! read as the epoch and treat as very old indeed.
+    say stamp-of with path being path
+    give 0
+end paragraph

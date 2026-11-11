@@ -639,6 +639,12 @@ private:
   std::vector<std::pair<int64_t, int64_t>> ready_;
   std::size_t ready_cursor_ = 0;
 
+  // The bytes from the last net.receive. Held here because a non-blocking
+  // read has three outcomes -- bytes, a closed peer, or nothing yet -- and a
+  // single Result<text, text> has room for two. net.receive reports which
+  // happened and net.received hands the bytes over.
+  std::string last_received_;
+
   // Closes every socket a run still holds. A program that exits without
   // closing its listener must not leave the port bound against the next one.
   void closeOpenSockets();

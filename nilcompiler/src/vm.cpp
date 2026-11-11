@@ -780,6 +780,7 @@ void VM::resetRuntimeState(const std::string &root_function) {
   watch_wanted_.clear();
   ready_.clear();
   ready_cursor_ = 0;
+  last_received_.clear();
   stack_.clear();
   globals_.clear();
   gc_marked_structs_.clear();
@@ -4008,6 +4009,95 @@ void VM::executeInstruction(const Instruction &instr) {
         return;
       }
 
+      // Reading and writing without blocking.
+      //
+      // Two calls rather than one, because a single Result<text, text> has no
+      // room for the three answers a non-blocking read has to give: bytes
+      // arrived, the peer closed, or nothing is available yet. Conflating the
+      // last two is the classic event-loop bug -- a spurious wakeup then
+      // looks like a hangup and the connection is dropped mid-request. So
+      // `receive` reports which happened and `received` hands over the bytes.
+      if (fn_name == "net.receive") {
+        VM::SocketHandle *held = nullptr;
+        std::string complaint;
+        std::int64_t wanted = 0;
+        if (!socket_at(0, held, complaint)) {
+          push_error(complaint);
+          return;
+        }
+        if (!number_at(1, wanted)) {
+          push_error("net.receive: expected a socket handle and a byte count");
+          return;
+        }
+        if (held->listening) {
+          push_error("net.receive: that socket is a listener, not a connection");
+          return;
+        }
+        auto taken = net_support::read_some(held->descriptor, wanted);
+        if (!taken.ok()) {
+          last_received_.clear();
+          push_error(taken.error);
+          return;
+        }
+        if (taken.would_block) {
+          last_received_.clear();
+          push_ok_number(-1);
+          return;
+        }
+        if (taken.closed) {
+          last_received_.clear();
+          push_ok_number(0);
+          return;
+        }
+        last_received_ = std::move(taken.data);
+        push_ok_number(static_cast<std::int64_t>(last_received_.size()));
+        return;
+      }
+
+      if (fn_name == "net.received") {
+        push_ok_text(last_received_);
+        return;
+      }
+
+      // Sends what the socket will take now, from an offset into the data.
+      // Minus one means it would block: the buffer is full and poll will say
+      // when it is not. Zero bytes sent with no block is possible for an
+      // empty remainder and is not an error.
+      if (fn_name == "net.send_some") {
+        VM::SocketHandle *held = nullptr;
+        std::string complaint;
+        std::string data;
+        std::int64_t offset = 0;
+        if (!socket_at(0, held, complaint)) {
+          push_error(complaint);
+          return;
+        }
+        if (!text_at(1, data) || !number_at(2, offset)) {
+          push_error("net.send_some: expected a socket handle, text, and an offset");
+          return;
+        }
+        if (held->listening) {
+          push_error("net.send_some: that socket is a listener, not a connection");
+          return;
+        }
+        if (offset < 0) {
+          push_error("net.send_some: an offset cannot be negative");
+          return;
+        }
+        auto sent = net_support::write_some(held->descriptor, data,
+                                            static_cast<std::size_t>(offset));
+        if (!sent.ok()) {
+          push_error(sent.error);
+          return;
+        }
+        if (sent.would_block) {
+          push_ok_number(-1);
+          return;
+        }
+        push_ok_number(sent.count);
+        return;
+      }
+
       if (fn_name == "net.set_blocking") {
         VM::SocketHandle *held = nullptr;
         std::string complaint;
@@ -4829,6 +4919,59 @@ void VM::executeInstruction(const Instruction &instr) {
         return;
       }
       pushStack(target);
+      return;
+    }
+
+    // file.modified_at(path) -> Result<i64, text>, in milliseconds since the
+    // epoch.
+    //
+    // There was a size and no time, which left two ordinary jobs unreachable.
+    // A cache cannot tell whether what it holds is still current without
+    // re-reading the file, which defeats the cache; and an HTTP server cannot
+    // send Last-Modified or answer If-Modified-Since, so every client fetches
+    // every unchanged file in full, forever.
+    //
+    // Milliseconds rather than the host's native resolution: a filesystem
+    // timestamp is not reliably finer than that across platforms, and a
+    // caller comparing two of them should not be comparing precision it does
+    // not have.
+    if (fn_name == "file.modified_at") {
+      auto push_ok_number = [&](std::int64_t number) {
+        EnumValue ok; ok.variant_name = "Result::Ok"; ok.payloads.push_back(number);
+        pushStack(ok);
+      };
+      auto push_error = [&](const std::string &message) {
+        EnumValue bad; bad.variant_name = "Result::Error"; bad.payloads.push_back(message);
+        pushStack(bad);
+      };
+      if (args.size() != 1 || !std::holds_alternative<std::string>(args[0])) {
+        push_error("file.modified_at: expected one text path");
+        return;
+      }
+      const std::string &path = std::get<std::string>(args[0]);
+      std::error_code ec;
+      const auto written = fs::last_write_time(path, ec);
+      if (ec) {
+        // The path and the reason are both left out: a caller that needs to
+        // tell "absent" from "unreadable" asks file.exists, and an error
+        // carrying a path puts it into whatever log the caller keeps.
+        push_error("file.modified_at: the file has no readable timestamp");
+        return;
+      }
+      // file_clock's epoch is unspecified and need not match the system
+      // clock's, so the two are related by taking a reading from each at the
+      // same moment and carrying the difference across. std::chrono::clock_cast
+      // would say this in one line and is not available on every toolchain
+      // this still builds on.
+      const auto file_now = fs::file_time_type::clock::now();
+      const auto system_now = std::chrono::system_clock::now();
+      const auto since_now =
+          std::chrono::duration_cast<std::chrono::system_clock::duration>(
+              written - file_now);
+      const auto as_system = std::chrono::time_point_cast<std::chrono::milliseconds>(
+          system_now + since_now);
+      push_ok_number(static_cast<std::int64_t>(
+          as_system.time_since_epoch().count()));
       return;
     }
 

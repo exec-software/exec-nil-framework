@@ -26,6 +26,9 @@ compiled through it will not find them.
 | `wait(timeout_milliseconds: i64) -> Result<i64, text>` | Wait for readiness; gives back how many are ready. |
 | `next_ready() -> Result<i64, text>` | One ready socket per call, packed; zero when drained. |
 | `ready_handle` / `ready_flags` / `is_readable` / `is_writable` / `is_finished` | Unpack what `next_ready` gave. |
+| `receive(handle: i64, maximum_bytes: i64) -> Result<i64, text>` | Take what arrived: count, 0 for closed, -1 for nothing yet. |
+| `received() -> Result<text, text>` | The bytes from the last `receive`. |
+| `send_some(handle: i64, data: text, offset: i64) -> Result<i64, text>` | Send what the socket takes now; -1 when it would block. |
 
 Matrix uses the same names; `maximum_bytes` is spelled `maximum_bytes` because
 it is an Ny declaration and Matrix keeps a foreign name's spelling.
@@ -182,11 +185,17 @@ division.
 connections are waiting, so accept until it answers zero. A loop that accepts
 one per wait falls behind under load and never catches up.
 
-**Leave accepted connections blocking, and give them a timeout.** `poll` has
-said the connection is readable, so a read returns at once — and an empty read
-then means the peer closed rather than "nothing yet", which is a distinction
-an event loop has to be able to make. A non-blocking read cannot make it:
-EAGAIN and a clean close both produce no bytes.
+**Use `receive` and `send_some`, not `read` and `write`, on a non-blocking
+connection.** `read` and `write` suit a blocking socket: read waits for
+something, write loops until everything has gone. In an event loop `write` is
+the dangerous one — a large response to a client that reads slowly fills the
+socket buffer, the call blocks, and one slow reader stops everybody.
+
+`receive` exists because a non-blocking read has three outcomes and a
+`Result<text, text>` has room for two. It reports the byte count, `0` for a
+peer that closed, or `-1` for nothing yet, and `received` hands over the bytes.
+Conflating the last two is the classic event-loop bug: a spurious wakeup then
+looks like a hangup and the connection is dropped mid-request.
 
 **`is_readable` and `is_finished` can both be true.** A peer that hung up may
 still have sent something, and that something has to be read before the

@@ -251,3 +251,41 @@ end fn
 pub fn is_finished(packed: i64) -> bool
     return (ready_flags(packed) & ready_finished) != 0
 end fn
+
+# -----------------------------------------------------------------------------
+# Reading and writing without blocking
+# -----------------------------------------------------------------------------
+#
+# `read` and `write` above suit a blocking socket: read waits for something,
+# write loops until everything has gone. An event loop cannot use write that
+# way — a large response to a client that reads slowly fills the socket buffer,
+# the call blocks, and one slow reader stops the whole loop. These are the
+# non-blocking pair.
+
+# Take what has arrived, and say which of three things happened.
+#
+# Returns the byte count on success, 0 when the peer closed its side, and -1
+# when nothing is available yet. Call `received` for the bytes themselves.
+#
+# Two calls rather than one because a single Result<text, text> has room for
+# two answers and a non-blocking read has three. Conflating "nothing yet" with
+# "the peer closed" is the classic event-loop bug: a spurious wakeup then
+# looks like a hangup and the connection is dropped in the middle of a request.
+@intrinsic("net.receive")
+pub fn receive(handle: i64, maximum_bytes: i64) -> Result<i64, text>
+
+# The bytes from the last successful `receive` on any socket.
+#
+# Valid immediately after a `receive` that returned a positive count; empty
+# after one that reported a close or a would-block. Read it before the next
+# receive, which replaces it.
+@intrinsic("net.received")
+pub fn received() -> Result<text, text>
+
+# Send what the socket will take right now, starting at an offset.
+#
+# Returns the number of bytes sent, or -1 when the socket would block. The
+# caller keeps the remainder and sends it when `wait` reports the socket
+# writable, which is what stops a slow reader from holding up everyone else.
+@intrinsic("net.send_some")
+pub fn send_some(handle: i64, data: text, offset: i64) -> Result<i64, text>

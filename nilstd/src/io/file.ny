@@ -81,6 +81,22 @@ pub fn copy(source: text, dest: text) -> Result<bool, text>
 pub fn move(source: text, dest: text) -> Result<bool, text>
 
 # Get file size in bytes
+# When the file was last written, in milliseconds since the Unix epoch.
+#
+# Two ordinary jobs need this and neither can be done without it. A cache
+# cannot tell whether what it holds is still current without re-reading the
+# file, which defeats the cache. An HTTP server cannot send Last-Modified or
+# answer If-Modified-Since, so every client re-fetches every unchanged file in
+# full, forever.
+#
+# Milliseconds rather than the host's native resolution: a filesystem
+# timestamp is not reliably finer than that across platforms, and a caller
+# comparing two should not be comparing precision it does not have. The error
+# carries neither the path nor the reason; ask `exists` to tell an absent file
+# from an unreadable one.
+@intrinsic("file.modified_at")
+pub fn modified_at(path: text) -> Result<i64, text>
+
 @intrinsic("file.size")
 pub fn size(path: text) -> Result<i64, text>
 

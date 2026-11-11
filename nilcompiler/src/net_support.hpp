@@ -79,6 +79,8 @@ struct Transferred {
   std::int64_t count = 0;
   /** The peer closed its side in an orderly way. Not an error. */
   bool closed = false;
+  /** Nothing available right now, on a socket asked not to block. */
+  bool would_block = false;
   std::string error;
   bool ok() const { return error.empty(); }
 };
@@ -330,6 +332,48 @@ inline Transferred read_some(int descriptor, std::int64_t wanted) {
     if (errno == EINTR)
       continue;
 #endif
+    if (last_call_would_block()) {
+      result.would_block = true;
+      return result;
+    }
+    result.error = last_error_text();
+    return result;
+  }
+}
+
+/**
+ * Write what the socket will take right now, and say how much that was.
+ *
+ * The non-blocking counterpart of write_all. A server sending a large
+ * response to a client that reads it slowly cannot afford write_all: the
+ * socket buffer fills, the call blocks, and one slow reader stops the whole
+ * event loop. This takes what it can, reports it, and leaves the rest to the
+ * caller to send when poll says the socket will accept more.
+ */
+inline Transferred write_some(int descriptor, const std::string &data,
+                              std::size_t offset) {
+  Transferred result;
+  if (!ensure_started(result.error))
+    return result;
+  if (offset >= data.size())
+    return result;
+
+  for (;;) {
+    const transfer_size taken =
+        ::send(descriptor, data.data() + offset,
+               static_cast<transfer_size>(data.size() - offset), no_signal_flag);
+    if (taken > 0) {
+      result.count = static_cast<std::int64_t>(taken);
+      return result;
+    }
+#if !defined(_WIN32)
+    if (taken < 0 && errno == EINTR)
+      continue;
+#endif
+    if (last_call_would_block()) {
+      result.would_block = true;
+      return result;
+    }
     result.error = last_error_text();
     return result;
   }

@@ -22,7 +22,8 @@ three-component lengths, finite-value checks, and checked normalization shared
 by Ny and Matrix.
 The [socket reference](sockets.md) defines TCP listening, accepting,
 connecting and transfer, with opaque handles the runtime closes for a program
-that does not.
+that does not, and the poll-based event loop that lets one process serve many
+connections at once.
 
 The [random-generator reference](random.md) defines independent mutable
 streams, reproducible seeds, cloning, and bounded integer/floating sampling.
