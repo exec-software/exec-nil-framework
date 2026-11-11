@@ -149,14 +149,13 @@ the complete admission rules.
 
 ## Remaining macOS work
 
-- Native incremental dependency discovery and reuse remain incomplete. Darwin
-  compiler loaded-library identity remains incomplete in production. A separate
-  native diagnostic now matches all observed loaded images to ordinary files or
-  exact shared-cache mappings on both architectures and hashes every cache file
-  twice. Reading roughly 5 GB took 15.057 then 14.056 seconds on ARM, and 104.462
-  then 15.351 seconds on Intel. This is not yet a practical cache-key integration;
-  native toolchain dependency discovery also remains open. Both VM and native
-  builds deliberately rebuild without complete identity.
+- Native incremental reuse is still being qualified. The compiler now resolves
+  loaded images to ordinary files and exact shared-cache backing files for full
+  content hashing; its actual Apple Silicon collector test passes at `2632bc6`.
+  The builder uses separate preparation and verification digest phases without
+  caching source/manifest reads. Native linker dependency collection and real
+  VM/native reuse still require both hosted architectures to pass. Incomplete
+  or unsupported dependency profiles deliberately rebuild.
 - A separate [development SDK workflow](../.github/workflows/macos-sdk.yml) now
   implements native Darwin consumer admission, root install layout, pinned
   documentation tooling, and staged dependency/relocation checks. Both

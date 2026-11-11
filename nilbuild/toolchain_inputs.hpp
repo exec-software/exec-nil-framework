@@ -2,6 +2,7 @@
 
 #include "process.hpp"
 #include "windows_toolchain_inputs.hpp"
+#include "darwin_toolchain_inputs.hpp"
 
 #include <cctype>
 #include <cstdlib>
@@ -11,6 +12,9 @@
 #include <optional>
 #include <set>
 #include <sstream>
+#if defined(__APPLE__)
+#include <crt_externs.h>
+#endif
 
 namespace nilbuild {
 struct process_cancelled : std::exception {
@@ -258,6 +262,58 @@ inline std::optional<std::vector<std::filesystem::path>> native_toolchain_files(
   };
   return windows_toolchain_detail::collector(driver, directory, runtime,
       library_paths, lib ? lib : "", inspect).files();
+#elif defined(__APPLE__)
+  // nilbuild currently forwards no -l/--link options. Expanding that command
+  // surface requires expanding this closure before admitting those projects.
+  if (!library_paths.empty() || runtime.empty()) return std::nullopt;
+  for (char **entry = *_NSGetEnviron(); entry && *entry; ++entry) {
+    const std::string item(*entry);
+    const auto equal = item.find('=');
+    if (equal == std::string::npos || equal + 1 == item.size()) continue;
+    const auto name = item.substr(0, equal);
+    if (name.rfind("DYLD_", 0) == 0 || name.rfind("LD_", 0) == 0 || name.rfind("CCC_", 0) == 0 ||
+        name.rfind("CLANG_CONFIG_", 0) == 0 || name == "LIBRARY_PATH" || name == "COMPILER_PATH" ||
+        name == "GCC_EXEC_PREFIX" || name == "CPATH" || name == "CPLUS_INCLUDE_PATH" ||
+        name == "C_INCLUDE_PATH" || name == "OBJC_INCLUDE_PATH" || name == "ARCHFLAGS" ||
+        name == "IPHONEOS_DEPLOYMENT_TARGET" || name == "TVOS_DEPLOYMENT_TARGET" ||
+        name == "WATCHOS_DEPLOYMENT_TARGET") return std::nullopt;
+  }
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+  unsigned queries = 0;
+  const auto query = [&](const std::vector<std::string> &command, bool driver_plan = false)
+      -> std::optional<std::string> {
+    const auto now = std::chrono::steady_clock::now();
+    if (++queries > 128 || now >= deadline) return {};
+    process_options options;
+    options.close_stdin = true; options.cleanup_descendants = true;
+    options.time_limit = std::min(std::chrono::milliseconds(15000),
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now));
+    options.output_limit = 4 * 1024 * 1024; options.total_output_limit = 4 * 1024 * 1024;
+    const auto result = execute_many({{command, directory}}, 1, options).front();
+    if (result.cancelled) throw process_cancelled(result.status);
+    if (result.status || result.timed_out || result.output_limited || (!driver_plan && !result.error.empty())) return {};
+    return driver_plan ? result.output + result.error : result.output;
+  };
+  const auto output = query({driver.string(), "-###", "-pthread", "-o", "/dev/null", runtime.string(),
+                             "-framework", "Cocoa", "-framework", "CoreGraphics"}, true);
+  if (!output) return {};
+  const auto plan = darwin_toolchain_detail::parse_plan(*output, runtime);
+  if (!plan) return {};
+#if defined(__aarch64__) || defined(__arm64__)
+  if (plan->architecture != "arm64") return {};
+#elif defined(__x86_64__)
+  if (plan->architecture != "x86_64") return {};
+#else
+  return {};
+#endif
+  const auto inspect = [&](const std::filesystem::path &image)
+      -> std::optional<darwin_toolchain_detail::image_description> {
+    const auto libraries = query({"/usr/bin/otool", "-arch", plan->architecture, "-L", image.string()});
+    const auto commands = query({"/usr/bin/otool", "-arch", plan->architecture, "-l", image.string()});
+    if (!libraries || !commands) return {};
+    return darwin_toolchain_detail::parse_image(image, *libraries, *commands);
+  };
+  return darwin_toolchain_detail::collector(driver, directory, runtime, *plan, inspect).files();
 #else
   (void)driver; (void)directory; (void)runtime; (void)library_paths;
   return std::nullopt;

@@ -129,6 +129,17 @@ also pass. Actual Apple API execution is a required hosted test. Native linker
 input closure is being implemented separately; compiler identity alone does not
 establish native incremental reuse.
 
+The first native closure implementation hashes the selected Apple driver,
+linker and helper libraries, compiler runtime, and the SDK's linkable namespace.
+It resolves loader search paths per executable and preserves selected aliases.
+Unknown linker options, external fallback files and injected loader/search
+environments disable reuse. Fifty-nine portable checks and all 407 complete
+TBD files in the ARM census pass; the other 808 captured prefixes are truncated
+and require actual hosted full-file reads. The observed `-L/usr/local/lib`
+driver option is still outside the admitted profile, so this implementation
+does not yet establish default native cache parity. The application workflow
+now requires the actual complete VM/native incremental contract on both hosts.
+
 ## Darwin allocation retention and editor coverage
 
 The two native lifetime programs remain unchanged. Darwin now has a test-only
@@ -158,6 +169,25 @@ declares its own pointer pairs in the documented Mach-O interposing section.
 The pinned editor archive uses a different executable name; the launcher now
 reads `CFBundleExecutable` from its own verified app bundle. Both failures are
 retained, and actual injection/editor acceptance remains pending a corrected run.
+
+At `2632bc6`, application campaign `43118620968` (PR merge `4eac1494`)
+passes the real compiler loaded-image collector and all native timestamp routes
+on both architectures. Both allocation controls exit before their report
+handshake; this is retained as a failed test, not a memory-retention pass. The
+editor now launches but its deep profile exceeds macOS's Unix socket path limit.
+Its owned fixture now uses a short temporary root while retaining Unicode paths;
+launch records identify the exact retained profile logs. Both artifact manifests
+were replayed locally: 104 matching files each and unchanged source.
+
+The complete Windows `2632bc6` build exposed an unconditional GNU weak-function
+attribute in the freestanding archive. MSVC now uses a COFF alternate symbol for
+the default failure hook. Separate executable link controls require the real
+archive with and without an application-provided hook; the Linux archive and
+existing freestanding execution contract pass. Actual MSVC archive creation,
+default/override linking and both executions now pass all six phases in the
+private VM, with owned cleanup and unchanged source. The full Windows campaign
+will use the next committed source; its earlier failure remains recorded. The
+current `2632bc6` LLVM-enabled Linux campaign also passes all 580 CTests, no skips.
 
 Native socket/byte/entropy parity needs a binary-safe value boundary. The new
 VM APIs deliberately carry embedded NUL and arbitrary bytes in `text`; the

@@ -20,6 +20,10 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     deadline = time.monotonic() + 90
     report = {'status': 'FAIL', 'scope': 'SDK stub census and dry link plan only', 'commands': []}
+    # Only explicit tool-selection inputs; never dump the runner environment.
+    report['selection_environment'] = {name: os.environ.get(name) for name in (
+        'LIBRARY_PATH', 'COMPILER_PATH', 'SDKROOT', 'DEVELOPER_DIR', 'TOOLCHAINS',
+        'DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH', 'LDFLAGS')}
 
     def run(name, argv):
         remaining = deadline - time.monotonic()

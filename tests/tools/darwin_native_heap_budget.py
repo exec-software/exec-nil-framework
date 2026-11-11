@@ -8,6 +8,7 @@ the Python process-ownership gate. Raw successes and failures are retained.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from pathlib import Path
@@ -59,12 +60,14 @@ class DarwinHeapBudget:
                        'whole_process_memory_parity': False, 'whole_seconds': seconds,
                        'commands': [], 'runs': [], 'imports': [], 'fixtures': [],
                        'inputs': {}}
-        inputs = [self.library, self.control, args.compiler.resolve(strict=True), Path(__file__),
-                  ROOT / ('tests/tools/native_' + name.replace('-', '_') + '.py'),
+        inputs = [self.library, self.control, Path(__file__),
                   ROOT / 'tests/darwin_native_heap_budget.c',
                   ROOT / 'tests/darwin_native_heap_budget.h',
                   ROOT / 'tests/darwin_native_heap_budget_control.c',
                   ROOT / 'validation/ny-3d/scripts/debugger_process.py']
+        if fixtures:
+            inputs.extend([args.compiler.resolve(strict=True),
+                           ROOT / ('tests/tools/native_' + name.replace('-', '_') + '.py')])
         for path in inputs:
             self.report['inputs'][str(path)] = support.file_record(path)
 
@@ -109,7 +112,11 @@ class DarwinHeapBudget:
         errors = (self.logs / row['stderr']).read_bytes()
         if (row.get('exit_code') != exit_code or not row.get('cleanup_verified') or
                 row.get('error') or (stdout is not None and actual != stdout) or errors != stderr):
-            raise AssertionError(name + ': output/exit/deadline/owned-cleanup contract failed')
+            raise AssertionError(name + ': output/exit/deadline/owned-cleanup contract failed; '
+                                 f"exit={row.get('exit_code')} expected={exit_code}, "
+                                 f"cleanup={row.get('cleanup_verified')}, "
+                                 f"error={row.get('error')!r}, stdout={actual[:1024]!r}, "
+                                 f"stderr={errors[:1024]!r}")
         row['status'] = 'PASS'  # Expected negative exits are evidence, not skipped tests.
         return actual
 
@@ -215,3 +222,21 @@ class DarwinHeapBudget:
                                         'source_record': source_record, 'executable_record': executable_record,
                                         'expected_target_allocations': count, 'target_bytes': target,
                                         'positive_and_withheld_free_replay': 'PASS'})
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_arguments(parser)
+    parser.add_argument('--controls-only', action='store_true', required=True,
+                        help='Qualify injection and allocation accounting without building native fixtures')
+    args = parser.parse_args()
+    harness = DarwinHeapBudget(args, 'heap-controls', seconds=180, fixtures=0)
+    with harness:
+        # The identical positive, untouched-retention, and withheld-free controls
+        # used by both lifetime contracts run before the expensive compiler build.
+        # Passing this command does not qualify either native lifetime fixture.
+        harness.prepare()
+
+
+if __name__ == '__main__':
+    main()

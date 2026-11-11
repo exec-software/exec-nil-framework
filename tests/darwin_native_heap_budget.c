@@ -71,6 +71,27 @@ static char *field(char *at, const char *name, uint64_t value) {
     at = append_text(at, ",\""); at = append_text(at, name);
     at = append_text(at, "\":"); return append_number(at, value);
 }
+/* Initialization itself can fail before the report file is available. Keep
+ * these failures distinguishable from a consumer's retained-allocation exit,
+ * without asking stdio or the allocator to format the diagnostic. */
+__attribute__((noreturn)) static void tracker_error(const char *event) {
+    int saved_errno = errno;
+    char line[256], *at = line;
+    at = append_text(at, "nil heap tracker: ");
+    at = append_text(at, event);
+    at = append_text(at, "; errno=");
+    at = append_number(at, (uint64_t)saved_errno);
+    at = append_text(at, "\n");
+    const char *next = line;
+    size_t left = (size_t)(at - line);
+    while (left) {
+        ssize_t written = write(STDERR_FILENO, next, left);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) break;
+        next += written; left -= (size_t)written;
+    }
+    _exit(NIL_HEAP_TRACKER_EXIT);
+}
 static void emit_locked(const char *event) {
     char line[2048], *at = line;
     if (report_fd < 0) return;
@@ -89,12 +110,13 @@ static void emit_locked(const char *event) {
     while (left) {
         ssize_t written = write(report_fd, next, left);
         if (written < 0 && errno == EINTR) continue;
-        if (written <= 0) _exit(NIL_HEAP_TRACKER_EXIT);
+        if (written <= 0) tracker_error("report-write");
         next += written; left -= (size_t)written;
     }
 }
 static void fail_locked(const char *event, int code) {
     emit_locked(event);
+    if (code == NIL_HEAP_TRACKER_EXIT) tracker_error(event);
     _exit(code);
 }
 
@@ -303,21 +325,21 @@ __attribute__((constructor)) static void initialize_budget(void) {
     uint64_t target_size;
     int withhold_mode;
     if (!path || !*path || !given_token || strlen(given_token) != 32 || !target || !mode)
-        _exit(NIL_HEAP_TRACKER_EXIT);
+        tracker_error("initialization-environment");
     for (size_t index = 0; index < 32; ++index) {
         char value = given_token[index];
         if (!((value >= '0' && value <= '9') || (value >= 'a' && value <= 'f')))
-            _exit(NIL_HEAP_TRACKER_EXIT);
+            tracker_error("initialization-token");
         token[index] = value;
     }
     if (strcmp(target, "16384") == 0) target_size = 16384;
     else if (strcmp(target, "65536") == 0) target_size = 65536;
-    else _exit(NIL_HEAP_TRACKER_EXIT);
+    else tracker_error("initialization-target");
     if (strcmp(mode, "0") == 0) withhold_mode = 0;
     else if (strcmp(mode, "1") == 0) withhold_mode = 1;
-    else _exit(NIL_HEAP_TRACKER_EXIT);
+    else tracker_error("initialization-withhold");
     int descriptor = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
-    if (descriptor < 0) _exit(NIL_HEAP_TRACKER_EXIT);
+    if (descriptor < 0) tracker_error("report-open");
     lock_tracker();
     stats.target_size = target_size; withhold = withhold_mode; report_fd = descriptor;
     ready = 1; emit_locked("ready"); unlock_tracker();

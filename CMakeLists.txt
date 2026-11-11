@@ -101,6 +101,19 @@ install(
 install(FILES LICENSE DESTINATION ".")
 
 if(BUILD_TESTING)
+    foreach(nil_hook_profile IN ITEMS default override)
+        add_executable(nil_freestanding_hook_${nil_hook_profile} tests/freestanding_hook_contract.cpp)
+        target_compile_features(nil_freestanding_hook_${nil_hook_profile} PRIVATE cxx_std_17)
+        target_link_libraries(nil_freestanding_hook_${nil_hook_profile} PRIVATE nilruntime_freestanding)
+        if(nil_hook_profile STREQUAL "override")
+            target_compile_definitions(nil_freestanding_hook_${nil_hook_profile} PRIVATE NIL_TEST_HOST_OVERRIDE=1)
+        endif()
+        if(UNIX AND NOT APPLE)
+            target_link_options(nil_freestanding_hook_${nil_hook_profile} PRIVATE -no-pie)
+        endif()
+        add_test(NAME nil.freestanding-hook-${nil_hook_profile} COMMAND $<TARGET_FILE:nil_freestanding_hook_${nil_hook_profile}>)
+        set_tests_properties(nil.freestanding-hook-${nil_hook_profile} PROPERTIES LABELS "runtime;rc" TIMEOUT 15)
+    endforeach()
     if(WIN32)
         # Keep the public backend declarations usable after real Windows RPC
         # headers, even in an LLVM-OFF build that normally hides this interface.
@@ -128,6 +141,13 @@ if(BUILD_TESTING)
     if(WIN32)
         target_link_libraries(nil_compiler_module_darwin_tests PRIVATE advapi32)
     endif()
+    add_executable(nil_darwin_toolchain_inputs_tests tests/darwin_toolchain_inputs_tests.cpp)
+    target_compile_features(nil_darwin_toolchain_inputs_tests PRIVATE cxx_std_17)
+    if(WIN32)
+        target_link_libraries(nil_darwin_toolchain_inputs_tests PRIVATE advapi32)
+    endif()
+    add_test(NAME nil.darwin-toolchain-inputs COMMAND $<TARGET_FILE:nil_darwin_toolchain_inputs_tests>)
+    set_tests_properties(nil.darwin-toolchain-inputs PROPERTIES LABELS "tools;project;rc" TIMEOUT 60)
 
     # Test-only launcher for isolated editor integration runs. Reuse the
     # toolchain's bounded process/Job cleanup; never ship it in the SDK.

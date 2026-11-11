@@ -69,6 +69,7 @@ jobs:
           cache: npm
           cache-dependency-path: vscode/package-lock.json
       - name: Configure LLVM applications
+        id: configure
         timeout-minutes: 8
         run: |
           mkdir -p build/application-evidence
@@ -83,15 +84,6 @@ jobs:
             "-DLLVM_DIR=$nil_llvm_prefix/lib/cmake/llvm" \
             -DNILCOMPILER_SQLITE_INCLUDE_DIR=OFF -DNILCOMPILER_POSTGRESQL_INCLUDE_DIR=OFF \
             2>&1 | tee build/application-evidence/configure.log
-      - name: Build application tools
-        id: tools
-        timeout-minutes: 40
-        run: |
-          set -o pipefail
-          cmake --build build/application --parallel 2 --target \
-            nilcompiler nilinterpreter nilassembler nillsp nildebugger nilbuild niltest aperture \
-            nil_vscode_host_runner nil_file_time_support_tests nil_compiler_module_darwin_tests \
-            2>&1 | tee build/application-evidence/build.log
       - name: Build independent allocation controls
         id: heap
         timeout-minutes: 3
@@ -100,6 +92,37 @@ jobs:
           cmake --build build/application --parallel 2 --target \
             nil_darwin_native_heap_budget nil_darwin_native_heap_budget_control \
             2>&1 | tee build/application-evidence/heap-build.log
+      - name: Qualify allocator injection before building applications
+        if: ${{ !cancelled() && steps.heap.outcome == 'success' }}
+        timeout-minutes: 4
+        run: |
+          set -o pipefail
+          python3 -B tests/tools/darwin_native_heap_budget.py --controls-only \
+            --heap-budget-library build/application/lib/libnil_darwin_native_heap_budget.dylib \
+            --heap-budget-control build/application/bin/nil_darwin_native_heap_budget_control \
+            --output-parent build/application/test-evidence \
+            2>&1 | tee build/application-evidence/heap-controls.log
+      - name: Preserve early allocation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-heap-controls-${{ matrix.host.arch }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            build/application/test-evidence/darwin-heap-controls-*/
+            build/application-evidence/heap-*.log
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Build application tools
+        id: tools
+        if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
+        timeout-minutes: 40
+        run: |
+          set -o pipefail
+          cmake --build build/application --parallel 2 --target \
+            nilcompiler nilinterpreter nilassembler nillsp nildebugger nilbuild niltest aperture \
+            nil_vscode_host_runner nil_file_time_support_tests nil_compiler_module_darwin_tests \
+            nil_darwin_toolchain_inputs_tests nil_freestanding_hook_default nil_freestanding_hook_override \
+            2>&1 | tee build/application-evidence/build.log
       - name: Record selected native SDK and linker inputs
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         timeout-minutes: 2
@@ -107,14 +130,16 @@ jobs:
           python3 -B scripts/ci/macos-toolchain-census.py --build build/application
           --output build/application-evidence/toolchain-census
       - name: Verify actual native lifetime and timestamp contracts
-        timeout-minutes: 15
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' && steps.heap.outcome == 'success' }}
+        timeout-minutes: 16
         run: |
           python3 - <<'PYTHON'
           import json, subprocess, xml.etree.ElementTree as ET
           from pathlib import Path
           expected = {'compiler.darwin-module-fingerprint', 'ny.native-managed-lifetime', 'ny.native-owned-lifetime',
-                      'nil.file-time-support', 'nil.file-modified-at-contract'}
-          pattern = r'^(compiler[.]darwin-module-fingerprint|ny[.]native-(managed|owned)-lifetime|nil[.]file-(time-support|modified-at-contract))$'
+                      'nil.file-time-support', 'nil.file-modified-at-contract',
+                      'nil.freestanding-hook-default', 'nil.freestanding-hook-override'}
+          pattern = r'^(compiler[.]darwin-module-fingerprint|ny[.]native-(managed|owned)-lifetime|nil[.]file-(time-support|modified-at-contract)|nil[.]freestanding-hook-(default|override))$'
           base = ['ctest', '--test-dir', 'build/application', '-R', pattern]
           root = Path('build/application-evidence').resolve()
           inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
@@ -123,10 +148,35 @@ jobs:
           with (root/'ctest.log').open('wb') as output:
               run = subprocess.run(base+['--no-tests=error', '--output-on-failure',
                   '--output-junit', str(root/'results.xml')], stdout=output,
-                  stderr=subprocess.STDOUT, timeout=850)
+                  stderr=subprocess.STDOUT, timeout=910)
           print((root/'ctest.log').read_text(errors='replace'))
           run.check_returncode()
           cases = list(ET.parse(root/'results.xml').getroot().iter('testcase'))
+          assert len(cases) == len(expected) and {case.get('name') for case in cases} == expected
+          assert all(case.get('status') == 'run' and all(case.find(kind) is None
+              for kind in ['failure','error','skipped']) for case in cases)
+          PYTHON
+      - name: Verify default native toolchain and real incremental reuse
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        timeout-minutes: 20
+        run: |
+          python3 - <<'PYTHON'
+          import json, subprocess, xml.etree.ElementTree as ET
+          from pathlib import Path
+          expected = {'nil.darwin-toolchain-inputs', 'nilbuild.incremental-contract'}
+          pattern = r'^(nil[.]darwin-toolchain-inputs|nilbuild[.]incremental-contract)$'
+          base = ['ctest', '--test-dir', 'build/application', '-R', pattern]
+          root = Path('build/application-evidence').resolve()
+          inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
+          (root/'incremental-inventory.json').write_bytes(inventory)
+          assert {case['name'] for case in json.loads(inventory)['tests']} == expected
+          with (root/'incremental.log').open('wb') as output:
+              run = subprocess.run(base+['--no-tests=error', '--output-on-failure',
+                  '--output-junit', str(root/'incremental-results.xml')], stdout=output,
+                  stderr=subprocess.STDOUT, timeout=1100)
+          print((root/'incremental.log').read_text(errors='replace'))
+          run.check_returncode()
+          cases = list(ET.parse(root/'incremental-results.xml').getroot().iter('testcase'))
           assert len(cases) == len(expected) and {case.get('name') for case in cases} == expected
           assert all(case.get('status') == 'run' and all(case.find(kind) is None
               for kind in ['failure','error','skipped']) for case in cases)
@@ -138,7 +188,7 @@ jobs:
         run: |
           # Version 1.146.0; architecture-specific SHA256 values from Microsoft's
           # update API on 2026-11-11. No auto-update or system installation.
-          mkdir -p build/editor-download build/editor-tmp
+          mkdir -p build/editor-download
           curl --fail --location --max-time 180 --max-filesize 800000000 \
             "https://vscode.download.prss.microsoft.com/dbazure/download/stable/69047191fc427f2f92828279aae1d90d8eeda7ab/$NIL_EDITOR_ARCHIVE" \
             -o build/editor-download/editor.zip
@@ -187,7 +237,6 @@ jobs:
           export NIL_VSCODE_TOOL_DIRECTORY="$GITHUB_WORKSPACE/build/application/bin"
           export NIL_VSCODE_HOST_RUNNER="$NIL_VSCODE_TOOL_DIRECTORY/nil_vscode_host_runner"
           export NIL_VSCODE_SDK_PATH="$GITHUB_WORKSPACE"
-          export TMPDIR="$GITHUB_WORKSPACE/build/editor-tmp"
           for nil_subset in NIL_VSCODE_NILDATA_ONLY NIL_VSCODE_LANGUAGE_VALUES_ONLY \
             NIL_VSCODE_MEMBER_SIGNATURE_ONLY NIL_VSCODE_COMPLETION_ONLY NIL_VSCODE_SEMANTIC_ONLY \
             NIL_VSCODE_WORKSPACE_ONLY NIL_VSCODE_ANALYSIS_ONLY NIL_VSCODE_ANALYSIS_PROBE_ONLY; do
@@ -213,6 +262,15 @@ jobs:
           for source, name in [('build/application/test-evidence','contracts'),
                                ('build/vscode-host-smoke','editor-reports')]:
               if Path(source).is_dir(): shutil.copytree(source, root/name)
+          for launch in Path('build/vscode-host-smoke').glob('*-launch.json'):
+              record = json.loads(launch.read_text())
+              temporary = Path(record['temporary'])
+              assert record['platform'] == 'darwin' and temporary.parent == Path('/tmp')
+              assert temporary.name.startswith('nil vscode host café 中文-')
+              profile = temporary/'profile'
+              assert str(profile) == record['profile'] and not profile.is_symlink()
+              logs = profile/'logs'
+              if logs.is_dir(): shutil.copytree(logs, root/'editor-logs'/record['runId'])
           dirty = subprocess.check_output(['git','status','--porcelain','--untracked-files=no'], text=True, timeout=15)
           revision = subprocess.check_output(['git','rev-parse','HEAD'], text=True, timeout=15).strip()
           files = {}
@@ -236,6 +294,5 @@ jobs:
             build/application-evidence/
             build/application/Testing/Temporary/LastTest.log
             build/application/CMakeCache.txt
-            build/editor-tmp/**/profile/logs/**
           if-no-files-found: error
           retention-days: 14
