@@ -91,6 +91,38 @@ passes. The Linux rebuild and Matrix, timestamp and freestanding contracts pass.
 These corrections require fresh hosted execution; the original failures remain
 under `parity-web-20261111/github-web-43113972394` and the private Windows evidence.
 
+At `965f159`, the fresh Windows LLVM-ON source build and all six focused contracts
+pass with no skips: 118 adapter assertions, 184 VM lifecycle assertions, 129
+timestamp helper assertions, 38 Matrix fixtures, ten loopback cases and the public
+timestamp route contract. The full run took 103.79 seconds and preserved the old
+dirty guest checkout and accepted SDK. Its report SHA is
+`d1d823e482290dd3044d872a97d1ca79ecadfb22a1e858a1a4972bf8f3fe1649`.
+A separate eight-case Windows probe confirms that textual and binary source maps
+embed canonical long paths even when the compiler receives an 8.3 TEMP alias.
+
+## Darwin allocation retention and editor coverage
+
+The two native lifetime programs remain unchanged. Darwin now has a test-only
+interposer to enforce **96 MiB of live requested native heap allocations**.
+This metric excludes allocator overhead, the fixed tracker, mapped images and
+allocation paths outside the intercepted API; it is not a claim of whole-process
+address-space/commit parity. The harness audits the generated binary's allocator
+imports, requires an injection handshake, checks the unchanged loops' allocation
+counts and repeats each exact executable while withholding real target frees.
+Retained untouched allocations must also fail, so a sampled footprint cannot
+substitute for the allocation-retention check. Linux RLIMIT_AS and Windows Job
+tests retain their original behavior.
+
+GCC and Clang portable accounting controls pass: over 2 GiB allocated and freed
+with a 64 KiB peak, plus realloc growth/shrink/failure, alignment and overflow
+controls. Untouched retention and withheld-free controls reject at 96 MiB.
+These local controls do not establish Mach-O injection. The new application
+workflow requires real Intel and ARM execution, the existing native timestamp
+routes, and the full VS Code extension-host campaign with no recorded exclusions.
+It uses a fresh profile and Microsoft's architecture-specific VS Code 1.146.0
+archives, pinned by SHA256 from the official update service. All results are
+development/build-tree checks; no installed SDK or user editor is activated.
+
 Native socket/byte/entropy parity needs a binary-safe value boundary. The new
 VM APIs deliberately carry embedded NUL and arbitrary bytes in `text`; the
 current native text ABI and several LLVM operations use null-terminated strings

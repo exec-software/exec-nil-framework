@@ -975,6 +975,20 @@ if(BUILD_TESTING)
             set(NIL_MEMORY_LIMIT_ARGUMENTS --memory-launcher $<TARGET_FILE:nil_native_memory_limiter>)
             add_test(NAME nil.native-memory-limit-contract COMMAND nil_native_memory_limiter --self-test)
             set_tests_properties(nil.native-memory-limit-contract PROPERTIES LABELS "native;memory;rc" TIMEOUT 60)
+        elseif(APPLE)
+            # A requested-allocation retention oracle for these exact native
+            # fixtures. This is distinct from Linux AS and Windows commit caps.
+            add_library(nil_darwin_native_heap_budget SHARED tests/darwin_native_heap_budget.c)
+            add_executable(nil_darwin_native_heap_budget_control tests/darwin_native_heap_budget_control.c)
+            foreach(nil_heap_target IN ITEMS nil_darwin_native_heap_budget nil_darwin_native_heap_budget_control)
+                target_compile_features(${nil_heap_target} PRIVATE c_std_11)
+                target_compile_options(${nil_heap_target} PRIVATE -fno-builtin -Wall -Wextra -Werror -mmacosx-version-min=14.0)
+                target_link_options(${nil_heap_target} PRIVATE -mmacosx-version-min=14.0)
+            endforeach()
+            set(NIL_MEMORY_LIMIT_ARGUMENTS
+                --heap-budget-library $<TARGET_FILE:nil_darwin_native_heap_budget>
+                --heap-budget-control $<TARGET_FILE:nil_darwin_native_heap_budget_control>
+                --output-parent "${CMAKE_BINARY_DIR}/test-evidence")
         endif()
         add_test(
             NAME ny.native-managed-lifetime
@@ -994,6 +1008,12 @@ if(BUILD_TESTING)
                 --compiler $<TARGET_FILE:nilcompiler> --llvm "${NIL_ENABLE_LLVM}"
                 ${NIL_MEMORY_LIMIT_ARGUMENTS})
         set_tests_properties(ny.native-owned-lifetime PROPERTIES LABELS "native;ownership;rc" SKIP_RETURN_CODE 77 TIMEOUT 240)
+        if(APPLE)
+            # Includes independent allocator controls and a second execution of
+            # each unchanged native fixture with real frees deliberately withheld.
+            set_tests_properties(ny.native-managed-lifetime PROPERTIES TIMEOUT 240)
+            set_tests_properties(ny.native-owned-lifetime PROPERTIES TIMEOUT 360)
+        endif()
         # Matrix lexer conformance: the sample corpus must tokenise clean, and
         # each negative fixture must be rejected for the stated reason.
         add_executable(matrix_lex_dump tests/matrix/lex_dump.cpp)

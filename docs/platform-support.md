@@ -204,3 +204,10 @@ alone do not establish Windows or macOS support, and declarations do not establi
 native/JIT execution. Cross-platform validation of these additions is in progress.
 Their evidence must join the older desktop, tooling and SDK baselines before
 declaring current-source parity.
+
+The private Windows LLVM-ON build at `965f159` passes all six focused web-runtime
+contracts with no skips, including VM socket cleanup and the native timestamp
+routes. The corresponding Linux contracts pass. Hosted Intel/ARM acceptance and
+current macOS editor coverage are still in progress. The socket/byte/entropy
+native limitation is common to Linux, Windows and macOS; those APIs currently
+require the interpreter on all three hosts.

@@ -1,0 +1,223 @@
+name: macOS application platform checks
+
+"on":
+  pull_request:
+    paths:
+      - '.github/workflows/macos-application-parity.yml'
+      - 'CMakeLists.txt'
+      - 'nilcompiler/**'
+      - 'nilinterpreter/**'
+      - 'nilstd/**'
+      - 'nilbuild/**'
+      - 'niltest/**'
+      - 'nildebugger/**'
+      - 'nillsp/**'
+      - 'aperture/**'
+      - 'common/**'
+      - 'nillinker/process_runner*'
+      - 'validation/ny-3d/scripts/debugger_process.py'
+      - 'tests/darwin_native_heap_budget*'
+      - 'tests/tools/darwin_native_heap_budget.py'
+      - 'tests/tools/native_managed_lifetime.py'
+      - 'tests/tools/native_owned_lifetime.py'
+      - 'tests/tools/file_modified_at_contract.py'
+      - 'vscode/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-application-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+# Real LLVM native consumers and an isolated VS Code development-extension host.
+# No installed SDK, signed release, personal profile or extension is replaced.
+jobs:
+  applications:
+    name: macOS ${{ matrix.host.arch }} native applications and editor
+    runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      matrix:
+        host:
+          - runner: macos-15-intel
+            arch: x86_64
+            archive: VSCode-darwin.zip
+            sha256: 74b1deef1e33cc144d913d60c0e98cef6b1e29c1f2993d905c3b58576fa12202
+          - runner: macos-15
+            arch: arm64
+            archive: VSCode-darwin-arm64.zip
+            sha256: 6e8d27ee0c5a8f2aa3c43e373407eecd11c270c3fe7f46100ef682aac14bb648
+    defaults:
+      run:
+        shell: bash
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      NIL_EDITOR_ARCHIVE: ${{ matrix.host.archive }}
+      NIL_EDITOR_SHA256: ${{ matrix.host.sha256 }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: vscode/package-lock.json
+      - name: Configure LLVM applications
+        timeout-minutes: 8
+        run: |
+          mkdir -p build/application-evidence
+          git rev-parse HEAD > build/application-evidence/revision.txt
+          uname -a > build/application-evidence/host.txt
+          sw_vers >> build/application-evidence/host.txt
+          set -o pipefail
+          nil_llvm_prefix="$(brew --prefix llvm@18)"
+          test -x "$nil_llvm_prefix/bin/llvm-config"
+          cmake -S . -B build/application -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON -DNIL_ENABLE_LLVM=ON \
+            "-DLLVM_DIR=$nil_llvm_prefix/lib/cmake/llvm" \
+            -DNILCOMPILER_SQLITE_INCLUDE_DIR=OFF -DNILCOMPILER_POSTGRESQL_INCLUDE_DIR=OFF \
+            2>&1 | tee build/application-evidence/configure.log
+      - name: Build application tools
+        id: tools
+        timeout-minutes: 40
+        run: |
+          set -o pipefail
+          cmake --build build/application --parallel 2 --target \
+            nilcompiler nilinterpreter nilassembler nillsp nildebugger nilbuild niltest aperture \
+            nil_vscode_host_runner nil_file_time_support_tests \
+            2>&1 | tee build/application-evidence/build.log
+      - name: Build independent allocation controls
+        id: heap
+        timeout-minutes: 3
+        run: |
+          set -o pipefail
+          cmake --build build/application --parallel 2 --target \
+            nil_darwin_native_heap_budget nil_darwin_native_heap_budget_control \
+            2>&1 | tee build/application-evidence/heap-build.log
+      - name: Verify actual native lifetime and timestamp contracts
+        timeout-minutes: 15
+        run: |
+          python3 - <<'PYTHON'
+          import json, subprocess, xml.etree.ElementTree as ET
+          from pathlib import Path
+          expected = {'ny.native-managed-lifetime', 'ny.native-owned-lifetime',
+                      'nil.file-time-support', 'nil.file-modified-at-contract'}
+          pattern = r'^(ny[.]native-(managed|owned)-lifetime|nil[.]file-(time-support|modified-at-contract))$'
+          base = ['ctest', '--test-dir', 'build/application', '-R', pattern]
+          root = Path('build/application-evidence').resolve()
+          inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
+          (root/'inventory.json').write_bytes(inventory)
+          assert {case['name'] for case in json.loads(inventory)['tests']} == expected
+          with (root/'ctest.log').open('wb') as output:
+              run = subprocess.run(base+['--no-tests=error', '--output-on-failure',
+                  '--output-junit', str(root/'results.xml')], stdout=output,
+                  stderr=subprocess.STDOUT, timeout=850)
+          print((root/'ctest.log').read_text(errors='replace'))
+          run.check_returncode()
+          cases = list(ET.parse(root/'results.xml').getroot().iter('testcase'))
+          assert len(cases) == len(expected) and {case.get('name') for case in cases} == expected
+          assert all(case.get('status') == 'run' and all(case.find(kind) is None
+              for kind in ['failure','error','skipped']) for case in cases)
+          PYTHON
+      - name: Prepare pinned VS Code in this runner's private build directory
+        id: editor
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        timeout-minutes: 6
+        run: |
+          # Version 1.146.0; architecture-specific SHA256 values from Microsoft's
+          # update API on 2026-11-11. No auto-update or system installation.
+          mkdir -p build/editor-download build/editor-tmp
+          curl --fail --location --max-time 180 --max-filesize 800000000 \
+            "https://vscode.download.prss.microsoft.com/dbazure/download/stable/69047191fc427f2f92828279aae1d90d8eeda7ab/$NIL_EDITOR_ARCHIVE" \
+            -o build/editor-download/editor.zip
+          python3 - <<'PYTHON'
+          import hashlib, json, os
+          from pathlib import Path
+          path = Path('build/editor-download/editor.zip')
+          digest_state = hashlib.sha256()
+          with path.open('rb') as stream:
+              for chunk in iter(lambda: stream.read(1024*1024), b''): digest_state.update(chunk)
+          digest = digest_state.hexdigest()
+          assert digest == os.environ['NIL_EDITOR_SHA256']
+          Path('build/application-evidence/editor.json').write_text(json.dumps(dict(
+              version='1.146.0', revision='69047191fc427f2f92828279aae1d90d8eeda7ab',
+              archive=os.environ['NIL_EDITOR_ARCHIVE'], sha256=digest, bytes=path.stat().st_size), indent=2)+'\n')
+          PYTHON
+          ditto -x -k build/editor-download/editor.zip build/editor-download
+      - name: Build and check the extension
+        id: extension
+        if: ${{ !cancelled() && steps.editor.outcome == 'success' }}
+        timeout-minutes: 5
+        working-directory: vscode
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Exercise the real editor host
+        if: ${{ !cancelled() && steps.extension.outcome == 'success' }}
+        timeout-minutes: 17
+        env:
+          NIL_VSCODE_HOST_TIMEOUT_MS: '900000'
+        run: |
+          set -o pipefail
+          export VSCODE_EXECUTABLE="$GITHUB_WORKSPACE/build/editor-download/Visual Studio Code.app/Contents/MacOS/Electron"
+          export NIL_VSCODE_TOOL_DIRECTORY="$GITHUB_WORKSPACE/build/application/bin"
+          export NIL_VSCODE_HOST_RUNNER="$NIL_VSCODE_TOOL_DIRECTORY/nil_vscode_host_runner"
+          export NIL_VSCODE_SDK_PATH="$GITHUB_WORKSPACE"
+          export TMPDIR="$GITHUB_WORKSPACE/build/editor-tmp"
+          for nil_subset in NIL_VSCODE_NILDATA_ONLY NIL_VSCODE_LANGUAGE_VALUES_ONLY \
+            NIL_VSCODE_MEMBER_SIGNATURE_ONLY NIL_VSCODE_COMPLETION_ONLY NIL_VSCODE_SEMANTIC_ONLY \
+            NIL_VSCODE_WORKSPACE_ONLY NIL_VSCODE_ANALYSIS_ONLY NIL_VSCODE_ANALYSIS_PROBE_ONLY; do
+            unset "$nil_subset"
+          done
+          node vscode/test/run-host.cjs 2>&1 | tee build/application-evidence/editor-host.log
+          python3 - <<'PYTHON'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('build/vscode-host-smoke/latest.json').read_text())
+          assert report['platform'] == 'darwin' and report['status'] == 'PASS'
+          assert report['vscode'] == '1.146.0' and not report['skippedChecks']
+          assert len(report['checks']) >= 100 and all(row['status'] == 'PASS' for row in report['checks'])
+          PYTHON
+      - name: Preserve complete or partial evidence
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib, json, os, shutil, subprocess
+          from pathlib import Path
+          root = Path('build/application-evidence'); root.mkdir(parents=True, exist_ok=True)
+          for source, name in [('build/application/test-evidence','contracts'),
+                               ('build/vscode-host-smoke','editor-reports')]:
+              if Path(source).is_dir(): shutil.copytree(source, root/name)
+          dirty = subprocess.check_output(['git','status','--porcelain','--untracked-files=no'], text=True, timeout=15)
+          revision = subprocess.check_output(['git','rev-parse','HEAD'], text=True, timeout=15).strip()
+          files = {}
+          for path in sorted(root.rglob('*')):
+              if path.is_file() and not path.is_symlink():
+                  digest_state = hashlib.sha256()
+                  with path.open('rb') as stream:
+                      for chunk in iter(lambda: stream.read(1024*1024), b''): digest_state.update(chunk)
+                  digest = digest_state.hexdigest()
+                  files[path.relative_to(root).as_posix()] = dict(bytes=path.stat().st_size,sha256=digest)
+          (root/'evidence.json').write_text(json.dumps(dict(revision=revision,
+              source_unchanged=not dirty,files=files),indent=2)+'\n')
+          assert not dirty and revision == os.environ['GITHUB_SHA']
+          PYTHON
+      - name: Upload application results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-applications-${{ matrix.host.arch }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            build/application-evidence/
+            build/application/Testing/Temporary/LastTest.log
+            build/application/CMakeCache.txt
+            build/editor-tmp/**/profile/logs/**
+          if-no-files-found: error
+          retention-days: 14
