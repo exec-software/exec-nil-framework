@@ -72,6 +72,7 @@ inline std::optional<std::vector<std::string>> quoted_arguments(const std::strin
 struct link_plan {
   fs::path installed, linker, sdk, lto, compiler_rt;
   std::string architecture;
+  bool local_libraries = false;
 };
 inline std::optional<link_plan> parse_plan(const std::string &text, const fs::path &runtime) {
   if (text.size() > 1024 * 1024 || text.find('\0') != std::string::npos) return {};
@@ -114,6 +115,15 @@ inline std::optional<link_plan> parse_plan(const std::string &text, const fs::pa
     if (option == "-dynamic" && !dynamic) { dynamic = true; continue; }
     if (option == "-lc++" && !cxx) { cxx = true; continue; }
     if (option == "-lSystem" && !system) { system = true; continue; }
+    // Apple's selected driver emits this explicit search path on ordinary
+    // hosted installations. Unlike ld's implicit default it can fall back to
+    // the host when the selected SDK has no usr/local/lib directory.
+    if (option == "-L/usr/local/lib") { plan.local_libraries = true; continue; }
+    if (option == "-L") {
+      const auto value = next();
+      if (!value || *value != "/usr/local/lib") return {};
+      plan.local_libraries = true; continue;
+    }
     if (option == "-arch" && plan.architecture.empty()) {
       const auto value = next(); if (!value || (*value != "arm64" && *value != "x86_64")) return {};
       plan.architecture = *value; continue;
@@ -159,6 +169,15 @@ inline std::optional<link_plan> parse_plan(const std::string &text, const fs::pa
       plan.lto != plan.installed.parent_path() / "lib" / "libLTO.dylib" ||
       plan.sdk.filename().string().rfind("MacOSX", 0) != 0 || plan.sdk.extension() != ".sdk") return {};
   return plan;
+}
+
+// The two explicit archives are the only link inputs that can carry object
+// autolinks in this profile. An unmodeled LC_LINKER_OPTION can request libraries
+// outside the command's fixed c++/System/framework roots. otool must successfully
+// inspect the selected architecture before the caller invokes the collector.
+inline bool supported_archive_commands(const std::string &text) {
+  return !text.empty() && text.size() <= 4 * 1024 * 1024 && text.find('\0') == std::string::npos &&
+         text.find("LC_LINKER_OPTION") == std::string::npos;
 }
 
 inline bool system_install_name(const std::string &name) {
@@ -440,6 +459,61 @@ private:
     }
     return !error;
   }
+  bool local_library_inputs() {
+    if (!plan.local_libraries) return true;
+    std::error_code error;
+    // Options.cpp:4380-4429: an explicit absolute -L uses the SDK directory
+    // when it exists; unlike a standard search directory it otherwise falls
+    // back to the host. Inspect this choice anew on every collection.
+    const auto sdk_directory = plan.sdk / "usr/local/lib";
+    const bool sdk_directory_exists = fs::is_directory(sdk_directory, error);
+    if (error && error != std::errc::no_such_file_or_directory) return false;
+    if (sdk_directory_exists) return true; // Complete SDK tree was collected.
+    error.clear();
+    const auto directory = host_path("/usr/local/lib");
+    const bool host_directory_exists = fs::is_directory(directory, error);
+    if (error && error != std::errc::no_such_file_or_directory) return false;
+    if (!host_directory_exists) return true;
+
+    // The default command's two -l roots and every architecture/OS SDK
+    // re-export form a conservative set of names the linker can look up here.
+    // This is a fresh namespace lookup, not a list cached from the last build:
+    // additions, removals, aliases and new transitive TBD names are observed.
+    // Unrelated Homebrew libraries cannot be chosen by these roots; inspecting
+    // their dyld dependencies would incorrectly model them as executed tools.
+    std::set<std::string> candidates = {"libc++.tbd", "libc++.dylib", "libc++.so", "libc++.a",
+                                         "libSystem.tbd", "libSystem.dylib", "libSystem.so", "libSystem.a"};
+    std::set<std::string> checked;
+    for (;;) {
+      for (const auto &reference : stub_references) {
+        const auto path = fs::path(reference), leaf = path.filename();
+        // Options.cpp:1153-1199 searches frameworks via -F, and never searches
+        // -L for a .dylib embedded inside a framework. Other indirect library
+        // lookups use the literal leaf and its .tbd replacement (no lib prefix).
+        if (reference.find('/' + leaf.string() + ".framework/") != std::string::npos ||
+            (path.extension() == ".dylib" && reference.find(".framework/") != std::string::npos)) continue;
+        candidates.insert(leaf.string());
+        auto stub = leaf; stub.replace_extension(".tbd"); candidates.insert(stub.string());
+      }
+      if (candidates.size() > 131072) return false;
+      bool changed = false;
+      for (const auto &name : candidates) {
+        if (!checked.insert(name).second) continue;
+        changed = true;
+        const auto path = directory / name;
+        error.clear(); const auto status = fs::status(path, error);
+        if (error == std::errc::no_such_file_or_directory || status.type() == fs::file_type::not_found) continue;
+        if (error || !fs::is_regular_file(status)) return false;
+        // A selected ordinary binary/archive requires its own link-input
+        // dependency closure; don't confuse that with the tools' dyld graph.
+        // Admit only supported text stubs, including a stub behind an alias
+        // with a .dylib/extensionless name, and collect its re-exports as well.
+        if (!add(path) || !read_stub(path)) return false;
+      }
+      if (!changed) break;
+    }
+    return true;
+  }
 public:
   collector(fs::path selected_driver, fs::path directory, fs::path selected_runtime,
             link_plan selected_plan, probe inspect_image, fs::path host_root = "/")
@@ -473,6 +547,7 @@ public:
       const bool present = fs::exists(directory, error);
       if (error || (present && !tree(directory, true))) return {};
     }
+    if (!local_library_inputs()) return {};
     // Absolute re-export lookup differs from standard -L/-F lookup: when the
     // SDK/inlined stub cannot satisfy it, ld can try the raw host pathname.
     // Until ordinary host link-input closure is modeled, refuse that profile.

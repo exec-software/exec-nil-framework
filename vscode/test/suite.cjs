@@ -275,8 +275,16 @@ exports.run = async function run() {
       await eventually(() => events.length > start, "rejected compiler task");
       assert.equal(events[start].task, "compile");
       assert.notEqual(events[start].exitCode, 0);
-      const diagnostics = await eventually(() => {
-        const items = vscode.languages.getDiagnostics(invalid.uri).filter((item) => item.source === "nilcompiler");
+      const diagnostics = await eventually(async () => {
+        // Compiler diagnostics use physical source paths. On macOS /tmp and
+        // /private/tmp identify the same file but have different URI spellings.
+        // Require the correct file identity and compiler source in Problems.
+        const items = [];
+        for (const [uri, entries] of vscode.languages.getDiagnostics()) {
+          if (uri.scheme === "file" && await sameFile(uri.fsPath, invalid.uri.fsPath)) {
+            items.push(...entries.filter((item) => item.source === "nilcompiler"));
+          }
+        }
         return items.length && items;
       }, "Matrix compiler problem matcher");
       assert.ok(diagnostics.some((item) => item.range.start.line === 2 && /Type mismatch/.test(item.message)));

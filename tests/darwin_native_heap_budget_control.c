@@ -15,6 +15,9 @@ static nil_heap_snapshot_fn snapshot;
 static nil_heap_fail_realloc_fn fail_next_realloc;
 static void *volatile retained[2048];
 static volatile unsigned char observed;
+#if defined(NIL_HEAP_BUDGET_NESTED_TEST)
+extern void nil_heap_nested_verify_threads(void);
+#endif
 
 static void write_all(int fd, const char *text) {
     size_t left = strlen(text);
@@ -126,6 +129,10 @@ int main(int argc, char **argv) {
     require(snapshot && fail_next_realloc, "heap budget injection absent\n");
     require(argc == 2, "expected one control mode\n");
     (void)state();
+#if defined(NIL_HEAP_BUDGET_NESTED_TEST)
+    if (strcmp(argv[1], "positive") == 0 && strcmp(getenv("NIL_DARWIN_HEAP_WITHHOLD"), "0") == 0)
+        nil_heap_nested_verify_threads();
+#endif
     if (strcmp(argv[1], "positive") == 0) { positive(); return 0; }
     require(strcmp(argv[1], "retain") == 0, "unknown control mode\n");
     /* Do not touch payload pages: a footprint-only replacement can miss this.

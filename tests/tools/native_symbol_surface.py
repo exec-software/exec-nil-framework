@@ -7,13 +7,18 @@ target supplies those hooks deliberately; anything beyond them it has to
 satisfy with stubs it should never need, and a libc symbol arriving by
 accident is exactly the kind of drift that is invisible on a hosted host.
 
-The ELF symbol table is read directly rather than shelling out to nm, so the
-contract does not depend on binutils being installed.
+The ELF symbol table is read directly. COFF and Mach-O use an explicitly
+provided llvm-nm, with no demangling and only the Darwin ABI's one leading
+underscore removed. The relocation checks apply only to ELF x86_64; the
+import/export and LLVM-IR checks run on every supported object profile.
 """
 from __future__ import annotations
 
 import argparse
+from functools import partial
 from pathlib import Path
+import platform
+import re
 import struct
 import subprocess
 import sys
@@ -41,7 +46,65 @@ concat_imports = {'strlen', 'memcpy', 'calloc'}
 freestanding_concat_imports = {'nyrt_str_length', 'nyrt_mem_copy', 'nyrt_alloc'}
 
 
-def undefined_symbols(path: Path) -> set[str]:
+def object_profile(path: Path) -> tuple[str, str]:
+    """Validate a single supported relocatable object, never an archive/image."""
+    data = path.read_bytes()
+    if data.startswith(b'\x7fELF'):
+        if len(data) < 64 or data[4:7] != b'\x02\x01\x01':
+            raise AssertionError(f'expected ELF64 little-endian version 1: {path}')
+        kind, machine = struct.unpack_from('<HH', data, 16)
+        if kind != 1 or machine not in (62, 183):
+            raise AssertionError(f'expected x86_64/arm64 ELF relocatable object: {path}')
+        return 'ELF', 'x86_64' if machine == 62 else 'arm64'
+    if data.startswith(b'\xcf\xfa\xed\xfe'):
+        if len(data) < 32:
+            raise AssertionError(f'truncated Mach-O header: {path}')
+        cpu, _subtype, kind, commands, command_bytes = struct.unpack_from('<IIIII', data, 4)
+        if (cpu not in (0x1000007, 0x100000c) or kind != 1 or not commands or
+                commands > command_bytes // 8 or command_bytes > len(data) - 32):
+            raise AssertionError(f'expected x86_64/arm64 Mach-O MH_OBJECT: {path}')
+        return 'Mach-O', 'x86_64' if cpu == 0x1000007 else 'arm64'
+    if len(data) >= 20:
+        machine, sections, _timestamp, _symbols, _symbol_count, optional, flags = struct.unpack_from('<HHIIIHH', data)
+        if (machine in (0x8664, 0xaa64) and sections and optional == 0 and
+                not flags & 0x0002 and 20 + sections * 40 <= len(data)):
+            return 'COFF', 'x86_64' if machine == 0x8664 else 'arm64'
+    raise AssertionError(f'unsupported or malformed native relocatable object: {path}')
+
+
+def nm_names(output: str, profile: tuple[str, str]) -> set[str]:
+    names = set()
+    for name in output.splitlines():
+        # The fixture's ABI names are ASCII identifiers; prefixes such as an
+        # archive/member heading, an address/type column, or demangled spaces
+        # must never silently become a symbol. Preserve all language underscores.
+        if not re.fullmatch(r'[A-Za-z_.$?@][A-Za-z_0-9.$?@]*', name):
+            raise AssertionError(f'unexpected llvm-nm just-symbols output: {name!r}')
+        if profile[0] == 'Mach-O':
+            if not name.startswith('_'):
+                raise AssertionError(f'Mach-O external symbol lacks Darwin ABI underscore: {name!r}')
+            name = name[1:]
+        if not name or name in names:
+            raise AssertionError(f'empty or duplicate external symbol: {name!r}')
+        names.add(name)
+    return names
+
+
+def undefined_symbols(path: Path, llvm_nm: Path | None = None) -> tuple[set[str], set[str]]:
+    profile = object_profile(path)
+    if profile[0] != 'ELF':
+        if llvm_nm is None or not llvm_nm.is_file():
+            raise AssertionError(f'{profile[0]} symbol checks require an explicit existing --llvm-nm executable')
+        sets = []
+        for selection in ('--undefined-only', '--defined-only'):
+            command = [str(llvm_nm), '--format=just-symbols', '--extern-only',
+                       '--no-demangle', selection, str(path)]
+            result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True,
+                                    text=True, timeout=30)
+            if result.returncode or result.stderr:
+                raise AssertionError((command, result.returncode, result.stdout, result.stderr))
+            sets.append(nm_names(result.stdout, profile))
+        return sets[0], sets[1]
     data = path.read_bytes()
     if data[:4] != b'\x7fELF':
         raise SystemExit(f'not an ELF object: {path}')
@@ -117,6 +180,8 @@ def absolute_relocation_count(obj: Path) -> int:
     misbehaving. Read from the section headers directly, so the check needs no
     binutils.
     """
+    if object_profile(obj) != ('ELF', 'x86_64'):
+        raise AssertionError('32-bit absolute relocation check requires ELF x86_64')
     data = obj.read_bytes()
     if data[:4] != b'\x7fELF' or data[4] != 2 or data[5] != 1:
         raise SystemExit(f'expected a little-endian 64-bit object: {obj}')
@@ -143,7 +208,7 @@ def absolute_relocation_count(obj: Path) -> int:
 def emit(compiler: Path, assembler: Path, root: Path, name: str, source: str,
          freestanding: bool = False, no_red_zone: bool = False,
          code_model: str | None = None,
-         ir: Path | None = None):
+         ir: Path | None = None, llvm_nm: Path | None = None):
     path = root / f'{name}.ny'
     path.write_text(source, newline='\n')
     nil = root / f'{name}.nil'
@@ -162,23 +227,24 @@ def emit(compiler: Path, assembler: Path, root: Path, name: str, source: str,
         result = subprocess.run(list(map(str, command)), stdin=subprocess.DEVNULL,
                                 capture_output=True, text=True, timeout=120)
         assert result.returncode == 0, (command, result.returncode, result.stdout, result.stderr)
-    return undefined_symbols(obj)
+    return undefined_symbols(obj, llvm_nm)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--compiler', type=Path, required=True)
     parser.add_argument('--assembler', type=Path, required=True)
+    parser.add_argument('--llvm-nm', type=Path,
+                        help='Explicit LLVM symbol reader, required for COFF and Mach-O objects')
     args = parser.parse_args()
-    if sys.platform != 'linux':
-        print('SKIP: the native symbol surface is pinned on ELF hosts')
-        return 77
 
     checks = 0
     with tempfile.TemporaryDirectory(prefix='nil-symbol-surface-') as directory:
         root = Path(directory)
+        emit_case = partial(emit, args.compiler, args.assembler, root, llvm_nm=args.llvm_nm)
         trivial = 'fn main() -> i64 {\n    let total: i64 = 0;\n    return total;\n}\n'
-        plain, plain_exports = emit(args.compiler, args.assembler, root, 'plain', trivial)
+        plain, plain_exports = emit_case('plain', trivial)
+        profile = object_profile(root / 'plain.o')
         assert plain <= runtime_abi, (
             'an object that uses no hosted facility imports only the native runtime ABI; '
             f'unexpected: {sorted(plain - runtime_abi)}')
@@ -194,7 +260,7 @@ def main() -> int:
                          '    let b: text = "right";\n'
                          '    let joined: text = a + b;\n'
                          '    return 0;\n}\n')
-        concat, _ = emit(args.compiler, args.assembler, root, 'concat',
+        concat, _ = emit_case('concat',
                          concatenating)
         assert concat_imports <= concat, (
             'a concatenating program must still import the helper dependencies; '
@@ -211,8 +277,7 @@ def main() -> int:
         # dependencies become runtime hooks, and no libc name may survive --
         # a freestanding consumer satisfying calloc at all is the reverse-
         # engineered-shim problem this exists to remove.
-        free_concat, _ = emit(args.compiler, args.assembler, root,
-                              'free_concat', concatenating, freestanding=True)
+        free_concat, _ = emit_case('free_concat', concatenating, freestanding=True)
         assert freestanding_concat_imports <= free_concat, (
             'a freestanding concatenating program must reach memory through the '
             'runtime hooks; missing: '
@@ -235,7 +300,7 @@ def main() -> int:
         assert 'main' in plain_exports and '__ny_entry' not in plain_exports, (
             f'a hosted object is entered through main; exports: {sorted(plain_exports)}')
         checks += 1
-        free, free_exports = emit(args.compiler, args.assembler, root, 'free',
+        free, free_exports = emit_case('free',
                                   trivial, freestanding=True)
         assert '__ny_entry' in free_exports and 'main' not in free_exports, (
             'a freestanding object is entered through __ny_entry and defines no C main; '
@@ -256,14 +321,14 @@ def main() -> int:
                        '@interop("host")\n'
                        f'fn {host_symbol}(message: text) -> i64\n'
                        'end fn\n\n')
-        unused, _ = emit(args.compiler, args.assembler, root, 'host_unused',
+        unused, _ = emit_case('host_unused',
                          declaration + 'fn main() -> i64 {\n    return 0;\n}\n',
                          freestanding=True)
         assert host_symbol not in unused, (
             'a host symbol that is never called must not be imported; '
             f'imports: {sorted(unused)}')
         checks += 1
-        called, _ = emit(args.compiler, args.assembler, root, 'host_called',
+        called, _ = emit_case('host_called',
                          declaration + 'fn main() -> i64 {\n'
                          '    let greeting: text = "from ny";\n'
                          f'    return {host_symbol}(greeting);\n'
@@ -288,31 +353,31 @@ def main() -> int:
         # string constants of a program that never asked to be low. The large
         # model removes them, and the first assertion keeps the second from
         # passing because the program had no addresses to materialize.
-        emit(args.compiler, args.assembler, root, 'small', concatenating,
-             freestanding=True)
-        small_absolutes = absolute_relocation_count(root / 'small.o')
-        assert small_absolutes > 0, (
-            'the default code model is expected to use 32-bit absolute '
-            'relocations; this check would otherwise prove nothing')
-        checks += 1
-        emit(args.compiler, args.assembler, root, 'large', concatenating,
-             freestanding=True, code_model='large')
-        large_absolutes = absolute_relocation_count(root / 'large.o')
-        assert large_absolutes == 0, (
-            'an object emitted for the large code model must have no 32-bit '
-            f'absolute relocations; found {large_absolutes}')
-        checks += 1
+        relocation_checks = 0
+        if profile == ('ELF', 'x86_64'):
+            emit_case('small', concatenating, freestanding=True)
+            small_absolutes = absolute_relocation_count(root / 'small.o')
+            assert small_absolutes > 0, (
+                'the default code model is expected to use 32-bit absolute '
+                'relocations; this check would otherwise prove nothing')
+            relocation_checks += 1
+            emit_case('large', concatenating, freestanding=True, code_model='large')
+            large_absolutes = absolute_relocation_count(root / 'large.o')
+            assert large_absolutes == 0, (
+                'an object emitted for the large code model must have no 32-bit '
+                f'absolute relocations; found {large_absolutes}')
+            relocation_checks += 1
 
         # The red zone is a separate decision from the entry shape: a target
         # whose interrupt entry switches stacks keeps it, a kernel-reentrant
         # one cannot. So it is its own option and is checked on its own.
         hosted_ir = root / 'hosted.ll'
-        emit(args.compiler, args.assembler, root, 'hosted_ir', trivial, ir=hosted_ir)
+        emit_case('hosted_ir', trivial, ir=hosted_ir)
         assert definitions_without_noredzone(hosted_ir), (
             'the red zone stays available unless it is turned off')
         checks += 1
         guarded_ir = root / 'guarded.ll'
-        emit(args.compiler, args.assembler, root, 'guarded_ir', trivial,
+        emit_case('guarded_ir', trivial,
              freestanding=True, no_red_zone=True, ir=guarded_ir)
         missing = definitions_without_noredzone(guarded_ir)
         assert not missing, (
@@ -320,7 +385,19 @@ def main() -> int:
             f'without it: {missing}')
         checks += 1
 
-    print(f'Native symbol surface: {checks} checks passed')
+        expected_format = {'linux': 'ELF', 'win32': 'COFF', 'darwin': 'Mach-O'}.get(sys.platform)
+        expected_architecture = {'x86_64': 'x86_64', 'amd64': 'x86_64',
+                                 'arm64': 'arm64', 'aarch64': 'arm64'}.get(platform.machine().lower())
+        assert profile == (expected_format, expected_architecture), (
+            f'default object profile {profile} differs from host {(expected_format, expected_architecture)}')
+        assert all(object_profile(path) == profile for path in root.glob('*.o')), (
+            'object profile changed between native surface fixtures')
+
+    print(f'Native symbol surface ({profile[0]} {profile[1]}): {checks} generic ABI/IR checks passed')
+    if relocation_checks:
+        print(f'ELF x86_64 small/large-model relocation checks: {relocation_checks} passed')
+    else:
+        print(f'Relocation coverage is limited to ELF x86_64; {profile[0]} {profile[1]} is outside that profile')
     return 0
 
 

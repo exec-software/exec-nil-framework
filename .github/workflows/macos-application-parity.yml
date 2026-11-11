@@ -138,8 +138,8 @@ jobs:
           from pathlib import Path
           expected = {'compiler.darwin-module-fingerprint', 'ny.native-managed-lifetime', 'ny.native-owned-lifetime',
                       'nil.file-time-support', 'nil.file-modified-at-contract',
-                      'nil.freestanding-hook-default', 'nil.freestanding-hook-override'}
-          pattern = r'^(compiler[.]darwin-module-fingerprint|ny[.]native-(managed|owned)-lifetime|nil[.]file-(time-support|modified-at-contract)|nil[.]freestanding-hook-(default|override))$'
+                      'nil.freestanding-hook-default', 'nil.freestanding-hook-override', 'nil.native-symbol-surface'}
+          pattern = r'^(compiler[.]darwin-module-fingerprint|ny[.]native-(managed|owned)-lifetime|nil[.]file-(time-support|modified-at-contract)|nil[.]freestanding-hook-(default|override)|nil[.]native-symbol-surface)$'
           base = ['ctest', '--test-dir', 'build/application', '-R', pattern]
           root = Path('build/application-evidence').resolve()
           inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)

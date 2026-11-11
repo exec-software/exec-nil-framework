@@ -108,10 +108,11 @@ The framework includes:
   [testing guide](docs/tools/testing.md).
 - **Desktop applications.** The Matrix-authored
   [`nil.std.ui`](docs/standard-library/ui.md) provides windows, layout containers,
-  standard controls, typed events, and explicit model synchronization. Its GTK 4
-  provider supports VM and native execution on Linux and Windows development
-  builds. GTK is an external runtime dependency; Windows requires an interactive,
-  visible desktop. This does not extend Windows release qualification.
+  standard controls, typed events, and explicit model synchronization. VM and
+  native desktop checks pass with GTK4 on Linux, Win32 on Windows and AppKit on
+  Intel and Apple Silicon macOS. Linux requires an external GTK4 runtime;
+  desktop tests require an interactive session. Installed SDK and release
+  qualification remain separate from these development checks.
 - **Aperture runtime diagnostics.** Memory profiles record runtime allocations,
   frees, retained storage, peaks and source locations for VM and native programs.
   Saved JSON reports support inspection and automated analysis. See
@@ -260,8 +261,8 @@ native Win32 provider; Linux uses GTK4. macOS editor integration and a complete
 current SDK desktop campaign remain open. The newer socket, entropy and text-byte
 intrinsics pass the same interpreter contracts on Linux, Windows and both Macs.
 File timestamps share an implementation across interpreter and native routes,
-with Linux and Windows text/binary NIL, JIT and AOT checks passing.
-Incremental reuse and native memory-limit tests also remain open, so full platform
+with text/binary NIL, JIT and AOT checks passing on all four hosts.
+Darwin incremental reuse and native allocation-retention tests remain open, so full platform
 parity is not yet established.
 The [platform support matrix](docs/platform-support.md) separates verified
 development behavior from remaining SDK, provider and release work.

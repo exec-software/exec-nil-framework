@@ -140,6 +140,17 @@ driver option is still outside the admitted profile, so this implementation
 does not yet establish default native cache parity. The application workflow
 now requires the actual complete VM/native incremental contract on both hosts.
 
+The next closure slice models the observed explicit `/usr/local/lib` search
+option using Apple's SDK rerooting rules and a fresh candidate lookup on every
+collection. Supported stub shadows and their transitive re-exports are hashed;
+unmodeled binary shadows and archive autolinks disable reuse. Seventy-seven
+Linux checks and sanitizer controls pass. The portable fixture's path keys now
+use generic separators; actual MSVC compilation and all 71 Windows controls
+pass (the additional six Linux controls require symlink creation). The source
+campaign's original Windows fixture failure is retained. Hosted default native
+reuse remains required; `f79b94b` proves VM reuse on ARM but correctly refuses
+the still-unmodeled native search profile in that revision.
+
 ## Darwin allocation retention and editor coverage
 
 The two native lifetime programs remain unchanged. Darwin now has a test-only
@@ -188,6 +199,32 @@ default/override linking and both executions now pass all six phases in the
 private VM, with owned cleanup and unchanged source. The full Windows campaign
 will use the next committed source; its earlier failure remains recorded. The
 current `2632bc6` LLVM-enabled Linux campaign also passes all 580 CTests, no skips.
+
+The `f79b94b` early Darwin controls identify the initialization failure as a
+duplicate-pointer accounting event: libmalloc can nest typed and untyped public
+allocator calls. The fixture now accounts only for the outer request using a
+fixed per-thread table, avoiding first-use TLS allocation. An explicit nesting
+shim reproduces the old failure; ordinary/nested positive, untouched-retention
+and withheld-free controls pass under both GCC and Clang. They include startup,
+realloc preservation and overlapping threads. Coverage counts now subtract the
+ready snapshot. Actual Darwin qualification remains pending this correction.
+
+The shortened Mac editor profile launches successfully. At `f79b94b` the ARM
+Problems check fails because the test requests `/tmp` diagnostics while the
+compiler correctly reports the physical `/private/tmp` file. Retained terminal
+output and Problems entries show the expected compiler source, line and message.
+The harness now checks physical file identity with its existing alias helper,
+while still requiring those diagnostic fields. This is not an editor pass until
+the complete real-host suite finishes; no checks are excluded.
+
+The native symbol-surface harness now reads COFF and Mach-O through explicit
+LLVM tooling instead of skipping those hosts. It preserves the same runtime
+import allowlists and checks freestanding entry/host interop and IR attributes;
+ELF x86_64 relocation assertions remain identified as that format's extra
+coverage. Six actual Clang-emitted format/architecture fixtures validate the
+reader. All sixteen generic checks pass with the real Windows `f79b94b` compiler
+and assembler; Linux passes those plus both ELF relocation checks. Mach-O
+framework execution remains in the next hosted campaign.
 
 Native socket/byte/entropy parity needs a binary-safe value boundary. The new
 VM APIs deliberately carry embedded NUL and arbitrary bytes in `text`; the

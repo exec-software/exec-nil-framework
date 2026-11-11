@@ -689,6 +689,12 @@ if(BUILD_TESTING)
     # test suite when testing was explicitly enabled.
     find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            add_test(NAME nil.darwin-heap-accounting
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/darwin_heap_accounting_contract.py"
+                    --cc "${CMAKE_C_COMPILER}" --output-parent "${CMAKE_BINARY_DIR}/test-evidence")
+            set_tests_properties(nil.darwin-heap-accounting PROPERTIES LABELS "runtime;native;rc" TIMEOUT 120)
+        endif()
         add_test(NAME nilbuild.llvm-dia-configuration
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/llvm_dia_cmake_contract.py"
                 --helper "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NilLlvmDia.cmake"
@@ -790,9 +796,16 @@ if(BUILD_TESTING)
         # consumer has to supply every undefined symbol deliberately, so this
         # boundary widens only on purpose.
         if(NIL_ENABLE_LLVM)
+            find_program(NIL_TEST_LLVM_NM NAMES llvm-nm llvm-nm-18
+                HINTS "${LLVM_DIR}/../../../bin" "${LLVM_DIR}/../bin")
+            set(NIL_SYMBOL_TOOL_ARGUMENTS)
+            if(NIL_TEST_LLVM_NM)
+                list(APPEND NIL_SYMBOL_TOOL_ARGUMENTS --llvm-nm "${NIL_TEST_LLVM_NM}")
+            endif()
             add_test(NAME nil.native-symbol-surface
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_symbol_surface.py"
-                    --compiler $<TARGET_FILE:nilcompiler> --assembler $<TARGET_FILE:nilassembler>)
+                    --compiler $<TARGET_FILE:nilcompiler> --assembler $<TARGET_FILE:nilassembler>
+                    ${NIL_SYMBOL_TOOL_ARGUMENTS})
             set_tests_properties(nil.native-symbol-surface PROPERTIES
                 LABELS "native;abi;rc" SKIP_RETURN_CODE 77 TIMEOUT 180)
         endif()

@@ -151,7 +151,7 @@ the complete admission rules.
 
 - Native incremental reuse is still being qualified. The compiler now resolves
   loaded images to ordinary files and exact shared-cache backing files for full
-  content hashing; its actual Apple Silicon collector test passes at `2632bc6`.
+  content hashing; its actual collector test passes on both Macs at `2632bc6`.
   The builder uses separate preparation and verification digest phases without
   caching source/manifest reads. Native linker dependency collection and real
   VM/native reuse still require both hosted architectures to pass. Incomplete

@@ -38,11 +38,12 @@ std::string plan_text(const detail::link_plan &plan, const fs::path &runtime) {
        plan.sdk.string(), "-mllvm", "-enable-linkonceodr-outlining", "-o", "/dev/null", runtime.string(),
        "-framework", "Cocoa", "-framework", "CoreGraphics", "-lc++", "-lSystem", plan.compiler_rt.string()})
     result += quote(value) + ' ';
+  if (plan.local_libraries) result += quote("-L/usr/local/lib") + ' ';
   return result + '\n';
 }
 std::map<std::string, std::string> identities(const std::vector<fs::path> &files) {
   std::map<std::string, std::string> result;
-  for (const auto &path : files) result[path.string()] = nil::detail::file_digest(path);
+  for (const auto &path : files) result[path.generic_string()] = nil::detail::file_digest(path);
   return result;
 }
 void parsing(const detail::link_plan &plan, const fs::path &runtime) {
@@ -52,6 +53,17 @@ void parsing(const detail::link_plan &plan, const fs::path &runtime) {
         parsed->architecture == "arm64", "real Apple17 plan shape resolves without losing paths");
   auto intel = plan; intel.architecture = "x86_64";
   check(detail::parse_plan(plan_text(intel, runtime), runtime).has_value(), "Intel Apple17 plan resolves");
+  auto local = plan; local.local_libraries = true;
+  const auto local_plan = detail::parse_plan(plan_text(local, runtime), runtime);
+  check(local_plan && local_plan->local_libraries, "observed explicit local library search is modeled");
+  auto separate_local = text; separate_local.insert(separate_local.size() - 1, " \"-L\" \"/usr/local/lib\"");
+  const auto separate_plan = detail::parse_plan(separate_local, runtime);
+  check(separate_plan && separate_plan->local_libraries, "separate-argument local search is equivalent");
+  check(detail::supported_archive_commands("Archive : fixture.a\nfixture.a(member.o):\nLoad command 1\ncmd LC_SEGMENT_64\n"),
+        "ordinary archive load commands admit the fixed link roots");
+  check(!detail::supported_archive_commands("Archive : fixture.a\ncmd LC_LINKER_OPTION\ncount 2\nstring #1 -l\nstring #2 hidden\n"),
+        "archive autolinks require additional modeled library roots");
+  check(!detail::supported_archive_commands(""), "empty archive inspection cannot certify absent autolinks");
   for (const auto &extra : {" \"@response.rsp\"", " \"-L/other/lib\"", " \"-framework\" \"Unknown\"", " \"-force_load\" \"other.a\""}) {
     auto changed = text; changed.insert(changed.size() - 1, extra);
     check(!detail::parse_plan(changed, runtime), "unmodeled link inputs fail closed");
@@ -128,7 +140,7 @@ void closure(const fs::path &root) {
   auto before = identities(*files);
   for (const auto &path : {driver, plan.linker, plan.lto, plan.compiler_rt, runtime,
        plan.installed.parent_path() / "lib/libtapi.dylib", plan.sdk / "usr/lib/system/libdyld.tbd"})
-    check(before.count(path.string()) != 0, "driver, helpers, runtime and transitive stub bytes included");
+    check(before.count(path.generic_string()) != 0, "driver, helpers, runtime and transitive stub bytes included");
   const auto shared = plan.installed.parent_path() / "lib/shared.dylib";
   const auto driver_leaf = plan.installed.parent_path() / "lib/driver-set/leaf.dylib";
   const auto linker_leaf = plan.installed.parent_path() / "lib/linker-set/leaf.dylib";
@@ -138,7 +150,7 @@ void closure(const fs::path &root) {
   descriptions[plan.linker].rpaths.push_back(linker_leaf.parent_path().string());
   descriptions[shared] = {{"@rpath/leaf.dylib"}, {}};
   files = collect();
-  check(files && identities(*files).count(driver_leaf.string()) && identities(*files).count(linker_leaf.string()),
+  check(files && identities(*files).count(driver_leaf.generic_string()) && identities(*files).count(linker_leaf.generic_string()),
         "shared image is resolved in both driver and linker inherited-runpath contexts");
   descriptions[driver] = {};
   descriptions[plan.linker].libraries.pop_back(); descriptions[plan.linker].rpaths.pop_back();
@@ -147,7 +159,7 @@ void closure(const fs::path &root) {
   write(other_driver, "other driver"); write(executable_leaf, "root-specific helper");
   descriptions[other_driver] = {{"@rpath/helper.dylib"}, {"@executable_path/."}};
   files = detail::collector(other_driver, project, runtime, plan, inspect, host).files();
-  check(files && identities(*files).count(executable_leaf.string()), "executable_path follows the current process root");
+  check(files && identities(*files).count(executable_leaf.generic_string()), "executable_path follows the current process root");
   files = collect(); before = identities(*files);
   const auto leaf = plan.sdk / "usr/lib/system/libdyld.tbd";
   const auto timestamp = fs::last_write_time(leaf);
@@ -182,18 +194,72 @@ void closure(const fs::path &root) {
 #ifndef _WIN32
   const auto alias = plan.sdk / "usr/lib/alias.tbd";
   fs::create_symlink("system/libdyld.tbd", alias);
-  files = collect(); check(files && identities(*files).count(alias.string()), "selected file alias retained");
+  files = collect(); check(files && identities(*files).count(alias.generic_string()), "selected file alias retained");
   before = identities(*files);
   fs::remove(alias); fs::create_symlink("libSystem.tbd", alias);
   files = collect(); check(files && identities(*files) != before, "file alias retarget invalidates even when both old targets exist");
   const auto directory_alias = plan.sdk / "usr/lib/current";
   fs::create_directory_symlink("system", directory_alias);
-  files = collect(); check(files && identities(*files).count((directory_alias / "libdyld.tbd").string()),
+  files = collect(); check(files && identities(*files).count((directory_alias / "libdyld.tbd").generic_string()),
                           "directory alias preserves its selected child paths");
   fs::create_directory_symlink(".", plan.sdk / "usr/lib/cycle");
   check(!collect(), "directory symlink cycles fail closed within bounds");
   fs::remove(plan.sdk / "usr/lib/cycle");
 #endif
+  plan.local_libraries = true;
+  files = collect();
+  check(files.has_value(), "explicit local search permits an absent host directory");
+  const auto local = host / "usr/local/lib";
+  write(local / "libunrelated.dylib", "unrelated ordinary binary");
+  files = collect();
+  check(files.has_value(), "unrelated host library cannot become an input of fixed default link roots");
+  write(local / "libc++.tbd", stub("/usr/lib/libc++.1.dylib"));
+  files = collect();
+  check(files && identities(*files).count((local / "libc++.tbd").generic_string()),
+        "direct c++ text stub shadow is captured");
+  before = identities(*files);
+  const auto local_time = fs::last_write_time(local / "libc++.tbd");
+  write(local / "libc++.tbd", stub("/usr/lib/libc++.1.dylib") + "# same-time shadow change\n");
+  fs::last_write_time(local / "libc++.tbd", local_time);
+  files = collect();
+  check(files && identities(*files) != before, "host stub bytes invalidate with preserved timestamps");
+  before = identities(*files);
+  write(local / "libdyld.tbd", stub("/usr/lib/system/libdyld.dylib") +
+        "libraries: [ '/usr/lib/extra-dependency.dylib' ]\n");
+  write(local / "extra-dependency.tbd", stub("/usr/lib/extra-dependency.dylib"));
+  files = collect();
+  check(files && identities(*files) != before && identities(*files).count((local / "extra-dependency.tbd").generic_string()),
+        "new SDK indirect shadow and its additional re-export are collected to a fixed point");
+  fs::remove(local / "extra-dependency.tbd");
+  write(local / "extra-dependency.dylib", "unmodeled ordinary dependency");
+  check(!collect(), "new transitive ordinary shadow disables reuse");
+  fs::remove(local / "extra-dependency.dylib");
+  write(local / "libSystem.a", "!<arch>\n");
+  check(!collect(), "direct static library shadow requires additional link-input closure");
+  fs::remove(local / "libSystem.a");
+  write(local / "libdyld.dylib", "unmodeled ordinary shadow");
+  check(!collect(), "ordinary SDK indirect library shadow disables reuse");
+  write(plan.sdk / "usr/local/lib/sdk-local.tbd", stub("/usr/lib/sdk-local.dylib"));
+  files = collect();
+  check(files && !identities(*files).count((local / "libc++.tbd").generic_string()) &&
+        identities(*files).count((plan.sdk / "usr/local/lib/sdk-local.tbd").generic_string()),
+        "SDK local directory reroots explicit search and hides ordinary host shadows");
+  fs::remove_all(plan.sdk / "usr/local/lib");
+  check(!collect(), "removing SDK local directory observes newly exposed host shadow");
+  fs::remove(local / "libdyld.dylib");
+#ifndef _WIN32
+  const auto local_alias = local / "libSystem.tbd";
+  fs::create_symlink("libc++.tbd", local_alias);
+  files = collect();
+  check(files && identities(*files).count(local_alias.generic_string()), "host candidate alias name is retained");
+  before = identities(*files);
+  fs::remove(local_alias); fs::create_symlink("libdyld.tbd", local_alias);
+  files = collect();
+  check(files && identities(*files) != before, "host candidate alias retarget invalidates");
+#endif
+  plan.local_libraries = false;
+  write(local / "libSystem.dylib", "unmodeled host default");
+  check(collect().has_value(), "implicit standard local path alone never falls back outside the SDK");
   fs::remove(plan.lto);
   check(!collect(), "missing required linker helper disables reuse");
 }

@@ -166,21 +166,25 @@ class DarwinHeapBudget:
         initial, final = events
         if initial['pid'] != final['pid']:
             raise AssertionError(name + ': report crossed process identity')
-        for key in ('allocations', 'frees', 'cumulative', 'target_allocations', 'target_frees', 'typed_calls'):
+        since_ready = {}
+        for key in ('allocations', 'frees', 'cumulative', 'target_allocations', 'target_frees',
+                    'typed_calls', 'reallocations', 'failures', 'unknown_frees', 'withheld'):
             if final[key] < initial[key]:
                 raise AssertionError(name + ': allocator counters moved backwards')
+            since_ready[key] = final[key] - initial[key]
         if negative:
             if (not 0 < final['denied_request'] <= target or
                     final['live'] < BUDGET - 2 * target or
-                    final['target_allocations'] * target < BUDGET * .8 or
-                    (withhold and final['withheld'] == 0)):
+                    since_ready['target_allocations'] * target < BUDGET * .8 or
+                    (withhold and since_ready['withheld'] == 0)):
                 raise AssertionError(name + ': retention did not cause the bounded allocation rejection')
         elif final['withheld'] or final['denied_request']:
             raise AssertionError(name + ': ordinary fixture used negative-control behavior')
         self.report['runs'].append({'name': name, 'expected_budget_rejection': negative,
                                     'withhold_target_frees': withhold, 'events': events,
+                                    'since_ready': since_ready,
                                     'report_file': events_path.name, **record})
-        return final
+        return since_ready
 
     def prepare(self):
         self.command('host-version', ['/usr/bin/sw_vers'], stdout=None)

@@ -266,13 +266,21 @@ inline std::optional<std::vector<std::filesystem::path>> native_toolchain_files(
   // nilbuild currently forwards no -l/--link options. Expanding that command
   // surface requires expanding this closure before admitting those projects.
   if (!library_paths.empty() || runtime.empty()) return std::nullopt;
+  bool local_library_environment = false;
   for (char **entry = *_NSGetEnviron(); entry && *entry; ++entry) {
     const std::string item(*entry);
     const auto equal = item.find('=');
     if (equal == std::string::npos || equal + 1 == item.size()) continue;
     const auto name = item.substr(0, equal);
+    if (name == "LIBRARY_PATH") {
+      // This exact search profile is modeled below and already appears in the
+      // build key. Empty components/other directories are intentionally not
+      // inferred or sanitized; they require a broader search closure.
+      if (item.substr(equal + 1) != "/usr/local/lib") return std::nullopt;
+      local_library_environment = true; continue;
+    }
     if (name.rfind("DYLD_", 0) == 0 || name.rfind("LD_", 0) == 0 || name.rfind("CCC_", 0) == 0 ||
-        name.rfind("CLANG_CONFIG_", 0) == 0 || name == "LIBRARY_PATH" || name == "COMPILER_PATH" ||
+        name.rfind("CLANG_CONFIG_", 0) == 0 || name == "COMPILER_PATH" ||
         name == "GCC_EXEC_PREFIX" || name == "CPATH" || name == "CPLUS_INCLUDE_PATH" ||
         name == "C_INCLUDE_PATH" || name == "OBJC_INCLUDE_PATH" || name == "ARCHFLAGS" ||
         name == "IPHONEOS_DEPLOYMENT_TARGET" || name == "TVOS_DEPLOYMENT_TARGET" ||
@@ -298,7 +306,7 @@ inline std::optional<std::vector<std::filesystem::path>> native_toolchain_files(
                              "-framework", "Cocoa", "-framework", "CoreGraphics"}, true);
   if (!output) return {};
   const auto plan = darwin_toolchain_detail::parse_plan(*output, runtime);
-  if (!plan) return {};
+  if (!plan || (local_library_environment && !plan->local_libraries)) return {};
 #if defined(__aarch64__) || defined(__arm64__)
   if (plan->architecture != "arm64") return {};
 #elif defined(__x86_64__)
@@ -306,6 +314,12 @@ inline std::optional<std::vector<std::filesystem::path>> native_toolchain_files(
 #else
   return {};
 #endif
+  // Archives can carry hidden -l/-framework directives in object load commands.
+  // Keep that unsupported until their names join the modeled search roots.
+  for (const auto &archive : {runtime, plan->compiler_rt}) {
+    const auto commands = query({"/usr/bin/otool", "-arch", plan->architecture, "-l", archive.string()});
+    if (!commands || !darwin_toolchain_detail::supported_archive_commands(*commands)) return {};
+  }
   const auto inspect = [&](const std::filesystem::path &image)
       -> std::optional<darwin_toolchain_detail::image_description> {
     const auto libraries = query({"/usr/bin/otool", "-arch", plan->architecture, "-L", image.string()});

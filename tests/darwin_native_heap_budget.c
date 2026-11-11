@@ -7,6 +7,7 @@
 #include "darwin_native_heap_budget.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,14 +27,18 @@
 #elif defined(NIL_HEAP_BUDGET_PORTABLE_TEST)
 /* Linux --wrap exercises the identical accounting and controls locally. It
  * does not validate Mach-O interposition and cannot admit Darwin coverage. */
-extern void *__real_malloc(size_t);
-extern void *__real_calloc(size_t, size_t);
-extern void *__real_realloc(void *, size_t);
-extern void __real_free(void *);
-extern void *__real_aligned_alloc(size_t, size_t);
-extern int __real_posix_memalign(void **, size_t, size_t);
-extern void *__real_valloc(size_t);
+#if defined(NIL_HEAP_BUDGET_NESTED_TEST)
+#define ORIGINAL(name) nil_heap_nested_##name
+#else
 #define ORIGINAL(name) __real_##name
+#endif
+extern void *ORIGINAL(malloc)(size_t);
+extern void *ORIGINAL(calloc)(size_t, size_t);
+extern void *ORIGINAL(realloc)(void *, size_t);
+extern void ORIGINAL(free)(void *);
+extern void *ORIGINAL(aligned_alloc)(size_t, size_t);
+extern int ORIGINAL(posix_memalign)(void **, size_t, size_t);
+extern void *ORIGINAL(valloc)(size_t);
 #else
 #error This test requires Darwin (or the explicit portable accounting check).
 #endif
@@ -48,6 +53,8 @@ static struct nil_heap_snapshot stats = {
 };
 static int report_fd = -1, ready, withhold, fail_realloc;
 static char token[33];
+#define ACTIVE_THREADS 256u
+static struct { pthread_t owner; int active; } active_calls[ACTIVE_THREADS];
 
 static void lock_tracker(void) {
     while (atomic_flag_test_and_set_explicit(&tracker_lock, memory_order_acquire)) {}
@@ -119,6 +126,38 @@ static void fail_locked(const char *event, int code) {
     if (code == NIL_HEAP_TRACKER_EXIT) tracker_error(event);
     _exit(code);
 }
+
+/* The original allocator can call another interposed public entry point:
+ * notably Darwin's typed/untyped compatibility paths during initialization.
+ * Charge only the outer request, including realloc's internal malloc/free.
+ * Do not use C/C++ TLS: Darwin's first TLV lookup may itself allocate. pthread
+ * self identity is already available to dyld before library initialization.
+ * This fixed table has no lifetime allocation and fails closed if exhausted. */
+static size_t enter_allocator(void) {
+    const pthread_t self = pthread_self();
+    size_t vacant = ACTIVE_THREADS;
+    lock_tracker();
+    for (size_t index = 0; index < ACTIVE_THREADS; ++index) {
+        if (!active_calls[index].active) { if (vacant == ACTIVE_THREADS) vacant = index; }
+        else if (pthread_equal(active_calls[index].owner, self)) {
+            unlock_tracker(); return ACTIVE_THREADS;
+        }
+    }
+    if (vacant == ACTIVE_THREADS) fail_locked("active-thread-limit", NIL_HEAP_TRACKER_EXIT);
+    active_calls[vacant].owner = self; active_calls[vacant].active = 1;
+    unlock_tracker(); return vacant;
+}
+static void leave_allocator(size_t slot) {
+    int saved_errno = errno;
+    lock_tracker(); active_calls[slot].active = 0; unlock_tracker();
+    errno = saved_errno;
+}
+static void *leave_result(void *result, size_t slot) {
+    leave_allocator(slot); return result;
+}
+#define ENTER_OR_FORWARD(call) \
+    const size_t active_slot = enter_allocator(); \
+    if (active_slot == ACTIVE_THREADS) return (call)
 
 static size_t slot_for(void *pointer, int inserting) {
     size_t first_dead = TABLE_COUNT;
@@ -223,32 +262,42 @@ static void *finish_realloc(void *old_pointer, void *pointer, size_t bytes, stru
 }
 
 static void *budget_malloc(size_t bytes) {
-    reserve(bytes, 0); return finish_allocate(ORIGINAL(malloc)(bytes), bytes);
+    ENTER_OR_FORWARD(ORIGINAL(malloc)(bytes));
+    reserve(bytes, 0); return leave_result(finish_allocate(ORIGINAL(malloc)(bytes), bytes), active_slot);
 }
 static void *budget_calloc(size_t count, size_t size) {
-    size_t bytes; if (!calloc_size(count, size, &bytes, 0)) return NULL;
-    reserve(bytes, 0); return finish_allocate(ORIGINAL(calloc)(count, size), bytes);
+    ENTER_OR_FORWARD(ORIGINAL(calloc)(count, size));
+    size_t bytes; if (!calloc_size(count, size, &bytes, 0)) return leave_result(NULL, active_slot);
+    reserve(bytes, 0); return leave_result(finish_allocate(ORIGINAL(calloc)(count, size), bytes), active_slot);
 }
 static void budget_free(void *pointer) {
+    const size_t active_slot = enter_allocator();
+    if (active_slot == ACTIVE_THREADS) { ORIGINAL(free)(pointer); return; }
     if (release(pointer, 0)) ORIGINAL(free)(pointer);
+    leave_allocator(active_slot);
 }
 static void *budget_realloc(void *pointer, size_t bytes) {
+    ENTER_OR_FORWARD(ORIGINAL(realloc)(pointer, bytes));
     struct realloc_state state = begin_realloc(pointer, bytes, 0);
-    if (state.denied) { errno = ENOMEM; return NULL; }
-    return finish_realloc(pointer, ORIGINAL(realloc)(pointer, bytes), bytes, state);
+    if (state.denied) { errno = ENOMEM; return leave_result(NULL, active_slot); }
+    return leave_result(finish_realloc(pointer, ORIGINAL(realloc)(pointer, bytes), bytes, state), active_slot);
 }
 static void *budget_aligned_alloc(size_t alignment, size_t bytes) {
-    reserve(bytes, 0); return finish_allocate(ORIGINAL(aligned_alloc)(alignment, bytes), bytes);
+    ENTER_OR_FORWARD(ORIGINAL(aligned_alloc)(alignment, bytes));
+    reserve(bytes, 0); return leave_result(finish_allocate(ORIGINAL(aligned_alloc)(alignment, bytes), bytes), active_slot);
 }
 static int budget_posix_memalign(void **out, size_t alignment, size_t bytes) {
+    ENTER_OR_FORWARD(ORIGINAL(posix_memalign)(out, alignment, bytes));
     reserve(bytes, 0); void *pointer = NULL;
     int result = ORIGINAL(posix_memalign)(&pointer, alignment, bytes);
     finish_allocate(result == 0 ? pointer : NULL, bytes);
     if (result == 0) *out = pointer;
+    leave_allocator(active_slot);
     return result;
 }
 static void *budget_valloc(size_t bytes) {
-    reserve(bytes, 0); return finish_allocate(ORIGINAL(valloc)(bytes), bytes);
+    ENTER_OR_FORWARD(ORIGINAL(valloc)(bytes));
+    reserve(bytes, 0); return leave_result(finish_allocate(ORIGINAL(valloc)(bytes), bytes), active_slot);
 }
 
 #if defined(__APPLE__)
@@ -264,32 +313,42 @@ NIL_HEAP_INTERPOSE(budget_valloc, valloc)
 /* Modern Apple Clang can rewrite ordinary calls to typed allocation symbols.
  * Intercept these actual entry points too, preserving the type argument. */
 static void *budget_type_malloc(size_t bytes, malloc_type_id_t type) {
-    reserve(bytes, 1); return finish_allocate(malloc_type_malloc(bytes, type), bytes);
+    ENTER_OR_FORWARD(malloc_type_malloc(bytes, type));
+    reserve(bytes, 1); return leave_result(finish_allocate(malloc_type_malloc(bytes, type), bytes), active_slot);
 }
 static void *budget_type_calloc(size_t count, size_t size, malloc_type_id_t type) {
-    size_t bytes; if (!calloc_size(count, size, &bytes, 1)) return NULL;
-    reserve(bytes, 1); return finish_allocate(malloc_type_calloc(count, size, type), bytes);
+    ENTER_OR_FORWARD(malloc_type_calloc(count, size, type));
+    size_t bytes; if (!calloc_size(count, size, &bytes, 1)) return leave_result(NULL, active_slot);
+    reserve(bytes, 1); return leave_result(finish_allocate(malloc_type_calloc(count, size, type), bytes), active_slot);
 }
 static void budget_type_free(void *pointer, malloc_type_id_t type) {
+    const size_t active_slot = enter_allocator();
+    if (active_slot == ACTIVE_THREADS) { malloc_type_free(pointer, type); return; }
     if (release(pointer, 1)) malloc_type_free(pointer, type);
+    leave_allocator(active_slot);
 }
 static void *budget_type_realloc(void *pointer, size_t bytes, malloc_type_id_t type) {
+    ENTER_OR_FORWARD(malloc_type_realloc(pointer, bytes, type));
     struct realloc_state state = begin_realloc(pointer, bytes, 1);
-    if (state.denied) { errno = ENOMEM; return NULL; }
-    return finish_realloc(pointer, malloc_type_realloc(pointer, bytes, type), bytes, state);
+    if (state.denied) { errno = ENOMEM; return leave_result(NULL, active_slot); }
+    return leave_result(finish_realloc(pointer, malloc_type_realloc(pointer, bytes, type), bytes, state), active_slot);
 }
 static void *budget_type_aligned_alloc(size_t alignment, size_t bytes, malloc_type_id_t type) {
-    reserve(bytes, 1); return finish_allocate(malloc_type_aligned_alloc(alignment, bytes, type), bytes);
+    ENTER_OR_FORWARD(malloc_type_aligned_alloc(alignment, bytes, type));
+    reserve(bytes, 1); return leave_result(finish_allocate(malloc_type_aligned_alloc(alignment, bytes, type), bytes), active_slot);
 }
 static int budget_type_posix_memalign(void **out, size_t alignment, size_t bytes, malloc_type_id_t type) {
+    ENTER_OR_FORWARD(malloc_type_posix_memalign(out, alignment, bytes, type));
     reserve(bytes, 1); void *pointer = NULL;
     int result = malloc_type_posix_memalign(&pointer, alignment, bytes, type);
     finish_allocate(result == 0 ? pointer : NULL, bytes);
     if (result == 0) *out = pointer;
+    leave_allocator(active_slot);
     return result;
 }
 static void *budget_type_valloc(size_t bytes, malloc_type_id_t type) {
-    reserve(bytes, 1); return finish_allocate(malloc_type_valloc(bytes, type), bytes);
+    ENTER_OR_FORWARD(malloc_type_valloc(bytes, type));
+    reserve(bytes, 1); return leave_result(finish_allocate(malloc_type_valloc(bytes, type), bytes), active_slot);
 }
 NIL_HEAP_INTERPOSE(budget_type_malloc, malloc_type_malloc)
 NIL_HEAP_INTERPOSE(budget_type_calloc, malloc_type_calloc)
