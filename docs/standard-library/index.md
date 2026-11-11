@@ -20,6 +20,10 @@ pagination, projection and the Matrix-authored collection terminals.
 The [vector norm reference](math-vectors.md) describes stable two- and
 three-component lengths, finite-value checks, and checked normalization shared
 by Ny and Matrix.
+The [socket reference](sockets.md) defines TCP listening, accepting,
+connecting and transfer, with opaque handles the runtime closes for a program
+that does not.
+
 The [random-generator reference](random.md) defines independent mutable
 streams, reproducible seeds, cloning, and bounded integer/floating sampling.
 The [checked text-span reference](text-spans.md) defines exact byte ranges,
@@ -212,12 +216,18 @@ fixed-width encoding, and CRC, including detection of a one-bit change.
 Each active `nil.std` family has at least one exact-output fixture through
 textual and binary NIL, but those fixtures establish selected behavior rather
 than every declaration in a family. The aggregate `prelude` has strict
-compile/package coverage, not its own standalone behavior oracle. Network
-transports, JSON, broad concurrency/threading, compression,
-cryptographic hashing, encryption, and secure random generation remain experimental.
-`http.send` and all network transports remain quarantined because no runtime
-dispatcher is shipped, and active `nil.std.system` does not include subprocess
-execution or agent messaging.
+compile/package coverage, not its own standalone behavior oracle. JSON, broad
+concurrency/threading, compression, cryptographic hashing and encryption remain
+experimental, and active `nil.std.system` does not include subprocess execution
+or agent messaging.
+
+TCP stream sockets are active as of `nil.std.net.socket`, and secure random
+values as of `nil.std.security.random`; both are interpreter-backed and their
+contracts are checked by dedicated fixtures. See the
+[socket reference](sockets.md) and the secure-random section of the
+[random reference](random.md). `http.send` and the higher-level transports —
+HTTP client and server, WebSocket, IMAP, SMTP — remain quarantined, now for
+want of a built provider rather than for want of a transport to build one on.
 
 The [database and networking capability boundary](database-networking.md)
 records the audited split between active deterministic builders and quarantined

@@ -1,0 +1,112 @@
+!!! Cryptographically secure random values.
+!!!
+!!! nil.std.math is MINSTD, seeded at 12345, and says itself that it is not
+!!! cryptographic. Before nil.std.security's random intrinsics there was no
+!!! alternative anywhere in the standard library, and /dev/urandom was no way
+!!! round it: the file intrinsics refuse a character device by design. Any
+!!! library needing a session id, a token or a nonce had to either invent
+!!! something predictable or drop the feature.
+!!!
+!!! Nothing here can assert a particular value, which is the point. What it
+!!! asserts is the shape, the bounds, and that two draws differ — the last
+!!! being the one check that would have caught MINSTD standing in for this.
+
+book matrix.entropy
+
+read nil.std.core
+read nil.std.text.string_utils
+read nil.std.security.random
+
+!!! Reports a Result<text> as a width, or minus one if it failed, so the
+!!! expected output does not depend on the bytes drawn.
+hex-width receives byte-count as number returns number begin paragraph
+    value drawn is nil.std.security::random_hex with byte_count being byte-count
+    consider drawn
+        when Result.Ok holding token then give nil.std.text::length with s being token
+        otherwise give 0 minus 1
+    end consider
+end paragraph
+
+hex-of receives byte-count as number returns text begin paragraph
+    value drawn is nil.std.security::random_hex with byte_count being byte-count
+    consider drawn
+        when Result.Ok holding token then give token
+        otherwise give ""
+    end consider
+end paragraph
+
+!!! Whether every character is a lower-case hex digit. A generator that
+!!! returned raw bytes through the hex door would fail here.
+all-hex receives token as text returns boolean begin paragraph
+    value width is nil.std.text::length with s being token
+    when width is less than 1 then
+        give false
+    end when
+    variable index as number is 0
+    repeat while index is less than width
+        value code is nil.std.text::byte_at with s being token, index being index
+        value is-digit is code is at least 48 and code is at most 57
+        value is-lower is code is at least 97 and code is at most 102
+        when not (is-digit or is-lower) then
+            give false
+        end when
+        set index to index plus 1
+    end repeat
+    give true
+end paragraph
+
+main returns number begin paragraph
+    !!! Two hex characters per byte, which is what makes the width predictable
+    !!! even though the content is not.
+    say hex-width with byte-count being 16
+    say hex-width with byte-count being 32
+
+    !!! The bounds are refused rather than clamped: a caller asking for zero
+    !!! bytes of entropy has a bug, and so has one asking for a megabyte.
+    say hex-width with byte-count being 0
+    say hex-width with byte-count being 1025
+
+    value token is hex-of with byte-count being 16
+    say (all-hex with token being token) becomes text
+
+    !!! The check that matters. Two draws from a secure source differ; two
+    !!! draws from a counter or a seeded LCG at a fixed start do not.
+    say (not ((hex-of with byte-count being 16) equals (hex-of with byte-count being 16))) becomes text
+
+    !!! Raw bytes come back as text and are read by byte, not by character.
+    value raw is nil.std.security::random_bytes with byte_count being 8
+    consider raw
+        when Result.Ok holding bytes then say nil.std.text::length with s being bytes
+        otherwise say 0 minus 1
+    end consider
+
+    !!! A bounded draw lands inside its bound, every time.
+    variable inside as boolean is true
+    variable round as number is 0
+    repeat while round is less than 50
+        value picked is nil.std.security::random_below with bound being 10
+        consider picked
+            when Result.Ok holding amount then begin block
+                when amount is less than 0 or amount is at least 10 then
+                    set inside to false
+                end when
+            end block
+            otherwise set inside to false
+        end consider
+        set round to round plus 1
+    end repeat
+    say inside becomes text
+
+    !!! A bound of one has exactly one answer, and a bound below one is a bug.
+    value only is nil.std.security::random_below with bound being 1
+    consider only
+        when Result.Ok holding amount then say amount
+        otherwise say 0 minus 1
+    end consider
+    value impossible is nil.std.security::random_below with bound being 0
+    consider impossible
+        when Result.Ok holding amount then say amount
+        otherwise say "refused"
+    end consider
+    give 0
+end paragraph

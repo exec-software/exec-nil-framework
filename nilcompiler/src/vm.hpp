@@ -612,6 +612,22 @@ private:
   std::unordered_map<int64_t, FileHandle> file_handles_;
   int64_t next_file_handle_ = 1;
 
+  // Sockets follow the same rule as streams: a NIL program is given a token,
+  // never a host descriptor, so it cannot read from or close something it was
+  // not handed -- including a descriptor the host opened for its own purposes.
+  // `listening` is kept so that accepting on a connection, or reading from a
+  // listener, is an error with a sentence in it rather than an EINVAL.
+  struct SocketHandle {
+    int descriptor = -1;
+    bool listening = false;
+  };
+  std::unordered_map<int64_t, SocketHandle> socket_handles_;
+  int64_t next_socket_handle_ = 1;
+
+  // Closes every socket a run still holds. A program that exits without
+  // closing its listener must not leave the port bound against the next one.
+  void closeOpenSockets();
+
   // Type size helper (simplified - all types are 8 bytes for now)
   size_t get_type_size(const std::string &type_name) const {
     return 8; // All types treated as 64-bit for simplicity

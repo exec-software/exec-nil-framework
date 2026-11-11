@@ -1023,6 +1023,21 @@ if(BUILD_TESTING)
                     --interpreter $<TARGET_FILE:nilinterpreter>
                     --root "${CMAKE_CURRENT_SOURCE_DIR}")
         set_tests_properties(matrix.samples PROPERTIES LABELS "matrix;routes" TIMEOUT 180)
+        # The network intrinsics, against a real peer. A socket cannot be
+        # checked by comparing stdout, because the interesting behaviour is
+        # what the other end of the connection sees: the test runs a Matrix
+        # page as a process and plays the other side from Python. It covers
+        # the cases a simpler fixture passes without exercising -- an opaque
+        # handle refusing a number it never issued, a leaked listener whose
+        # port the runtime still has to release, a read deadline expiring, and
+        # a peer that vanishes mid-write being reported rather than killing
+        # the process.
+        add_test(NAME net.socket-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/net_socket_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --root "${CMAKE_CURRENT_SOURCE_DIR}")
+        set_tests_properties(net.socket-contract PROPERTIES LABELS "net;routes;rc" TIMEOUT 300)
         add_test(NAME nillsp.semantic-protocol
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lsp_semantic_protocol.py"
                     --lsp $<TARGET_FILE:nillsp>)

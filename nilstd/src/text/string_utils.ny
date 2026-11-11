@@ -785,3 +785,39 @@ end fn
 pub fn int_to_string_i64(n: i64) -> text
     return _int64_to_string(n)
 end fn
+
+# =============================================================================
+# Byte access
+# =============================================================================
+#
+# This module measures and slices by byte — length of "café" is 5 — but had
+# no way to read a byte as a number. The conversion that looked like it would,
+# convert.char_to_i32, takes a whole Unicode scalar and raises on a partial
+# one, and that raise is a fatal runtime error rather than a fault `attempt`
+# can catch. So a byte in the middle of a multi-byte character could not be
+# inspected, and such a character could not be isolated in order to inspect it
+# whole, because isolating it needed the same test. Percent-encoding anything
+# outside ASCII was unreachable because of this, and so was reading the bytes
+# off a socket.
+#
+# These two are about bytes and say so in their names. They know nothing about
+# UTF-8; assembling characters from bytes is the caller's job, and now it is a
+# job that can be done.
+
+# The byte at an index, 0..255, or minus one when the index is out of range.
+#
+# Out of range answers rather than raising, because reading past the end is
+# how a scan over bytes discovers it has finished, and a loop that must check
+# the length separately is a loop that will sometimes forget to.
+@intrinsic("text.byte_at")
+pub fn byte_at(s: text, index: i64) -> i64
+
+# One byte as text. Not one character.
+#
+# from_byte(195) is the single byte 0xC3, where convert.i32_to_char(195) is
+# the two bytes that encode U+00C3. Joining text joins bytes, so a multi-byte
+# character can be built one byte at a time with this.
+#
+# A code outside 0..255 gives empty text.
+@intrinsic("text.from_byte")
+pub fn from_byte(code: i64) -> text

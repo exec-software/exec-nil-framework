@@ -13,6 +13,8 @@
 #include "numeric_literal.hpp"
 #include "scalar_text.hpp"
 #include "integer_conversion.hpp"
+#include "entropy_support.hpp"
+#include "net_support.hpp"
 #include "secure_file_io.hpp"
 #include "time_support.hpp"
 #include "../../common/windows_environment.hpp"
@@ -746,6 +748,22 @@ std::ostream &VM::outputStream() {
   return output_stream_ ? *output_stream_ : std::cout;
 }
 
+/**
+ * Closes every socket a run still holds.
+ *
+ * A NIL program is not required to close its listener before it exits, and a
+ * program that crashes certainly will not. Leaving the descriptor open would
+ * leave the port bound against the next run, which during development means
+ * every second start of a server fails for a reason that has nothing to do
+ * with the code just changed.
+ */
+void VM::closeOpenSockets() {
+  for (auto &entry : socket_handles_)
+    net_support::close_descriptor(entry.second.descriptor);
+  socket_handles_.clear();
+  next_socket_handle_ = 1;
+}
+
 void VM::resetRuntimeState(const std::string &root_function) {
   // Configuration belongs to the host and survives a restart. Everything that
   // can be observed or owned by the Ny program belongs to one invocation.
@@ -757,6 +775,7 @@ void VM::resetRuntimeState(const std::string &root_function) {
   databases_.clear();
   file_handles_.clear();
   next_file_handle_ = 1;
+  closeOpenSockets();
   stack_.clear();
   globals_.clear();
   gc_marked_structs_.clear();
@@ -1093,6 +1112,8 @@ void VM::validateCheckpointAdmission() const {
     throw std::runtime_error("VM checkpoints do not support memory profiling");
   if (!file_handles_.empty())
     throw std::runtime_error("VM checkpoints do not support open file handles");
+  if (!socket_handles_.empty())
+    throw std::runtime_error("VM checkpoints do not support open sockets");
   for (const auto &instruction : program_) {
     switch (instruction.op) {
     case Opcode::INTEROP_CALL:
@@ -3749,6 +3770,388 @@ void VM::executeInstruction(const Instruction &instr) {
         pushStack(args_[static_cast<std::size_t>(index)]);
         return;
       }
+    }
+
+    // --- Network intrinsics ---
+    //
+    // The standard library has described sockets and an HTTP server for a
+    // while with nothing underneath them. This is that floor. Each call gives
+    // back a Result, because every one of these fails for reasons outside the
+    // program and a server has to answer all of them on an ordinary day.
+    //
+    // A program never sees a descriptor. It is handed a token into
+    // socket_handles_, which is what stops it reading from a descriptor the
+    // host opened and what lets the runtime close whatever is still open when
+    // the run ends.
+    if (fn_name.rfind("net.", 0) == 0) {
+      auto push_ok_text = [&](const std::string &text) {
+        EnumValue ok; ok.variant_name = "Result::Ok"; ok.payloads.push_back(text);
+        pushStack(ok);
+      };
+      auto push_ok_number = [&](std::int64_t number) {
+        EnumValue ok; ok.variant_name = "Result::Ok"; ok.payloads.push_back(number);
+        pushStack(ok);
+      };
+      auto push_error = [&](const std::string &message) {
+        EnumValue bad; bad.variant_name = "Result::Error"; bad.payloads.push_back(message);
+        pushStack(bad);
+      };
+      auto text_at = [&](std::size_t index, std::string &into) -> bool {
+        if (index >= args.size() || !std::holds_alternative<std::string>(args[index]))
+          return false;
+        into = std::get<std::string>(args[index]);
+        return true;
+      };
+      auto number_at = [&](std::size_t index, std::int64_t &into) -> bool {
+        if (index >= args.size()) return false;
+        if (const auto *wide = std::get_if<int64_t>(&args[index])) { into = *wide; return true; }
+        return false;
+      };
+      // Resolves a token to a live socket. Every failure here is the program
+      // using a token it was never given or has already closed, so the
+      // message says that rather than reporting a system error it did not
+      // cause.
+      auto socket_at = [&](std::size_t index, VM::SocketHandle *&into,
+                           std::string &complaint) -> bool {
+        std::int64_t token = 0;
+        if (!number_at(index, token)) {
+          complaint = fn_name + ": expected a socket handle";
+          return false;
+        }
+        auto found = socket_handles_.find(token);
+        if (found == socket_handles_.end()) {
+          complaint = fn_name + ": that socket is not open";
+          return false;
+        }
+        into = &found->second;
+        return true;
+      };
+
+      if (fn_name == "net.listen") {
+        std::string host;
+        std::int64_t port = 0;
+        std::int64_t backlog = 0;
+        if (!text_at(0, host) || !number_at(1, port) || !number_at(2, backlog)) {
+          push_error("net.listen: expected a host, a port and a backlog");
+          return;
+        }
+        const auto opened = net_support::listen_on(host, port, backlog);
+        if (!opened.ok()) {
+          push_error(opened.error);
+          return;
+        }
+        const std::int64_t token = next_socket_handle_++;
+        socket_handles_.emplace(token, VM::SocketHandle{opened.descriptor, true});
+        push_ok_number(token);
+        return;
+      }
+
+      if (fn_name == "net.accept") {
+        VM::SocketHandle *held = nullptr;
+        std::string complaint;
+        if (!socket_at(0, held, complaint)) {
+          push_error(complaint);
+          return;
+        }
+        if (!held->listening) {
+          push_error("net.accept: that socket is a connection, not a listener");
+          return;
+        }
+        const auto opened = net_support::accept_on(held->descriptor);
+        if (!opened.ok()) {
+          push_error(opened.error);
+          return;
+        }
+        const std::int64_t token = next_socket_handle_++;
+        socket_handles_.emplace(token, VM::SocketHandle{opened.descriptor, false});
+        push_ok_number(token);
+        return;
+      }
+
+      if (fn_name == "net.connect") {
+        std::string host;
+        std::int64_t port = 0;
+        if (!text_at(0, host) || !number_at(1, port)) {
+          push_error("net.connect: expected a host and a port");
+          return;
+        }
+        const auto opened = net_support::connect_to(host, port);
+        if (!opened.ok()) {
+          push_error(opened.error);
+          return;
+        }
+        const std::int64_t token = next_socket_handle_++;
+        socket_handles_.emplace(token, VM::SocketHandle{opened.descriptor, false});
+        push_ok_number(token);
+        return;
+      }
+
+      // Reads what has arrived, which may be less than asked for. An orderly
+      // close comes back as empty text and not as an error, so a caller
+      // reading to the end of a request sees the same shape either way;
+      // net.is_open tells them which it was when it matters.
+      if (fn_name == "net.read") {
+        VM::SocketHandle *held = nullptr;
+        std::string complaint;
+        std::int64_t wanted = 0;
+        if (!socket_at(0, held, complaint)) {
+          push_error(complaint);
+          return;
+        }
+        if (!number_at(1, wanted)) {
+          push_error("net.read: expected a socket handle and a byte count");
+          return;
+        }
+        if (held->listening) {
+          push_error("net.read: that socket is a listener, not a connection");
+          return;
+        }
+        auto taken = net_support::read_some(held->descriptor, wanted);
+        if (!taken.ok()) {
+          push_error(taken.error);
+          return;
+        }
+        push_ok_text(taken.data);
+        return;
+      }
+
+      if (fn_name == "net.write") {
+        VM::SocketHandle *held = nullptr;
+        std::string complaint;
+        std::string data;
+        if (!socket_at(0, held, complaint)) {
+          push_error(complaint);
+          return;
+        }
+        if (!text_at(1, data)) {
+          push_error("net.write: expected a socket handle and text to send");
+          return;
+        }
+        if (held->listening) {
+          push_error("net.write: that socket is a listener, not a connection");
+          return;
+        }
+        auto sent = net_support::write_all(held->descriptor, data);
+        if (!sent.ok()) {
+          push_error(sent.error);
+          return;
+        }
+        push_ok_number(sent.count);
+        return;
+      }
+
+      if (fn_name == "net.close") {
+        std::int64_t token = 0;
+        if (!number_at(0, token)) {
+          push_error("net.close: expected a socket handle");
+          return;
+        }
+        auto found = socket_handles_.find(token);
+        if (found == socket_handles_.end()) {
+          // Closing something already closed is not worth a failure: it is
+          // what a cleanup path does when an earlier one already ran.
+          push_ok_number(0);
+          return;
+        }
+        net_support::close_descriptor(found->second.descriptor);
+        socket_handles_.erase(found);
+        push_ok_number(1);
+        return;
+      }
+
+      if (fn_name == "net.set_timeout") {
+        VM::SocketHandle *held = nullptr;
+        std::string complaint;
+        std::int64_t milliseconds = 0;
+        if (!socket_at(0, held, complaint)) {
+          push_error(complaint);
+          return;
+        }
+        if (!number_at(1, milliseconds)) {
+          push_error("net.set_timeout: expected a socket handle and milliseconds");
+          return;
+        }
+        const auto error = net_support::set_timeout(held->descriptor, milliseconds);
+        if (!error.empty()) {
+          push_error(error);
+          return;
+        }
+        push_ok_number(milliseconds);
+        return;
+      }
+
+      if (fn_name == "net.set_no_delay") {
+        VM::SocketHandle *held = nullptr;
+        std::string complaint;
+        std::int64_t enabled = 1;
+        if (!socket_at(0, held, complaint)) {
+          push_error(complaint);
+          return;
+        }
+        number_at(1, enabled);
+        const auto error = net_support::set_no_delay(held->descriptor, enabled != 0);
+        if (!error.empty()) {
+          push_error(error);
+          return;
+        }
+        push_ok_number(enabled != 0 ? 1 : 0);
+        return;
+      }
+
+      if (fn_name == "net.peer_address") {
+        VM::SocketHandle *held = nullptr;
+        std::string complaint;
+        if (!socket_at(0, held, complaint)) {
+          push_error(complaint);
+          return;
+        }
+        auto found = net_support::peer_address(held->descriptor);
+        if (!found.ok()) {
+          push_error(found.error);
+          return;
+        }
+        push_ok_text(found.data);
+        return;
+      }
+
+      // Whether the runtime still holds this token. Not whether the peer is
+      // reachable -- nothing short of a write can tell you that.
+      if (fn_name == "net.is_open") {
+        std::int64_t token = 0;
+        if (!number_at(0, token)) {
+          pushStack((int64_t)0);
+          return;
+        }
+        pushStack((int64_t)(socket_handles_.count(token) != 0 ? 1 : 0));
+        return;
+      }
+
+      throw std::runtime_error("unsupported network intrinsic: " + fn_name);
+    }
+
+    // --- Entropy intrinsics ---
+    //
+    // The only unpredictable source in the standard library. nil.std.math is
+    // MINSTD and says itself that it is not cryptographic, so anything
+    // drawing a credential has to come here. There is no seeding and no
+    // state: these ask the kernel, and if the kernel cannot answer they fail
+    // rather than returning something a caller might mistake for a secret.
+    if (fn_name.rfind("random.", 0) == 0) {
+      auto push_ok_text = [&](const std::string &text) {
+        EnumValue ok; ok.variant_name = "Result::Ok"; ok.payloads.push_back(text);
+        pushStack(ok);
+      };
+      auto push_ok_number = [&](std::int64_t number) {
+        EnumValue ok; ok.variant_name = "Result::Ok"; ok.payloads.push_back(number);
+        pushStack(ok);
+      };
+      auto push_error = [&](const std::string &message) {
+        EnumValue bad; bad.variant_name = "Result::Error"; bad.payloads.push_back(message);
+        pushStack(bad);
+      };
+      auto number_at = [&](std::size_t index, std::int64_t &into) -> bool {
+        if (index >= args.size()) return false;
+        if (const auto *wide = std::get_if<int64_t>(&args[index])) { into = *wide; return true; }
+        return false;
+      };
+
+      if (fn_name == "random.hex") {
+        std::int64_t count = 0;
+        if (!number_at(0, count)) {
+          push_error("random.hex: expected a byte count");
+          return;
+        }
+        auto drawn = entropy_support::random_hex(count);
+        if (!drawn.ok()) {
+          push_error(drawn.error);
+          return;
+        }
+        push_ok_text(drawn.bytes);
+        return;
+      }
+
+      if (fn_name == "random.bytes") {
+        std::int64_t count = 0;
+        if (!number_at(0, count)) {
+          push_error("random.bytes: expected a byte count");
+          return;
+        }
+        auto drawn = entropy_support::random_bytes(count);
+        if (!drawn.ok()) {
+          push_error(drawn.error);
+          return;
+        }
+        // As text, so a byte string crosses into Matrix, which cannot index
+        // an Ny byte array. The bytes are arbitrary and are not valid UTF-8
+        // in general: read them with text.byte_at, not with substring.
+        push_ok_text(drawn.bytes);
+        return;
+      }
+
+      if (fn_name == "random.below") {
+        std::int64_t bound = 0;
+        if (!number_at(0, bound)) {
+          push_error("random.below: expected an upper bound");
+          return;
+        }
+        auto chosen = entropy_support::random_below(bound);
+        if (!chosen.ok()) {
+          push_error(chosen.error);
+          return;
+        }
+        push_ok_number(chosen.value);
+        return;
+      }
+
+      throw std::runtime_error("unsupported entropy intrinsic: " + fn_name);
+    }
+
+    // --- Byte access to text ---
+    //
+    // nil.std.text measures and slices by byte but had no way to read a byte
+    // as a number, and the one conversion that looked like it would --
+    // convert.char_to_i32 -- takes a whole Unicode scalar and raises on a
+    // partial one, which no `attempt` can catch. So a byte in the middle of a
+    // multi-byte character could not be inspected, and the character could
+    // not be isolated to inspect whole, because isolating it needed the same
+    // test. Percent-encoding anything non-ASCII was unreachable because of it.
+    //
+    // These two are deliberately about bytes and say so in their names. They
+    // do not know what UTF-8 is: that is the caller's to assemble, and now it
+    // can be.
+    if (fn_name == "text.byte_at") {
+      if (args.size() != 2 || !std::holds_alternative<std::string>(args[0])) {
+        pushStack((int64_t)-1);
+        return;
+      }
+      const std::string &subject = std::get<std::string>(args[0]);
+      std::int64_t index = -1;
+      if (const auto *wide = std::get_if<int64_t>(&args[1])) index = *wide;
+      // Out of range is minus one rather than a raise: reading past the end
+      // is how a scan over bytes discovers it has finished, and a loop that
+      // has to check the length first is a loop that will sometimes forget.
+      if (index < 0 || static_cast<std::size_t>(index) >= subject.size()) {
+        pushStack((int64_t)-1);
+        return;
+      }
+      pushStack((int64_t)static_cast<unsigned char>(
+          subject[static_cast<std::size_t>(index)]));
+      return;
+    }
+
+    if (fn_name == "text.from_byte") {
+      std::int64_t code = -1;
+      if (!args.empty()) {
+        if (const auto *wide = std::get_if<int64_t>(&args[0])) code = *wide;
+      }
+      if (code < 0 || code > 255) {
+        pushStack(std::string());
+        return;
+      }
+      // One byte, not one character. 195 gives the single byte 0xC3, where
+      // convert.i32_to_char would give the two bytes that encode U+00C3.
+      pushStack(std::string(1, static_cast<char>(static_cast<unsigned char>(code))));
+      return;
     }
 
     // --- Path Intrinsics ---
