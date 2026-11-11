@@ -9,6 +9,7 @@ compiled through it will not find them.
 | Ny API | Behavior |
 | --- | --- |
 | `listen(host: text, port: i32, backlog: i32) -> Result<i64, text>` | Open, bind and listen in one step; gives back a handle. |
+| `listen_reuse_port(host: text, port: i32, backlog: i32) -> Result<i64, text>` | Opt into POSIX port sharing before binding; unsupported on Windows. |
 | `accept(handle: i64) -> Result<i64, text>` | Block until a connection arrives; gives back a handle to it. |
 | `connect(host: text, port: i32) -> Result<i64, text>` | Connect out, resolving a name if it is one. |
 | `read(handle: i64, maximum_bytes: i64) -> Result<text, text>` | Read what has arrived, up to a ceiling. |
@@ -19,7 +20,7 @@ compiled through it will not find them.
 | `set_no_delay(handle: i64, enabled: bool) -> Result<i64, text>` | Send small writes immediately. |
 | `peer_address(handle: i64) -> Result<text, text>` | The peer's address and port, as text. |
 | `set_blocking(handle: i64, blocking: bool) -> Result<i64, text>` | Whether a call waits when there is nothing to do. |
-| `set_reuse_port(handle: i64, enabled: bool) -> Result<i64, text>` | Let other processes bind this same port. |
+| `set_reuse_port(handle: i64, enabled: bool) -> Result<i64, text>` | Set the platform option on an existing socket; use `listen_reuse_port` when opening shared listeners. |
 | `watch(handle: i64, flags: i64) -> Result<i64, text>` | Watch a socket for readability, writability, or both. |
 | `unwatch(handle: i64) -> Result<i64, text>` | Stop watching. |
 | `watch_count() -> i64` | How many sockets are watched. |
@@ -49,7 +50,10 @@ received is refused with a sentence rather than used.
 A listener and a connection are told apart: accepting on a connection, or
 reading from a listener, is a named error and not an `EINVAL`.
 
-The runtime closes whatever a run leaves open. A program that exits without
+The runtime closes whatever a run leaves open at normal completion, an uncaught
+runtime error, reset, program replacement or VM destruction. Tokens are not
+reissued during a VM's lifetime, and its watch set, readiness queue and receive
+buffer are cleared with the invocation. A program that exits without
 closing its listener — or one that crashes — does not leave the port bound
 against the next run, which during development is the difference between a
 server that restarts and one that fails every second time for a reason
@@ -70,19 +74,23 @@ IPv4 and an IPv6 address is tried in turn and the first to connect wins.
 
 TCP is a stream. A request may arrive in several pieces, so a read returning
 less than asked for is normal. An orderly close by the peer comes back as
-empty text rather than an error, so a loop reading to the end of a request
-sees one shape; `is_open` distinguishes them when it matters.
+empty text rather than an error. A timeout or a non-blocking `read` with no data
+returns an error. `is_open` reports ownership of the local handle; it does not
+detect whether the peer has closed. Use `receive` to distinguish would-block
+from EOF in an event loop.
 
 What `read` gives back is bytes, not necessarily valid UTF-8 — it is whatever
 the peer sent. Read it with `nil.std.text`'s `byte_at` rather than `substring`
 if it may not be text. One call never transfers more than 8 MiB.
 
-## Writes complete or report how far they got
+## Writes complete or report an error
 
 A single `send` is permitted to take less than it was given. `write` loops
 until everything is gone or the attempt fails, because the number of servers
 that have shipped a truncated response from the one-call version is large. On
-failure the count says how far it reached.
+failure, `write` returns an error and may already have sent part of the data;
+its public error does not contain that partial count. Use `send_some` and retain
+the offset when the caller needs to track progress.
 
 A peer that closes mid-write is reported rather than fatal: the runtime
 suppresses the signal whose default disposition would end the process. A
@@ -93,7 +101,11 @@ case that a test which never closes a connection early will not catch.
 
 A single-threaded server without `set_timeout` is one slow client away from
 serving nobody: a connection that opens and then says nothing holds the accept
-loop for as long as it likes. Set a deadline on every accepted connection.
+loop for as long as it likes. Set a timeout on every accepted blocking connection.
+`set_timeout` accepts 0 through 2,147,483,647 milliseconds and applies to individual
+socket operations; it is not an end-to-end HTTP request deadline. Finite `wait`
+values have the same maximum and retain their deadline across interruptions.
+Negative `wait` values wait indefinitely. An empty watch set returns immediately.
 
 ## An echo server
 
@@ -144,12 +156,10 @@ globals, with no lock anywhere near them, and `nil.std.threading` offers only
 `sleep` — so concurrency here is `poll` telling you which sockets can be acted
 on, and one pass round a loop acting on each in turn.
 
-That is nginx's shape rather than Apache's prefork, and it is the one this
-runtime can keep. It is also the one that scales: 64 simultaneous connections,
-each sending its request in two parts with a quarter-second pause between, are
-served in about one pause rather than sixty-four of them. The contract test
-asserts exactly that difference, because a throughput figure would measure the
-machine while this measures the shape.
+The contract test opens 64 simultaneous connections and sends the first part of
+each request. It releases the remaining parts only after the server confirms it
+has processed every first part. This barrier proves that one incomplete request
+does not prevent the others from making progress; it is not a throughput claim.
 
 The watch set lives in the runtime rather than being passed in per call, so no
 array crosses the intrinsic boundary. That is not tidiness: a Matrix page
@@ -204,13 +214,17 @@ connection is dropped, or the last request of a session is lost.
 ### More than one core
 
 A second core means a second process, because a second thread would need an
-interpreter that could survive one. `set_reuse_port` lets several processes
-bind the same port and the kernel load-balances accepts between them.
+interpreter that could survive one. On POSIX hosts, every participating listener
+must use `listen_reuse_port`, which sets `SO_REUSEPORT` before binding. Setting
+the option after `listen` cannot make a failed second bind succeed. Connection
+distribution follows the host's socket implementation; this API does not promise
+a particular scheduling policy.
 
-It is opt-in and distinct from the `SO_REUSEADDR` that `listen` always sets:
-that one only allows rebinding a port left in `TIME_WAIT`, while this one
-deliberately allows two servers to share a port. Switched on by accident it
-would silently split traffic between a running server and a stray one.
+Sharing is opt-in. Ordinary POSIX listeners use `SO_REUSEADDR` for restart
+behavior; ordinary Windows listeners use `SO_EXCLUSIVEADDRUSE` to reject a
+competing bind. Windows does not implement this port-sharing constructor and
+returns an explicit error. It still supports the single-process event loop and
+multiple simultaneous connections.
 
 ## What is not here
 

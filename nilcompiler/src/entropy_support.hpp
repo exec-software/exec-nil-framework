@@ -24,13 +24,18 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 
 #if defined(_WIN32)
-// rand_s is the CRT's wrapper over RtlGenRandom. It needs no extra library,
-// which keeps this from changing how the project links on Windows.
-#define _CRT_RAND_S
-#include <cstdlib>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <bcrypt.h>
 #else
 #include <cerrno>
 #include <cstdio>
@@ -90,6 +95,21 @@ inline bool fill_from_kernel(unsigned char *into, std::size_t count,
   }
   if (syscall_usable && filled == count)
     return true;
+#elif defined(__APPLE__)
+  // Darwin supplies getentropy without opening a device. Each call accepts at
+  // most 256 bytes; a failed OS request never falls back to a userspace PRNG.
+  std::size_t filled = 0;
+  while (filled < count) {
+    const std::size_t chunk = count - filled > 256 ? 256 : count - filled;
+    if (::getentropy(into + filled, chunk) == 0) {
+      filled += chunk;
+      continue;
+    }
+    if (errno == EINTR) continue;
+    error = "random: no entropy source is available on this system";
+    return false;
+  }
+  return true;
 #endif
 
   // The device, for a kernel without the syscall. Opened and closed per call:
@@ -113,17 +133,21 @@ inline bool fill_from_kernel(unsigned char *into, std::size_t count,
 
 inline bool fill_from_kernel(unsigned char *into, std::size_t count,
                              std::string &error) {
-  std::size_t filled = 0;
-  while (filled < count) {
-    unsigned int drawn = 0;
-    if (::rand_s(&drawn) != 0) {
-      error = "random: no entropy source is available on this system";
-      return false;
-    }
-    for (int byte = 0; byte < 4 && filled < count; ++byte) {
-      into[filled] = static_cast<unsigned char>((drawn >> (byte * 8)) & 0xFF);
-      filled += 1;
-    }
+  // Resolve the system DLL explicitly. This avoids a CRT include-order
+  // dependency and does not add a loader search through the working directory.
+  using Generate = NTSTATUS (WINAPI *)(BCRYPT_ALG_HANDLE, PUCHAR, ULONG, ULONG);
+  static const Generate generate = []() -> Generate {
+    const HMODULE library = ::LoadLibraryExW(L"bcrypt.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!library) return nullptr;
+    const auto result = reinterpret_cast<Generate>(::GetProcAddress(library, "BCryptGenRandom"));
+    if (!result) ::FreeLibrary(library);
+    // Keep a successful module loaded for the lifetime of the function pointer.
+    return result;
+  }();
+  if (count > (std::numeric_limits<ULONG>::max)() || !generate ||
+      generate(nullptr, into, static_cast<ULONG>(count), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0) {
+    error = "random: no entropy source is available on this system";
+    return false;
   }
   return true;
 }

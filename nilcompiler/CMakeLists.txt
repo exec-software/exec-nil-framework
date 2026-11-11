@@ -45,8 +45,8 @@ set(NILCOMPILER_CORE_SOURCES
     src/executable_context.cpp
 )
 
-# One desktop provider per platform: GTK is the Linux (and macOS) provider,
-# Win32 is the Windows provider. Both implement the same ui.v1 contract and
+# One desktop provider per platform: GTK on Linux, Win32 on Windows, and
+# AppKit on macOS. All implement the same ui.v1 contract and
 # share its toolkit-independent half through src/ui_runtime_shared.hpp, so
 # exactly one of them is ever compiled into the runtime.
 if(WIN32)

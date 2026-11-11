@@ -1,7 +1,7 @@
 # Platform support and validation
 
 Implementation, development acceptance and release qualification are separate.
-This page summarizes the recorded development baselines as of 2026-11-05;
+This page summarizes the recorded development baselines as of 2026-11-11;
 the [v1 release profile](release/v1-profile.md) defines the reviewed binary
 release boundary. A newer source checkout does not update an installed SDK.
 
@@ -164,8 +164,8 @@ the complete admission rules.
   and pass the installed standard-library and debugger/checkpoint campaigns.
   The optional isolated PostgreSQL 16 profile now passes
   its coherent client/server and installed source/binary routes on both architectures;
-  the scoped-address validation correction passes on both hosts. The complete
-  corrected Intel candidate remains pending after a source-campaign timeout.
+  the scoped-address validation correction passes on both hosts. The corrected
+  Intel retry at `0c88d2f` completes all installed campaigns, as recorded above.
 - The two native lifetime stress tests still lack a demonstrated Darwin memory
   bound. Native diagnostics show that the fixed 96 MiB virtual-memory cap is
   rejected at process setup; larger diagnostic profiles do not replace it.
@@ -179,19 +179,13 @@ the complete admission rules.
   real window server session on both hosted architectures, 93 checks each,
   and `nil.ui-display` now passes there too: the provider fixture, the
   lifecycle fixture and the Matrix desktop suite. Real keyboard input is
-  covered in process, because macOS requires accessibility trust to post
-  events to another process and a hosted runner does not grant it; that is a
-  limit of cross-process injection, not of the provider, so the interaction
-  suite is Linux and Windows only. GTK on macOS is retired, because a GTK
-  process there never runs the AppKit event loop and so has no accessibility
-  hierarchy at all. Both hosted Mac architectures
-  now pass the prerequisite GLib, Cairo-Quartz and HarfBuzz/CoreText compile,
-  link and runtime checks, plus exact own-process AppKit key dispatch, view
-  delivery and window closure. Directed keyboard input to a verified child and
-  native accessibility closure also pass on both hosts. Both have built and
-  installed the private GTK dependency stack and passed actual widget input,
-  CoreText/font layout, PNG decoding and window teardown checks. Integration
-  with the product runtime and language-level desktop acceptance remain open.
+  covered in process by the AppKit provider fixture. The current AppKit
+  campaign does not qualify cross-process keyboard injection or accessibility;
+  the language interaction suite currently runs on Linux and Windows. Earlier
+  private GTK and AppKit prerequisite probes are retained as historical evidence,
+  but GTK is no longer the macOS product provider. The language-level AppKit
+  display campaign uses LLVM OFF and therefore establishes the interpreter route,
+  not native/JIT application or editor acceptance.
 - Editor desktop integration, untested provider configurations and release-package
   acceptance remain separate from the passing installed campaigns. Shipping a
   Mach-O tool alone does not qualify these surfaces.
@@ -199,3 +193,14 @@ the complete admission rules.
 The [macOS workflow](../.github/workflows/macos-bringup.yml) records the complete
 inventory, including failures and skips. The [release gates](release/v1-profile.md#qualification-and-publication)
 still apply before publishing a macOS SDK or declaring parity.
+
+## New web-runtime APIs
+
+The socket, secure-random and text-byte additions in the open web-runtime branch
+are currently interpreter-backed. File timestamps share a stable native-metadata
+implementation across interpreter and native routes: Linux text NIL, binary NIL,
+JIT and AOT all pass unchanged-file and changed-metadata checks. Linux results
+alone do not establish Windows or macOS support, and declarations do not establish
+native/JIT execution. Cross-platform validation of these additions is in progress.
+Their evidence must join the older desktop, tooling and SDK baselines before
+declaring current-source parity.

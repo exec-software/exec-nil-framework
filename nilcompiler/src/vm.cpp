@@ -17,6 +17,7 @@
 #include "net_support.hpp"
 #include "secure_file_io.hpp"
 #include "time_support.hpp"
+#include "file_time_support.hpp"
 #include "../../common/windows_environment.hpp"
 #include <algorithm>
 #include <cerrno>
@@ -722,6 +723,8 @@ int64_t invoke_native(void *fn_ptr, const std::vector<int64_t> &args) {
 
 VM::VM() : pc_(0) {}
 
+VM::~VM() noexcept { closeOpenSockets(); }
+
 void VM::beginMemoryProfile() {
   if (memory_profile_started_ || !memory_profile_allowed_)
     return;
@@ -734,6 +737,7 @@ bool VM::finishMemoryProfile(const char *status, bool completed) noexcept {
   // This hook runs at every invocation terminal, even without profiling.
   // Paused debugger steps retain their UI until completion/reset.
   ui_.clear();
+  closeOpenSockets();
   if (!memory_profile_started_ || memory_profile_finished_)
     return true;
   memory_profile_finished_ = true;
@@ -757,11 +761,17 @@ std::ostream &VM::outputStream() {
  * every second start of a server fails for a reason that has nothing to do
  * with the code just changed.
  */
-void VM::closeOpenSockets() {
+void VM::closeOpenSockets() noexcept {
   for (auto &entry : socket_handles_)
     net_support::close_descriptor(entry.second.descriptor);
   socket_handles_.clear();
-  next_socket_handle_ = 1;
+  // Tokens remain monotonic across resets so an old program value cannot name
+  // a new socket. Readiness and receive buffers belong to this invocation.
+  watch_order_.clear();
+  watch_wanted_.clear();
+  ready_.clear();
+  ready_cursor_ = 0;
+  last_received_.clear();
 }
 
 void VM::resetRuntimeState(const std::string &root_function) {
@@ -776,11 +786,6 @@ void VM::resetRuntimeState(const std::string &root_function) {
   file_handles_.clear();
   next_file_handle_ = 1;
   closeOpenSockets();
-  watch_order_.clear();
-  watch_wanted_.clear();
-  ready_.clear();
-  ready_cursor_ = 0;
-  last_received_.clear();
   stack_.clear();
   globals_.clear();
   gc_marked_structs_.clear();
@@ -3832,7 +3837,24 @@ void VM::executeInstruction(const Instruction &instr) {
         return true;
       };
 
-      if (fn_name == "net.listen") {
+      auto retain_socket = [&](net_support::socket_descriptor descriptor, bool listening) {
+        if (next_socket_handle_ > (std::numeric_limits<std::int64_t>::max)() / 8) {
+          net_support::close_descriptor(descriptor);
+          push_error("net: socket handle space is exhausted");
+          return;
+        }
+        const auto token = next_socket_handle_;
+        try {
+          socket_handles_.emplace(token, VM::SocketHandle{descriptor, listening});
+        } catch (...) {
+          net_support::close_descriptor(descriptor);
+          throw;
+        }
+        ++next_socket_handle_;
+        push_ok_number(token);
+      };
+
+      if (fn_name == "net.listen" || fn_name == "net.listen_reuse_port") {
         std::string host;
         std::int64_t port = 0;
         std::int64_t backlog = 0;
@@ -3840,14 +3862,12 @@ void VM::executeInstruction(const Instruction &instr) {
           push_error("net.listen: expected a host, a port and a backlog");
           return;
         }
-        const auto opened = net_support::listen_on(host, port, backlog);
+        const auto opened = net_support::listen_on(host, port, backlog, fn_name == "net.listen_reuse_port");
         if (!opened.ok()) {
           push_error(opened.error);
           return;
         }
-        const std::int64_t token = next_socket_handle_++;
-        socket_handles_.emplace(token, VM::SocketHandle{opened.descriptor, true});
-        push_ok_number(token);
+        retain_socket(opened.descriptor, true);
         return;
       }
 
@@ -3873,9 +3893,7 @@ void VM::executeInstruction(const Instruction &instr) {
           push_error(opened.error);
           return;
         }
-        const std::int64_t token = next_socket_handle_++;
-        socket_handles_.emplace(token, VM::SocketHandle{opened.descriptor, false});
-        push_ok_number(token);
+        retain_socket(opened.descriptor, false);
         return;
       }
 
@@ -3891,9 +3909,7 @@ void VM::executeInstruction(const Instruction &instr) {
           push_error(opened.error);
           return;
         }
-        const std::int64_t token = next_socket_handle_++;
-        socket_handles_.emplace(token, VM::SocketHandle{opened.descriptor, false});
-        push_ok_number(token);
+        retain_socket(opened.descriptor, false);
         return;
       }
 
@@ -3920,6 +3936,10 @@ void VM::executeInstruction(const Instruction &instr) {
         auto taken = net_support::read_some(held->descriptor, wanted);
         if (!taken.ok()) {
           push_error(taken.error);
+          return;
+        }
+        if (taken.would_block) {
+          push_error("net.read: no bytes arrived before the socket deadline or the socket would block");
           return;
         }
         push_ok_text(taken.data);
@@ -4240,13 +4260,13 @@ void VM::executeInstruction(const Instruction &instr) {
       // declarations carry ready_handle and ready_flags so no caller has to
       // write the division.
       if (fn_name == "net.next_ready") {
-        if (ready_cursor_ >= ready_.size()) {
-          push_ok_number(0);
+        while (ready_cursor_ < ready_.size()) {
+          const auto &one = ready_[ready_cursor_++];
+          if (socket_handles_.count(one.first) == 0) continue;
+          push_ok_number(one.first * 8 + one.second);
           return;
         }
-        const auto &one = ready_[ready_cursor_];
-        ready_cursor_ += 1;
-        push_ok_number(one.first * 8 + one.second);
+        push_ok_number(0);
         return;
       }
 
@@ -4949,29 +4969,15 @@ void VM::executeInstruction(const Instruction &instr) {
         return;
       }
       const std::string &path = std::get<std::string>(args[0]);
-      std::error_code ec;
-      const auto written = fs::last_write_time(path, ec);
-      if (ec) {
+      const auto written = file_time_support::modified_at(path);
+      if (!written) {
         // The path and the reason are both left out: a caller that needs to
         // tell "absent" from "unreadable" asks file.exists, and an error
         // carrying a path puts it into whatever log the caller keeps.
         push_error("file.modified_at: the file has no readable timestamp");
         return;
       }
-      // file_clock's epoch is unspecified and need not match the system
-      // clock's, so the two are related by taking a reading from each at the
-      // same moment and carrying the difference across. std::chrono::clock_cast
-      // would say this in one line and is not available on every toolchain
-      // this still builds on.
-      const auto file_now = fs::file_time_type::clock::now();
-      const auto system_now = std::chrono::system_clock::now();
-      const auto since_now =
-          std::chrono::duration_cast<std::chrono::system_clock::duration>(
-              written - file_now);
-      const auto as_system = std::chrono::time_point_cast<std::chrono::milliseconds>(
-          system_now + since_now);
-      push_ok_number(static_cast<std::int64_t>(
-          as_system.time_since_epoch().count()));
+      push_ok_number(*written);
       return;
     }
 

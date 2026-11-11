@@ -15,16 +15,14 @@ struct Result {
   explicit operator bool() const noexcept { return error.empty(); }
 };
 
-// Checks the optional GTK 4 provider's symbols, without opening a display.
-// macOS requires NIL_UI_GTK_DIRECTORY: an absolute trusted directory containing
-// libgtk-4.1.dylib, libgobject-2.0.0.dylib and libglib-2.0.0.dylib. Curated aliases
-// may point to canonical external prerequisites; all resolved symbol origins
-// and GTK/GObject dependency lookups must match the selected files.
+// Checks provider availability without opening a display. Linux loads GTK 4;
+// Windows and macOS use their linked Win32 and AppKit providers. Availability
+// alone does not establish that an interactive desktop session is usable.
 bool available() noexcept;
 
 // Handles are nonzero, process-unique, and owned by one Context. No toolkit
 // pointers cross this boundary. UI calls run on the context's creation thread
-// and, once GTK initializes, the single process UI thread.
+// and obey the selected provider's process-level UI thread requirements.
 // On macOS that thread must always be the process main thread, including first
 // initialization. This requirement also applies to embedded/VM/debugger hosts.
 class Context {
@@ -59,9 +57,9 @@ public:
   // kind codes: window=0,column=1,row=2,grid=3,label=4,button=5,entry=6,checkbox=7.
   Result set_number(std::int64_t handle, const std::string &property, std::int64_t value);
   Result read_number(std::int64_t handle, const std::string &property);
-  // Button/checkbox activation uses GTK's actual widget activation path.
+  // Button/checkbox activation uses the platform's actual control activation path.
   Result activate(std::int64_t handle);
-  // Nonblocking: pumps a bounded number of GLib iterations, then snapshots one
+  // Nonblocking: pumps a bounded number of platform events, then snapshots one
   // event for this window. number==0 means no event, solely in this private ABI.
   Result poll(std::int64_t window);
   // Immutable snapshot fields: kind, target, window, checked. Event kinds:

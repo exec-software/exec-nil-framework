@@ -94,6 +94,9 @@ pub fn move(source: text, dest: text) -> Result<bool, text>
 # comparing two should not be comparing precision it does not have. The error
 # carries neither the path nor the reason; ask `exists` to tell an absent file
 # from an unreadable one.
+# Shared interpreter/native implementation: floor the host timestamp to Unix
+# milliseconds without sampling the current clock. Unchanged metadata is stable
+# across repeated reads. Paths are UTF-8 and cannot contain NUL.
 @intrinsic("file.modified_at")
 pub fn modified_at(path: text) -> Result<i64, text>
 

@@ -16,23 +16,30 @@
 //
 // Three decisions are worth stating because they are the ones that bite:
 //
-//   * Writes use MSG_NOSIGNAL. Without it, a peer that closes mid-write
-//     delivers SIGPIPE and the default disposition kills the process. A web
-//     server that dies when a browser closes a tab is not a web server.
-//   * A listening socket sets SO_REUSEADDR but never SO_REUSEPORT. The first
-//     lets a restart rebind a port still in TIME_WAIT; the second would let
-//     two unrelated servers share one port and silently split the traffic.
+//   * Writes suppress SIGPIPE per socket on Darwin and per send on Linux.
+//   * Ordinary listeners are exclusive on Windows and use SO_REUSEADDR on
+//     POSIX. Sharing a port requires the explicit pre-bind constructor.
 //   * Binding never resolves a name through DNS. A server binds an address it
 //     already knows, and a DNS lookup on that path is a blocking call plus a
 //     way to end up listening somewhere unintended. `localhost` is understood
 //     directly; everything else must be numeric. Connecting does resolve,
 //     because a client is given names.
 
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
+#include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
 #if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else
@@ -53,6 +60,19 @@
 
 namespace ny::net_support {
 
+#if defined(_WIN32)
+using socket_descriptor = SOCKET;
+constexpr socket_descriptor invalid_socket = INVALID_SOCKET;
+static_assert(sizeof(socket_descriptor) == sizeof(std::uintptr_t),
+              "Winsock handles require pointer-width storage");
+#else
+using socket_descriptor = int;
+constexpr socket_descriptor invalid_socket = -1;
+#endif
+
+constexpr std::int64_t max_timeout_ms = 2147483647;
+
+
 /** One read never takes more than this, however much the caller asks for. */
 constexpr std::int64_t max_transfer_bytes = 8LL * 1024 * 1024;
 
@@ -60,7 +80,7 @@ constexpr std::int64_t max_transfer_bytes = 8LL * 1024 * 1024;
 constexpr std::int64_t max_backlog = 1024;
 
 struct Opened {
-  int descriptor = -1;
+  socket_descriptor descriptor = invalid_socket;
   std::string error;
   /**
    * Nothing to do right now, on a socket that was asked not to block.
@@ -71,7 +91,7 @@ struct Opened {
    * server log a line every time a port scanner connected and left.
    */
   bool would_block = false;
-  bool ok() const { return descriptor >= 0 && error.empty(); }
+  bool ok() const { return descriptor != invalid_socket && error.empty(); }
 };
 
 struct Transferred {
@@ -91,26 +111,25 @@ struct Transferred {
 // WSAStartup/WSACleanup pair means a library may start it without taking the
 // decision away from whatever else in the process also needs it.
 inline bool ensure_started(std::string &error) {
-  static bool started = false;
-  static std::string start_error;
-  if (!started && start_error.empty()) {
-    WSADATA data;
-    const int result = WSAStartup(MAKEWORD(2, 2), &data);
-    if (result != 0)
-      start_error = "net: Winsock could not be started";
-    else
-      started = true;
-  }
-  if (!start_error.empty()) {
-    error = start_error;
-    return false;
-  }
-  return true;
+  struct Startup {
+    int result;
+    Startup() : result(0) {
+      WSADATA data{};
+      result = WSAStartup(MAKEWORD(2, 2), &data);
+    }
+    ~Startup() { if (result == 0) WSACleanup(); }
+  };
+  static const Startup startup;
+  if (startup.result == 0) return true;
+  error = "net: Winsock could not be started (" + std::to_string(startup.result) + ")";
+  return false;
 }
 
-inline std::string last_error_text() { return "net: the socket call failed"; }
-inline int close_descriptor(int descriptor) {
-  return ::closesocket(static_cast<SOCKET>(descriptor));
+inline std::string last_error_text() {
+  return "net: the socket call failed (" + std::to_string(::WSAGetLastError()) + ")";
+}
+inline int close_descriptor(socket_descriptor descriptor) {
+  return ::closesocket(descriptor);
 }
 using transfer_size = int;
 constexpr int no_signal_flag = 0;
@@ -125,7 +144,7 @@ inline std::string last_error_text() {
   return std::string("net: ") + (text ? text : "the socket call failed");
 }
 
-inline int close_descriptor(int descriptor) { return ::close(descriptor); }
+inline int close_descriptor(socket_descriptor descriptor) { return ::close(descriptor); }
 using transfer_size = ssize_t;
 #if defined(MSG_NOSIGNAL)
 constexpr int no_signal_flag = MSG_NOSIGNAL;
@@ -134,6 +153,25 @@ constexpr int no_signal_flag = 0;
 #endif
 
 #endif
+
+/** Apply process-local socket safety before exposing the descriptor. */
+inline std::string prepare_socket(socket_descriptor descriptor) {
+#if defined(SO_NOSIGPIPE)
+  const int enabled = 1;
+  if (::setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE,
+                   reinterpret_cast<const char *>(&enabled), sizeof(enabled)) != 0)
+    return last_error_text();
+#endif
+#if defined(_WIN32)
+  if (!::SetHandleInformation(reinterpret_cast<HANDLE>(descriptor), HANDLE_FLAG_INHERIT, 0))
+    return "net: the socket could not be made non-inheritable";
+#else
+  const int flags = ::fcntl(descriptor, F_GETFD);
+  if (flags < 0 || ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) < 0)
+    return last_error_text();
+#endif
+  return {};
+}
 
 /** Whether the last call failed only because it would have blocked. */
 inline bool last_call_would_block() {
@@ -155,6 +193,10 @@ inline bool last_call_would_block() {
  */
 inline bool fill_bind_address(const std::string &host, std::int64_t port,
                               sockaddr_in &into, std::string &error) {
+  if (host.find('\0') != std::string::npos) {
+    error = "net: a host must not contain a NUL byte";
+    return false;
+  }
   if (port < 1 || port > 65535) {
     error = "net: a port must be between 1 and 65535";
     return false;
@@ -180,7 +222,7 @@ inline bool fill_bind_address(const std::string &host, std::int64_t port,
 
 /** Open, bind and listen in one step, because no caller wants them apart. */
 inline Opened listen_on(const std::string &host, std::int64_t port,
-                        std::int64_t backlog) {
+                        std::int64_t backlog, bool share_port = false) {
   Opened opened;
   if (!ensure_started(opened.error))
     return opened;
@@ -189,15 +231,39 @@ inline Opened listen_on(const std::string &host, std::int64_t port,
   if (!fill_bind_address(host, port, address, opened.error))
     return opened;
 
-  const int descriptor = static_cast<int>(::socket(AF_INET, SOCK_STREAM, 0));
-  if (descriptor < 0) {
+#if !defined(SO_REUSEPORT) || defined(_WIN32)
+  if (share_port) {
+    opened.error = "net: this platform has no shared-listener SO_REUSEPORT support";
+    return opened;
+  }
+#endif
+  const socket_descriptor descriptor = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (descriptor == invalid_socket) {
     opened.error = last_error_text();
     return opened;
   }
 
+  opened.error = prepare_socket(descriptor);
   const int reuse = 1;
-  ::setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR,
-               reinterpret_cast<const char *>(&reuse), sizeof(reuse));
+#if defined(_WIN32)
+  constexpr int reuse_option = SO_EXCLUSIVEADDRUSE;
+#else
+  constexpr int reuse_option = SO_REUSEADDR;
+#endif
+  if (opened.error.empty() &&
+      ::setsockopt(descriptor, SOL_SOCKET, reuse_option,
+                   reinterpret_cast<const char *>(&reuse), sizeof(reuse)) != 0)
+    opened.error = last_error_text();
+#if defined(SO_REUSEPORT) && !defined(_WIN32)
+  if (opened.error.empty() && share_port &&
+      ::setsockopt(descriptor, SOL_SOCKET, SO_REUSEPORT,
+                   reinterpret_cast<const char *>(&reuse), sizeof(reuse)) != 0)
+    opened.error = last_error_text();
+#endif
+  if (!opened.error.empty()) {
+    close_descriptor(descriptor);
+    return opened;
+  }
 
   if (::bind(descriptor, reinterpret_cast<sockaddr *>(&address),
              sizeof(address)) != 0) {
@@ -220,14 +286,16 @@ inline Opened listen_on(const std::string &host, std::int64_t port,
 }
 
 /** Wait for a connection. Retries an interruption rather than reporting one. */
-inline Opened accept_on(int listening) {
+inline Opened accept_on(socket_descriptor listening) {
   Opened opened;
   if (!ensure_started(opened.error))
     return opened;
   for (;;) {
-    const int descriptor = static_cast<int>(::accept(listening, nullptr, nullptr));
-    if (descriptor >= 0) {
-      opened.descriptor = descriptor;
+    const socket_descriptor descriptor = ::accept(listening, nullptr, nullptr);
+    if (descriptor != invalid_socket) {
+      opened.error = prepare_socket(descriptor);
+      if (opened.error.empty()) opened.descriptor = descriptor;
+      else close_descriptor(descriptor);
       return opened;
     }
 #if !defined(_WIN32)
@@ -254,6 +322,10 @@ inline Opened connect_to(const std::string &host, std::int64_t port) {
   Opened opened;
   if (!ensure_started(opened.error))
     return opened;
+  if (host.find('\0') != std::string::npos) {
+    opened.error = "net: a host must not contain a NUL byte";
+    return opened;
+  }
   if (port < 1 || port > 65535) {
     opened.error = "net: a port must be between 1 and 65535";
     return opened;
@@ -277,10 +349,15 @@ inline Opened connect_to(const std::string &host, std::int64_t port) {
   std::string attempt_error = "net: no address accepted the connection";
   for (addrinfo *candidate = found; candidate != nullptr;
        candidate = candidate->ai_next) {
-    const int descriptor = static_cast<int>(::socket(
-        candidate->ai_family, candidate->ai_socktype, candidate->ai_protocol));
-    if (descriptor < 0)
+    const socket_descriptor descriptor = ::socket(
+        candidate->ai_family, candidate->ai_socktype, candidate->ai_protocol);
+    if (descriptor == invalid_socket)
       continue;
+    attempt_error = prepare_socket(descriptor);
+    if (!attempt_error.empty()) {
+      close_descriptor(descriptor);
+      continue;
+    }
     if (::connect(descriptor, candidate->ai_addr,
                   static_cast<int>(candidate->ai_addrlen)) == 0) {
       ::freeaddrinfo(found);
@@ -303,7 +380,7 @@ inline Opened connect_to(const std::string &host, std::int64_t port) {
  * apart from a failure, because a caller reading until the peer finishes needs
  * to know which happened and both return no data.
  */
-inline Transferred read_some(int descriptor, std::int64_t wanted) {
+inline Transferred read_some(socket_descriptor descriptor, std::int64_t wanted) {
   Transferred result;
   if (!ensure_started(result.error))
     return result;
@@ -350,7 +427,7 @@ inline Transferred read_some(int descriptor, std::int64_t wanted) {
  * event loop. This takes what it can, reports it, and leaves the rest to the
  * caller to send when poll says the socket will accept more.
  */
-inline Transferred write_some(int descriptor, const std::string &data,
+inline Transferred write_some(socket_descriptor descriptor, const std::string &data,
                               std::size_t offset) {
   Transferred result;
   if (!ensure_started(result.error))
@@ -361,7 +438,8 @@ inline Transferred write_some(int descriptor, const std::string &data,
   for (;;) {
     const transfer_size taken =
         ::send(descriptor, data.data() + offset,
-               static_cast<transfer_size>(data.size() - offset), no_signal_flag);
+               static_cast<transfer_size>(std::min<std::size_t>(data.size() - offset,
+                   static_cast<std::size_t>(max_transfer_bytes))), no_signal_flag);
     if (taken > 0) {
       result.count = static_cast<std::int64_t>(taken);
       return result;
@@ -386,7 +464,7 @@ inline Transferred write_some(int descriptor, const std::string &data,
  * permitted to take less than it was given, and the number of servers that
  * have shipped a truncated response because nobody checked is large.
  */
-inline Transferred write_all(int descriptor, const std::string &data) {
+inline Transferred write_all(socket_descriptor descriptor, const std::string &data) {
   Transferred result;
   if (!ensure_started(result.error))
     return result;
@@ -396,7 +474,8 @@ inline Transferred write_all(int descriptor, const std::string &data) {
     const std::size_t remaining = data.size() - sent;
     const transfer_size taken =
         ::send(descriptor, data.data() + sent,
-               static_cast<transfer_size>(remaining), no_signal_flag);
+               static_cast<transfer_size>(std::min<std::size_t>(remaining,
+                   static_cast<std::size_t>(max_transfer_bytes))), no_signal_flag);
     if (taken > 0) {
       sent += static_cast<std::size_t>(taken);
       continue;
@@ -420,12 +499,12 @@ inline Transferred write_all(int descriptor, const std::string &data) {
  * serving nobody: a connection that opens and then says nothing holds the
  * accept loop forever. Zero removes the deadline again.
  */
-inline std::string set_timeout(int descriptor, std::int64_t milliseconds) {
+inline std::string set_timeout(socket_descriptor descriptor, std::int64_t milliseconds) {
   std::string error;
   if (!ensure_started(error))
     return error;
-  if (milliseconds < 0)
-    return "net: a timeout cannot be negative";
+  if (milliseconds < 0 || milliseconds > max_timeout_ms)
+    return "net: a timeout must be between 0 and 2147483647 milliseconds";
 
 #if defined(_WIN32)
   const DWORD value = static_cast<DWORD>(milliseconds);
@@ -446,7 +525,7 @@ inline std::string set_timeout(int descriptor, std::int64_t milliseconds) {
 }
 
 /** The peer's address as text, for a log line. Never part of a decision. */
-inline Transferred peer_address(int descriptor) {
+inline Transferred peer_address(socket_descriptor descriptor) {
   Transferred result;
   if (!ensure_started(result.error))
     return result;
@@ -500,7 +579,7 @@ constexpr std::int64_t ready_finished = 4;
 /** One watched socket and what it is being watched for. */
 struct Watched {
   std::int64_t token = 0;
-  int descriptor = -1;
+  socket_descriptor descriptor = invalid_socket;
   std::int64_t wanted = ready_readable;
 };
 
@@ -519,13 +598,13 @@ struct Ready {
  * finds nothing — a spurious wakeup, a connection withdrawn between the poll
  * and the accept — would stop the whole loop on behalf of one socket.
  */
-inline std::string set_blocking(int descriptor, bool blocking) {
+inline std::string set_blocking(socket_descriptor descriptor, bool blocking) {
   std::string error;
   if (!ensure_started(error))
     return error;
 #if defined(_WIN32)
   u_long mode = blocking ? 0 : 1;
-  if (::ioctlsocket(static_cast<SOCKET>(descriptor), FIONBIO, &mode) != 0)
+  if (::ioctlsocket(descriptor, FIONBIO, &mode) != 0)
     return last_error_text();
 #else
   const int flags = ::fcntl(descriptor, F_GETFL, 0);
@@ -539,24 +618,16 @@ inline std::string set_blocking(int descriptor, bool blocking) {
 }
 
 /**
- * Let several processes bind the same port.
- *
- * The missing half of running on more than one core. This runtime is
- * single-threaded by construction — the interpreter holds one stack, one heap
- * and one set of globals, with no lock anywhere near them — so a second core
- * means a second process, and two processes cannot share a listening socket
- * without this. The kernel then load-balances accepts between them.
- *
- * Distinct from SO_REUSEADDR, which `listen_on` always sets and which only
- * allows rebinding a port in TIME_WAIT. This one deliberately allows two
- * servers to share a port, so it is opt-in: switched on by accident it would
- * silently split traffic between a running server and a stray one.
+ * Change SO_REUSEPORT on an existing socket where the host supports it.
+ * This cannot configure a second listener before bind: shared listeners must
+ * instead use listen_on(..., true) on every participating process. Windows
+ * rejects enabling this option rather than emulating it with SO_REUSEADDR.
  */
-inline std::string set_reuse_port(int descriptor, bool enabled) {
+inline std::string set_reuse_port(socket_descriptor descriptor, bool enabled) {
   std::string error;
   if (!ensure_started(error))
     return error;
-#if defined(SO_REUSEPORT)
+#if defined(SO_REUSEPORT) && !defined(_WIN32)
   const int value = enabled ? 1 : 0;
   if (::setsockopt(descriptor, SOL_SOCKET, SO_REUSEPORT,
                    reinterpret_cast<const char *>(&value), sizeof(value)) != 0)
@@ -589,8 +660,12 @@ inline std::string poll_wait(const std::vector<Watched> &watching,
   std::string error;
   if (!ensure_started(error))
     return error;
+  if (timeout_ms > max_timeout_ms)
+    return "net: a finite wait cannot exceed 2147483647 milliseconds";
   if (watching.empty())
     return {};
+  if (watching.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)()))
+    return "net: too many watched sockets";
 
 #if defined(_WIN32)
   std::vector<WSAPOLLFD> entries;
@@ -599,9 +674,11 @@ inline std::string poll_wait(const std::vector<Watched> &watching,
 #endif
   entries.reserve(watching.size());
   for (const auto &one : watching) {
+    if (one.wanted <= 0 || (one.wanted & ~(ready_readable | ready_writable)) != 0)
+      return "net: watch flags must select readability, writability, or both";
 #if defined(_WIN32)
     WSAPOLLFD entry{};
-    entry.fd = static_cast<SOCKET>(one.descriptor);
+    entry.fd = one.descriptor;
 #else
     pollfd entry{};
     entry.fd = one.descriptor;
@@ -614,24 +691,27 @@ inline std::string poll_wait(const std::vector<Watched> &watching,
     entries.push_back(entry);
   }
 
-  int signalled = 0;
+  using Clock = std::chrono::steady_clock;
+  const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms < 0 ? 0 : timeout_ms);
+  int remaining = timeout_ms < 0 ? -1 : static_cast<int>(timeout_ms);
   for (;;) {
 #if defined(_WIN32)
-    signalled = ::WSAPoll(entries.data(), static_cast<ULONG>(entries.size()),
-                          static_cast<INT>(timeout_ms));
+    const int signalled = ::WSAPoll(entries.data(), static_cast<ULONG>(entries.size()), remaining);
 #else
-    signalled = ::poll(entries.data(), static_cast<nfds_t>(entries.size()),
-                       static_cast<int>(timeout_ms));
+    const int signalled = ::poll(entries.data(), static_cast<nfds_t>(entries.size()), remaining);
 #endif
-    if (signalled >= 0)
-      break;
-#if !defined(_WIN32)
-    // An interrupted wait is not a failure. Reporting one would make an
-    // unrelated signal look to the server like a broken socket.
-    if (errno == EINTR)
-      continue;
+    if (signalled >= 0) break;
+#if defined(_WIN32)
+    const bool interrupted = ::WSAGetLastError() == WSAEINTR;
+#else
+    const bool interrupted = errno == EINTR;
 #endif
-    return last_error_text();
+    if (!interrupted) return last_error_text();
+    if (timeout_ms >= 0) {
+      const auto left = deadline - Clock::now();
+      if (left <= Clock::duration::zero()) return {};
+      remaining = static_cast<int>(std::chrono::ceil<std::chrono::milliseconds>(left).count());
+    }
   }
 
   for (std::size_t index = 0; index < entries.size(); ++index) {
@@ -656,7 +736,7 @@ inline std::string poll_wait(const std::vector<Watched> &watching,
 }
 
 /** Stop a write-blocked peer from keeping a response in a buffer. */
-inline std::string set_no_delay(int descriptor, bool enabled) {
+inline std::string set_no_delay(socket_descriptor descriptor, bool enabled) {
   std::string error;
   if (!ensure_started(error))
     return error;

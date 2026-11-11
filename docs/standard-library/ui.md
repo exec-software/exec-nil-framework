@@ -5,10 +5,10 @@ events and explicit model bindings. Ny programs can import the same module.
 The VM and native compiler use one desktop provider per platform, each behind
 the same checked boundary: a GTK4 provider on Linux and a Win32 provider on
 Windows. Windows remains a development target, not a qualified release platform.
-The macOS provider is being integrated; AppKit replaces the earlier GTK-on-macOS
-work, because a GTK process on macOS never runs the AppKit event loop and is
-therefore invisible to the accessibility APIs that assistive technology and
-directed input depend on. See [platform support](../platform-support.md).
+The macOS provider is AppKit. Its provider, lifecycle and interpreter
+language-level desktop contracts pass on Intel and Apple Silicon; current SDK,
+native/JIT application and editor acceptance remain separate. AppKit replaces the
+earlier private GTK-on-macOS experiments. See [platform support](../platform-support.md).
 Examples display the framework generation as **NIL²**, with **NIL^2** as the
 plain-text spelling. This presentation does not change numeric release or
 artifact identities in `VERSION`.
@@ -65,16 +65,14 @@ Because the provider calls Cocoa and CoreGraphics directly, every linked
 program carries those frameworks, which is why they appear in the Darwin link
 lines alongside the runtime.
 
-GTK is no longer a macOS provider. A GTK process on macOS never runs
-`-[NSApplication run]`, and AppKit answers accessibility requests from the main
-run loop, so such a process has no accessibility hierarchy at all: every
-accessibility query against it fails, including the application element's own
-role, which makes it invisible to assistive technology and to directed input.
+GTK is no longer a macOS provider. The earlier private GTK profile failed its
+cross-process accessibility probes; those observations do not qualify every
+possible GTK configuration. AppKit is the supported source implementation.
 
 On macOS, creation and polling must run on the process main thread, which is
 where AppKit requires its windows to be used. Ordinary interpreter, JIT and
-native entry routes use the main thread; UI behaviour through these routes
-still needs the desktop acceptance campaign. DAP currently executes the
+native entry routes use the main thread. The interpreter display campaign passes;
+native/JIT application acceptance still needs its own campaign. DAP currently executes the
 debuggee on a worker, so DAP with macOS UI is outside this port, and pausing a
 text or JSON debug session does not automatically pump window events. AppKit
 supplies no box or grid container, so, as on Win32, the provider owns the

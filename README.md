@@ -255,8 +255,12 @@ assembly and executable-context embedding, inspection and dead-strip retention
 checks. Both macOS development SDKs also pass the full installed
 standard-library campaign, isolated PostgreSQL application routes, installed
 debugger checks and execution checkpoints. Both hosts now pass the underlying
-AppKit window/event checks, including directed keyboard input and native closure
-of a verified child window. The GTK port and desktop acceptance remain in progress.
+AppKit provider and interpreter language-level desktop checks. Windows uses its
+native Win32 provider; Linux uses GTK4. macOS editor integration and a complete
+current SDK desktop campaign remain open. The newer socket, entropy and text-byte
+intrinsics are interpreter-backed; their cross-platform acceptance is being
+brought up to date. File timestamps now share an implementation across interpreter
+and native routes, with Linux text/binary NIL, JIT and AOT checks passing.
 Incremental reuse and native memory-limit tests also remain open, so full platform
 parity is not yet established.
 The [platform support matrix](docs/platform-support.md) separates verified

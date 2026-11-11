@@ -8,8 +8,8 @@
 !!! something predictable or drop the feature.
 !!!
 !!! Nothing here can assert a particular value, which is the point. What it
-!!! asserts is the shape, the bounds, and that two draws differ — the last
-!!! being the one check that would have caught MINSTD standing in for this.
+!!! asserts is the shape, the bounds, and that two draws differ. The last is
+!!! only a constant-output sanity check; it does not prove cryptographic quality.
 
 book matrix.entropy
 

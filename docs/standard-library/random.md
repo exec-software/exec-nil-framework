@@ -127,8 +127,10 @@ modulo the bound skews towards the low values whenever the bound does not
 divide the range evenly — a bias small enough never to be noticed and large
 enough to matter to anything that was counting on uniformity.
 
-These ask the operating system and do nothing else: `getrandom(2)` on Linux
-falling back to `/dev/urandom`, and the CRT's `rand_s` on Windows. There is no
+These use the operating system: `getrandom(2)` on Linux with `/dev/urandom`
+fallback, `getentropy` on macOS, and `BCryptGenRandom` with the system-preferred
+generator on Windows. The Windows implementation resolves the OS copy of
+`bcrypt.dll` explicitly. There is no
 userspace pool, no seeding and no state. There is also no fallback to a weak
 source — if the kernel cannot provide entropy the answer is an error, because
 quietly returning something guessable is how this goes wrong in a way nobody

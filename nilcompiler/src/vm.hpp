@@ -312,6 +312,7 @@ class VM {
   struct CheckpointState;
 public:
   VM();
+  ~VM() noexcept;
   void loadProgram(const std::vector<Instruction> &program,
                    const std::unordered_map<std::string, Value> &constants);
   void execute(bool reset = true);
@@ -618,7 +619,11 @@ private:
   // `listening` is kept so that accepting on a connection, or reading from a
   // listener, is an error with a sentence in it rather than an EINVAL.
   struct SocketHandle {
+#ifdef _WIN32
+    std::uintptr_t descriptor = ~std::uintptr_t{0};
+#else
     int descriptor = -1;
+#endif
     bool listening = false;
   };
   std::unordered_map<int64_t, SocketHandle> socket_handles_;
@@ -647,7 +652,7 @@ private:
 
   // Closes every socket a run still holds. A program that exits without
   // closing its listener must not leave the port bound against the next one.
-  void closeOpenSockets();
+  void closeOpenSockets() noexcept;
 
   // Type size helper (simplified - all types are 8 bytes for now)
   size_t get_type_size(const std::string &type_name) const {

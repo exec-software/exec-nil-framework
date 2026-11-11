@@ -10,7 +10,7 @@
 # program could accept a connection, and the socket design under experimental/
 # had nothing beneath it to build on.
 #
-# Every call returns a Result. A network call fails for reasons entirely
+# Operations that can fail return a Result. A network call fails for reasons entirely
 # outside the program — the port is taken, the peer went away, the name does
 # not resolve — and for a server those are ordinary answers on an ordinary
 # day, not exceptional conditions. None of these raise.
@@ -43,6 +43,12 @@ import nil.std.core
 @intrinsic("net.listen")
 pub fn listen(host: text, port: i32, backlog: i32) -> Result<i64, text>
 
+# Bind an explicitly shared listener. Every listener sharing the endpoint must
+# opt in before binding; setting reuse-port after listen cannot do this.
+# Uses SO_REUSEPORT on Linux/macOS; unsupported hosts return Result.Error.
+@intrinsic("net.listen_reuse_port")
+pub fn listen_reuse_port(host: text, port: i32, backlog: i32) -> Result<i64, text>
+
 # Wait for a connection and return a handle to it.
 #
 # Blocks until one arrives. An interrupted call is retried inside the runtime
@@ -69,8 +75,9 @@ pub fn connect(host: text, port: i32) -> Result<i64, text>
 #
 # A short read is normal and is not an error: TCP is a stream, and a request
 # may arrive in several pieces. An orderly close by the peer comes back as
-# empty text, so a loop reading to the end of a request sees one shape; use
-# is_open when the difference matters.
+# empty text. A timeout or would-block result is an error for this blocking
+# interface. is_open only reports whether this VM still owns the handle;
+# receive distinguishes bytes, EOF and would-block for nonblocking callers.
 #
 # The bytes are returned as text and are not necessarily valid UTF-8 — they
 # are whatever the peer sent. Read them with nil.std.text's byte_at rather
@@ -84,8 +91,9 @@ pub fn read(handle: i64, maximum_bytes: i64) -> Result<text, text>
 #
 # A single send is permitted to take less than it was given; this loops until
 # everything is gone or the attempt fails, because the number of servers that
-# have shipped a truncated response from the one-call version is large. On
-# failure the count says how far it got.
+# have shipped a truncated response from the one-call version is large.
+# Failure returns error text without a partial byte count. An event loop
+# should use send_some and retain its own progress offset.
 #
 # A peer that closes mid-write is reported, not fatal: the runtime suppresses
 # the signal that would otherwise end the process.
@@ -110,7 +118,8 @@ pub fn close(handle: i64) -> Result<i64, text>
 @intrinsic("net.is_open")
 pub fn is_open(handle: i64) -> bool
 
-# Put a deadline on reads and writes, in milliseconds. Zero removes it.
+# Set each blocking receive/send timeout, in milliseconds. Zero removes it.
+# Values must be between 0 and 2147483647 on every supported host.
 #
 # A single-threaded server without this is one slow client away from serving
 # nobody: a connection that opens and then says nothing holds the accept loop
@@ -166,19 +175,18 @@ pub const ready_finished: i64 = 4
 # because the peer withdrew in between — would stop the whole loop on behalf
 # of one socket.
 #
-# Leave accepted connections blocking and give them a timeout instead. Poll
-# has said they are readable, so a read returns at once, and an empty read
-# then means the peer closed rather than "nothing yet", which is a
-# distinction an event loop has to be able to make.
+# A fully nonblocking loop also sets this on accepted connections, then uses
+# receive and send_some to distinguish no progress from an orderly close.
+# Readiness can change before the transfer; it is not a promise that a
+# blocking read or write will return immediately.
 @intrinsic("net.set_blocking")
 pub fn set_blocking(handle: i64, blocking: bool) -> Result<i64, text>
 
-# Let other processes bind this same port.
+# Change SO_REUSEPORT on an existing socket where supported.
 #
-# Opt-in, and distinct from the SO_REUSEADDR that listen always sets. That one
-# only allows rebinding a port left in TIME_WAIT; this one deliberately allows
-# two servers to share a port, which switched on by accident would silently
-# split traffic between a running server and a stray one.
+# This runs after binding and cannot make a second ordinary listener opt in
+# before its bind. Use listen_reuse_port for every shared listener instead.
+# Windows returns an error when enabling this option.
 @intrinsic("net.set_reuse_port")
 pub fn set_reuse_port(handle: i64, enabled: bool) -> Result<i64, text>
 

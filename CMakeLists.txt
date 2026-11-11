@@ -237,6 +237,29 @@ if(BUILD_TESTING)
     set_tests_properties(nil.owned-contract PROPERTIES LABELS "nil;ownership;rc" TIMEOUT 30)
 
     find_package(Threads REQUIRED)
+    add_executable(nil_net_support_tests tests/net_support_tests.cpp)
+    target_compile_features(nil_net_support_tests PRIVATE cxx_std_17)
+    target_include_directories(nil_net_support_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    target_link_libraries(nil_net_support_tests PRIVATE Threads::Threads)
+    if(WIN32)
+        target_link_libraries(nil_net_support_tests PRIVATE ws2_32)
+    endif()
+    add_test(NAME net.support-contract COMMAND $<TARGET_FILE:nil_net_support_tests>)
+    set_tests_properties(net.support-contract PROPERTIES LABELS "net;runtime;rc" TIMEOUT 60)
+
+    add_executable(nil_net_lifecycle_tests tests/net_lifecycle_tests.cpp)
+    target_compile_features(nil_net_lifecycle_tests PRIVATE cxx_std_17)
+    target_include_directories(nil_net_lifecycle_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    target_link_libraries(nil_net_lifecycle_tests PRIVATE nilcompiler_core)
+    add_test(NAME net.lifecycle-contract COMMAND $<TARGET_FILE:nil_net_lifecycle_tests>)
+    set_tests_properties(net.lifecycle-contract PROPERTIES LABELS "net;runtime;vm;rc" TIMEOUT 60)
+
+    add_executable(nil_file_time_support_tests tests/file_time_support_tests.cpp)
+    target_compile_features(nil_file_time_support_tests PRIVATE cxx_std_17)
+    target_include_directories(nil_file_time_support_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    add_test(NAME nil.file-time-support COMMAND $<TARGET_FILE:nil_file_time_support_tests>)
+    set_tests_properties(nil.file-time-support PROPERTIES LABELS "io;runtime;rc" TIMEOUT 30)
+
     add_executable(ny_database_runtime_tests tests/database_runtime_tests.cpp)
     target_link_libraries(ny_database_runtime_tests PRIVATE nilruntime)
     target_include_directories(ny_database_runtime_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
@@ -1038,6 +1061,14 @@ if(BUILD_TESTING)
                     --interpreter $<TARGET_FILE:nilinterpreter>
                     --root "${CMAKE_CURRENT_SOURCE_DIR}")
         set_tests_properties(net.socket-contract PROPERTIES LABELS "net;routes;rc" TIMEOUT 300)
+        add_test(NAME nil.file-modified-at-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/file_modified_at_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --nilstd "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                    --llvm "${NIL_ENABLE_LLVM}"
+                    --output-parent "${CMAKE_BINARY_DIR}/test-evidence")
+        set_tests_properties(nil.file-modified-at-contract PROPERTIES LABELS "io;routes;rc" TIMEOUT 180)
         add_test(NAME nillsp.semantic-protocol
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lsp_semantic_protocol.py"
                     --lsp $<TARGET_FILE:nillsp>)

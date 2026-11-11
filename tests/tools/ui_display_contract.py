@@ -245,6 +245,20 @@ def checked(command, env, timeout=180):
         if process.stderr: process.stderr.close()
 
 
+def validate_desktop_report(report, llvm):
+    names = {'widgets_layout_and_model_binding', 'window_ownership_and_size_errors',
+             'dynamic_subtrees_and_effective_state'}
+    routes = {'vm', 'native'} if llvm == 'ON' else {'vm'}
+    expected = {(name, 'nil.std.ui.gtk.desktop', route) for name in names for route in routes}
+    tests = report['tests']
+    assert report['schema'] == 'nil.test.results.v1' and not report['errors'], report
+    assert len(tests) == len(expected), report
+    assert {(test['name'], test['suite'], test['route']) for test in tests} == expected, report
+    assert all(test['status'] == 'passed' and test['exitCode'] == 77 and
+               not test['signal'] and not test['timedOut'] and not test['cancelled']
+               for test in tests), report
+
+
 def darwin(args):
     """The AppKit contract. macOS has no detachable display to create, so the
     runner's own window server session is used; without one there is nothing
@@ -269,8 +283,10 @@ def darwin(args):
     desktop = checked([*base, '--target', 'all' if args.llvm == 'ON' else 'vm',
                        '--filter', 'nil.std.ui.gtk.desktop', args.source.resolve()], env)
     report = json.loads(desktop.stdout)
-    assert report['tests'] and not report['errors'], report
-    assert all(test['status'] == 'passed' for test in report['tests']), report
+    # Preserve each route's actual results in CTest's retained output, and reject
+    # missing, duplicated or skipped cases rather than accepting any green subset.
+    print(json.dumps(report, indent=2), flush=True)
+    validate_desktop_report(report, args.llvm)
     # The interaction suite is deliberately not run here. It needs keystrokes
     # delivered to another process, and on macOS posting events to a different
     # process requires accessibility trust that a hosted runner does not grant.
