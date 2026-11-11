@@ -1,5 +1,4 @@
 Type checking failed:
-  {{SOURCE}}:8: Undefined identifier 'gzip_compress'
-  {{SOURCE}}:9: Undefined identifier 'sha256'
-  {{SOURCE}}:10: Undefined identifier 'random_bytes'
-  {{SOURCE}}:11: Undefined identifier 'aes_encrypt'
+  {{SOURCE}}:18: Undefined identifier 'gzip_compress'
+  {{SOURCE}}:19: Undefined identifier 'sha256'
+  {{SOURCE}}:20: Undefined identifier 'aes_encrypt'
