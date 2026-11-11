@@ -14,7 +14,13 @@
 
 #if defined(__APPLE__)
 #include <AvailabilityMacros.h>
-#include <mach-o/dyld-interposing.h>
+/* The public SDK omits dyld's convenience macro header. The loader consumes
+ * pointer pairs in this documented Mach-O section; keep the declaration here. */
+#define NIL_HEAP_INTERPOSE(replacement, original) \
+    __attribute__((used, section("__DATA,__interpose,interposing"))) \
+    static const struct { const void *new_function, *old_function; } \
+    nil_heap_pair_##replacement = { (const void *)(uintptr_t)&replacement, \
+                                    (const void *)(uintptr_t)&original };
 #include <malloc/malloc.h>
 #define ORIGINAL(name) name
 #elif defined(NIL_HEAP_BUDGET_PORTABLE_TEST)
@@ -224,13 +230,13 @@ static void *budget_valloc(size_t bytes) {
 }
 
 #if defined(__APPLE__)
-DYLD_INTERPOSE(budget_malloc, malloc)
-DYLD_INTERPOSE(budget_calloc, calloc)
-DYLD_INTERPOSE(budget_free, free)
-DYLD_INTERPOSE(budget_realloc, realloc)
-DYLD_INTERPOSE(budget_aligned_alloc, aligned_alloc)
-DYLD_INTERPOSE(budget_posix_memalign, posix_memalign)
-DYLD_INTERPOSE(budget_valloc, valloc)
+NIL_HEAP_INTERPOSE(budget_malloc, malloc)
+NIL_HEAP_INTERPOSE(budget_calloc, calloc)
+NIL_HEAP_INTERPOSE(budget_free, free)
+NIL_HEAP_INTERPOSE(budget_realloc, realloc)
+NIL_HEAP_INTERPOSE(budget_aligned_alloc, aligned_alloc)
+NIL_HEAP_INTERPOSE(budget_posix_memalign, posix_memalign)
+NIL_HEAP_INTERPOSE(budget_valloc, valloc)
 
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 140000
 /* Modern Apple Clang can rewrite ordinary calls to typed allocation symbols.
@@ -263,13 +269,13 @@ static int budget_type_posix_memalign(void **out, size_t alignment, size_t bytes
 static void *budget_type_valloc(size_t bytes, malloc_type_id_t type) {
     reserve(bytes, 1); return finish_allocate(malloc_type_valloc(bytes, type), bytes);
 }
-DYLD_INTERPOSE(budget_type_malloc, malloc_type_malloc)
-DYLD_INTERPOSE(budget_type_calloc, malloc_type_calloc)
-DYLD_INTERPOSE(budget_type_free, malloc_type_free)
-DYLD_INTERPOSE(budget_type_realloc, malloc_type_realloc)
-DYLD_INTERPOSE(budget_type_aligned_alloc, malloc_type_aligned_alloc)
-DYLD_INTERPOSE(budget_type_posix_memalign, malloc_type_posix_memalign)
-DYLD_INTERPOSE(budget_type_valloc, malloc_type_valloc)
+NIL_HEAP_INTERPOSE(budget_type_malloc, malloc_type_malloc)
+NIL_HEAP_INTERPOSE(budget_type_calloc, malloc_type_calloc)
+NIL_HEAP_INTERPOSE(budget_type_free, malloc_type_free)
+NIL_HEAP_INTERPOSE(budget_type_realloc, malloc_type_realloc)
+NIL_HEAP_INTERPOSE(budget_type_aligned_alloc, malloc_type_aligned_alloc)
+NIL_HEAP_INTERPOSE(budget_type_posix_memalign, malloc_type_posix_memalign)
+NIL_HEAP_INTERPOSE(budget_type_valloc, malloc_type_valloc)
 #endif
 #else
 void *__wrap_malloc(size_t bytes) { return budget_malloc(bytes); }

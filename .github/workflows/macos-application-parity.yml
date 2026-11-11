@@ -16,6 +16,7 @@ name: macOS application platform checks
       - 'common/**'
       - 'nillinker/process_runner*'
       - 'validation/ny-3d/scripts/debugger_process.py'
+      - 'scripts/ci/macos-toolchain-census.py'
       - 'tests/darwin_native_heap_budget*'
       - 'tests/tools/darwin_native_heap_budget.py'
       - 'tests/tools/native_managed_lifetime.py'
@@ -89,7 +90,7 @@ jobs:
           set -o pipefail
           cmake --build build/application --parallel 2 --target \
             nilcompiler nilinterpreter nilassembler nillsp nildebugger nilbuild niltest aperture \
-            nil_vscode_host_runner nil_file_time_support_tests \
+            nil_vscode_host_runner nil_file_time_support_tests nil_compiler_module_darwin_tests \
             2>&1 | tee build/application-evidence/build.log
       - name: Build independent allocation controls
         id: heap
@@ -99,15 +100,21 @@ jobs:
           cmake --build build/application --parallel 2 --target \
             nil_darwin_native_heap_budget nil_darwin_native_heap_budget_control \
             2>&1 | tee build/application-evidence/heap-build.log
+      - name: Record selected native SDK and linker inputs
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        timeout-minutes: 2
+        run: >-
+          python3 -B scripts/ci/macos-toolchain-census.py --build build/application
+          --output build/application-evidence/toolchain-census
       - name: Verify actual native lifetime and timestamp contracts
         timeout-minutes: 15
         run: |
           python3 - <<'PYTHON'
           import json, subprocess, xml.etree.ElementTree as ET
           from pathlib import Path
-          expected = {'ny.native-managed-lifetime', 'ny.native-owned-lifetime',
+          expected = {'compiler.darwin-module-fingerprint', 'ny.native-managed-lifetime', 'ny.native-owned-lifetime',
                       'nil.file-time-support', 'nil.file-modified-at-contract'}
-          pattern = r'^(ny[.]native-(managed|owned)-lifetime|nil[.]file-(time-support|modified-at-contract))$'
+          pattern = r'^(compiler[.]darwin-module-fingerprint|ny[.]native-(managed|owned)-lifetime|nil[.]file-(time-support|modified-at-contract))$'
           base = ['ctest', '--test-dir', 'build/application', '-R', pattern]
           root = Path('build/application-evidence').resolve()
           inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
@@ -165,7 +172,18 @@ jobs:
           NIL_VSCODE_HOST_TIMEOUT_MS: '900000'
         run: |
           set -o pipefail
-          export VSCODE_EXECUTABLE="$GITHUB_WORKSPACE/build/editor-download/Visual Studio Code.app/Contents/MacOS/Electron"
+          VSCODE_EXECUTABLE="$(python3 - <<'PYTHON'
+          import plistlib
+          from pathlib import Path
+          app = Path('build/editor-download/Visual Studio Code.app/Contents').resolve(strict=True)
+          with (app/'Info.plist').open('rb') as stream: name = plistlib.load(stream)['CFBundleExecutable']
+          assert name and Path(name).name == name
+          executable = app/'MacOS'/name
+          assert executable.is_file()
+          print(executable)
+          PYTHON
+          )"
+          export VSCODE_EXECUTABLE
           export NIL_VSCODE_TOOL_DIRECTORY="$GITHUB_WORKSPACE/build/application/bin"
           export NIL_VSCODE_HOST_RUNNER="$NIL_VSCODE_TOOL_DIRECTORY/nil_vscode_host_runner"
           export NIL_VSCODE_SDK_PATH="$GITHUB_WORKSPACE"

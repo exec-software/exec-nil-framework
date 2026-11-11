@@ -183,9 +183,11 @@ the complete admission rules.
   campaign does not qualify cross-process keyboard injection or accessibility;
   the language interaction suite currently runs on Linux and Windows. Earlier
   private GTK and AppKit prerequisite probes are retained as historical evidence,
-  but GTK is no longer the macOS product provider. The language-level AppKit
-  display campaign uses LLVM OFF and therefore establishes the interpreter route,
-  not native/JIT application or editor acceptance.
+  but GTK is no longer the macOS product provider. The LLVM-ON campaign at
+  `965f159` passes all five selected CTests on both hosts, including all three
+  Matrix desktop cases on each interpreter/native route. The retained full
+  language reports verify all six cases; this is separate from editor acceptance
+  and the cross-process keyboard/accessibility exclusion.
 - Editor desktop integration, untested provider configurations and release-package
   acceptance remain separate from the passing installed campaigns. Shipping a
   Mach-O tool alone does not qualify these surfaces.
@@ -207,7 +209,9 @@ declaring current-source parity.
 
 The private Windows LLVM-ON build at `965f159` passes all six focused web-runtime
 contracts with no skips, including VM socket cleanup and the native timestamp
-routes. The corresponding Linux contracts pass. Hosted Intel/ARM acceptance and
-current macOS editor coverage are still in progress. The socket/byte/entropy
+routes. At `19bd5f1`, the hosted campaign passes the same six interpreter contracts
+on all four hosts, with exact inventories, no skips and independent raw-result
+replay. The tested PR merge and head revisions are retained separately. Current
+macOS editor coverage is still in progress. The socket/byte/entropy
 native limitation is common to Linux, Windows and macOS; those APIs currently
 require the interpreter on all three hosts.

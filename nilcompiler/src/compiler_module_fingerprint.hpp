@@ -20,6 +20,10 @@
 namespace nil::detail::compiler_modules {
 namespace fs = std::filesystem;
 using files = std::set<std::string>;
+#if defined(__APPLE__)
+// Defined in the Darwin-only translation unit (-fblocks).
+bool collect_darwin(files &observed);
+#endif
 
 // Linux file-backed mappings are a separate identity graph from source inputs.
 // Keep valid observations on failure; callers may still protect/hash them, but

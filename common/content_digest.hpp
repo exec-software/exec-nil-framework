@@ -2,6 +2,7 @@
 
 // SHA-256 content identities for build inputs. Timestamps are not cache keys.
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -9,9 +10,13 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <limits>
+#if defined(__APPLE__)
+#include <CommonCrypto/CommonDigest.h>
+#endif
 
 namespace nil::detail {
-class sha256 {
+class portable_sha256 {
   std::array<std::uint32_t, 8> state{0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,
                                   0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
   std::array<unsigned char, 64> block{};
@@ -58,14 +63,49 @@ public:
     return out.str();
   }
 };
+#if defined(__APPLE__)
+// The identity is still ordinary SHA-256 over every byte. Apple's implementation
+// avoids spending minutes in the scalar fallback on the dyld backing files.
+class sha256 {
+  CC_SHA256_CTX state{};
+public:
+  sha256() {
+    if (CC_SHA256_Init(&state) != 1) throw std::runtime_error("cannot initialize SHA-256");
+  }
+  void update(const char *data, std::size_t length) {
+    while (length) {
+      const auto count = static_cast<CC_LONG>(std::min<std::size_t>(length, std::numeric_limits<CC_LONG>::max()));
+      if (CC_SHA256_Update(&state, data, count) != 1) throw std::runtime_error("cannot update SHA-256");
+      data += count;
+      length -= count;
+    }
+  }
+  std::string finish() {
+    unsigned char bytes[CC_SHA256_DIGEST_LENGTH];
+    if (CC_SHA256_Final(bytes, &state) != 1) throw std::runtime_error("cannot finish SHA-256");
+    constexpr char digits[] = "0123456789abcdef";
+    std::string result;
+    result.reserve(sizeof(bytes) * 2);
+    for (auto byte : bytes) { result += digits[byte >> 4]; result += digits[byte & 15]; }
+    return result;
+  }
+};
+#else
+using sha256 = portable_sha256;
+#endif
 inline std::string content_digest(const std::string &text) { sha256 hash; hash.update(text.data(),text.size());return hash.finish(); }
-inline std::string file_digest(const std::filesystem::path &path) {
+template <class Check> inline std::string file_digest(const std::filesystem::path &path, Check check) {
+  check();
   if(!std::filesystem::is_regular_file(path)) throw std::runtime_error("expected a regular build input: "+path.string());
   std::ifstream input(path,std::ios::binary);
   if(!input) throw std::runtime_error("cannot read build input: "+path.string());
   sha256 hash; char buffer[65536];
-  while(input.read(buffer,sizeof(buffer))||input.gcount()) hash.update(buffer,static_cast<std::size_t>(input.gcount()));
+  while(input.read(buffer,sizeof(buffer))||input.gcount()) {
+    check();
+    hash.update(buffer,static_cast<std::size_t>(input.gcount()));
+  }
   if(input.bad()) throw std::runtime_error("cannot read build input: "+path.string());
   return hash.finish();
 }
+inline std::string file_digest(const std::filesystem::path &path) { return file_digest(path, [] {}); }
 } // namespace nil::detail

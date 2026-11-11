@@ -191,6 +191,13 @@ if next_contents.is_file():
  module.write_bytes(next_contents.read_bytes())
  os.utime(module, ns=(previous.st_atime_ns,previous.st_mtime_ns))
  next_contents.unlink()
+next_cache=entry.parent/'cache-content-after'
+if next_cache.is_file():
+ module=entry.parent/'dyld_shared_cache_arm64e.1'
+ previous=module.stat()
+ module.write_bytes(next_cache.read_bytes())
+ os.utime(module, ns=(previous.st_atime_ns,previous.st_mtime_ns))
+ next_cache.unlink()
 event('finish')
 ''', newline='\n')
         script.chmod(0o755)
@@ -204,7 +211,11 @@ event('finish')
             command = [str(builder), *map(str, arguments)]
             if arguments[0] in ('build', 'run', 'check'):
                 command += ['--compiler', str(tool), '--sdk', str(stdlib)]
-            result = subprocess.run(command, cwd=cwd, text=True, capture_output=True, timeout=60)
+            # Actual whole-cache SHA on Intel has measured a 104 s first pass.
+            # Keep fake/containment checks at 60 s and bound real Darwin builds
+            # separately; this changes no assertion or cache admission rule.
+            timeout = 300 if sys.platform == 'darwin' and tool == compiler else 60
+            result = subprocess.run(command, cwd=cwd, text=True, capture_output=True, timeout=timeout)
             checks += 1
             assert result.returncode == status, (command, result.returncode, result.stdout, result.stderr)
             return result
@@ -298,6 +309,24 @@ event('finish')
             assert artifact.read_bytes()==original and state.read_bytes()==old_state
             run('build','--project',project)
             assert artifact.read_bytes()!=original and not state.exists()
+
+            # A compiler may report a source or manifest as a loaded input as
+            # well. Shared toolchain hashing must not hide its fresh source
+            # check, including preserved-length/timestamp mutation.
+            project=create(root/'overlapping-source-module','app')
+            dependency=project.parent/'dependency.input'
+            dependency.write_bytes(b'source version 1')
+            (project.parent/'compiler-modules.json').write_text(json.dumps([
+                str(project), str(project.parent/'main.matrix'), str(dependency)]))
+            run('build','--project',project)
+            artifact=project.parent/'build/app.nil';state=artifact.parent/'.nilbuild/app.nil.nildata'
+            original,old_state=artifact.read_bytes(),state.read_bytes()
+            stamp=dependency.stat()
+            (project.parent/'dependency-content-after').write_bytes(b'source version 2')
+            rejected=run('build','--project',project,'--rebuild',status=2)
+            assert 'build input changed during the build' in rejected.stderr and str(dependency) in rejected.stderr,rejected.stderr
+            assert artifact.read_bytes()==original and state.read_bytes()==old_state
+            assert dependency.stat().st_mtime_ns==stamp.st_mtime_ns
             print(f'nilbuild compiler identity: {checks} explicit certification, uncached build and source protection checks passed')
             return
 
@@ -505,8 +534,32 @@ event('finish')
         assert content_artifact.read_bytes()!=old_artifact
         assert 'up to date:' in run('build','--project',content_project).stderr
 
-        # Positive parity remains required here, including on Darwin where
-        # incomplete loaded-image discovery deliberately prevents reuse.
+        # Whole shared-cache files use the same ordinary content identities.
+        # Changing a tail byte with the header/length/timestamp unchanged must
+        # invalidate a hit and reject publication if it occurs during compile.
+        cache_project=create(root/'cache-content','cache-content')
+        cache_dir=cache_project.parent
+        backing=cache_dir/'dyld_shared_cache_arm64e.1'
+        cache_bytes=b'unchanged cache header and UUID' + bytes(1024 * 1024) + b'1'
+        backing.write_bytes(cache_bytes)
+        (cache_dir/'compiler-modules.json').write_text(json.dumps([str(backing)]))
+        run('build','--project',cache_project)
+        assert 'up to date:' in run('build','--project',cache_project).stderr
+        stamp=backing.stat()
+        backing.write_bytes(cache_bytes[:-1]+b'2')
+        os.utime(backing,ns=(stamp.st_atime_ns,stamp.st_mtime_ns))
+        assert 'up to date:' not in run('build','--project',cache_project).stderr
+        cache_artifact=cache_dir/'build/cache-content.nil'
+        cache_state=cache_dir/'build/.nilbuild/cache-content.nil.nildata'
+        original_cache_artifact,original_cache_state=cache_artifact.read_bytes(),cache_state.read_bytes()
+        (cache_dir/'main.matrix').write_text('version two\n',newline='\n')
+        (cache_dir/'cache-content-after').write_bytes(cache_bytes[:-1]+b'3')
+        changed=run('build','--project',cache_project,'--rebuild',status=2)
+        assert 'build input changed during the build' in changed.stderr and str(backing) in changed.stderr,changed.stderr
+        assert cache_artifact.read_bytes()==original_cache_artifact and cache_state.read_bytes()==original_cache_state
+        assert backing.stat().st_mtime_ns==stamp.st_mtime_ns and backing.read_bytes()==cache_bytes[:-1]+b'3'
+
+        # Positive reuse is required on every supported host.
         # Containment is covered independently by --compiler-identity-only.
         # Real compiler smoke: unchanged imports skip compilation for both routes.
         actual=root/'real';actual.mkdir()

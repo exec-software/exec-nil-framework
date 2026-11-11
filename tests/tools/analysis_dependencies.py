@@ -83,12 +83,10 @@ def main():
         assert all(Path(path).is_absolute() and Path(path).is_file() for path in compiler_files)
         if sys.platform.startswith('linux'):
             assert str(compiler) in compiler_files, compiler_files
-        if sys.platform.startswith('linux') or os.name == 'nt':
+        if sys.platform.startswith('linux') or os.name == 'nt' or sys.platform == 'darwin':
             assert report['compilerFilesComplete'], report
-        elif sys.platform == 'darwin':
-            # Source certification remains available while loaded-image/shared
-            # cache identity is deliberately incomplete on this host.
-            assert not report['compilerFilesComplete'] and report['dependenciesComplete'], report
+        if sys.platform == 'darwin':
+            assert any('dyld_shared_cache' in path for path in compiler_files), compiler_files
 
         # Preserving the timestamp cannot conceal an edit; the digest describes bytes.
         previous = nested.stat()

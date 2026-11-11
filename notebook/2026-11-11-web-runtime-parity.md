@@ -100,6 +100,35 @@ dirty guest checkout and accepted SDK. Its report SHA is
 A separate eight-case Windows probe confirms that textual and binary source maps
 embed canonical long paths even when the compiler receives an 8.3 TEMP alias.
 
+The completed hosted web-runtime run `43116117693` passes all six contracts on
+Linux, Windows, Intel macOS and ARM macOS. Independent replay checked 148 artifact
+hashes and each host's timestamp byte streams. Its checked-out PR merge is
+`cec4364d`, with requested head `19bd5f1` retained as a separate identity. AppKit
+run `43115312796` passes all five CTests and all six interpreter/native desktop
+cases on both architectures at exact head `965f159`. The LLVM-enabled Linux
+source workflow at `19bd5f1` also passes all 579 CTests with no skips; its LLVM-OFF
+and extension jobs pass.
+
+## Darwin compiler cache identity
+
+The compiler now has a bounded Darwin loaded-image collector. It matches actual
+headers (including dyld) to exact cache mappings and UUID tables, preserves
+ordinary loaded paths and returns the complete backing-file set for ordinary
+full-content SHA256 hashing. UUIDs are attribution metadata, never cache keys.
+Unknown APIs/profiles or unstable observations remain uncached; known readable
+inputs are retained for output protection even when the inventory is incomplete.
+CommonCrypto computes the same digest as the portable SHA implementation.
+
+The builder hashes shared toolchain files once per preparation phase and once
+again in a fresh verification phase. It never carries those values across builds
+or compilation boundaries. Consumed sources and manifests, including symlink and
+hard-link aliases, are excluded from memoization. Seventy portable controls,
+36 explicit identity checks and retained real Intel/ARM metadata replay pass.
+The coordinated Linux builder, fingerprint and source-protection regressions
+also pass. Actual Apple API execution is a required hosted test. Native linker
+input closure is being implemented separately; compiler identity alone does not
+establish native incremental reuse.
+
 ## Darwin allocation retention and editor coverage
 
 The two native lifetime programs remain unchanged. Darwin now has a test-only
@@ -122,6 +151,13 @@ routes, and the full VS Code extension-host campaign with no recorded exclusions
 It uses a fresh profile and Microsoft's architecture-specific VS Code 1.146.0
 archives, pinned by SHA256 from the official update service. All results are
 development/build-tree checks; no installed SDK or user editor is activated.
+
+The first application campaign at `19bd5f1` exposed two setup errors. The public
+Apple SDK does not ship dyld's interposition convenience header; the fixture now
+declares its own pointer pairs in the documented Mach-O interposing section.
+The pinned editor archive uses a different executable name; the launcher now
+reads `CFBundleExecutable` from its own verified app bundle. Both failures are
+retained, and actual injection/editor acceptance remains pending a corrected run.
 
 Native socket/byte/entropy parity needs a binary-safe value boundary. The new
 VM APIs deliberately carry embedded NUL and arbitrary bytes in `text`; the

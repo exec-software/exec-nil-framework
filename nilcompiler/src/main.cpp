@@ -1673,8 +1673,11 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     // a false graph change between separate analysis processes.
     analysis->compiler_files_complete =
         nil::detail::compiler_modules::collect_windows(analysis->compiler_files);
+#elif defined(__APPLE__)
+    analysis->compiler_files_complete =
+        nil::detail::compiler_modules::collect_darwin(analysis->compiler_files);
 #else
-    // Darwin loaded images/shared-cache backing identity is not yet complete.
+    // Unknown hosts cannot establish a complete loaded-module inventory.
     // Successful source analysis still reports and protects all consumed files.
     analysis->compiler_files_complete = false;
 #endif

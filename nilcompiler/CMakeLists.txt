@@ -210,6 +210,11 @@ if(NILCOMPILER_POSTGRESQL_INCLUDE_DIR)
 endif()
 
 add_executable(nilcompiler src/main.cpp)
+if(APPLE)
+    target_sources(nilcompiler PRIVATE src/compiler_module_fingerprint_darwin.cpp)
+    set_source_files_properties(src/compiler_module_fingerprint_darwin.cpp PROPERTIES
+        COMPILE_OPTIONS "-fblocks")
+endif()
 if(WIN32)
     target_sources(nilcompiler PRIVATE ../nillinker/process_runner.cpp)
     target_link_libraries(nilcompiler PRIVATE advapi32)

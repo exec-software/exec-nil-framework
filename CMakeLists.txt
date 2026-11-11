@@ -117,6 +117,17 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME nilbuild.compiler-module-fingerprints COMMAND $<TARGET_FILE:nil_compiler_module_fingerprint_tests>)
     set_tests_properties(nilbuild.compiler-module-fingerprints PROPERTIES LABELS "tools;project;rc" TIMEOUT 30)
+    add_executable(nil_compiler_module_darwin_tests tests/compiler_module_darwin_tests.cpp)
+    target_compile_features(nil_compiler_module_darwin_tests PRIVATE cxx_std_17)
+    if(APPLE)
+        target_sources(nil_compiler_module_darwin_tests PRIVATE nilcompiler/src/compiler_module_fingerprint_darwin.cpp)
+        target_compile_options(nil_compiler_module_darwin_tests PRIVATE -fblocks)
+    endif()
+    add_test(NAME compiler.darwin-module-fingerprint COMMAND $<TARGET_FILE:nil_compiler_module_darwin_tests>)
+    set_tests_properties(compiler.darwin-module-fingerprint PROPERTIES LABELS "tools;project;rc" TIMEOUT 60)
+    if(WIN32)
+        target_link_libraries(nil_compiler_module_darwin_tests PRIVATE advapi32)
+    endif()
 
     # Test-only launcher for isolated editor integration runs. Reuse the
     # toolchain's bounded process/Job cleanup; never ship it in the SDK.
@@ -832,6 +843,11 @@ if(BUILD_TESTING)
                 --cxx "${CMAKE_C_COMPILER}"
                 --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(nilbuild.incremental-contract PROPERTIES LABELS "tools;project;rc" TIMEOUT 240)
+        if(APPLE)
+            # Three real builds read complete dyld cache contents. The measured
+            # first Intel hash took 104 s; fake/mutation cases keep their limits.
+            set_tests_properties(nilbuild.incremental-contract PROPERTIES TIMEOUT 900)
+        endif()
         add_test(NAME nilbuild.compiler-identity-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/incremental_build_contract.py"
                 --builder $<TARGET_FILE:nilbuild> --compiler $<TARGET_FILE:nilcompiler>
