@@ -473,9 +473,9 @@ int run_assembler(const command_line &arguments) {
   native.setFreestandingEntry(arguments.freestanding);
   native.setDisableRedZone(arguments.no_red_zone);
   if (arguments.code_model == "small") {
-    native.setCodeModel(ny::NativeCodegen::CodeModel::small);
+    native.setCodeModel(ny::NativeCodegen::CodeModel::Small);
   } else if (arguments.code_model == "large") {
-    native.setCodeModel(ny::NativeCodegen::CodeModel::large);
+    native.setCodeModel(ny::NativeCodegen::CodeModel::Large);
   }
   native.setEmbedContext(arguments.embed_context);
   if (!native.initialize()) {

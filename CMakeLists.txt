@@ -101,6 +101,15 @@ install(
 install(FILES LICENSE DESTINATION ".")
 
 if(BUILD_TESTING)
+    if(WIN32)
+        # Keep the public backend declarations usable after real Windows RPC
+        # headers, even in an LLVM-OFF build that normally hides this interface.
+        add_library(nil_native_windows_header_contract OBJECT tests/native_windows_header_contract.cpp)
+        target_compile_features(nil_native_windows_header_contract PRIVATE cxx_std_17)
+        target_compile_definitions(nil_native_windows_header_contract PRIVATE NY_HAS_LLVM=1)
+        target_include_directories(nil_native_windows_header_contract PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+        add_dependencies(nilcompiler nil_native_windows_header_contract)
+    endif()
     add_executable(nil_compiler_module_fingerprint_tests tests/compiler_module_fingerprint_tests.cpp)
     target_compile_features(nil_compiler_module_fingerprint_tests PRIVATE cxx_std_17)
     if(WIN32)

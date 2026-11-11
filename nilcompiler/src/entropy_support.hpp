@@ -43,6 +43,8 @@
 #include <unistd.h>
 #if defined(__linux__)
 #include <sys/syscall.h>
+#elif defined(__APPLE__)
+#include <sys/random.h>
 #endif
 #endif
 

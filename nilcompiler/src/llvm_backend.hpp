@@ -67,7 +67,9 @@ public:
   // A freestanding consumer that places an object above 4 GiB needs `large`,
   // because the small model's R_X86_64_32 relocations cannot reach there and
   // fail at link time rather than at run time.
-  enum class CodeModel { host, small, large };
+  // Windows RPC headers define lowercase `small` as a type macro. Keep these
+  // identifiers usable regardless of which platform headers a caller included.
+  enum class CodeModel { Host, Small, Large };
   void setCodeModel(CodeModel model);
 
   // Write the generated LLVM IR, so what the backend produced can be

@@ -478,7 +478,9 @@ def check_declaration_context(compiler, workdir):
 
 def check_debug_metadata(compiler, interpreter, workdir):
     """Matrix paragraphs and methods need source maps for editor breakpoints."""
-    page = pathlib.Path(workdir) / "source-debug.matrix"
+    # Source maps use canonical paths. Resolve Windows short-name TEMP aliases
+    # (and POSIX temporary-directory symlinks) before checking serialized bytes.
+    page = pathlib.Path(workdir).resolve() / "source-debug.matrix"
     page.write_text(
         "book debug-check\n\n"
         "Reading begin record\n    field level as number\nend record\n"
@@ -508,7 +510,7 @@ def check_debug_metadata(compiler, interpreter, workdir):
         # same string and this reduces to the original check.
         spelling = str(page) if binary else str(page).replace("\\", "\\\\")
         if (spelling.encode() in data) != debug:
-            failures.append(f"source debug: path presence incorrect for debug={debug}, binary={binary}")
+            failures.append(f"source debug: path presence incorrect for debug={debug}, binary={binary}, expected={spelling!r}")
         if debug and not binary:
             functions = [part for part in data.decode().split("\nfunction ")[1:]]
             if len(functions) != 3 or any("# source_debug " not in part.split("end function")[0] for part in functions):

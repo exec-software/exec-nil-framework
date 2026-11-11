@@ -157,7 +157,8 @@ def main() -> int:
                                          'stable_repetitions': 100})
             if signature(paths) != before:
                 raise AssertionError('timestamp reads changed the fixtures')
-        nul = work / 'nul.ny'
+        # NUL is a reserved DOS device name, even with a file extension.
+        nul = work / 'embedded-zero-path.ny'
         nul.write_text(source_for(paths, nul_case=True), encoding='utf-8', newline='\n')
         for encoding in ('text', 'binary'):
             output_nil = work / ('nul-' + encoding + '.nil')

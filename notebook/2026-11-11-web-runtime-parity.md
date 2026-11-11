@@ -77,6 +77,20 @@ every requested route and prints the full language report into retained CTest
 output. Positive and five malformed-inventory controls pass locally; actual
 LLVM-enabled AppKit execution still needs both hosted architectures.
 
+The first hosted campaign at `45f5569` retained actual failures: Linux passed all
+six contracts; both Macs failed to compile because Darwin declares `getentropy`
+in `<sys/random.h>`. Windows LLVM-OFF passed socket adapters, same-process cleanup,
+timestamp adapters and all ten loopback cases. Its timestamp fixture used the
+reserved DOS device name `nul.ny`, and its source-map test compared an unresolved
+temporary path with the compiler's canonical path. The fixture now uses a normal
+filename and resolves the source path before compilation. The separate Windows
+LLVM-ON build exposed the RPC header's `small` macro colliding with the new
+backend code-model enum. Capitalized enum members preserve the CLI spellings;
+a real Windows-header-first compilation protects that interface. Its MSVC check
+passes. The Linux rebuild and Matrix, timestamp and freestanding contracts pass.
+These corrections require fresh hosted execution; the original failures remain
+under `parity-web-20261111/github-web-43113972394` and the private Windows evidence.
+
 Native socket/byte/entropy parity needs a binary-safe value boundary. The new
 VM APIs deliberately carry embedded NUL and arbitrary bytes in `text`; the
 current native text ABI and several LLVM operations use null-terminated strings
@@ -84,6 +98,14 @@ and `strlen`. Merely registering these intrinsics with that ABI would silently
 truncate legitimate network data and entropy. The scalar timestamp operation can
 use the existing ordinary-I/O ABI; the byte APIs require an explicit length-aware
 design and cross-route tests before native support is claimed.
+
+This native limitation also exists on Linux. Host parity for these APIs means
+equivalent interpreter behavior and consistent native rejection. A subsequent
+counted-text ABI should retain one machine-word language values by pointing to
+an immutable length/data descriptor, migrate language literals and runtime text
+consumers together, adapt C-string FFI boundaries explicitly, and reject mixed
+old/new object and runtime ABIs. A hidden pointer-length registry would retain
+the same migration burden while adding lifetime and registration ambiguity.
 
 ## Preserved web handoff
 
