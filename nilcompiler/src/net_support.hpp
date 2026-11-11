@@ -30,6 +30,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #if defined(_WIN32)
 #include <winsock2.h>
@@ -43,6 +44,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -60,6 +62,15 @@ constexpr std::int64_t max_backlog = 1024;
 struct Opened {
   int descriptor = -1;
   std::string error;
+  /**
+   * Nothing to do right now, on a socket that was asked not to block.
+   *
+   * Told apart from an error because for an event loop it is the ordinary
+   * case: poll said the listener was readable, and by the time accept ran the
+   * connection had been withdrawn. Reporting that as a failure would make a
+   * server log a line every time a port scanner connected and left.
+   */
+  bool would_block = false;
   bool ok() const { return descriptor >= 0 && error.empty(); }
 };
 
@@ -121,6 +132,15 @@ constexpr int no_signal_flag = 0;
 #endif
 
 #endif
+
+/** Whether the last call failed only because it would have blocked. */
+inline bool last_call_would_block() {
+#if defined(_WIN32)
+  return ::WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+  return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+}
 
 /**
  * The address a listening socket may bind.
@@ -212,6 +232,10 @@ inline Opened accept_on(int listening) {
     if (errno == EINTR)
       continue;
 #endif
+    if (last_call_would_block()) {
+      opened.would_block = true;
+      return opened;
+    }
     opened.error = last_error_text();
     return opened;
   }
@@ -415,6 +439,176 @@ inline Transferred peer_address(int descriptor) {
   }
   result.error = "net: the peer uses an address family this build does not read";
   return result;
+}
+
+/**
+ * Readiness flags, as a NIL program sees them.
+ *
+ * Deliberately not poll(2)'s numbering: POLLIN and friends differ between
+ * platforms, and a program that learned the host's values would be a program
+ * that breaks when it moves. These three are the ones a server acts on.
+ */
+constexpr std::int64_t ready_readable = 1;
+constexpr std::int64_t ready_writable = 2;
+/** The peer hung up, or the socket is in error. Either way it is finished. */
+constexpr std::int64_t ready_finished = 4;
+
+/** One watched socket and what it is being watched for. */
+struct Watched {
+  std::int64_t token = 0;
+  int descriptor = -1;
+  std::int64_t wanted = ready_readable;
+};
+
+/** One socket that is ready, and what it is ready for. */
+struct Ready {
+  std::int64_t token = 0;
+  std::int64_t flags = 0;
+};
+
+/**
+ * Whether a socket blocks when there is nothing to do.
+ *
+ * A blocking accept is what a one-connection-at-a-time server uses and is
+ * perfectly correct for it. An event loop needs the opposite: it has already
+ * been told by poll that something is ready, and a blocking call that then
+ * finds nothing — a spurious wakeup, a connection withdrawn between the poll
+ * and the accept — would stop the whole loop on behalf of one socket.
+ */
+inline std::string set_blocking(int descriptor, bool blocking) {
+  std::string error;
+  if (!ensure_started(error))
+    return error;
+#if defined(_WIN32)
+  u_long mode = blocking ? 0 : 1;
+  if (::ioctlsocket(static_cast<SOCKET>(descriptor), FIONBIO, &mode) != 0)
+    return last_error_text();
+#else
+  const int flags = ::fcntl(descriptor, F_GETFL, 0);
+  if (flags < 0)
+    return last_error_text();
+  const int wanted = blocking ? (flags & ~O_NONBLOCK) : (flags | O_NONBLOCK);
+  if (::fcntl(descriptor, F_SETFL, wanted) < 0)
+    return last_error_text();
+#endif
+  return {};
+}
+
+/**
+ * Let several processes bind the same port.
+ *
+ * The missing half of running on more than one core. This runtime is
+ * single-threaded by construction — the interpreter holds one stack, one heap
+ * and one set of globals, with no lock anywhere near them — so a second core
+ * means a second process, and two processes cannot share a listening socket
+ * without this. The kernel then load-balances accepts between them.
+ *
+ * Distinct from SO_REUSEADDR, which `listen_on` always sets and which only
+ * allows rebinding a port in TIME_WAIT. This one deliberately allows two
+ * servers to share a port, so it is opt-in: switched on by accident it would
+ * silently split traffic between a running server and a stray one.
+ */
+inline std::string set_reuse_port(int descriptor, bool enabled) {
+  std::string error;
+  if (!ensure_started(error))
+    return error;
+#if defined(SO_REUSEPORT)
+  const int value = enabled ? 1 : 0;
+  if (::setsockopt(descriptor, SOL_SOCKET, SO_REUSEPORT,
+                   reinterpret_cast<const char *>(&value), sizeof(value)) != 0)
+    return last_error_text();
+  return {};
+#else
+  (void)descriptor;
+  if (!enabled)
+    return {};
+  return "net: this platform has no SO_REUSEPORT, so a port cannot be shared";
+#endif
+}
+
+/**
+ * Wait until one of the watched sockets can be acted on.
+ *
+ * poll(2) rather than epoll or kqueue. poll is portable, needs no per-platform
+ * registration, and is O(n) in the watch set — which starts to matter in the
+ * thousands and is not where this runtime's limits are. The interface here
+ * takes the whole set per call precisely so that a later epoll or kqueue
+ * implementation can keep it without the caller noticing.
+ *
+ * A negative timeout waits indefinitely, which is what an idle server does
+ * between requests; zero polls and returns at once.
+ */
+inline std::string poll_wait(const std::vector<Watched> &watching,
+                             std::int64_t timeout_ms,
+                             std::vector<Ready> &into) {
+  into.clear();
+  std::string error;
+  if (!ensure_started(error))
+    return error;
+  if (watching.empty())
+    return {};
+
+#if defined(_WIN32)
+  std::vector<WSAPOLLFD> entries;
+#else
+  std::vector<pollfd> entries;
+#endif
+  entries.reserve(watching.size());
+  for (const auto &one : watching) {
+#if defined(_WIN32)
+    WSAPOLLFD entry{};
+    entry.fd = static_cast<SOCKET>(one.descriptor);
+#else
+    pollfd entry{};
+    entry.fd = one.descriptor;
+#endif
+    entry.events = 0;
+    if ((one.wanted & ready_readable) != 0)
+      entry.events = static_cast<short>(entry.events | POLLIN);
+    if ((one.wanted & ready_writable) != 0)
+      entry.events = static_cast<short>(entry.events | POLLOUT);
+    entries.push_back(entry);
+  }
+
+  int signalled = 0;
+  for (;;) {
+#if defined(_WIN32)
+    signalled = ::WSAPoll(entries.data(), static_cast<ULONG>(entries.size()),
+                          static_cast<INT>(timeout_ms));
+#else
+    signalled = ::poll(entries.data(), static_cast<nfds_t>(entries.size()),
+                       static_cast<int>(timeout_ms));
+#endif
+    if (signalled >= 0)
+      break;
+#if !defined(_WIN32)
+    // An interrupted wait is not a failure. Reporting one would make an
+    // unrelated signal look to the server like a broken socket.
+    if (errno == EINTR)
+      continue;
+#endif
+    return last_error_text();
+  }
+
+  for (std::size_t index = 0; index < entries.size(); ++index) {
+    const short revents = entries[index].revents;
+    if (revents == 0)
+      continue;
+    std::int64_t flags = 0;
+    if ((revents & POLLIN) != 0)
+      flags |= ready_readable;
+    if ((revents & POLLOUT) != 0)
+      flags |= ready_writable;
+    // POLLHUP with POLLIN still has buffered data to read first, so both are
+    // reported and the caller drains before closing. POLLNVAL means the
+    // descriptor is not open, which for a token-based API is a bug here
+    // rather than in the program, but it must not loop forever on it.
+    if ((revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+      flags |= ready_finished;
+    if (flags != 0)
+      into.push_back(Ready{watching[index].token, flags});
+  }
+  return {};
 }
 
 /** Stop a write-blocked peer from keeping a response in a buffer. */

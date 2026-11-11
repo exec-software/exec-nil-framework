@@ -341,6 +341,210 @@ end paragraph
 """
 
 
+
+POLL_PAGE = """
+book net.contract.poll
+
+read nil.std.core
+read nil.std.net.socket
+
+reason-for receives outcome as Result of number, text returns text begin paragraph
+    consider outcome
+        when Result.Ok holding amount then give "ok"
+        when Result.Error holding why then give why
+        otherwise give "neither"
+    end consider
+end paragraph
+
+amount-of receives outcome as Result of number, text returns number begin paragraph
+    consider outcome
+        when Result.Ok holding amount then give amount
+        otherwise give 0 minus 1
+    end consider
+end paragraph
+
+main returns number begin paragraph
+    value opened is nil.std.net::listen with host being "127.0.0.1", port being PORT, backlog being 8
+    consider opened
+        when Result.Ok holding listener then begin block
+            !!! An empty watch set does not wait: a loop that watched nothing
+            !!! by mistake would otherwise be an invisible stall.
+            say amount-of with outcome being (nil.std.net::wait with timeout_milliseconds being 10000)
+            say nil.std.net::watch_count with nothing
+
+            say reason-for with outcome being (nil.std.net::set_blocking with handle being listener, blocking being false)
+            evaluate nil.std.net::watch with handle being listener, flags being nil.std.net::ready_readable
+            say nil.std.net::watch_count with nothing
+            !!! Watching again replaces the flags rather than adding a second entry.
+            evaluate nil.std.net::watch with handle being listener, flags being nil.std.net::ready_readable
+            say nil.std.net::watch_count with nothing
+
+            !!! Nothing is connecting, so nothing is ready, and the drained
+            !!! ready set reads as zero.
+            say amount-of with outcome being (nil.std.net::wait with timeout_milliseconds being 50)
+            say amount-of with outcome being (nil.std.net::next_ready with nothing)
+
+            !!! A non-blocking accept with nothing pending is zero, not an error.
+            say amount-of with outcome being (nil.std.net::accept with handle being listener)
+
+            !!! Unwatching something not watched succeeds.
+            say reason-for with outcome being (nil.std.net::unwatch with handle being 991)
+            say reason-for with outcome being (nil.std.net::unwatch with handle being listener)
+            say nil.std.net::watch_count with nothing
+
+            !!! A closed socket is dropped from the watch set by the next wait
+            !!! rather than polled on a descriptor that may have been reissued.
+            evaluate nil.std.net::watch with handle being listener, flags being nil.std.net::ready_readable
+            evaluate nil.std.net::close with handle being listener
+            say amount-of with outcome being (nil.std.net::wait with timeout_milliseconds being 10)
+            say nil.std.net::watch_count with nothing
+
+            !!! Packing: handle and flags travel as one number.
+            say nil.std.net::ready_handle with packed being 41
+            say nil.std.net::ready_flags with packed being 41
+            say (nil.std.net::is_readable with packed being 41) becomes text
+            say (nil.std.net::is_finished with packed being 41) becomes text
+            say (nil.std.net::is_writable with packed being 41) becomes text
+            give 0
+        end block
+        when Result.Error holding why then begin block
+            say "listen failed: " plus why
+            give 1
+        end block
+        otherwise give 1
+    end consider
+end paragraph
+"""
+
+
+EVENT_LOOP_PAGE = """
+book net.contract.event-loop
+
+read nil.std.core
+read nil.std.text.string_utils
+read nil.std.net.socket
+
+pending begin record
+    field handle as number
+    field gathered as text
+    field live as boolean
+end record
+
+find-slot receives slots as array of pending, handle as number returns number begin paragraph
+    variable index as number is 0
+    repeat while index is less than the length of slots
+        value one is slots at index
+        when one.live and one.handle equals handle then
+            give index
+        end when
+        set index to index plus 1
+    end repeat
+    give 0 minus 1
+end paragraph
+
+main returns number begin paragraph
+    value opened is nil.std.net::listen with host being "127.0.0.1", port being PORT, backlog being 128
+    consider opened
+        when Result.Error holding why then begin block
+            say "listen failed: " plus why
+            give 1
+        end block
+        when Result.Ok holding listener then begin block
+            evaluate nil.std.net::set_blocking with handle being listener, blocking being false
+            evaluate nil.std.net::watch with handle being listener, flags being nil.std.net::ready_readable
+            say "ready"
+
+            variable slots as array of pending is []
+            variable answered as number is 0
+            variable live-now as number is 0
+            variable most-at-once as number is 0
+
+            repeat while answered is less than EXPECTED
+                evaluate nil.std.net::wait with timeout_milliseconds being 10000
+                variable draining as boolean is true
+                repeat while draining
+                    value packed is nil.std.net::next_ready with nothing
+                    consider packed
+                        when Result.Ok holding value-held then begin block
+                            when value-held equals 0 then
+                                set draining to false
+                            end when
+                            value handle is nil.std.net::ready_handle with packed being value-held
+                            when value-held is greater than 0 and handle equals listener then
+                                variable accepting as boolean is true
+                                repeat while accepting
+                                    value taken is nil.std.net::accept with handle being listener
+                                    consider taken
+                                        when Result.Ok holding client then begin block
+                                            when client equals 0 then
+                                                set accepting to false
+                                            end when
+                                            when client is greater than 0 then
+                                                evaluate nil.std.net::set_timeout with handle being client, milliseconds being 10000
+                                                evaluate nil.std.net::watch with handle being client, flags being nil.std.net::ready_readable
+                                                append build pending with handle being client, gathered being "", live being true to slots
+                                                set live-now to live-now plus 1
+                                                when live-now is greater than most-at-once then
+                                                    set most-at-once to live-now
+                                                end when
+                                            end when
+                                        end block
+                                        otherwise set accepting to false
+                                    end consider
+                                end repeat
+                            end when
+                            when value-held is greater than 0 and not (handle equals listener) then
+                                value slot is find-slot with slots being slots, handle being handle
+                                when slot is at least 0 then
+                                    value heard is nil.std.net::read with handle being handle, maximum_bytes being 4096
+                                    consider heard
+                                        when Result.Ok holding piece then begin block
+                                            value held is slots at slot
+                                            value whole is held.gathered plus piece
+                                            value done is nil.std.text::contains with s being whole, needle being "END"
+                                            value gone is piece equals ""
+                                            when not done and not gone then
+                                                set slots at slot to build pending with handle being handle,
+                                                    gathered being whole, live being true
+                                            end when
+                                            when done then
+                                                evaluate nil.std.net::write with handle being handle,
+                                                    data being "ok:" plus ((nil.std.text::length with s being whole) becomes text)
+                                            end when
+                                            when done or gone then
+                                                evaluate nil.std.net::unwatch with handle being handle
+                                                evaluate nil.std.net::close with handle being handle
+                                                set slots at slot to build pending with handle being 0, gathered being "", live being false
+                                                set live-now to live-now minus 1
+                                                set answered to answered plus 1
+                                            end when
+                                        end block
+                                        otherwise begin block
+                                            evaluate nil.std.net::unwatch with handle being handle
+                                            evaluate nil.std.net::close with handle being handle
+                                            set slots at slot to build pending with handle being 0, gathered being "", live being false
+                                            set live-now to live-now minus 1
+                                            set answered to answered plus 1
+                                        end block
+                                    end consider
+                                end when
+                            end when
+                        end block
+                        otherwise set draining to false
+                    end consider
+                end repeat
+            end repeat
+
+            evaluate nil.std.net::close with handle being listener
+            say "answered " plus (answered becomes text)
+            say "most-at-once " plus (most-at-once becomes text)
+            give 0
+        end block
+        otherwise give 1
+    end consider
+end paragraph
+"""
+
 def run_page(interpreter: Path, artifact: Path) -> subprocess.Popen:
     return subprocess.Popen(
         [str(interpreter), str(artifact)],
@@ -526,6 +730,119 @@ def case_client(compiler, interpreter, stdlib, workdir) -> list[str]:
     return problems
 
 
+
+def case_poll(compiler, interpreter, stdlib, workdir) -> list[str]:
+    """The watch set, the ready set, and the packing between them."""
+    port = free_port()
+    artifact = build(compiler, stdlib,
+                     POLL_PAGE.replace("PORT", str(port)), workdir, "poll")
+    finished = subprocess.run([str(interpreter), str(artifact)],
+                              capture_output=True, text=True, timeout=120)
+    lines = finished.stdout.splitlines()
+    expected = [
+        ("an empty watch set does not wait", lambda v: v == "0"),
+        ("nothing is watched yet", lambda v: v == "0"),
+        ("a listener can be made non-blocking", lambda v: v == "ok"),
+        ("watching counts one", lambda v: v == "1"),
+        ("watching again replaces rather than adds", lambda v: v == "1"),
+        ("nothing connecting means nothing ready", lambda v: v == "0"),
+        ("a drained ready set reads zero", lambda v: v == "0"),
+        ("a non-blocking accept with nothing pending is zero", lambda v: v == "0"),
+        ("unwatching something unwatched succeeds", lambda v: v == "ok"),
+        ("unwatching a watched socket succeeds", lambda v: v == "ok"),
+        ("the watch set is empty again", lambda v: v == "0"),
+        ("a closed socket is not polled", lambda v: v == "0"),
+        ("a closed socket leaves the watch set", lambda v: v == "0"),
+        ("the packed handle is recovered", lambda v: v == "5"),
+        ("the packed flags are recovered", lambda v: v == "1"),
+        ("packed readability is read", lambda v: v == "1"),
+        ("packed finishedness is read", lambda v: v == "0"),
+        ("packed writability is read", lambda v: v == "0"),
+    ]
+    if len(lines) != len(expected):
+        return [f"poll: expected {len(expected)} lines, got {len(lines)}: "
+                f"{finished.stdout!r}{finished.stderr!r}"]
+    problems: list[str] = []
+    for (label, holds), value in zip(expected, lines):
+        if not holds(value):
+            problems.append(f"poll: {label} gave {value!r}")
+    return problems
+
+
+def case_event_loop(compiler, interpreter, stdlib, workdir) -> list[str]:
+    """Many connections at once, and the timing that proves it.
+
+    Each client sends its request in two parts with a gap between. A server
+    that serves one connection at a time must wait out the first client's gap
+    before it touches the second, so the run costs clients x gap. An event
+    loop overlaps them and costs about one gap. The assertion is on that
+    difference rather than on a throughput number, because a number would
+    measure the machine and this measures the shape.
+    """
+    clients = 64
+    gap = 0.25
+    serial_cost = clients * gap
+    problems: list[str] = []
+    port = free_port()
+    artifact = build(compiler, stdlib,
+                     EVENT_LOOP_PAGE.replace("PORT", str(port))
+                                    .replace("EXPECTED", str(clients)),
+                     workdir, "event_loop")
+    page = run_page(interpreter, artifact)
+    answered: list[bytes] = []
+    failures: list[str] = []
+    guard = __import__("threading").Lock()
+
+    def one_client() -> None:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=30) as client:
+                client.sendall(b"part-one ")
+                time.sleep(gap)
+                client.sendall(b"END")
+                reply = client.recv(64)
+            with guard:
+                (answered if reply.startswith(b"ok:") else failures).append(reply)
+        except Exception as failure:  # noqa: BLE001
+            with guard:
+                failures.append(repr(failure))
+
+    try:
+        wait_for_line(page, "ready")
+        threading = __import__("threading")
+        started = time.monotonic()
+        workers = [threading.Thread(target=one_client) for _ in range(clients)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=60)
+        elapsed = time.monotonic() - started
+
+        if len(answered) != clients:
+            problems.append(
+                f"event-loop: {len(answered)} of {clients} clients were answered; "
+                f"first failures {failures[:2]}")
+        if elapsed > serial_cost / 4:
+            problems.append(
+                f"event-loop: {clients} clients took {elapsed:.2f}s, which is not "
+                f"meaningfully better than the {serial_cost:.0f}s a one-at-a-time "
+                "server would need, so the connections were not overlapped")
+
+        page.wait(timeout=30)
+        output = page.stdout.read()
+        if f"answered {clients}" not in output:
+            problems.append(f"event-loop: the page said {output!r}")
+        # The point of the whole exercise: they were open simultaneously.
+        if f"most-at-once {clients}" not in output:
+            problems.append(
+                "event-loop: the server never held all the connections at once, "
+                f"so it was draining them in batches; it said {output!r}")
+    except (AssertionError, subprocess.TimeoutExpired) as failure:
+        problems.append(f"event-loop: {failure!r}")
+    finally:
+        page.kill()
+        page.wait(timeout=10)
+    return problems
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compiler", type=Path, required=True)
@@ -544,6 +861,8 @@ def main() -> int:
         ("timeout", case_timeout),
         ("peer-hangup", case_peer_hangup),
         ("client", case_client),
+        ("poll", case_poll),
+        ("event-loop", case_event_loop),
     )
 
     problems: list[str] = []
@@ -565,7 +884,9 @@ def main() -> int:
           "listen/accept/read/write carry bytes unchanged, handles are opaque, "
           "a listener is not a connection, the runtime releases a leaked port, "
           "a read deadline expires, a lost peer is reported rather than fatal, "
-          "and connecting out resolves a name.")
+          "connecting out resolves a name, the watch set behaves, and an event "
+          "loop holds many connections at once instead of draining them in "
+          "turn.")
     return 0
 
 

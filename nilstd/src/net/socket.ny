@@ -131,3 +131,123 @@ pub fn set_no_delay(handle: i64, enabled: bool) -> Result<i64, text>
 # an identity, and behind any proxy it is the proxy's.
 @intrinsic("net.peer_address")
 pub fn peer_address(handle: i64) -> Result<text, text>
+
+# -----------------------------------------------------------------------------
+# Serving more than one connection at a time
+# -----------------------------------------------------------------------------
+#
+# This runtime is single-threaded by construction: the interpreter holds one
+# stack, one heap and one set of globals, with no lock anywhere near them, and
+# nil.std.threading offers only sleep. So concurrency here is an event loop,
+# not a thread per connection — poll says which sockets can be acted on, and
+# one pass round the loop acts on each in turn.
+#
+# For more than one core, run more than one process and let them share the
+# port with set_reuse_port. The kernel load-balances accepts between them.
+# That is nginx's shape rather than Apache's prefork, and it is the one this
+# runtime can actually keep.
+#
+# The watch set lives in the runtime rather than being passed in per call, so
+# no array has to cross the intrinsic boundary. That is not tidiness: a Matrix
+# page cannot index an Ny generic, and an event loop that could only be
+# written in Ny would be one half the language could not use.
+
+# Readiness flags. Deliberately not poll(2)'s numbering, which differs between
+# platforms — a program that learned the host's values would break on a move.
+pub const ready_readable: i64 = 1
+pub const ready_writable: i64 = 2
+# The peer hung up, or the socket is in error. Either way it is finished.
+pub const ready_finished: i64 = 4
+
+# Whether a socket blocks when there is nothing to do.
+#
+# An event loop wants its listener non-blocking: poll has already said a
+# connection is pending, and a blocking accept that then finds nothing —
+# because the peer withdrew in between — would stop the whole loop on behalf
+# of one socket.
+#
+# Leave accepted connections blocking and give them a timeout instead. Poll
+# has said they are readable, so a read returns at once, and an empty read
+# then means the peer closed rather than "nothing yet", which is a
+# distinction an event loop has to be able to make.
+@intrinsic("net.set_blocking")
+pub fn set_blocking(handle: i64, blocking: bool) -> Result<i64, text>
+
+# Let other processes bind this same port.
+#
+# Opt-in, and distinct from the SO_REUSEADDR that listen always sets. That one
+# only allows rebinding a port left in TIME_WAIT; this one deliberately allows
+# two servers to share a port, which switched on by accident would silently
+# split traffic between a running server and a stray one.
+@intrinsic("net.set_reuse_port")
+pub fn set_reuse_port(handle: i64, enabled: bool) -> Result<i64, text>
+
+# Watch a socket, for the given flags. Watching it again replaces the flags.
+#
+# A listener is watched for ready_readable, which means a connection is
+# pending. A connection is watched for ready_readable while a request is being
+# read, and for ready_writable while a response is going out to a peer that is
+# not taking it fast enough.
+@intrinsic("net.watch")
+pub fn watch(handle: i64, flags: i64) -> Result<i64, text>
+
+# Stop watching. Unwatching something not watched succeeds, because that is
+# what a close path does when it does not track whether it registered.
+@intrinsic("net.unwatch")
+pub fn unwatch(handle: i64) -> Result<i64, text>
+
+# How many sockets are watched.
+@intrinsic("net.watch_count")
+pub fn watch_count() -> i64
+
+# Wait until a watched socket can be acted on; gives back how many are ready.
+#
+# A negative timeout waits indefinitely, which is what an idle server does
+# between requests. Zero polls and returns at once.
+#
+# Each wait replaces whatever the last one found. A program that did not drain
+# the previous set has moved on, and stale readiness would hand it a handle
+# that may since have been closed and its number reissued.
+#
+# A socket closed since the last wait is dropped from the watch set rather
+# than polled, so a loop that forgets to unwatch a connection it closed is
+# untidy rather than broken.
+@intrinsic("net.wait")
+pub fn wait(timeout_milliseconds: i64) -> Result<i64, text>
+
+# One ready socket per call, packed; zero when the set is drained.
+#
+# Packed because an intrinsic returns one value, and two calls whose meaning
+# depended on being made in the right order would be worse than arithmetic the
+# caller can see. Use ready_handle and ready_flags rather than writing it out.
+@intrinsic("net.next_ready")
+pub fn next_ready() -> Result<i64, text>
+
+# The socket from a packed next_ready value.
+pub fn ready_handle(packed: i64) -> i64
+    return packed / 8
+end fn
+
+# The readiness flags from a packed next_ready value.
+pub fn ready_flags(packed: i64) -> i64
+    return packed % 8
+end fn
+
+# Whether a packed value says the socket has something to read.
+pub fn is_readable(packed: i64) -> bool
+    return (ready_flags(packed) & ready_readable) != 0
+end fn
+
+# Whether a packed value says the socket will take a write.
+pub fn is_writable(packed: i64) -> bool
+    return (ready_flags(packed) & ready_writable) != 0
+end fn
+
+# Whether a packed value says the socket is finished.
+#
+# Both this and is_readable can be true at once: a peer that hung up may still
+# have sent something, and that something has to be read before the connection
+# is dropped or the last request of a session is lost.
+pub fn is_finished(packed: i64) -> bool
+    return (ready_flags(packed) & ready_finished) != 0
+end fn

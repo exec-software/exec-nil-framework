@@ -18,6 +18,14 @@ compiled through it will not find them.
 | `set_timeout(handle: i64, milliseconds: i64) -> Result<i64, text>` | Deadline for reads and writes; zero removes it. |
 | `set_no_delay(handle: i64, enabled: bool) -> Result<i64, text>` | Send small writes immediately. |
 | `peer_address(handle: i64) -> Result<text, text>` | The peer's address and port, as text. |
+| `set_blocking(handle: i64, blocking: bool) -> Result<i64, text>` | Whether a call waits when there is nothing to do. |
+| `set_reuse_port(handle: i64, enabled: bool) -> Result<i64, text>` | Let other processes bind this same port. |
+| `watch(handle: i64, flags: i64) -> Result<i64, text>` | Watch a socket for readability, writability, or both. |
+| `unwatch(handle: i64) -> Result<i64, text>` | Stop watching. |
+| `watch_count() -> i64` | How many sockets are watched. |
+| `wait(timeout_milliseconds: i64) -> Result<i64, text>` | Wait for readiness; gives back how many are ready. |
+| `next_ready() -> Result<i64, text>` | One ready socket per call, packed; zero when drained. |
+| `ready_handle` / `ready_flags` / `is_readable` / `is_writable` / `is_finished` | Unpack what `next_ready` gave. |
 
 Matrix uses the same names; `maximum_bytes` is spelled `maximum_bytes` because
 it is an Ny declaration and Matrix keeps a foreign name's spelling.
@@ -125,16 +133,85 @@ main returns number begin paragraph
 end paragraph
 ```
 
+## Serving many connections at once
+
+An event loop, not a thread per connection. This runtime is single-threaded by
+construction — the interpreter holds one stack, one heap and one set of
+globals, with no lock anywhere near them, and `nil.std.threading` offers only
+`sleep` — so concurrency here is `poll` telling you which sockets can be acted
+on, and one pass round a loop acting on each in turn.
+
+That is nginx's shape rather than Apache's prefork, and it is the one this
+runtime can keep. It is also the one that scales: 64 simultaneous connections,
+each sending its request in two parts with a quarter-second pause between, are
+served in about one pause rather than sixty-four of them. The contract test
+asserts exactly that difference, because a throughput figure would measure the
+machine while this measures the shape.
+
+The watch set lives in the runtime rather than being passed in per call, so no
+array crosses the intrinsic boundary. That is not tidiness: a Matrix page
+cannot index an Ny generic, and an event loop that could only be written in Ny
+would be one that half the language could not use.
+
+### The shape of the loop
+
+```matrix
+evaluate nil.std.net::set_blocking with handle being listener, blocking being false
+evaluate nil.std.net::watch with handle being listener, flags being nil.std.net::ready_readable
+
+repeat forever
+    evaluate nil.std.net::wait with timeout_milliseconds being 10000
+    variable draining as boolean is true
+    repeat while draining
+        value packed is nil.std.net::next_ready with nothing
+        !!! zero means the ready set is drained; otherwise unpack and act
+    end repeat
+end repeat
+```
+
+`next_ready` packs the handle and the flags into one number — `handle * 8 +
+flags` — because an intrinsic returns one value, and two calls whose meaning
+depended on being made in the right order would be worse than arithmetic the
+caller can see. `ready_handle`, `ready_flags`, `is_readable`, `is_writable` and
+`is_finished` are ordinary Ny functions over it, so nobody has to write the
+division.
+
+### Three things the loop has to get right
+
+**Drain the listener.** `poll` reports a listener readable once however many
+connections are waiting, so accept until it answers zero. A loop that accepts
+one per wait falls behind under load and never catches up.
+
+**Leave accepted connections blocking, and give them a timeout.** `poll` has
+said the connection is readable, so a read returns at once — and an empty read
+then means the peer closed rather than "nothing yet", which is a distinction
+an event loop has to be able to make. A non-blocking read cannot make it:
+EAGAIN and a clean close both produce no bytes.
+
+**`is_readable` and `is_finished` can both be true.** A peer that hung up may
+still have sent something, and that something has to be read before the
+connection is dropped, or the last request of a session is lost.
+
+### More than one core
+
+A second core means a second process, because a second thread would need an
+interpreter that could survive one. `set_reuse_port` lets several processes
+bind the same port and the kernel load-balances accepts between them.
+
+It is opt-in and distinct from the `SO_REUSEADDR` that `listen` always sets:
+that one only allows rebinding a port left in `TIME_WAIT`, while this one
+deliberately allows two servers to share a port. Switched on by accident it
+would silently split traffic between a running server and a stray one.
+
 ## What is not here
 
-One connection at a time. There are no threads to hand a connection to and no
-async in the language, so a server built on this accepts, serves and closes in
-order. That is enough for a development server, a local tool, or anything
-behind a reverse proxy that holds the slow clients.
+No TLS. No datagrams. No `sendfile`, so a file goes out through the program
+rather than straight from the page cache.
 
-No TLS. No datagrams. No `select` or `poll`, so a program cannot wait on
-several sockets at once — which is the piece that would have to arrive before
-concurrent serving is possible.
+`poll` is O(n) in the watch set per call, which starts to matter in the
+thousands. `epoll` and `kqueue` do not; the interface here takes the whole set
+per call precisely so that either can replace `poll` underneath without a
+caller noticing.
 
 The contract these keep is checked by `tests/tools/net_socket_contract.py`,
 which runs a Matrix page as a process and plays the other end from Python.

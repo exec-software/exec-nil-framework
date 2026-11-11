@@ -624,6 +624,21 @@ private:
   std::unordered_map<int64_t, SocketHandle> socket_handles_;
   int64_t next_socket_handle_ = 1;
 
+  // The event loop's watch set and the result of its last wait.
+  //
+  // Held by the runtime rather than passed in per call, so no array has to
+  // cross the intrinsic boundary -- which matters because a Matrix page cannot
+  // index an Ny generic, and an event loop that could only be written in Ny
+  // would be an event loop half the language cannot use.
+  //
+  // `ready_cursor_` walks ready_ once. A program drains it with repeated calls
+  // and gets zero when it is empty, which is the same shape as reading a
+  // stream to its end and needs no second concept.
+  std::vector<int64_t> watch_order_;
+  std::unordered_map<int64_t, int64_t> watch_wanted_;
+  std::vector<std::pair<int64_t, int64_t>> ready_;
+  std::size_t ready_cursor_ = 0;
+
   // Closes every socket a run still holds. A program that exits without
   // closing its listener must not leave the port bound against the next one.
   void closeOpenSockets();

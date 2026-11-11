@@ -776,6 +776,10 @@ void VM::resetRuntimeState(const std::string &root_function) {
   file_handles_.clear();
   next_file_handle_ = 1;
   closeOpenSockets();
+  watch_order_.clear();
+  watch_wanted_.clear();
+  ready_.clear();
+  ready_cursor_ = 0;
   stack_.clear();
   globals_.clear();
   gc_marked_structs_.clear();
@@ -3858,6 +3862,12 @@ void VM::executeInstruction(const Instruction &instr) {
           return;
         }
         const auto opened = net_support::accept_on(held->descriptor);
+        // Zero means "nothing pending" on a listener that was asked not to
+        // block. Handles start at one, so it cannot be mistaken for one.
+        if (opened.would_block) {
+          push_ok_number(0);
+          return;
+        }
         if (!opened.ok()) {
           push_error(opened.error);
           return;
@@ -3995,6 +4005,158 @@ void VM::executeInstruction(const Instruction &instr) {
           return;
         }
         push_ok_number(enabled != 0 ? 1 : 0);
+        return;
+      }
+
+      if (fn_name == "net.set_blocking") {
+        VM::SocketHandle *held = nullptr;
+        std::string complaint;
+        std::int64_t blocking = 1;
+        if (!socket_at(0, held, complaint)) {
+          push_error(complaint);
+          return;
+        }
+        number_at(1, blocking);
+        const auto error = net_support::set_blocking(held->descriptor, blocking != 0);
+        if (!error.empty()) {
+          push_error(error);
+          return;
+        }
+        push_ok_number(blocking != 0 ? 1 : 0);
+        return;
+      }
+
+      if (fn_name == "net.set_reuse_port") {
+        VM::SocketHandle *held = nullptr;
+        std::string complaint;
+        std::int64_t enabled = 1;
+        if (!socket_at(0, held, complaint)) {
+          push_error(complaint);
+          return;
+        }
+        number_at(1, enabled);
+        const auto error = net_support::set_reuse_port(held->descriptor, enabled != 0);
+        if (!error.empty()) {
+          push_error(error);
+          return;
+        }
+        push_ok_number(enabled != 0 ? 1 : 0);
+        return;
+      }
+
+      // Watching, waiting and draining. The set lives in the VM so that no
+      // array crosses this boundary; see the fields on VM for why.
+      if (fn_name == "net.watch") {
+        VM::SocketHandle *held = nullptr;
+        std::string complaint;
+        std::int64_t wanted = net_support::ready_readable;
+        if (!socket_at(0, held, complaint)) {
+          push_error(complaint);
+          return;
+        }
+        std::int64_t token = 0;
+        number_at(0, token);
+        if (args.size() > 1)
+          number_at(1, wanted);
+        if (wanted == 0)
+          wanted = net_support::ready_readable;
+        if (watch_wanted_.find(token) == watch_wanted_.end())
+          watch_order_.push_back(token);
+        watch_wanted_[token] = wanted;
+        push_ok_number(static_cast<std::int64_t>(watch_order_.size()));
+        return;
+      }
+
+      if (fn_name == "net.unwatch") {
+        std::int64_t token = 0;
+        if (!number_at(0, token)) {
+          push_error("net.unwatch: expected a socket handle");
+          return;
+        }
+        // Unwatching something not watched is not a failure: it is what a
+        // close path does when it does not track whether it registered.
+        if (watch_wanted_.erase(token) != 0)
+          watch_order_.erase(std::remove(watch_order_.begin(), watch_order_.end(), token),
+                             watch_order_.end());
+        push_ok_number(static_cast<std::int64_t>(watch_order_.size()));
+        return;
+      }
+
+      if (fn_name == "net.watch_count") {
+        pushStack((int64_t)static_cast<std::int64_t>(watch_order_.size()));
+        return;
+      }
+
+      // Waits, then replaces the ready set. A wait discards whatever the
+      // previous one found: a program that did not drain it has moved on, and
+      // keeping stale readiness would hand it a handle that may since have
+      // been closed and reissued.
+      if (fn_name == "net.wait") {
+        std::int64_t timeout = 0;
+        if (!number_at(0, timeout)) {
+          push_error("net.wait: expected a timeout in milliseconds");
+          return;
+        }
+        ready_.clear();
+        ready_cursor_ = 0;
+
+        std::vector<net_support::Watched> watching;
+        watching.reserve(watch_order_.size());
+        // Rebuilt per wait from the live handle table, so a socket closed
+        // since the last wait is simply not watched rather than polled on a
+        // descriptor number that now means something else.
+        std::vector<std::int64_t> still_open;
+        still_open.reserve(watch_order_.size());
+        for (const auto token : watch_order_) {
+          auto found = socket_handles_.find(token);
+          if (found == socket_handles_.end()) {
+            watch_wanted_.erase(token);
+            continue;
+          }
+          still_open.push_back(token);
+          watching.push_back(net_support::Watched{token, found->second.descriptor,
+                                                 watch_wanted_[token]});
+        }
+        watch_order_ = std::move(still_open);
+
+        if (watching.empty()) {
+          // Nothing to wait for. Sleeping for the timeout would be the honest
+          // reading, but a loop that watched nothing by mistake would then be
+          // an invisible stall; zero ready and an immediate return lets the
+          // caller notice.
+          push_ok_number(0);
+          return;
+        }
+
+        std::vector<net_support::Ready> found;
+        const auto error = net_support::poll_wait(watching, timeout, found);
+        if (!error.empty()) {
+          push_error(error);
+          return;
+        }
+        ready_.reserve(found.size());
+        for (const auto &one : found)
+          ready_.emplace_back(one.token, one.flags);
+        push_ok_number(static_cast<std::int64_t>(ready_.size()));
+        return;
+      }
+
+      // One ready socket per call, packed as handle * 8 + flags, and zero when
+      // the set is drained.
+      //
+      // Packed rather than returned as a pair because an intrinsic gives back
+      // one value, and two calls whose meaning depended on being made in
+      // order would be worse than arithmetic the caller can see. The Ny
+      // declarations carry ready_handle and ready_flags so no caller has to
+      // write the division.
+      if (fn_name == "net.next_ready") {
+        if (ready_cursor_ >= ready_.size()) {
+          push_ok_number(0);
+          return;
+        }
+        const auto &one = ready_[ready_cursor_];
+        ready_cursor_ += 1;
+        push_ok_number(one.first * 8 + one.second);
         return;
       }
 
