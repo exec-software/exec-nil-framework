@@ -19,6 +19,81 @@ void write(const fs::path &path, const std::string &text) {
   std::ofstream stream(path, std::ios::binary); stream << text;
   if (!stream) throw std::runtime_error("cannot write fixture");
 }
+void integer(std::string &bytes, std::size_t offset, std::uint64_t value, unsigned width, bool big) {
+  for (unsigned index = 0; index < width; ++index)
+    bytes.at(offset + index) = static_cast<char>((value >> (8 * (big ? width - index - 1 : index))) & 255);
+}
+std::string macho(std::uint32_t kind, bool wide = true, bool big = false,
+                  std::uint32_t cpu = 0x0100000c, std::uint32_t subtype = 2) {
+  std::string bytes(wide ? 32 : 28, '\0');
+  integer(bytes, 0, wide ? 0xfeedfacf : 0xfeedface, 4, big);
+  integer(bytes, 4, cpu, 4, big); integer(bytes, 8, subtype, 4, big);
+  integer(bytes, 12, kind, 4, big);
+  return bytes;
+}
+std::string universal(std::uint32_t first = 2, std::uint32_t second = 8,
+                      bool wide = false, bool big = true) {
+  std::string bytes(160, '\0');
+  integer(bytes, 0, wide ? 0xcafebabf : 0xcafebabe, 4, big); integer(bytes, 4, 2, 4, big);
+  for (unsigned index = 0; index < 2; ++index) {
+    const auto at = 8 + index * (wide ? 32 : 20), offset = 96 + index * 32;
+    const auto cpu = index ? 0x01000007U : 0x0100000cU, subtype = index ? 3U : 2U;
+    integer(bytes, at, cpu, 4, big); integer(bytes, at + 4, subtype, 4, big);
+    integer(bytes, at + 8, offset, wide ? 8 : 4, big);
+    integer(bytes, at + (wide ? 16 : 12), 32, wide ? 8 : 4, big);
+    integer(bytes, at + (wide ? 24 : 16), 5, 4, big);
+    bytes.replace(offset, 32, macho(index ? second : first, true, false, cpu, subtype));
+  }
+  return bytes;
+}
+void machos(const fs::path &root) {
+  const auto path = root / "mach-o-control";
+  const auto accepts = [&](const std::string &bytes) { write(path, bytes); return detail::non_linkable_macho(path); };
+  const auto malformed = [&](const std::string &bytes) { write(path, bytes); return !detail::macho_file_types(path); };
+  for (bool wide : {false, true}) for (bool big : {false, true}) {
+    check(accepts(macho(2, wide, big)), "both byte orders and widths admit executable SDK resources");
+    check(accepts(macho(8, wide, big)), "both byte orders and widths admit bundle SDK resources");
+    check(accepts(universal(2, 8, wide, big)), "every universal executable/bundle slice is positively identified");
+  }
+  for (const auto kind : {1U, 6U, 9U, 0xffffffffU}) {
+    check(!accepts(macho(kind)), "object/dylib/stub/unknown file types cannot be ignored as SDK resources");
+    check(!accepts(universal(8, kind)), "one linkable or unknown universal slice prevents omission");
+  }
+  check(malformed("ordinary metadata"), "ordinary file is not positively identified as a Mach-O resource");
+  check(malformed("!<arch>\n"), "an archive is not a Mach-O resource");
+  check(malformed(macho(8).substr(0, 31)), "truncated 64-bit header is rejected");
+  auto commands = macho(8); commands.resize(40);
+  integer(commands, 16, 1, 4, false); integer(commands, 20, 8, 4, false);
+  integer(commands, 32, 1, 4, false); integer(commands, 36, 8, 4, false);
+  check(accepts(commands), "complete bounded load commands are accepted");
+  check(malformed(commands.substr(0, 39)), "truncated load commands are rejected");
+  auto changed = commands; integer(changed, 36, 7, 4, false);
+  check(malformed(changed), "undersized load command is rejected");
+  changed = commands; integer(changed, 16, 0, 4, false);
+  check(malformed(changed), "unaccounted load command bytes are rejected");
+  changed = commands; integer(changed, 20, 4 * 1024 * 1024 + 1, 4, false);
+  check(malformed(changed), "excessive load command extent is rejected");
+  changed = universal(); integer(changed, 4, 65, 4, true);
+  check(malformed(changed), "excessive universal slice count is rejected");
+  check(malformed(universal().substr(0, 47)), "truncated universal descriptor table is rejected");
+  changed = universal(); integer(changed, 16, 144, 4, true);
+  check(malformed(changed), "universal slice extending beyond file is rejected");
+  changed = universal(); integer(changed, 36, 96, 4, true);
+  check(malformed(changed), "overlapping universal slices are rejected");
+  changed = universal(); integer(changed, 16, 32, 4, true);
+  check(malformed(changed), "universal slice cannot overlap its descriptor table");
+  changed = universal(); integer(changed, 24, 64, 4, true);
+  check(malformed(changed), "invalid universal alignment is rejected before shifting");
+  changed = universal(2, 8, true); integer(changed, 36, 1, 4, true);
+  check(malformed(changed), "fat64 reserved field must be zero");
+  changed = universal(); integer(changed, 100, 0x01000007, 4, false);
+  check(malformed(changed), "universal descriptor must match its slice CPU type");
+  changed = universal(); integer(changed, 104, 0x80000002, 4, false);
+  check(accepts(changed), "CPU subtype capabilities are masked as in Apple ld");
+  changed = universal(); integer(changed, 48, 0x0100000c, 4, true); integer(changed, 52, 0, 4, true);
+  check(malformed(changed), "legacy hidden ARM64 descriptor cannot escape universal inspection");
+  fs::remove(path);
+}
 std::string quote(const std::string &text) {
   std::string result = "\"";
   for (const auto byte : text) { if (byte == '"' || byte == '\\') result += '\\'; result += byte; }
@@ -100,6 +175,13 @@ void parsing(const detail::link_plan &plan, const fs::path &runtime) {
       "Load command 1\n          cmd LC_RPATH\n      cmdsize 32\n         path @loader_path/../lib (offset 12)\n");
   check(description && description->libraries.size() == 1 && description->rpaths ==
         std::vector<std::string>{"@loader_path/../lib"}, "otool image and rpath inputs parsed together");
+  const auto universal_description = detail::parse_image(image,
+      image.string() + " (architecture arm64e):\n\t@rpath/arm.dylib (compatibility version 1.0.0, current version 1.0.0)\n" +
+      image.string() + " (architecture x86_64):\n\t@rpath/intel.dylib (compatibility version 1.0.0, current version 1.0.0)\n",
+      image.string() + " (architecture arm64e):\ncmd LC_RPATH\npath @loader_path/../lib/arm (offset 12)\n" +
+      image.string() + " (architecture x86_64):\ncmd LC_RPATH\npath @loader_path/../lib/intel (offset 12)\n");
+  check(universal_description && universal_description->libraries.size() == 2 && universal_description->rpaths.size() == 2,
+        "all-architecture tool output preserves both dependency and runpath sets");
   check(!detail::parse_image(image, "bad format\n", ""), "unknown image listing rejected");
   check(!detail::parse_image(image, image.string() + ":\n", "cmd LC_RPATH\n"), "truncated rpath rejected");
   check(!detail::parse_image(image, image.string() + ":\n", "cmd LC_DYLD_ENVIRONMENT\n"), "embedded loader environment rejected");
@@ -152,6 +234,21 @@ void closure(const fs::path &root) {
   files = collect();
   check(files && identities(*files).count(driver_leaf.generic_string()) && identities(*files).count(linker_leaf.generic_string()),
         "shared image is resolved in both driver and linker inherited-runpath contexts");
+  const auto arm_branch = plan.installed.parent_path() / "lib/arm/branch.dylib";
+  const auto intel_branch = plan.installed.parent_path() / "lib/intel/branch.dylib";
+  const auto arm_child = arm_branch.parent_path() / "child.dylib";
+  const auto intel_child = intel_branch.parent_path() / "child.dylib";
+  for (const auto &path : {arm_branch, intel_branch, arm_child, intel_child}) write(path, "slice-specific image");
+  descriptions[driver] = {{"@rpath/branch.dylib"}, {arm_branch.parent_path().string(), intel_branch.parent_path().string()}};
+  descriptions[arm_branch] = {{"@loader_path/child.dylib"}, {}};
+  descriptions[intel_branch] = {{"@loader_path/child.dylib"}, {}};
+  files = collect();
+  check(files && identities(*files).count(arm_branch.generic_string()) && identities(*files).count(arm_child.generic_string()) &&
+        identities(*files).count(intel_branch.generic_string()) && identities(*files).count(intel_child.generic_string()),
+        "merged universal runpaths retain both same-name candidates and their separate dependency graphs");
+  descriptions[intel_branch].libraries.push_back("/unmodeled/second-slice.dylib");
+  check(!collect(), "an unsupported dependency in a later universal runpath candidate fails closed");
+  descriptions[intel_branch].libraries.pop_back();
   descriptions[driver] = {};
   descriptions[plan.linker].libraries.pop_back(); descriptions[plan.linker].rpaths.pop_back();
   const auto other_driver = plan.installed.parent_path() / "alternate-bin/clang++";
@@ -170,6 +267,24 @@ void closure(const fs::path &root) {
   before = identities(*files);
   write(plan.sdk / "usr/lib/new-shadow.tbd", stub("/usr/lib/new-shadow.dylib"));
   files = collect(); check(files && identities(*files) != before, "new SDK shadow changes input namespace");
+  const auto plugin = plan.sdk / "System/Library/PrivateFrameworks/EmailCore.framework/Versions/A/PlugIns/EmailCore.wkbundle/Contents/MacOS/EmailCore";
+  for (const auto kind : {2U, 8U}) {
+    write(plugin, macho(kind)); files = collect();
+    check(files && !identities(*files).count(plugin.generic_string()), "positively nonlinkable SDK plugin image is not a native link input");
+  }
+  write(plugin, universal()); files = collect();
+  check(files && !identities(*files).count(plugin.generic_string()), "all-nonlinkable universal SDK plugin is omitted");
+  for (const auto kind : {1U, 6U, 9U, 0xffffffffU}) {
+    write(plugin, macho(kind));
+    check(!collect(), "SDK plugin location cannot exempt an object, dylib, stub or unknown Mach-O type");
+  }
+  write(plugin, macho(8).substr(0, 31));
+  check(!collect(), "truncated SDK plugin image is not silently omitted");
+  write(plugin, universal(8, 6));
+  check(!collect(), "mixed universal plugin cannot hide a linkable SDK slice");
+  write(plugin, "!<arch>\n");
+  check(!collect(), "extensionless archive in plugin location still disables reuse");
+  fs::remove(plugin);
   before = identities(*files);
   write(plan.installed.parent_path() / "lib/new-helper.dylib", "new helper");
   files = collect(); check(files && identities(*files) != before, "new toolchain helper changes namespace");
@@ -282,6 +397,7 @@ int main() {
   // through deliberate fixture links rather than an incidental host prefix.
   const auto root = fs::canonical(nil::detail::create_private_directory(fs::temp_directory_path(), "nil-darwin-closure-"));
   try {
+    machos(root);
     closure(root);
     fs::remove_all(root);
     std::cout << "Darwin toolchain closure: " << checks << " checks passed\n";

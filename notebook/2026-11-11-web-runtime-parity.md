@@ -306,6 +306,16 @@ the full-host bound. Full editor acceptance remains open. Early native probes
 identify the remaining cache refusals: an arm64e system launcher inspected as
 arm64, and a non-linkable EmailCore plugin embedded in the SDK.
 
+The native collector now inspects every tool slice, including Apple's arm64e
+launcher, and conservatively follows every existing candidate from merged
+runpaths. SDK omission requires a structurally valid executable/bundle in every
+slice; object/dylib/stub, mixed, unknown and malformed images still disable reuse.
+The ordinary link plan does not admit `-bundle_loader`. `OTOOL_PATH` is rejected
+as an unmodeled tool selector. All 131 portable controls pass strict warnings
+and ASan/UBSan, including transitive alternate-runpath dependencies and malformed
+universal headers. This implementation still needs the actual hosted probe and
+positive native cache reuse to pass.
+
 Paused windows are not pumped, and adapter transport failures use best-effort
 terminal notification before the reader accepts disconnect/EOF; cancellable
 arbitrary input streams are outside this slice. No new native debugger or

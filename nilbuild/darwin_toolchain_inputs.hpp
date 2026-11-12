@@ -7,10 +7,12 @@
 // is collected again before publication. No timestamps certify cache identity.
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <map>
+#include <limits>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -186,6 +188,111 @@ inline std::optional<link_plan> parse_plan(const std::string &text, const fs::pa
 inline bool supported_archive_commands(const std::string &text) {
   return !text.empty() && text.size() <= 4 * 1024 * 1024 && text.find('\0') == std::string::npos &&
          text.find("LC_LINKER_OPTION") == std::string::npos;
+}
+
+inline bool macho_magic(const std::string &bytes) {
+  if (bytes.size() < 4) return false;
+  const auto prefix = bytes.substr(0, 4);
+  return prefix == std::string("\xfe\xed\xfa\xce", 4) || prefix == std::string("\xce\xfa\xed\xfe", 4) ||
+         prefix == std::string("\xfe\xed\xfa\xcf", 4) || prefix == std::string("\xcf\xfa\xed\xfe", 4) ||
+         prefix == std::string("\xca\xfe\xba\xbe", 4) || prefix == std::string("\xbe\xba\xfe\xca", 4) ||
+         prefix == std::string("\xca\xfe\xba\xbf", 4) || prefix == std::string("\xbf\xba\xfe\xca", 4);
+}
+
+// An SDK may ship runnable plug-ins alongside its linkable interfaces. Apple
+// ld's ordinary dylib parser rejects MH_EXECUTE and MH_BUNDLE; this profile
+// never passes -bundle_loader. Ignore only positively identified such images,
+// including every universal slice. A dylib/object, malformed header or unknown
+// file remains unmodeled. Sources: cctools mach-o/{loader,fat}.h and ld64's
+// src/ld/parsers/macho_dylib_file.cpp, Parser::validFile.
+inline std::optional<std::vector<std::uint32_t>> macho_file_types(const fs::path &path) {
+  std::vector<std::uint32_t> kinds;
+  std::error_code error;
+  const auto size = fs::file_size(path, error);
+  if (error || size > static_cast<std::uintmax_t>(std::numeric_limits<std::streamoff>::max())) return {};
+  std::ifstream file(path, std::ios::binary);
+  const auto read = [&](std::uint64_t offset, std::size_t count) -> std::optional<std::string> {
+    if (offset > size || count > size - offset || count > 4 * 1024 * 1024) return {};
+    std::string bytes(count, '\0'); file.clear(); file.seekg(static_cast<std::streamoff>(offset));
+    if (!file.read(bytes.data(), static_cast<std::streamsize>(count))) return {};
+    return bytes;
+  };
+  const auto number = [](const std::string &bytes, std::size_t at, unsigned count, bool big) {
+    std::uint64_t value = 0;
+    for (unsigned index = 0; index < count; ++index)
+      value |= std::uint64_t(static_cast<unsigned char>(bytes[at + index])) <<
+               (8 * (big ? count - index - 1 : index));
+    return value;
+  };
+  const auto slice = [&](std::uint64_t offset, std::uint64_t extent,
+                         std::optional<std::pair<std::uint64_t, std::uint64_t>> cpu) {
+    const auto header = read(offset, 28);
+    if (!header || extent < 28) return false;
+    const auto magic = header->substr(0, 4);
+    const bool big = magic == std::string("\xfe\xed\xfa\xce", 4) || magic == std::string("\xfe\xed\xfa\xcf", 4);
+    const bool wide = magic == std::string("\xfe\xed\xfa\xcf", 4) || magic == std::string("\xcf\xfa\xed\xfe", 4);
+    if (!big && magic != std::string("\xce\xfa\xed\xfe", 4) && magic != std::string("\xcf\xfa\xed\xfe", 4)) return false;
+    const auto header_size = wide ? 32U : 28U;
+    if (extent < header_size || !read(offset, header_size)) return false;
+    if (cpu && (number(*header, 4, 4, big) != cpu->first || (number(*header, 8, 4, big) & 0x00ffffffU) != (cpu->second & 0x00ffffffU))) return false;
+    const auto kind = number(*header, 12, 4, big);
+    const auto count = number(*header, 16, 4, big), bytes = number(*header, 20, 4, big);
+    if (count > 65536 || bytes > 4 * 1024 * 1024 || bytes > extent - header_size) return false;
+    const auto commands = read(offset + header_size, static_cast<std::size_t>(bytes));
+    if (!commands) return false;
+    std::size_t at = 0;
+    for (std::uint64_t index = 0; index < count; ++index) {
+      if (at > commands->size() || commands->size() - at < 8) return false;
+      const auto length = number(*commands, at + 4, 4, big);
+      if (length < 8 || length % 4 || length > commands->size() - at) return false;
+      at += static_cast<std::size_t>(length);
+    }
+    if (at != commands->size()) return false;
+    kinds.push_back(static_cast<std::uint32_t>(kind));
+    return true;
+  };
+  const auto header = read(0, 8);
+  if (!header || !macho_magic(*header)) return {};
+  const auto magic = header->substr(0, 4);
+  const bool fat_big = magic == std::string("\xca\xfe\xba\xbe", 4) || magic == std::string("\xca\xfe\xba\xbf", 4);
+  const bool fat_little = magic == std::string("\xbe\xba\xfe\xca", 4) || magic == std::string("\xbf\xba\xfe\xca", 4);
+  if (!fat_big && !fat_little) {
+    if (!slice(0, size, {})) return {};
+    return kinds;
+  }
+  const bool wide = magic == std::string("\xca\xfe\xba\xbf", 4) || magic == std::string("\xbf\xba\xfe\xca", 4);
+  const auto count = number(*header, 4, 4, fat_big);
+  const auto stride = wide ? 32U : 20U;
+  if (!count || count > 64 || size < 8 + count * stride) return {};
+  const auto table = read(8, static_cast<std::size_t>(count * stride));
+  if (!table) return {};
+  // ld64 also recognizes one legacy ARM64 descriptor beyond nfat_arch in
+  // FAT_MAGIC files. Do not silently omit a hidden potentially-linkable slice.
+  if (!wide && size >= 8 + (count + 1) * stride) {
+    const auto extra = read(8 + count * stride, stride);
+    if (!extra) return {};
+    if (number(*extra, 0, 4, fat_big) == 0x0100000c && number(*extra, 4, 4, fat_big) <= 1) return {};
+  }
+  std::vector<std::pair<std::uint64_t, std::uint64_t>> extents;
+  for (std::uint64_t index = 0; index < count; ++index) {
+    const auto at = static_cast<std::size_t>(index * stride);
+    const auto offset = number(*table, at + 8, wide ? 8 : 4, fat_big);
+    const auto extent = number(*table, at + (wide ? 16 : 12), wide ? 8 : 4, fat_big);
+    const auto alignment = number(*table, at + (wide ? 24 : 16), 4, fat_big);
+    if (alignment > 63 || offset < 8 + count * stride || offset > size || extent > size - offset ||
+        offset % (std::uint64_t(1) << alignment) || (wide && number(*table, at + 28, 4, fat_big))) return {};
+    for (const auto &previous : extents)
+      if (offset < previous.second && previous.first < offset + extent) return {};
+    extents.emplace_back(offset, offset + extent);
+    if (!slice(offset, extent, std::make_pair(number(*table, at, 4, fat_big), number(*table, at + 4, 4, fat_big)))) return {};
+  }
+  return kinds;
+}
+
+inline bool non_linkable_macho(const fs::path &path) {
+  const auto kinds = macho_file_types(path);
+  return kinds && !kinds->empty() && std::all_of(kinds->begin(), kinds->end(),
+      [](std::uint32_t kind) { return kind == 2 || kind == 8; }); // MH_EXECUTE / MH_BUNDLE
 }
 
 inline bool system_install_name(const std::string &name) {
@@ -381,11 +488,11 @@ private:
             const std::string bytes(prefix, size);
             if (bytes.rfind("--- !tapi-tbd", 0) == 0) {
               if (!add(entry) || !read_stub(entry)) return false;
-            } else if (bytes.rfind("!<arch>\n", 0) == 0 || bytes.rfind("!<thin>\n", 0) == 0 ||
-                (size >= 4 && (bytes.compare(0, 4, "\xfe\xed\xfa\xce", 4) == 0 || bytes.compare(0, 4, "\xce\xfa\xed\xfe", 4) == 0 ||
-                               bytes.compare(0, 4, "\xfe\xed\xfa\xcf", 4) == 0 || bytes.compare(0, 4, "\xcf\xfa\xed\xfe", 4) == 0 ||
-                               bytes.compare(0, 4, "\xca\xfe\xba\xbe", 4) == 0 || bytes.compare(0, 4, "\xbe\xba\xfe\xca", 4) == 0 ||
-                               bytes.compare(0, 4, "\xca\xfe\xba\xbf", 4) == 0 || bytes.compare(0, 4, "\xbf\xba\xfe\xca", 4) == 0))) return fail("unmodeled extensionless binary SDK input", entry);
+            } else if (bytes.rfind("!<arch>\n", 0) == 0 || bytes.rfind("!<thin>\n", 0) == 0) {
+              return fail("unmodeled extensionless archive SDK input", entry);
+            } else if (macho_magic(bytes) && !non_linkable_macho(entry)) {
+              return fail("unmodeled or malformed extensionless Mach-O SDK input", entry);
+            }
             continue; // Non-linkable metadata such as framework PkgInfo.
           }
           if (!add(entry) || (extension == ".tbd" && !read_stub(entry))) return false;
@@ -441,31 +548,37 @@ private:
     if (!inspected_contexts.insert(context).second) return true;
     if (inspected_contexts.size() > 1024) return fail("tool image contexts exceeded 1024", path);
     for (const auto &name : description.libraries) {
-      fs::path selected;
+      std::vector<fs::path> selected;
       if (name.rfind("@rpath/", 0) == 0) {
         const auto tail = fs::path(name.substr(7));
         if (tail.has_parent_path()) return fail("tool rpath dependency has an unmodeled suffix", name);
+        // Tool inspection inventories every universal slice (the OS shim may
+        // be arm64e while the emitted link target is arm64). Its merged rpaths
+        // cannot safely pick only one winner: include every existing candidate
+        // so a different architecture/context's first match cannot be hidden.
         for (const auto &root : rpaths) {
           const auto candidate = root / tail;
-          if (regular(candidate)) { selected = candidate; break; }
+          if (regular(candidate)) selected.push_back(candidate);
         }
-        // A dylib's install ID may use its parent's rpath and appear in otool
-        // -L. It names this file, not an additional dependency.
-        if (selected.empty() && path.filename() == tail && path.extension() == ".dylib") selected = path;
+        // A dylib's install ID is self metadata, not an extra file dependency.
+        if (selected.empty() && path.filename() == tail && path.extension() == ".dylib") selected.push_back(path);
         if (selected.empty()) return fail("tool rpath dependency could not be resolved", name);
       } else if (name.rfind("@loader_path/", 0) == 0) {
-        selected = (physical.parent_path() / name.substr(13)).lexically_normal();
-        if (!inside(selected, plan.installed.parent_path())) return fail("loader-relative dependency escapes toolchain", selected);
+        const auto candidate = (physical.parent_path() / name.substr(13)).lexically_normal();
+        if (!inside(candidate, plan.installed.parent_path())) return fail("loader-relative dependency escapes toolchain", candidate);
+        selected.push_back(candidate);
       } else if (system_install_name(name)) {
-        selected = host_path(name);
-        // Non-file system images are represented by the compiler's complete
-        // shared-cache backing-file superset. Ordinary overrides are included.
-        if (!regular(selected)) continue;
+        const auto candidate = host_path(name);
+        // Actual system images without ordinary files are covered by the
+        // compiler's complete active shared-cache backing-file superset.
+        if (regular(candidate)) selected.push_back(candidate);
       } else {
-        selected = name;
-        if (!clean_path(selected) || !inside(selected, plan.installed.parent_path())) return fail("tool dependency escapes modeled roots", selected);
+        const fs::path candidate = name;
+        if (!clean_path(candidate) || !inside(candidate, plan.installed.parent_path())) return fail("tool dependency escapes modeled roots", candidate);
+        selected.push_back(candidate);
       }
-      if (selected != path && !image(selected, executable_directory, depth + 1, rpaths)) return false;
+      for (const auto &candidate : selected)
+        if (candidate != path && !image(candidate, executable_directory, depth + 1, rpaths)) return false;
     }
     return true;
   }

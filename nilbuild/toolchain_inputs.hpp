@@ -288,7 +288,7 @@ inline std::optional<std::vector<std::filesystem::path>> native_toolchain_files(
         name == "GCC_EXEC_PREFIX" || name == "CPATH" || name == "CPLUS_INCLUDE_PATH" ||
         name == "C_INCLUDE_PATH" || name == "OBJC_INCLUDE_PATH" || name == "ARCHFLAGS" ||
         name == "IPHONEOS_DEPLOYMENT_TARGET" || name == "TVOS_DEPLOYMENT_TARGET" ||
-        name == "WATCHOS_DEPLOYMENT_TARGET") return unavailable("unmodeled tool-selection environment variable: " + name);
+        name == "WATCHOS_DEPLOYMENT_TARGET" || name == "OTOOL_PATH") return unavailable("unmodeled tool-selection environment variable: " + name);
   }
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
   unsigned queries = 0;
@@ -337,8 +337,13 @@ inline std::optional<std::vector<std::filesystem::path>> native_toolchain_files(
   }
   const auto inspect = [&](const std::filesystem::path &image)
       -> std::optional<darwin_toolchain_detail::image_description> {
-    const auto libraries = query({"/usr/bin/otool", "-arch", plan->architecture, "-L", image.string()});
-    const auto commands = query({"/usr/bin/otool", "-arch", plan->architecture, "-l", image.string()});
+    const auto kinds = darwin_toolchain_detail::macho_file_types(image);
+    if (!kinds || !std::all_of(kinds->begin(), kinds->end(), [](std::uint32_t kind) { return kind == 2 || kind == 6; })) {
+      darwin_toolchain_detail::explain(reason, "unsupported or ambiguous Mach-O tool slices: " + image.string());
+      return {};
+    }
+    const auto libraries = query({"/usr/bin/otool", "-arch", "all", "-L", image.string()});
+    const auto commands = query({"/usr/bin/otool", "-arch", "all", "-l", image.string()});
     if (!libraries || !commands) return {};
     const auto description = darwin_toolchain_detail::parse_image(image, *libraries, *commands);
     if (!description) darwin_toolchain_detail::explain(reason, "unsupported otool image/load-command output: " + image.string());
