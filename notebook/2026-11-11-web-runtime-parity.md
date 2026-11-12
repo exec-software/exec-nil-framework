@@ -643,3 +643,152 @@ reports 653 checks. Those changes are preserved; the older 330-check snapshot
 and its reproductions must be checked against this new source before making
 further web changes. The README's remaining-parity paragraph still lists logs,
 configuration and virtual hosts as absent despite documenting them elsewhere.
+
+
+## Current installed Linux closeout and Mac source follow-up
+
+The private Linux SDK at exact `9fa354d48575378065f291c6208148c5e18ab61a`
+completes all 590 source CTests with no failures or skips. After relocation to
+`NIL SDK space λ`, all 1,184 installed consumer routes pass: 148 retained route
+reports supply 888 independently replayed results and 1,628 command records;
+296 native object/link executions are validated by the pinned driver. Installed
+acceptance also passes 146 debugger checks/15 sessions, live execution
+checkpoints, twelve PostgreSQL source/binary routes, sixteen timestamp route
+observations with 100 repetitions each, twenty GTK desktop/input cases,
+sixteen Unicode byte-file routes, six ordinary I/O observations and actual
+relocated `libnil.so` loader/ABI identity.
+
+All 88 VS Code 1.144.1 host groups pass with all nine modules, no exclusions and
+the full-suite completion sentinel. The launcher uses an empty private profile,
+isolated X11 display and D-Bus, private XDG roots and a launcher-only
+`--password-store=basic` option. All 78 source fixture pins remain unchanged;
+no test assertions or product binaries were changed. The 267 payload files and
+manifest preserve their bytes and modes, the original private install paths
+are absent, and all six owned service groups are stopped with no remaining PID.
+The composite report is `linux-sdk-9fa354d/linux-private-closeout.json`, SHA-256
+`a8d1a5dec3a5e96b0e5d0a717090723a72ccd878fa4a65ed3ca1abfcfd2b13d2`.
+
+Failed attempts remain recorded: PostgreSQL's long private Unix-socket path
+exceeded its 107-byte bound; a remaining-only retry uses a short owned temporary
+path. An editor launch inherited Wayland without a usable display. A later
+attempt timed out during its first NILData open/show/language check, before any
+group completed; this was not a demonstrated language-ID mismatch, and observed
+portal/keyring activation is not established as its cause. The isolated X11
+launch then passes the unchanged assertions. Canonical successful-test cleanup
+intentionally removes generated products; independent replay checks their
+retained command/result metadata rather than claiming to hash absent files.
+
+Both hosted Mac architectures complete the expanded 21-contract application
+campaign at feature head `eca43f1`, tested PR merge
+`3c677f7145f083fc228d09371a6f92976ebf81b8`
+([run 43141540789](https://github.com/exec-software/exec-nil-framework/actions/runs/43141540789)).
+The exact inventory is five SDK/project contracts, six debugger contracts,
+eight native contracts and two incremental contracts. Four real desktop DAP
+sessions and all 88 VS Code 1.146.0 groups also pass per host, with all nine
+modules and no exclusions. All 620 evidence hashes verify. Report
+`github-applications-43141540789/replay-report.json` has SHA-256
+`1f14c9689ef8ec563854cb3f80a0b4b2d491411a028930973942b8b2285f7d10`.
+This resolves the previously open Intel discovery deadline follow-up. Original
+full-suite failures stay preserved; this is supplemental current-source
+acceptance, not a rewritten full source report or a replacement SDK.
+
+## Windows installed desktop and library access
+
+The exact `9fa354d` Windows candidate completes 590 registered source tests:
+588 pass, none fail, and `nilagent.window-discovery`/`nil.ui-display` skip in the
+headless session. Eleven root tools, eighteen library modules and 69 compiled
+documents are staged. The relocated package then passes all 1,184 consumer
+routes, 146 debugger checks/15 sessions, five execution-checkpoint sessions,
+twelve PostgreSQL source/binary routes, Unicode/ordinary I/O, timestamps and
+runtime hooks. Independent replay verifies 442 installed evidence files and
+28 raw phase streams. Installed report SHA-256:
+`bc9d27c6f6c451f8ce4bcb5c1ff5b988a81c7fc577e688a3138952aba9071d23`.
+
+Nathan's interactive session initially stops at read-only preflight: it can
+read 166 of the 268 SDK files, with all 102 missing files under `nillib`.
+Nil/admin can read and hash all 268 unchanged; no readable payload differs.
+The compiled library root retains the protected Owner Rights/System/Admin DACL
+from Python 3.15's `TemporaryDirectory`, because packaging renamed that private
+compilation root directly into `nillib`. Its descendants inherit the restriction.
+This is a real cross-account packaging defect; same-user acceptance did not
+exercise it. The analogous private POSIX root mode also needs correction.
+
+Only this private candidate's `nillib` received inheritable Nathan read/execute
+access, with before/after ACLs and hashes retained under `desktop-access`.
+All 268 payload bytes and stat modes remain unchanged; Windows DACLs did change
+and are not described as unchanged by the payload seal. Both initial preflight
+failures remain preserved. No accepted SDK, original checkout or machine-wide
+ACL was changed.
+
+With that explicit access preparation, Nathan passes twenty VM/native UI cases
+(ten per source/binary library root), 217 provider and 235 lifecycle checks per
+root, window discovery, all 88 editor groups/all nine modules/no exclusions and
+four naturally exiting desktop DAP sessions. Extension unit tests pass 161
+checks with one POSIX-only skip. All 65 desktop evidence files and sixteen raw
+streams verify and the owned task is removed. Desktop report SHA-256:
+`c50b32b8f7dd000d3c5159c19cf1c69c19c44057ad76c5305c40c3ca36efa51d`.
+The previously headless display surfaces have now executed successfully; their
+original source-report skips remain intact. The permanent packaging correction
+requires its own tests before claiming default cross-account access.
+
+
+## Published library access correction
+
+At `3cc2515`, `compile_standard_library` retains its private compilation directory and
+copies the fully checked outputs into fresh destination entries. Each published
+directory/file inherits the destination's normal access policy; it copies no
+private mode/DACL metadata and does not call chmod or edit ACLs. Inventory
+rejects symlinks and special files before creating `nillib`. A failed copy
+removes only this attempt's new subtree; existing targets are preserved and
+original runtime inputs remain until publication succeeds.
+
+The real Linux compiler/interpreter/native mixed-source suite passes thirteen
+tests, including umasks 0022/0027/0077, private staging mode 0700, every copied
+file's exact hash, an injected second-copy failure, original runtime preservation
+and existing file/directory/dangling-symlink refusal. All 46 SDK qualification
+controls also pass. The old Linux SDK's root really is 0700; its bytes and modes
+remain unchanged. Evidence `package-access-linux-ucvmt82_/report.json`, SHA-256
+`c4f33be5b5ec3b3c8849c12eabfa549df0e1306bfd050d38afd459798890f362`.
+
+Actual Windows validation uses the same sealed `9fa354d` tools with only the
+packaging/test scripts overlaid in a disposable tree. All thirteen mixed-source
+and native tests pass. Limited Nathan reads and hash-matches all 102 published
+library files, while access to the original private staging directory is still
+denied (errno 13); all 121 published ACL entries inherit destination access.
+The one-off task and private stage are removed. All 33 evidence files and eight
+raw streams independently verify, and the original candidate remains unchanged.
+The first probe expected a Windows-specific error field; actual denied reads
+reported `PermissionError` with errno 13. That failed assertion remains retained
+alongside the corrected denial check and successful bounded repeat.
+Evidence `sdk-9fa354d48575/package-access-ed2765d377/probe-report.json`, SHA-256
+`da3fe80b73dd28f92caaf35dd75b87952c49dd417452d90929cd98f74d3538fd`.
+The next Mac application campaign also includes the actual mixed-source/native
+packaging test, increasing its exact selected CTest inventory from 21 to 22.
+
+## Installed Mac desktop follow-up
+
+[Run 43146638765](https://github.com/exec-software/exec-nil-framework/actions/runs/43146638765)
+uses the exact authenticated `1efbe6623445cfcc486b8b7a7794dd112c357224` SDKs from
+run `43129959317`, with separately pinned `285aea2` acceptance helpers. It builds
+only three test-only desktop helpers; it does not rebuild or substitute product
+tools or runtimes. The earlier dispatch `43146568751` had an incorrectly typed
+SDK revision and was cancelled before acceptance; the correction is retained.
+
+ARM passes twenty installed UI cases, four desktop DAP sessions with retained
+wire frames, 146 installed debugger checks/15 sessions, execution checkpoints
+and all 88 VS Code 1.146.0 groups/all nine modules/no exclusions. Independent
+replay verifies 213 new evidence files and all 920 original SDK evidence hashes,
+alongside exact preservation of all 268 SDK file bytes/modes and helper/editor
+inputs. Its desktop report SHA-256 is
+`b1f1ba3e46dc0615b5088f27a5f939de1ec7e7617082662a0a14aed95f4c7692`.
+
+Intel passes the same installed UI, desktop DAP, debugger and checkpoint phases,
+but the editor stops after 25 passing groups: the `ny: vm project check, build
+and run tasks` group reaches its 180-second deadline. Project check completed
+in 1,762 ms; project build started without a captured process-end event. The
+suite's global task-end listener was already installed, so a late command-local
+subscription is not established as the cause. No task-start PID/CPU snapshot
+was retained, preventing attribution to compilation, fingerprinting or task
+launch. All 211 evidence files verify and input seals remain unchanged. The
+failure remains recorded; bounded task lifecycle diagnostics and a same-deadline
+Intel follow-up are required before installed editor parity is complete.

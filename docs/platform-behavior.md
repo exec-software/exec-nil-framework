@@ -4,12 +4,12 @@ The same Ny or Matrix source is meant to produce the same result on every
 supported host. Where the framework had a choice, it chose the portable
 behavior rather than the host's local convention — so a program's output, a
 recorded transcript, and a byte offset in a diagnostic all mean the same thing
-on Linux and on Windows.
+on Linux, Windows and macOS.
 
-Linux is the development and reference host. Windows development acceptance
-compares against it. macOS builds and selected execution routes now pass, but
-its full parity inventory still has failures. This page states the intended
-portable behavior and explicit host differences; the
+Linux is the development and reference host. Windows, Intel macOS and Apple
+Silicon macOS have installed standard-library and tooling acceptance against
+that reference. This page states the intended portable behavior and explicit
+host differences; the
 [support matrix](platform-support.md) records what has actually been verified.
 
 ## Line endings

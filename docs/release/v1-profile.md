@@ -6,8 +6,9 @@ release; it does not promote every design document to an implemented promise.
 No stable v1 tag or publication is implied by building a candidate.
 
 Development capability has advanced beyond the earlier reviewed RC binaries.
-The [platform support matrix](../platform-support.md) records paired
-Windows/Linux SDK acceptance and native macOS build/runtime baselines. Those
+The [platform support matrix](../platform-support.md) records installed SDK,
+desktop, debugger and editor acceptance across Linux, Windows and both Mac
+architectures, including exact candidate revisions and remaining checks. Those
 results do not extend this document's pinned release qualification.
 
 ## Host and dependencies

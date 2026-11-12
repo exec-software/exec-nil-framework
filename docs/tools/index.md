@@ -62,12 +62,13 @@ The [project driver](projects.md) provides `init`, `convert`, `describe`, `check
 `build`, `run` and `test` over a `nil.project.nildata` file. It shares compiler
 analysis and project settings with the VS Code extension. VM/native targets
 share bounded parallel project scheduling. Incremental reuse requires complete
-source and toolchain identities; Darwin currently rebuilds both targets while
-loaded-image identity remains incomplete. See the
+source and toolchain identities. Both Mac architectures now pass real VM/native
+reuse and invalidation, including loaded images and shared-cache backing files;
+unsupported dependency profiles rebuild. See the
 [incremental build contract](projects.md#incremental-and-parallel-builds).
-Project process execution has recorded Linux and paired Windows `5630388`
-development acceptance; [platform support](../platform-support.md) separates
-that baseline from release qualification.
+Project process execution has recorded Linux, Windows and both Mac architecture
+development acceptance; [platform support](../platform-support.md) records exact
+source and SDK revisions separately from release qualification.
 
 ## `niltest`
 

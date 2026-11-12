@@ -6,8 +6,9 @@ The VM and native compiler use one desktop provider per platform, each behind
 the same checked boundary: a GTK4 provider on Linux and a Win32 provider on
 Windows. Windows remains a development target, not a qualified release platform.
 The macOS provider is AppKit. Its provider, lifecycle and interpreter/native
-language-level desktop contracts pass on Intel and Apple Silicon; current SDK
-and editor acceptance remain separate. AppKit replaces the
+language-level desktop contracts pass on Intel and Apple Silicon, including
+twenty installed source/binary-library desktop/input cases on each architecture.
+Editor and release qualification are recorded separately. AppKit replaces the
 earlier private GTK-on-macOS experiments. See [platform support](../platform-support.md).
 Examples display the framework generation as **NIL²**, with **NIL^2** as the
 plain-text spelling. This presentation does not change numeric release or

@@ -246,32 +246,30 @@ such as `say formatted "value={5}"`; it works on interpreted and native routes.
 
 ## Project status
 
-The current version is **1.0.0-rc.1**. Linux x86_64 is the reference development
-platform; the `9fb6c04` LLVM-enabled source suite passes all 590 CTests without
-skips. The Windows x86_64 development SDK has
-[paired Linux acceptance and installed tooling coverage](notebook/2026-11-02-windows-port.md).
-The newer Windows source campaign also passes the Win32 desktop contracts and
-all 88 real VS Code host groups; a fresh SDK still needs separate qualification.
-Intel and Apple Silicon macOS have passing native build baselines with LLVM
-enabled and disabled, real interpreter/checkpoint execution, and representative
-LLVM JIT/AOT execution. Both macOS architectures also pass bounded native inline
-assembly and executable-context embedding, inspection and dead-strip retention
-checks. Both macOS development SDKs also pass the full installed
-standard-library campaign, isolated PostgreSQL application routes, installed
-debugger checks and execution checkpoints. Both hosts now pass the underlying
-AppKit provider and interpreter/native language-level desktop checks. Windows uses its
-native Win32 provider; Linux uses GTK4. Both Mac architectures pass all 88 real
-editor groups at `9fb6c04`. Current SDK qualification and an Intel project-tool
-timeout follow-up remain open. The newer socket, entropy and text-byte
-intrinsics pass the same interpreter contracts on Linux, Windows and both Macs.
-File timestamps share an implementation across interpreter and native routes,
-with text/binary NIL, JIT and AOT checks passing on all four hosts.
-Both Macs now pass native allocation-retention contracts, desktop debugger
-sessions and native incremental reuse. Full platform parity awaits those
-remaining SDK and project-tool checks.
-The [platform support matrix](docs/platform-support.md) separates verified
-development behavior from remaining SDK, provider and release work.
-Windows and macOS release qualification remains pending. The
+The current version is **1.0.0-rc.1**. Development coverage spans Linux x86_64,
+Windows x86_64, Intel macOS and Apple Silicon macOS. Relocated development SDKs
+on all four hosts pass 1,184 installed standard-library routes, twelve PostgreSQL
+source/binary routes, 146 debugger checks and same-process execution checkpoints.
+Linux's current SDK also passes all 590 source tests, twenty installed GTK
+desktop/input cases and all 88 real VS Code host groups without exclusions.
+
+Windows uses Win32 and macOS uses AppKit. Windows and Apple Silicon also pass
+twenty installed desktop/input cases, four desktop debugger sessions and all
+88 editor groups. Both Macs pass the expanded 21-contract application campaign,
+native incremental reuse and all 88 build-tree editor groups; the earlier Intel
+project-tool timeout is resolved. Intel's installed UI/debugger checks pass,
+but its editor run timed out during a project build and remains under
+investigation. A separate Windows account exposed a packaged-library permission
+defect; the correction now passes real cross-account access tests.
+
+The newer socket, entropy and text-byte APIs pass the same interpreter contracts
+on every host; these APIs currently require the interpreter on all platforms.
+File timestamps also pass textual/binary NIL, LLVM JIT and AOT checks everywhere.
+The [platform support matrix](docs/platform-support.md) records exact SDK/source
+revisions, retained failures and remaining deployment boundaries.
+
+These are development results. Windows and macOS release qualification remains
+pending. The
 [release profile](docs/release/v1-profile.md) defines supported configurations
 and release requirements. Known limitations and planned improvements are
 tracked in the [development findings](matrix/docs/next-version-findings.md).

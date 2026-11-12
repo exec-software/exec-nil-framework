@@ -203,16 +203,22 @@ developer VM is not proof of installation on a bare Windows machine.
 ## macOS development builds
 
 Native Intel and Apple Silicon builds are established with LLVM enabled and
-disabled. The recorded `c123849` baseline passed compiler/interpreter/Matrix and
-checkpoint execution on all four profiles, with representative JIT/AOT routes
-also passing when LLVM is enabled. The full CTest inventory still has failures;
-these are development builds, not qualified macOS SDK releases.
+disabled. LLVM-enabled development SDKs pass the full installed standard-library
+campaign, isolated PostgreSQL routes, debugger/checkpoints and AppKit
+interpreter/native desktop/input checks. Original full CTest failures are
+retained alongside passing current-source follow-ups; these are development
+results, not qualified macOS SDK releases.
 
 The manually dispatched [macOS workflow](../../.github/workflows/macos-bringup.yml)
 contains the tested configure/build commands and records the runner, Apple SDK,
 LLVM and optional-provider inputs. It builds tools directly and retains the
-complete test inventory. Its tool archives have not undergone installed SDK
-extraction, relocation, provider, debugger/editor or release acceptance.
+complete test inventory. The separate
+[SDK workflow](../../.github/workflows/macos-sdk.yml) packages development SDKs
+and checks extraction, relocation and installed consumers. The
+[installed replay workflow](../../.github/workflows/macos-sdk-replay.yml)
+tests authenticated, unchanged SDK artifacts with current fixtures, including
+optional desktop/editor checks. This distinguishes passing source/build-tree
+tests from installed-package acceptance.
 Start with the [platform support matrix](../platform-support.md) and the
 [macOS notebook](../../notebook/2026-11-04-macos-parity-plan.md) for the exact
 source baselines and remaining work. Disabling LLVM does not make native routes
