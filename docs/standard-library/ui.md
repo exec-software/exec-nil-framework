@@ -80,6 +80,14 @@ Paused debug sessions do not automatically pump window events. AppKit
 supplies no box or grid container, so, as on Win32, the provider owns the
 layout pass and sizes come from each control's fitting size.
 
+Hidden children reserve no layout space. A grid span preserves the child's
+full requested size, and expanding tracks share available space. Containers
+inherit visible descendants' expansion requests unless explicitly overridden;
+cross-axis fill is independent of requesting extra major-axis space. Win32 and
+AppKit share bounded integer allocation, cached measurement and iterative
+placement. Native geometry assertions compare these behaviors against GTK
+without requiring identical fonts or pixel measurements.
+
 ## Windows and widgets
 
 `Window` and `Widget` are distinct records containing checked provider handles.
@@ -205,6 +213,12 @@ global input injection, change focus or switch desktops. Desktop interaction cas
 run sequentially with `niltest --jobs 1`; see [compiler-backed testing](../tools/testing.md)
 for filtering, reports and timeouts.
 
+The macOS harness uses a test-only library inside each owning process to send
+input through its verified AppKit responder chain. It exercises the same Matrix
+interaction source and records process-bound evidence without Accessibility
+permissions or global input. This library is not installed in the SDK. Hosted
+qualification of this new language-level input path is still pending.
+
 The same display harness checks real GTK window counts during VM pauses and
 after completion, faults, resets, reloads and destruction. Native context
 completion/restart releases windows, while copied text remains valid across
@@ -212,7 +226,6 @@ managed collection. CI installs the optional GTK/Xvfb dependencies so desktop
 coverage is required there; local builds without them report a test skip.
 The Windows harness's `--require-display` mode turns a missing desktop into a
 qualification failure. Optional headless mode checks an explicitly configured
-or executable-adjacent GTK deployment before allowing a skip; a broken selected
-runtime or any failure after starting a display fixture is never a skip. A
-headless skip is not desktop qualification. Separate loader and noninteractive
-provider probes cover DLL selection and rejection before GTK initialization.
+desktop before allowing a skip; any failure after starting a display fixture
+remains a failure. A headless skip is not desktop qualification. Linux loader
+probes separately cover GTK library selection and rejection before initialization.

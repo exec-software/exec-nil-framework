@@ -264,8 +264,8 @@ current SDK desktop campaign remain open. The newer socket, entropy and text-byt
 intrinsics pass the same interpreter contracts on Linux, Windows and both Macs.
 File timestamps share an implementation across interpreter and native routes,
 with text/binary NIL, JIT and AOT checks passing on all four hosts.
-Both Macs now pass the native allocation-retention contracts and desktop debugger
-sessions. Darwin incremental reuse, complete Mac editor coverage and current SDK
+Both Macs now pass native allocation-retention contracts, desktop debugger
+sessions and native incremental reuse. Complete Mac editor coverage and current SDK
 qualification remain open, so full platform parity is not yet established.
 The [platform support matrix](docs/platform-support.md) separates verified
 development behavior from remaining SDK, provider and release work.

@@ -15,6 +15,7 @@
 // main() runs on the process main thread, which is where AppKit requires the
 // provider to be used.
 #include "ui_runtime.hpp"
+#include "ui_layout_provider_contract.hpp"
 
 #include <iostream>
 #include <string>
@@ -385,11 +386,12 @@ int main(int argc, char **argv) {
   if (mode == "--display") {
     require(desktop, "--display requires a window server session");
     contract();
+    ui_layout_provider_contract(require);
     interaction_state_contract();
     std::cout << "UI runtime: " << checks << " checks passed (--display)\n";
     return 0;
   }
-  if (desktop) { contract(); interaction_state_contract(); }
+  if (desktop) { contract(); interaction_state_contract(); ui_layout_provider_contract(require); }
   else {
     ny::ui::Context context;
     rejected(context.window("no session", 320, 240), "window server",

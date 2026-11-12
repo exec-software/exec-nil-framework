@@ -367,6 +367,11 @@ if(BUILD_TESTING)
     add_test(NAME nil.etp-codec COMMAND $<TARGET_FILE:nil_etp_codec_tests>)
     set_tests_properties(nil.etp-codec PROPERTIES LABELS "tools;ipc;etp" TIMEOUT 30)
 
+    add_executable(nil_ui_layout_tests tests/ui_layout_tests.cpp)
+    target_compile_features(nil_ui_layout_tests PRIVATE cxx_std_17)
+    add_test(NAME nil.ui-layout COMMAND $<TARGET_FILE:nil_ui_layout_tests>)
+    set_tests_properties(nil.ui-layout PROPERTIES LABELS "ui;layout;parity" TIMEOUT 30)
+
     # The provider fixture follows the provider: tests/ui_runtime_tests.cpp
     # inspects loaded GTK modules and symbol origins, so it describes the GTK
     # provider and cannot speak for Win32.
@@ -382,6 +387,12 @@ if(BUILD_TESTING)
         target_include_directories(nil_ui_runtime_appkit_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
         target_compile_features(nil_ui_runtime_appkit_tests PRIVATE cxx_std_17)
         set(NIL_UI_PROVIDER_TEST nil_ui_runtime_appkit_tests)
+        # Test-only input into the owning process's AppKit responder chain.
+        # No install/export rule: SDKs never carry or load this fixture.
+        add_library(nil_ui_appkit_input_driver SHARED tests/ui_appkit_input_driver.mm)
+        target_compile_features(nil_ui_appkit_input_driver PRIVATE cxx_std_17)
+        target_compile_options(nil_ui_appkit_input_driver PRIVATE -fobjc-arc)
+        target_link_libraries(nil_ui_appkit_input_driver PRIVATE "-framework Cocoa")
     else()
         add_executable(nil_ui_runtime_tests tests/ui_runtime_tests.cpp)
         target_link_libraries(nil_ui_runtime_tests PRIVATE nilruntime Threads::Threads)
@@ -774,8 +785,17 @@ if(BUILD_TESTING)
         add_test(NAME nil.ui-windows-display-harness
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_windows_ui_display_contract.py")
         set_tests_properties(nil.ui-windows-display-harness PROPERTIES LABELS "ui;tools;windows" TIMEOUT 45)
+        add_test(NAME nil.ui-appkit-display-harness
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_ui_appkit_display_contract.py")
+        set_tests_properties(nil.ui-appkit-display-harness PROPERTIES LABELS "ui;tools;apple" TIMEOUT 30)
         set(NIL_UI_DISPLAY_CONTRACT "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/ui_display_contract.py")
         set(NIL_UI_DISPLAY_TIMEOUT 240)
+        set(NIL_UI_DISPLAY_APPKIT_ARGS)
+        if(APPLE)
+            set(NIL_UI_DISPLAY_TIMEOUT 420)
+            set(NIL_UI_DISPLAY_APPKIT_ARGS --appkit-input-driver $<TARGET_FILE:nil_ui_appkit_input_driver>
+                --appkit-evidence-directory "${CMAKE_CURRENT_BINARY_DIR}/appkit-input-evidence")
+        endif()
         if(WIN32)
             set(NIL_UI_DISPLAY_CONTRACT "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/windows_ui_display_contract.py")
             set(NIL_UI_DISPLAY_TIMEOUT 660)
@@ -790,7 +810,7 @@ if(BUILD_TESTING)
                 --interaction-source "${CMAKE_CURRENT_SOURCE_DIR}/tests/ui/gtk_interaction.matrix"
                 --provider-test $<TARGET_FILE:${NIL_UI_PROVIDER_TEST}>
                 --lifecycle-test $<TARGET_FILE:nil_ui_lifecycle_tests>
-                --llvm "${NIL_ENABLE_LLVM}")
+                --llvm "${NIL_ENABLE_LLVM}" ${NIL_UI_DISPLAY_APPKIT_ARGS})
         set_tests_properties(nil.ui-display PROPERTIES LABELS "ui;routes" SKIP_RETURN_CODE 77 TIMEOUT "${NIL_UI_DISPLAY_TIMEOUT}")
         add_test(NAME nil.ui-intrinsic-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/ui_intrinsic_contract.py"

@@ -341,7 +341,9 @@ At `860750e`, both actual Mac native-input probes collect 8,321 regular inputs.
 Both native incremental steps also pass: ARM's verified report contains 131
 closure and 78 real/fake incremental checks, including positive VM/native reuse
 and invalidation of changed bytes with unchanged timestamps. Intel's successful
-step takes roughly 387 seconds; its final raw artifact is still pending.
+step takes roughly 387 seconds. Its final 306-file artifact manifest has also
+been independently verified, with all six debugger, eight native and two
+incremental CTests passing without skips and source unchanged.
 
 A subsequent source review closes an additional cache-admission gap: an SDK
 archive selected for the direct c++/System library roots could add unmodeled
@@ -360,6 +362,14 @@ under `/private/tmp`, while the test reads `/tmp`. The test now collects finding
 by physical file identity without deduplicating them, preserving the exact
 one-finding, source, location, dirty-buffer and external-edit checks. Full editor
 acceptance remains pending.
+
+The Intel editor at the same revision completes 26 groups. Its VM project
+check/build/run takes approximately 104 seconds; the subsequent native build
+alone takes 144 seconds, leaving too little of the three-minute aggregate
+budget for the separate run task. The native project group now has a five-minute
+Darwin budget; VM retains three minutes, other checks retain their bounds and
+the full host still has a fifteen-minute deadline. Phase timings and exact
+successful exit assertions remain required. The original failure is retained.
 
 ## AppKit interaction behavior follow-up
 
@@ -385,6 +395,26 @@ fraction of its requested size, and grids ignore expansion. Nested containers
 also fail to inherit descendant expansion. These affect real layouts beyond
 font/pixel differences and are being corrected with shared bounded allocation
 math and native geometry assertions against the same public Context API.
+
+The shared allocator now preserves full spanning requisitions, removes hidden
+children and gaps, propagates expansion with explicit overrides and fills the
+cross axis. Native coordinate conversion saturates extreme nested grids, and
+per-layout child/expansion/measurement caches with iterative placement avoid
+recursive depth and repeated-subtree work. Strict GCC, ASan/UBSan and actual
+MSVC each pass 21,443 portable checks. The identical public geometry fixture
+passes in the real GTK reference (4,603 provider checks) and Nathan's Win32
+desktop (217 provider checks). The Windows report is retained at
+`ui-layout-windows-v1/desktop-69b47920e5/evidence/report.json`, SHA-256
+`db3b5a9e9d9737460ea75d50828e265eb5bf557eeb490331ec43cbb60ba6c5ed`.
+These are pinned working-tree builds; AppKit and final-SHA SDK checks remain.
+
+The new test-only AppKit input library drives only its own verified fixture
+window through AppKit responders. The unchanged Matrix interaction suite must
+complete both cases on each interpreter/native route and emit matching token,
+parent/child PID and phase evidence. Seven portable harness controls pass,
+including failed/timeout stream retention and malformed-evidence rejection.
+The library is excluded from SDK installation. Actual hosted compilation and
+input execution are the next gate; no Accessibility or global-input claim is made.
 
 ## SQL provider environment scope
 

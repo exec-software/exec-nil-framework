@@ -85,7 +85,9 @@ exports.run = async ({ check, workspace }) => {
       // Darwin fingerprints the complete dyld backing files in independent
       // preparation/verification phases. This group executes three real tools;
       // retain those checks with a bounded aggregate budget and phase timings.
-      }, process.platform === "darwin" ? 180_000 : 45_000);
+      // Intel hosted native builds measured 144 seconds before the separate
+      // run command, which verifies the same dependency closure again.
+      }, process.platform === "darwin" ? (target === "native" ? 300_000 : 180_000) : 45_000);
     }
     await check(`${language}: semantic rules and project warning policy agree with project checks`, async () => {
       const warning = language === "ny" ? 'import nil.std.text\nfn main() -> i32\n try_char_at("abc", 0)\n return 0\n println("unreachable")\nend fn\n' :

@@ -14,6 +14,7 @@
 // process has an interactive window station and otherwise checks that window
 // creation is refused, so the same test is meaningful in a service session.
 #include "ui_runtime.hpp"
+#include "ui_layout_provider_contract.hpp"
 
 #include <cstring>
 #include <iostream>
@@ -315,11 +316,12 @@ int main(int argc, char **argv) {
   if (mode == "--display") {
     require(desktop, "--display requires an interactive window station");
     contract();
+    ui_layout_provider_contract(require);
     input_probe(false);
     std::cout << "UI runtime: " << checks << " checks passed (--display)\n";
     return 0;
   }
-  if (desktop) contract();
+  if (desktop) { contract(); ui_layout_provider_contract(require); }
   else {
     // A service session has no desktop: creation must fail, and say why.
     ny::ui::Context context;

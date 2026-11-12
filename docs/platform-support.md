@@ -11,8 +11,8 @@ release boundary. A newer source checkout does not update an installed SDK.
 | --- | --- | --- |
 | Linux x86_64 | Reference host. The clean `5630388` SDK passed installed consumer routes, shared runtime, debugger, Unicode/I/O, checkpoints and GTK checks. The newer `8376252` LLVM-ON source suite passes all 586 CTests. | The reviewed Ubuntu release toolchain is separate from this development SDK. New release binaries still require the release gates. |
 | Windows x86_64 | The `5630388` installed SDK retains paired Linux acceptance. The newer private `f79b94b` source build passes 579 of 583 registered tests; separately pinned follow-ups resolve its fixture failure and execute the three skipped contracts. Real Win32 desktop and all 88 VS Code host groups pass. | The `8376252` debugger also passes six CTests and four real Win32 desktop sessions. Current-source SDK qualification remains open. Bare-host installation and Windows release qualification remain open. PostgreSQL requires an external runtime; the current UI provider is Win32. |
-| macOS 15 Intel x86_64 | At `0c88d2f`, the relocated development SDK passes its installed standard-library campaign, twelve isolated PostgreSQL source/binary routes, installed debugger/checkpoints and corrected numeric-address validation. Earlier LLVM-ON/OFF, native assembly and embedded-context baselines also pass. | That SDK baseline has 567 passes, one failure and three skips. Newer source checks pass AppKit VM/native UI, DAP desktop, native lifetime, timestamp and ABI contracts on both Macs. Native incremental reuse, full editor acceptance, a current-source SDK and release qualification remain open. |
-| macOS 15 Apple Silicon arm64 | At `3414ce5`, the relocated development SDK passes its installed standard-library campaign, twelve isolated PostgreSQL source/binary routes, installed debugger/checkpoints and corrected numeric-address validation. Native assembly and embedded context also pass. | That SDK baseline has 567 passes, one failure and three skips. Newer source checks pass AppKit VM/native UI, DAP desktop, native lifetime, timestamp and ABI contracts on both Macs. Native incremental reuse, full editor acceptance, a current-source SDK and release qualification remain open. |
+| macOS 15 Intel x86_64 | At `0c88d2f`, the relocated development SDK passes its installed standard-library campaign, twelve isolated PostgreSQL source/binary routes, installed debugger/checkpoints and corrected numeric-address validation. Earlier LLVM-ON/OFF, native assembly and embedded-context baselines also pass. | That SDK baseline has 567 passes, one failure and three skips. Newer source checks pass AppKit VM/native UI, DAP desktop, native lifetime, timestamp and ABI contracts on both Macs. Native incremental reuse passes at `860750e`; full editor acceptance, a current-source SDK and release qualification remain open. |
+| macOS 15 Apple Silicon arm64 | At `3414ce5`, the relocated development SDK passes its installed standard-library campaign, twelve isolated PostgreSQL source/binary routes, installed debugger/checkpoints and corrected numeric-address validation. Native assembly and embedded context also pass. | That SDK baseline has 567 passes, one failure and three skips. Newer source checks pass AppKit VM/native UI, DAP desktop, native lifetime, timestamp and ABI contracts on both Macs. Native incremental reuse passes at `860750e`; full editor acceptance, a current-source SDK and release qualification remain open. |
 
 LLVM-OFF builds exercise frontend/interpreter behavior and rejection of disabled
 native operations. Their successful tests do not establish native execution.
@@ -149,13 +149,14 @@ the complete admission rules.
 
 ## Remaining macOS work
 
-- Native incremental reuse is still being qualified. The compiler now resolves
+- Native incremental reuse passes on both Macs at `860750e`. The compiler resolves
   loaded images to ordinary files and exact shared-cache backing files for full
   content hashing; its actual collector test passes on both Macs at `2632bc6`.
   The builder uses separate preparation and verification digest phases without
-  caching source/manifest reads. Native linker dependency collection and real
-  VM/native reuse still require both hosted architectures to pass. Incomplete
-  or unsupported dependency profiles deliberately rebuild.
+  caching source/manifest reads. Both actual linker-dependency probes collect
+  8,321 inputs, and both real VM/native reuse and invalidation campaigns pass.
+  A subsequent SDK archive-fallback refinement still needs hosted qualification.
+  Incomplete or unsupported dependency profiles deliberately rebuild.
 - A separate [development SDK workflow](../.github/workflows/macos-sdk.yml) now
   implements native Darwin consumer admission, root install layout, pinned
   documentation tooling, and staged dependency/relocation checks. Both
@@ -178,7 +179,8 @@ the complete admission rules.
   Matrix desktop suite and the interaction suite that drives real keyboard
   input -- while a session without an interactive window station still skips.
   On macOS the provider is AppKit. Its published contract passes against a
-  real window server session on both hosted architectures, 93 checks each,
+  real window server session on both hosted architectures; the newer `40017f1`
+  provider passes 156 display and 41 in-process keyboard checks per host,
   and `nil.ui-display` now passes there too: the provider fixture, the
   lifecycle fixture and the Matrix desktop suite. Real keyboard input is
   covered in process by the AppKit provider fixture. The current AppKit
