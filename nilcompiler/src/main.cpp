@@ -432,6 +432,7 @@ static void print_usage(std::ostream &out = std::cerr) {
       << "  --native                       Compile through the optional LLVM "
          "backend\n"
       << "  --embed-context                Embed annotated context in native ELF/PE/Mach-O output\n"
+      << "  --no-context-registration      Retain annotations without generated AI runtime registration\n"
       << "  --debug-info                   Retain source paths and lexical locals in NIL\n"
       << "  --inspect-context <artifact>   Print context JSON from NIL or ELF/PE/Mach-O; no execution\n"
       << "  --jit                          Execute through LLVM JIT (requires "
@@ -761,6 +762,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
   bool skip_typecheck = false;
   bool unmanaged = false;
   bool embed_context = false;
+  bool no_context_registration = false;
   bool source_debug = false;
   bool bundle_output = true;
   bool explicit_bundle_option = false;
@@ -829,6 +831,12 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
         return 1;
       }
       embed_context = true;
+    } else if (a == "--no-context-registration") {
+      if (no_context_registration) {
+        std::cerr << "Error: --no-context-registration was provided more than once\n";
+        return 1;
+      }
+      no_context_registration = true;
     } else if (a == "--jit") {
       use_jit = true;
     } else if (a == "--no-bundle" || a == "--bundle=false") {
@@ -882,7 +890,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     return 1;
   }
   if (list_tests && (!output_path.empty() || use_native || use_jit || emit_binary_nil ||
-                     unmanaged || embed_context || source_debug || explicit_bundle_option ||
+                     unmanaged || embed_context || source_debug || no_context_registration || explicit_bundle_option ||
                      !link_libraries.empty() || has_program_argument_boundary)) {
     std::cerr << "Error: --test-list is discovery only; output, backend, execution, linking, and artifact options are not accepted\n";
     return 1;
@@ -902,6 +910,10 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
   }
   if (embed_context && (!use_native || use_jit)) {
     std::cerr << "Error: --embed-context requires native file output, not NIL, bundles or JIT\n";
+    return 1;
+  }
+  if (no_context_registration && emit_library) {
+    std::cerr << "Error: --no-context-registration applies to executable compilation, not source-bearing NIL libraries\n";
     return 1;
   }
   if (source_debug && (use_native || emit_library)) {
@@ -1823,6 +1835,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
 
   ny::codegen_options opts;
   opts.include_source_debug = source_debug;
+  opts.emit_context_registration = !no_context_registration;
   if (compile_tests || list_tests) opts.mode = ny::build_mode::test_mode;
   ny::codegen generator(opts);
   std::vector<ny::codegen_diagnostic> codegen_diags;

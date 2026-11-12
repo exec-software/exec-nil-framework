@@ -266,6 +266,12 @@ if(BUILD_TESTING)
     add_test(NAME context.manifest COMMAND $<TARGET_FILE:ny_context_manifest_tests>)
     set_tests_properties(context.manifest PROPERTIES LABELS "tools;rc" TIMEOUT 30)
 
+    add_executable(nil_context_registration_tests tests/context_registration_tests.cpp)
+    target_link_libraries(nil_context_registration_tests PRIVATE nilcompiler_core)
+    target_compile_features(nil_context_registration_tests PRIVATE cxx_std_17)
+    add_test(NAME context.registration COMMAND $<TARGET_FILE:nil_context_registration_tests>)
+    set_tests_properties(context.registration PROPERTIES LABELS "tools;codegen" TIMEOUT 30)
+
     add_executable(ny_parallel_runtime_tests tests/parallel_runtime_tests.cpp)
     target_link_libraries(ny_parallel_runtime_tests PRIVATE nilcompiler_core)
     target_compile_features(ny_parallel_runtime_tests PRIVATE cxx_std_17)
@@ -1238,6 +1244,12 @@ if(BUILD_TESTING)
                 --runtime $<TARGET_FILE:nilruntime>
                 --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(ny.tools.context-manifest PROPERTIES LABELS "tools;rc" TIMEOUT 180)
+
+        add_test(NAME nil.tools.context-registration
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/context_registration.py"
+                --compiler $<TARGET_FILE:nilcompiler>
+                --interpreter $<TARGET_FILE:nilinterpreter>)
+        set_tests_properties(nil.tools.context-registration PROPERTIES LABELS "tools;codegen" TIMEOUT 180)
 
         add_test(NAME ny.concurrency-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/concurrency_contract.py"

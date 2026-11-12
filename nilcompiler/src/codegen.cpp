@@ -6842,7 +6842,7 @@ codegen::assemble_module(const ast_program &program,
         }
       }
 
-      if (!ai_context_json.empty() &&
+      if (options_.emit_context_registration && !ai_context_json.empty() &&
           options_.mode != build_mode::release_mode) {
         if (options_.mode == build_mode::test_mode ||
             options_.mode == build_mode::debug_mode) {

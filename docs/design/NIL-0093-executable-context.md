@@ -3,6 +3,7 @@
 - **Status:** Implemented within the documented inspection profile
 - **Amended:** 2026-11-02 — inspection profile extended to Windows PE/COFF
 - **Amended:** 2026-11-04 — thin Mach-O64 x86_64/arm64 implemented and verified on native hosted runners
+- **Amended:** 2026-11-11 — explicit generation-time suppression of context registration, with annotations retained
 - **Scope:** Shared NIL artifacts produced by Ny and Matrix
 - **Recorded:** 2026-10-16
 
@@ -36,6 +37,17 @@ does not change an artifact format or its reader contract.
 
 ## Boundaries
 
+Executable compilation may explicitly select `--no-context-registration`.
+The shared code generator then retains authored annotations without creating
+the foreign AI registration helpers or their test-mode initializer. Default
+generation is unchanged. This is independent of native context embedding and
+does not rewrite an emitted artifact or remove explicit foreign calls. The
+option is scoped to one executable compilation; source-bearing libraries and
+read-only commands refuse it. The
+[command contract](../advanced/executable-context.md#retaining-context-without-runtime-registration)
+records those limits. Feature qualification is separate from SDK release
+qualification.
+
 - The manifest contains declared intent, not observed execution behavior.
 - Inspection does not resolve or run source capsules or native libraries.
 - Embedded annotation text is disclosed verbatim; it is not authenticated or
@@ -60,3 +72,5 @@ is exercised by the Matrix fixture below.
 - [Record-context fixture](../../tests/matrix/execution/record-context.matrix)
 - [Matrix execution harness](../../tests/matrix/run_execution_tests.py)
 - [Native context tests](../../tests/context_manifest_tests.cpp)
+- [Context registration generation tests](../../tests/context_registration_tests.cpp)
+- [Context registration CLI contract](../../tests/tools/context_registration.py)

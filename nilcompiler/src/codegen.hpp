@@ -65,6 +65,7 @@ struct codegen_options {
   nil_format target_format = nil_format::nil_text; // Default textual NIL
   bool include_debug_info = true; // include symbol / line mappings
   bool include_source_debug = false; // opt-in source paths and lexical bindings
+  bool emit_context_registration = true; // runtime helpers; annotations are retained independently
   int opt_level = 0;              // optimization level (0..3)
   bool preserve_comments = false; // keep comments in text output
   std::string target_triple;      // e.g., "x86_64-pc-windows-msvc"

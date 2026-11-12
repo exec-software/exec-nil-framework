@@ -40,6 +40,42 @@ NIL carrying neither functions nor type declarations rejects; NIL bearing
 either can be inspected without a `main` entry point. Inspection checks
 metadata, not program runnability.
 
+## Retaining context without runtime registration
+
+By default, executable compilation retains its existing AI context registration
+behavior: an annotated function can produce a generated
+`__nilaix_register_ai_context_...` helper that calls the external
+`nilaix.register_ai_context_internal` provider. Test-mode generation can also
+insert an initializer that calls those helpers. This is separate from the
+inert annotations disclosed by inspection.
+
+An embedding that needs authored intent without that generated runtime
+dependency can opt out explicitly:
+
+```sh
+nilcompiler --no-context-registration --no-bundle -o program.nil program.ny
+nilcompiler --inspect-context program.nil
+```
+
+`--no-context-registration` retains the annotations while preventing generation
+of these helpers and their test-mode initialization calls. It applies to both
+Ny and Matrix and to executable generation, including textual/binary NIL and
+the shared module used by bundle and native routes. Native context embedding
+still requires `--embed-context`. The default remains unchanged, and the option
+does not select a different build mode or alter test discovery.
+
+The option applies to the current compilation. It is refused for source-bearing
+NIL libraries, whose consumers compile their embedded sources independently,
+and for analysis, test-list discovery or context-inspection commands. Repeated
+occurrences are errors. Invalid combinations are refused before writing an
+output artifact.
+
+This is a generation policy, not a pass that strips instructions from an
+artifact. Explicit source foreign calls remain present, including calls into
+`nilaix`. The option therefore makes no claim that a program has no foreign
+effects or is admissible under an embedding's authority policy. A consumer must
+still inspect the complete artifact under its own execution contract.
+
 ## What is disclosed
 
 The `ny.context.v2` JSON object has `profile: "annotations"`, a module identity,
