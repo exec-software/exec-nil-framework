@@ -6,6 +6,7 @@ name: macOS application platform checks
       - '.github/workflows/macos-application-parity.yml'
       - 'CMakeLists.txt'
       - 'nilcompiler/**'
+      - 'nilruntime-freestanding/**'
       - 'nilinterpreter/**'
       - 'nilstd/**'
       - 'nilbuild/**'
@@ -24,6 +25,13 @@ name: macOS application platform checks
       - 'tests/tools/native_owned_lifetime.py'
       - 'tests/tools/native_symbol_surface.py'
       - 'tests/tools/file_modified_at_contract.py'
+      - 'tests/tools/project_build_contract.py'
+      - 'tests/tools/context_manifest.py'
+      - 'nilassembler/tests/nilassembler_cli_tests.py'
+      - 'scripts/sdk_freestanding_imports.py'
+      - 'scripts/validate-sdk.py'
+      - 'tests/sdk_freestanding_imports_tests.py'
+      - 'tests/freestanding_hook_contract.cpp'
       - 'vscode/**'
   workflow_dispatch:
 
@@ -147,7 +155,7 @@ jobs:
         run: |
           set -o pipefail
           cmake --build build/application --parallel 2 --target \
-            nilcompiler nilinterpreter nilassembler nillsp nildebugger nilbuild niltest aperture \
+            nilcompiler nilinterpreter nilassembler nillinker nillsp nildebugger nilbuild niltest aperture \
             nil_vscode_host_runner nil_file_time_support_tests nil_compiler_module_darwin_tests \
             nil_darwin_toolchain_inputs_tests nil_freestanding_hook_default nil_freestanding_hook_override \
             nildebugger_core_tests nildebugger_source_metadata_tests nildebugger_dap_owner_tests \
@@ -212,6 +220,32 @@ jobs:
           print((root/'ctest.log').read_text(errors='replace'))
           run.check_returncode()
           cases = list(ET.parse(root/'results.xml').getroot().iter('testcase'))
+          assert len(cases) == len(expected) and {case.get('name') for case in cases} == expected
+          assert all(case.get('status') == 'run' and all(case.find(kind) is None
+              for kind in ['failure','error','skipped']) for case in cases)
+          PYTHON
+      - name: Verify project, assembler, context and archive contracts
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        timeout-minutes: 20
+        run: |
+          python3 - <<'PYTHON'
+          import json, subprocess, xml.etree.ElementTree as ET
+          from pathlib import Path
+          expected = {'nilbuild.project-contract', 'nilassembler.cli',
+                      'ny.tools.context-manifest', 'nil.freestanding-archive-imports'}
+          pattern = r'^(nilbuild[.]project-contract|nilassembler[.]cli|ny[.]tools[.]context-manifest|nil[.]freestanding-archive-imports)$'
+          base = ['ctest', '--test-dir', 'build/application', '-R', pattern]
+          root = Path('build/application-evidence').resolve()
+          inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
+          (root/'sdk-contract-inventory.json').write_bytes(inventory)
+          assert {case['name'] for case in json.loads(inventory)['tests']} == expected
+          with (root/'sdk-contracts.log').open('wb') as output:
+              run = subprocess.run(base+['--no-tests=error', '--output-on-failure',
+                  '--output-junit', str(root/'sdk-contract-results.xml')], stdout=output,
+                  stderr=subprocess.STDOUT, timeout=1150)
+          print((root/'sdk-contracts.log').read_text(errors='replace'))
+          run.check_returncode()
+          cases = list(ET.parse(root/'sdk-contract-results.xml').getroot().iter('testcase'))
           assert len(cases) == len(expected) and {case.get('name') for case in cases} == expected
           assert all(case.get('status') == 'run' and all(case.find(kind) is None
               for kind in ['failure','error','skipped']) for case in cases)

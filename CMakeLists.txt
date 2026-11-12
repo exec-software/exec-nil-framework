@@ -902,8 +902,14 @@ if(BUILD_TESTING)
                     --llvm "${NIL_ENABLE_LLVM}"
                     --cxx "${CMAKE_C_COMPILER}"
         )
+        set(NIL_PROJECT_CONTRACT_TIMEOUT 180)
+        if(APPLE)
+            # The mixed-language contract performs multiple independently
+            # fingerprinted VM/native builds; each retains its own deadline.
+            set(NIL_PROJECT_CONTRACT_TIMEOUT 900)
+        endif()
         set_tests_properties(nilbuild.project-contract PROPERTIES
-            LABELS "tools;project;analysis;rc" TIMEOUT 180)
+            LABELS "tools;project;analysis;rc" TIMEOUT "${NIL_PROJECT_CONTRACT_TIMEOUT}")
         if(UNIX)
             # exec identity, POSIX controlling terminals and FIFOs do not
             # exist on Windows. The common contract tests Windows' resident
@@ -1011,6 +1017,12 @@ if(BUILD_TESTING)
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/sdk_qualification_tests.py"
         )
         set_tests_properties(ny.sdk-qualification PROPERTIES LABELS "sdk;rc" TIMEOUT 30)
+        # Inspect the actual runtime archive on every host, independently of
+        # LLVM availability. Unknown/malformed object members fail closed.
+        add_test(NAME nil.freestanding-archive-imports
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/sdk_freestanding_imports_tests.py"
+                --archive $<TARGET_FILE:nilruntime_freestanding>)
+        set_tests_properties(nil.freestanding-archive-imports PROPERTIES LABELS "sdk;native;abi;rc" TIMEOUT 120)
         add_test(
             NAME ny.release-artifacts
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/release_artifact_tests.py"

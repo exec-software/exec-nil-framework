@@ -289,7 +289,8 @@ def main() -> int:
                     raise AssertionError("Darwin context retention requires the host clang++ driver")
                 stripped = root / (artifact.stem + "-dead-strip")
                 success(run([driver, "-pthread", "-Wl,-dead_strip", "-o", stripped,
-                             obj, tools["runtime"]]), "Darwin dead-strip linking")
+                             obj, tools["runtime"], "-framework", "Cocoa", "-framework", "CoreGraphics"]),
+                        "Darwin dead-strip linking")
                 if inspect(stripped) != source_manifest:
                     raise AssertionError("Darwin dead stripping removed or changed context")
                 success(run([stripped]), "dead-stripped context execution", EXPECTED)

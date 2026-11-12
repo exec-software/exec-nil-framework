@@ -215,6 +215,20 @@ jobs:
           ctest --test-dir build/ci --output-on-failure --parallel 2 --no-tests=error --timeout 360 \
             --test-output-size-passed 16384 --test-output-size-failed 65536 \
             --output-junit ctest-results.xml 2>&1 | tee build/macos-sdk-evidence/ctest.log
+      - name: Upload full CTest evidence immediately
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-sdk-ctest-${{ matrix.host.arch }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            build/macos-sdk-evidence/registration.json
+            build/macos-sdk-evidence/capability-registration.json
+            build/macos-sdk-evidence/sdk-build-evidence.json
+            build/macos-sdk-evidence/ctest.log
+            build/ci/ctest-results.xml
+          if-no-files-found: warn
+          retention-days: 14
       - name: Install isolated development stage
         id: install
         # A complete failed suite is still recorded, and still fails this job.

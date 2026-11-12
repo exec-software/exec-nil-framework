@@ -469,6 +469,49 @@ exclusions in 44.7 seconds using VS Code 1.144.1. Analyzer bytes are unchanged.
 The complete failing/corrected chain is retained under
 `editor-workspace-alias-linux-q8g3r09h`; hosted Mac confirmation remains open.
 
+## SDK binary and full-suite follow-up
+
+The clean Windows `60d4c99` candidate records 586 passes and only the two
+headless desktop skips from 588 registrations, and stages eleven root tools,
+eighteen checked library modules and compiled documentation. A separate binary
+audit nevertheless finds MSVC-generated `memcpy` and `memset` imports in its
+freestanding archive. The old validator inspected only ELF objects and silently
+accepted other formats. That candidate therefore remains unsuitable for SDK
+parity despite its otherwise passing recorded gates.
+
+MSVC-specific volatile byte destinations prevent those two loop substitutions
+without changing GCC/Clang optimization. A new bounded archive reader checks
+ELF, COFF and Mach-O symbol tables and rejects malformed or mixed profiles;
+unknown formats no longer look import-free. Actual MSVC A/B archives prove the
+old imports disappear, while default/override hooks and the expanded heap/copy
+checks still pass. Both corrected no-CRT PE hosts link with `/NODEFAULTLIB`,
+import only the explicitly selected host `ExitProcess`, execute and exit zero.
+Fifteen parser groups, twelve actual Clang cross-format positive/negative
+archives, Linux's built runtime and the hosted ARM SDK archive also pass.
+The new CTest and SDK validator both enforce the archive boundary. Final Windows
+evidence is `freestanding-current-v3/report.json`, SHA-256
+`3bbf0218c33e105d69fa9a0df31bc38fadfd32043fd2bb4983c63dd215c1677a`.
+A corrected clean Windows SDK must replace the candidate qualification.
+
+The ARM `1efbe66` SDK preserves all 268 payload files through relocation and
+passes all 1,184 installed consumer routes, 146 debugger checks/15 sessions,
+execution checkpoints and twelve PostgreSQL source/binary routes. All 920
+retained evidence files were independently hash-verified. Its source suite is
+583 passes, four failures and one ELF-only freestanding execution skip; the
+installed results do not erase those failures. In addition to the now-corrected
+AppKit input fixture, two manual native-link fixtures omit Cocoa/CoreGraphics,
+and the first fingerprinted project build exceeds its 45-second deadline.
+
+The raw host links now carry the runtime's existing framework dependencies.
+Only real Darwin project build/run calls receive the measured VM/native budgets
+(180/300 seconds), retaining explicit shorter process/error-test deadlines and
+phase timings; their complete CTest is bounded to 900 seconds. The application
+workflow now admits the exact project, assembler, embedded-context and archive
+contracts as well as its existing native/editor checks. Seven relevant local
+CTests pass in 12.99 seconds; actual hosted follow-up remains required. Full SDK
+workflows also upload their source inventory immediately, before lengthy
+installed campaigns, so failed gates are visible without waiting for packaging.
+
 ## SQL provider environment scope
 
 The full Mac source/SDK workflows previously exported SQL's

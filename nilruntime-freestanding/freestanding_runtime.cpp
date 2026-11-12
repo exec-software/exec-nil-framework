@@ -163,7 +163,14 @@ void *nyrt_alloc(std::uint64_t size) noexcept {
   heap_used = start + size;
   // Zeroed because the helper this serves replaced calloc, and generated code
   // is entitled to assume a fresh block holds no earlier vessel's bytes.
+#if defined(_MSC_VER)
+  // MSVC has no -ffreestanding equivalent: observable byte writes prevent
+  // its optimizer from replacing this loop with an unavailable memset.
+  volatile unsigned char *const zero = block;
+  for (std::uint64_t index = 0; index < size; ++index) zero[index] = 0;
+#else
   for (std::uint64_t index = 0; index < size; ++index) block[index] = 0;
+#endif
   return block;
 }
 
@@ -171,7 +178,11 @@ void *nyrt_alloc(std::uint64_t size) noexcept {
 // has no libc to call and these are not the host's decision to make.
 void *nyrt_mem_copy(void *destination, const void *source,
                     std::uint64_t size) noexcept {
+#if defined(_MSC_VER)
+  volatile unsigned char *out = static_cast<volatile unsigned char *>(destination);
+#else
   unsigned char *out = static_cast<unsigned char *>(destination);
+#endif
   const unsigned char *in = static_cast<const unsigned char *>(source);
   for (std::uint64_t index = 0; index < size; ++index) out[index] = in[index];
   return destination;
