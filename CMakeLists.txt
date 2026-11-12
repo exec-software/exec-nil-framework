@@ -180,6 +180,12 @@ if(BUILD_TESTING)
             LABELS "tools;windows;rc" TIMEOUT 30)
     endif()
 
+    add_executable(nil_rooted_file_snapshot_tests tests/rooted_file_snapshot_tests.cpp)
+    target_link_libraries(nil_rooted_file_snapshot_tests PRIVATE nilruntime)
+    target_include_directories(nil_rooted_file_snapshot_tests PRIVATE nilcompiler/src)
+    add_test(NAME nil.rooted-file-snapshot COMMAND $<TARGET_FILE:nil_rooted_file_snapshot_tests>)
+    set_tests_properties(nil.rooted-file-snapshot PROPERTIES LABELS "storage;runtime;rc" TIMEOUT 60)
+
     add_executable(nil_utf8_file_paths_tests tests/utf8_file_paths_tests.cpp)
     target_link_libraries(nil_utf8_file_paths_tests PRIVATE nilruntime)
     target_include_directories(nil_utf8_file_paths_tests PRIVATE nilcompiler/src)
@@ -1216,6 +1222,14 @@ if(BUILD_TESTING)
                     --llvm "${NIL_ENABLE_LLVM}"
                     --output-parent "${CMAKE_BINARY_DIR}/test-evidence")
         set_tests_properties(nil.file-modified-at-contract PROPERTIES LABELS "io;routes;rc" TIMEOUT 180)
+        add_test(NAME nil.rooted-file-snapshot-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/rooted_file_snapshot_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --nilstd "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                    --llvm "${NIL_ENABLE_LLVM}"
+                    --output-parent "${CMAKE_BINARY_DIR}/test-evidence")
+        set_tests_properties(nil.rooted-file-snapshot-contract PROPERTIES LABELS "io;routes;rc" TIMEOUT 360)
         add_test(NAME nillsp.semantic-protocol
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lsp_semantic_protocol.py"
                     --lsp $<TARGET_FILE:nillsp>)

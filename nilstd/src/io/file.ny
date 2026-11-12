@@ -36,6 +36,28 @@ pub fn read_bytes(path: text) -> Result<array<u8>, text>
 @intrinsic("file.read_regular_bytes")
 pub fn read_regular_bytes(path: text, maximum_bytes: i64) -> Result<array<u8>, text>
 
+# The exact bytes read, their descriptor-observed modification time in Unix
+# milliseconds, and lowercase SHA-256 of those returned bytes. Binary content
+# remains an array on every execution route; no text encoding is assumed.
+pub struct FileSnapshot
+    content: array<u8>
+    modified_ms: i64
+    sha256: text
+end struct
+
+# Read a bounded regular file below a trusted root directory. The relative
+# path uses strict UTF-8 slash-separated components; empty, dot, dot-dot,
+# absolute, backslash, colon and NUL spellings are rejected. Every descendant
+# component is opened relative to an already-open directory without following
+# symlinks or Windows reparse points. The final handle supplies the bytes and
+# metadata, with observed changes checked before returning. maximum_bytes is
+# 0..512 MiB; zero admits an empty file. Errors contain no caller path values.
+# This is a directory-handle containment boundary, not protection against
+# privileged mount changes, hard links placed in the root, or all concurrent
+# writes. sha256 always describes content, rather than a size/timestamp key.
+@intrinsic("file.read_rooted_snapshot")
+pub fn read_rooted_snapshot(root: text, relative: text, maximum_bytes: i64) -> Result<FileSnapshot, text>
+
 # Write text to a file (creates or overwrites)
 @intrinsic("file.write_text")
 pub fn write_text(path: text, content: text) -> Result<bool, text>
