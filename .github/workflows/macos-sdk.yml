@@ -63,6 +63,7 @@ jobs:
           python3 -B tests/sdk_consumer_routes_tests.py -v 2>&1 | tee build/macos-sdk-evidence/consumer-controls.log
           python3 -B scripts/ci/test_macos_postgresql_provider.py -v 2>&1 | tee build/macos-sdk-evidence/provider-controls.log
           python3 -B scripts/ci/test_macos_debugger.py -v 2>&1 | tee build/macos-sdk-evidence/debugger-controls.log
+          python3 -B tests/test_runtime_provider_environment.py -v 2>&1 | tee build/macos-sdk-evidence/provider-environment-controls.log
       - name: Fetch hash-pinned official Pandoc
         id: pandoc
         timeout-minutes: 5
@@ -91,7 +92,9 @@ jobs:
           nil_macos_sdk="$(xcrun --sdk macosx --show-sdk-path)"
           test -f "$nil_macos_sdk/usr/include/sqlite3.h"
           echo "NIL_CI_SQLITE_INCLUDE=$nil_macos_sdk/usr/include" >> "$GITHUB_ENV"
-          echo "DYLD_FALLBACK_LIBRARY_PATH=/usr/local/lib:/usr/lib" >> "$GITHUB_ENV"
+          # Keep loader paths inert during compiler and SDK build processes.
+          # The SQL/route harnesses apply this declaration only to execution.
+          echo "NIL_TEST_DARWIN_RUNTIME_LIBRARY_PATH=/usr/local/lib:/usr/lib" >> "$GITHUB_ENV"
           printf 'SQLite: Apple SDK headers at %s; system dylib\n' "$nil_macos_sdk/usr/include" > build/macos-sdk-evidence/providers.txt
           if [ "$NIL_CI_POSTGRES_PROFILE" = private16 ]; then
             python3 -B - <<'PY'
@@ -103,7 +106,7 @@ jobs:
           provider.validate_provider(report)
           values = {'NIL_TEST_POSTGRES_BIN': report['bin_dir'], 'NIL_TEST_POSTGRES_SHARE': report['share_dir'],
                     'NIL_CI_PQ_INCLUDE': report['include_dir'],
-                    'DYLD_FALLBACK_LIBRARY_PATH': report['library_dir'] + ':/usr/lib'}
+                    'NIL_TEST_DARWIN_RUNTIME_LIBRARY_PATH': report['library_dir'] + ':/usr/lib'}
           with open(os.environ['GITHUB_ENV'], 'a') as stream:
               for key, value in values.items():
                   assert isinstance(value, str) and '\n' not in value and '\r' not in value
@@ -123,7 +126,7 @@ jobs:
               echo "NIL_TEST_POSTGRES_BIN=$nil_pg_prefix/bin"
               echo "NIL_TEST_POSTGRES_SHARE=$nil_pg_share"
               echo "NIL_CI_PQ_INCLUDE=$nil_pg_include"
-              echo "DYLD_FALLBACK_LIBRARY_PATH=$nil_pg_library:/usr/local/lib:/usr/lib"
+              echo "NIL_TEST_DARWIN_RUNTIME_LIBRARY_PATH=$nil_pg_library:/usr/local/lib:/usr/lib"
             } >> "$GITHUB_ENV"
             "$nil_pg_prefix/bin/pg_config" --version --includedir --libdir --sharedir >> build/macos-sdk-evidence/providers.txt
           else
@@ -131,9 +134,10 @@ jobs:
             echo 'PostgreSQL: coherent installed provider absent; actual CTest skips/failures retained' >> build/macos-sdk-evidence/providers.txt
           fi
           {
-            echo 'GTK: explicit macOS provider available in source; this SDK campaign does not provision or qualify desktop use'
+            echo 'AppKit: native macOS provider; this SDK campaign does not provision or qualify desktop use'
             echo 'Installed candidate checks: inherited DYLD/source/tool overrides removed; Apple toolchain PATH; system SQLite only'
             echo 'Private PostgreSQL installed checks use a separate explicitly declared provider environment'
+            echo 'SQL loader paths apply only to runtime children; JIT is a combined compilation/execution process'
             echo 'Homebrew LLVM dependencies remain external development prerequisites, not bundled portable libraries'
           } >> build/macos-sdk-evidence/providers.txt
           {

@@ -310,7 +310,13 @@ jobs:
           report = json.loads(Path('build/vscode-host-smoke/latest.json').read_text())
           assert report['platform'] == 'darwin' and report['status'] == 'PASS'
           assert report['vscode'] == '1.146.0' and not report['skippedChecks']
-          assert len(report['checks']) >= 100 and all(row['status'] == 'PASS' for row in report['checks'])
+          expected_modules = ['analyzer-checks', 'project-checks', 'workspace-checks', 'semantic-checks',
+                              'completion-checks', 'member-signature-checks', 'language-values-checks',
+                              'memory-profile-checks', 'niltest-checks']
+          assert report['fullSuiteCompleted'] is True and report['completedModules'] == expected_modules
+          checks = report['checks']
+          assert checks and all(row['status'] == 'PASS' and row['name'] for row in checks)
+          assert len({row['name'] for row in checks}) == len(checks)
           PYTHON
       - name: Preserve complete or partial evidence
         if: always()

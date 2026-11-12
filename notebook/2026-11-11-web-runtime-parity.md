@@ -253,8 +253,16 @@ in Nathan's session (ten language VM/native UI/keyboard cases plus window
 discovery). All 1,138 retained route successes and 78 expected native rejections
 replay correctly; PostgreSQL's six routes and owned cluster shutdown pass too.
 Source, installed SDK and the original dirty guest checkout remain unchanged.
-The real editor campaign is separate and still running; its first launch missed
-a required Windows test-only Node setting and is retained as a setup failure.
+The real Windows editor campaign now passes all 88 check groups without exclusions,
+using the `a518138` physical-file alias helper against the unchanged `f79b94b`
+products. Its first launch missed a required test-only Node setting and is
+retained as a setup failure. The second run's private outer wrapper incorrectly
+required 100 groups; the authoritative full-host report and all six process phases
+pass. Independent replay verifies 34 retained file hashes, twelve raw streams,
+matching run identity, cleanup and unchanged source/tools. The raw outer failure
+remains preserved. Extension unit tests pass 161 cases with the one explicitly
+inapplicable POSIX FIFO case skipped. Future host reports record full-suite
+completion and the exact completed module list instead of an arbitrary group count.
 
 ## DAP execution ownership
 
@@ -273,10 +281,35 @@ the fix: the old adapter can reuse pthread IDs and pass that test. A determinist
 stream observer instead checks the actual writer of two debuggee output events;
 it passes the new adapter and rejects the exact previous implementation.
 
-Win32 and AppKit DAP desktop confirmation remains required. Paused windows are
-not pumped, and adapter transport failures use best-effort terminal notification
-before the reader accepts disconnect/EOF; cancellable arbitrary input streams
-are outside this slice. No new native debugger or checkpoint profile is claimed.
+At `8376252`, Windows passes all six exact debugger CTests, fourteen lifecycle
+sessions and four real Nathan desktop sessions. Independent replay parses 318
+raw DAP frames and verifies 42 acknowledgement/continued orderings. Both actual
+Mac hosts also pass those six CTests and four AppKit desktop sessions in run
+`43124577210` (tested PR merge `b3661e8`). Linux's complete LLVM-ON source suite
+passes all 586 registrations without skips in run `43124577017`.
+
+The same Mac campaign passes all eight selected native contracts on each host:
+managed lifetime, both owned memory modes, generic Mach-O ABI checks, timestamps,
+compiler identity and default/overridden host hooks. Independent replay verifies
+306 retained file hashes per host and the raw allocation events. Each owned mode
+allocates/frees all 36,000 guarded buffers; withholding frees reaches the 96 MiB
+retained-payload bound. This does not claim a whole-process virtual-memory bound.
+The shared six web-runtime contracts also pass on all four hosts at this revision;
+148 retained file hashes and exact inventories replay successfully.
+
+Both Mac editor sessions reach 25 successful groups before the aggregate
+45-second project check/build/run deadline expires. The project check succeeds
+and the VM build reaches post-compilation verification; the current real cache
+contract takes roughly 110 seconds. The editor harness now records each command's
+duration and allows 180 seconds for this three-command Darwin group, retaining
+the full-host bound. Full editor acceptance remains open. Early native probes
+identify the remaining cache refusals: an arm64e system launcher inspected as
+arm64, and a non-linkable EmailCore plugin embedded in the SDK.
+
+Paused windows are not pumped, and adapter transport failures use best-effort
+terminal notification before the reader accepts disconnect/EOF; cancellable
+arbitrary input streams are outside this slice. No new native debugger or
+checkpoint profile is claimed.
 
 Native socket/byte/entropy parity needs a binary-safe value boundary. The new
 VM APIs deliberately carry embedded NUL and arbitrary bytes in `text`; the
@@ -293,6 +326,24 @@ an immutable length/data descriptor, migrate language literals and runtime text
 consumers together, adapt C-string FFI boundaries explicitly, and reject mixed
 old/new object and runtime ABIs. A hidden pointer-length registry would retain
 the same migration burden while adding lifetime and registration ambiguity.
+
+## SQL provider environment scope
+
+The full Mac source/SDK workflows previously exported SQL's
+`DYLD_FALLBACK_LIBRARY_PATH` to every process, including the builder. That changes
+native dependency selection and correctly prevents cache reuse under the modeled
+default profile. The workflows now carry an inert test declaration and apply it
+only to PostgreSQL server/client and language execution processes. Compilation,
+assembly and AOT linking keep their ordinary environment; JIT explicitly remains
+a combined compilation/execution process. External callers without the declaration
+retain their ambient environment. Conflicting declared and ambient DYLD settings
+fail explicitly rather than being silently cleared.
+
+The direct PostgreSQL client CTest receives its path only through its own test
+property. Four environment controls inspect all six route branches; seventeen
+isolated-server controls, fifteen SDK controls and the existing route/consumer
+controls pass. A real bounded Linux SQL smoke still passes all six routes.
+Actual Mac source and SDK campaigns must confirm the new provider scope.
 
 ## Preserved web handoff
 

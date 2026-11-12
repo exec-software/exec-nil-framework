@@ -23,6 +23,7 @@ import time
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / 'validation/ny-3d/scripts'))
 from debugger_process import CaptureBudget, OwnedProcess, PipeReader
+from runtime_provider_environment import DECLARATION, provider_environments
 
 
 def require(condition, message):
@@ -216,7 +217,17 @@ class Server:
 
 def run_fixture(args, report):
     env = clean_environment(os.environ)
+    if DECLARATION in os.environ:
+        env[DECLARATION] = os.environ[DECLARATION]
+    env, runtime_env, declared_provider = provider_environments(env)
     env['NIL_STDLIB_PATH'] = str(args.stdlib.resolve())
+    runtime_env['NIL_STDLIB_PATH'] = env['NIL_STDLIB_PATH']
+    if declared_provider is not None:
+        report['runtime_loader'] = {
+            'dyld_fallback_library_path': declared_provider,
+            'scope': 'server/client and route execution only; JIT combines compilation and execution',
+            'compile_environment': 'no ambient DYLD overrides',
+        }
     root = Path(tempfile.mkdtemp(prefix='nil-db-pg-'))
     report.update(work_directory=str(root), work_directory_retained=True)
     password, address, server = '', '', None
@@ -248,7 +259,7 @@ def run_fixture(args, report):
         if args.postgres_share:
             init += ['-L', str(args.postgres_share.resolve())]
         report['phase'] = 'initialize'
-        status, output = run(init, env, root, 30)
+        status, output = run(init, runtime_env, root, 30)
         record('initdb.log', output)
         pwfile.unlink()
         require(status == 0, 'private PostgreSQL initialization failed')
@@ -262,6 +273,7 @@ def run_fixture(args, report):
                 reservation.close()
             address = 'hostaddr=127.0.0.1 dbname=postgres user=nil_test'
             env.update(PGPASSWORD=password, PGPORT=str(port), PGSSLMODE='disable', PGGSSENCMODE='disable')
+            runtime_env.update(PGPASSWORD=password, PGPORT=str(port), PGSSLMODE='disable', PGGSSENCMODE='disable')
         else:
             port = 5432  # Scoped by the newly-created private socket directory.
             address = 'host=' + conninfo_quote(socket_directory) + ' dbname=postgres user=nil_test'
@@ -280,7 +292,7 @@ def run_fixture(args, report):
         command = ([binary('pg_ctl'), '-D', str(data), '-w', '-t', '30', 'start'] if windows
                    else [binary('postgres'), '-D', str(data)])
         report['server_launcher'] = 'pg_ctl-restricted-token' if windows else 'postgres-foreground'
-        server = Server(command, env, root, launcher=windows)
+        server = Server(command, runtime_env, root, launcher=windows)
         deadline = time.monotonic() + 30
         while not server.ready(data, port):
             require(time.monotonic() < deadline, 'private PostgreSQL startup deadline exceeded')
@@ -294,17 +306,17 @@ def run_fixture(args, report):
             report['phase'] = 'authentication-controls'
             check = [binary('psql'), '-X', '-w', '-qAt', '-h', '127.0.0.1',
                      '-U', 'nil_test', '-d', 'postgres', '-c', 'SELECT 1']
-            rejected, output = run(check, dict(env, PGPASSWORD=password + '-wrong'), root, 10)
+            rejected, output = run(check, dict(runtime_env, PGPASSWORD=password + '-wrong'), root, 10)
             record('authentication-negative.log', output)
             require(rejected != 0, 'loopback server accepted an incorrect credential')
-            accepted, output = run(check, env, root, 10)
+            accepted, output = run(check, runtime_env, root, 10)
             record('authentication-positive.log', output)
             require(accepted == 0 and output.replace(b'\r\n', b'\n') == b'1\n',
                     'loopback server did not accept the fixture credential')
             report['authentication_controls'] = 'wrong-password-rejected; correct-password-accepted'
         if args.provider_test:
             report['phase'] = 'provider-tests'
-            status, output = run([str(args.provider_test.resolve()), address], env, root, 30)
+            status, output = run([str(args.provider_test.resolve()), address], runtime_env, root, 30)
             record('provider.log', output)
             require(status == 0, 'PostgreSQL provider lifecycle tests failed')
         source = root / 'postgresql.ny'
@@ -316,7 +328,12 @@ def run_fixture(args, report):
                    '--expected-exit', '0', '--routes', 'all', '--with-stdlib', '--timeout', '30',
                    '--work-dir', str(args.report_dir / 'routes'), '--report-json', str(args.report_dir / 'routes.json')]
         report['phase'] = 'language-routes'
-        status, output = run(command, env, root, 180)
+        route_env = dict(env)
+        if declared_provider is not None:
+            # Keep the route harness and its compiler/AOT-link children clean;
+            # it applies this inert declaration only to execution phases.
+            route_env[DECLARATION] = declared_provider
+        status, output = run(command, route_env, root, 180)
         record('routes.log', output)
         require(status == 0, 'PostgreSQL language route matrix failed')
         matrix = json.loads((args.report_dir / 'routes.json').read_bytes())
@@ -324,7 +341,7 @@ def run_fixture(args, report):
         report['all_routes_executed'] = report['routes']['PASS'] == 6
         report['phase'] = 'shutdown'
         shutdown_attempted = True
-        server.graceful_stop([binary('pg_ctl'), '-D', str(data)], env, root, record)
+        server.graceful_stop([binary('pg_ctl'), '-D', str(data)], runtime_env, root, record)
         report['graceful_shutdown'] = True
         success = True
     finally:
@@ -336,7 +353,7 @@ def run_fixture(args, report):
                     if report.get('server_owned_and_ready') and not shutdown_attempted:
                         shutdown_attempted = True
                         try:
-                            server.graceful_stop([binary('pg_ctl'), '-D', str(data)], env, root, record)
+                            server.graceful_stop([binary('pg_ctl'), '-D', str(data)], runtime_env, root, record)
                             report['graceful_shutdown'] = True
                         except Exception:
                             report['graceful_shutdown'] = False
@@ -350,6 +367,7 @@ def run_fixture(args, report):
         finally:
             pwfile.unlink(missing_ok=True)
             env.pop('PGPASSWORD', None)
+            runtime_env.pop('PGPASSWORD', None)
         if success:
             shutil.rmtree(root)
             require(not root.exists(), 'private PostgreSQL directory survived cleanup')

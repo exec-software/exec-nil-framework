@@ -321,6 +321,12 @@ if(BUILD_TESTING)
     target_compile_features(nil_database_postgresql_tests PRIVATE cxx_std_17)
     add_test(NAME nil.database-postgresql-client COMMAND $<TARGET_FILE:nil_database_postgresql_tests>)
     set_tests_properties(nil.database-postgresql-client PROPERTIES LABELS "database;runtime" SKIP_RETURN_CODE 77 TIMEOUT 30)
+    if(APPLE AND NOT "$ENV{NIL_TEST_DARWIN_RUNTIME_LIBRARY_PATH}" STREQUAL "")
+        # The optional provider path belongs to this executing runtime only.
+        # Keep compiler/build processes free of test-only dyld selection inputs.
+        set_tests_properties(nil.database-postgresql-client PROPERTIES
+            ENVIRONMENT "DYLD_FALLBACK_LIBRARY_PATH=$ENV{NIL_TEST_DARWIN_RUNTIME_LIBRARY_PATH}")
+    endif()
 
     add_executable(nilagent_ipc_tests tests/nilagent_ipc_tests.cpp)
     target_link_libraries(nilagent_ipc_tests PRIVATE Threads::Threads)
@@ -1719,6 +1725,9 @@ if(BUILD_TESTING)
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
                 --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src" --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(nil.reflection-consumer PROPERTIES LABELS "analysis;reflection;routes" TIMEOUT 120)
+        add_test(NAME nil.runtime-provider-environment
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_runtime_provider_environment.py")
+        set_tests_properties(nil.runtime-provider-environment PROPERTIES LABELS "database;tools;routes" TIMEOUT 30)
         add_test(NAME nil.database-postgresql-fixture
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_database_postgresql_isolated.py")
         set_tests_properties(nil.database-postgresql-fixture PROPERTIES LABELS "database;tools" TIMEOUT 30)

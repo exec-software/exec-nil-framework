@@ -41,15 +41,17 @@ exports.run = async function run() {
   const checks = [];
   const runId = process.env.NIL_VSCODE_TEST_RUN_ID;
   assert.ok(runId, "Isolated host run identity is required.");
-  const report = { status: "RUNNING", runId, vscode: vscode.version, platform: process.platform, workspace, checks, skippedChecks: [] };
-  const check = async (name, operation) => {
+  const report = { status: "RUNNING", runId, vscode: vscode.version, platform: process.platform, workspace, checks, skippedChecks: [],
+    fullSuiteCompleted: false, completedModules: [] };
+  const check = async (name, operation, timeout = 45_000) => {
     const start = Date.now();
-    const detail = await bounded(operation(), name, 45_000);
+    const detail = await bounded(operation(), name, timeout);
     checks.push({ name, status: "PASS", milliseconds: Date.now() - start, ...(detail || {}) });
     console.log(`PASS ${name}`);
   };
   const runModule = async name => {
     await require(`./${name}.cjs`).run({ check, workspace });
+    report.completedModules.push(name);
   };
   const events = [];
   report.tasks = events;
@@ -378,6 +380,7 @@ exports.run = async function run() {
     for (const module of ["analyzer-checks", "project-checks", "workspace-checks", "semantic-checks", "completion-checks",
       "member-signature-checks", "language-values-checks", "memory-profile-checks", "niltest-checks"])
       await runModule(module);
+    report.fullSuiteCompleted = true;
     report.status = "PASS";
   } catch (error) {
     report.status = "FAIL";

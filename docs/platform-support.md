@@ -9,10 +9,10 @@ release boundary. A newer source checkout does not update an installed SDK.
 
 | Host | Verified development baseline | Remaining boundary |
 | --- | --- | --- |
-| Linux x86_64 | Reference host. The clean `5630388` SDK passed the full suite, installed consumer routes, shared runtime, debugger, Unicode/I/O, execution checkpoints and GTK checks. | The reviewed Ubuntu release toolchain is separate from this development SDK. New release binaries still require the release gates. |
-| Windows x86_64 | The same `5630388` source has paired Linux acceptance: interpreter/bundles, LLVM JIT/AOT, object/link routes, installed tooling, checkpoints, GTK and VS Code. | Development acceptance on the provisioned Windows VM; bare-host installation and Windows release qualification remain open. GTK and PostgreSQL require external runtimes. |
-| macOS 15 Intel x86_64 | At `0c88d2f`, the relocated development SDK passes its installed standard-library campaign, twelve isolated PostgreSQL source/binary routes, installed debugger/checkpoints and corrected numeric-address validation. Earlier LLVM-ON/OFF, native assembly and embedded-context baselines also pass. | Full source suite: 567 passed, one failed and three skipped out of 571. Incremental reuse fails; UI and two native memory-limit tests skip. Desktop/editor and release acceptance remain open. |
-| macOS 15 Apple Silicon arm64 | At `3414ce5`, the relocated development SDK passes its installed standard-library campaign, twelve isolated PostgreSQL source/binary routes, installed debugger/checkpoints and corrected numeric-address validation. Native assembly and embedded context also pass. | Full source suite: 567 passed, one failed and three skipped out of 571. Incremental reuse fails; UI and two native memory-limit tests skip. Desktop/editor and release acceptance remain open. |
+| Linux x86_64 | Reference host. The clean `5630388` SDK passed installed consumer routes, shared runtime, debugger, Unicode/I/O, checkpoints and GTK checks. The newer `8376252` LLVM-ON source suite passes all 586 CTests. | The reviewed Ubuntu release toolchain is separate from this development SDK. New release binaries still require the release gates. |
+| Windows x86_64 | The `5630388` installed SDK retains paired Linux acceptance. The newer private `f79b94b` source build passes 579 of 583 registered tests; separately pinned follow-ups resolve its fixture failure and execute the three skipped contracts. Real Win32 desktop and all 88 VS Code host groups pass. | The `8376252` debugger also passes six CTests and four real Win32 desktop sessions. Current-source SDK qualification remains open. Bare-host installation and Windows release qualification remain open. PostgreSQL requires an external runtime; the current UI provider is Win32. |
+| macOS 15 Intel x86_64 | At `0c88d2f`, the relocated development SDK passes its installed standard-library campaign, twelve isolated PostgreSQL source/binary routes, installed debugger/checkpoints and corrected numeric-address validation. Earlier LLVM-ON/OFF, native assembly and embedded-context baselines also pass. | That SDK baseline has 567 passes, one failure and three skips. Newer source checks pass AppKit VM/native UI, DAP desktop, native lifetime, timestamp and ABI contracts on both Macs. Native incremental reuse, full editor acceptance, a current-source SDK and release qualification remain open. |
+| macOS 15 Apple Silicon arm64 | At `3414ce5`, the relocated development SDK passes its installed standard-library campaign, twelve isolated PostgreSQL source/binary routes, installed debugger/checkpoints and corrected numeric-address validation. Native assembly and embedded context also pass. | That SDK baseline has 567 passes, one failure and three skips. Newer source checks pass AppKit VM/native UI, DAP desktop, native lifetime, timestamp and ABI contracts on both Macs. Native incremental reuse, full editor acceptance, a current-source SDK and release qualification remain open. |
 
 LLVM-OFF builds exercise frontend/interpreter behavior and rejection of disabled
 native operations. Their successful tests do not establish native execution.
@@ -165,10 +165,13 @@ the complete admission rules.
   its coherent client/server and installed source/binary routes on both architectures;
   the scoped-address validation correction passes on both hosts. The corrected
   Intel retry at `0c88d2f` completes all installed campaigns, as recorded above.
-- The two native lifetime stress tests still lack a demonstrated Darwin memory
-  bound. Native diagnostics show that the fixed 96 MiB virtual-memory cap is
-  rejected at process setup; larger diagnostic profiles do not replace it.
-  Successful lifetime execution routes remain covered by the ordinary suite.
+- Both Mac hosts pass the managed and owned native lifetime contracts at
+  `8376252`, including both owned memory modes. Each owned workload allocates
+  and frees 36,000 guarded buffers; mandatory withheld-free controls reach the
+  96 MiB retained-payload limit. The allocator controls also pass more than 2 GiB
+  of cumulative allocation. This measures intercepted malloc-family payloads,
+  not total address space, allocator metadata or mappings. The old Darwin
+  virtual-address cap remains unusable and is not represented as passing.
 - Desktop UI now uses one provider per platform: GTK on Linux and Win32 on
   Windows. The Windows provider passes the full desktop contract on a real
   interactive session -- provider contract, lifecycle release observation, the
@@ -202,7 +205,8 @@ are currently interpreter-backed. File timestamps share a stable native-metadata
 implementation across interpreter and native routes: Linux text NIL, binary NIL,
 JIT and AOT all pass unchanged-file and changed-metadata checks. Linux results
 alone do not establish Windows or macOS support, and declarations do not establish
-native/JIT execution. Cross-platform validation of these additions is in progress.
+native/JIT execution. The actual native timestamp contract also passes on Windows
+and both Mac architectures; full current-source packaging remains in progress.
 Their evidence must join the older desktop, tooling and SDK baselines before
 declaring current-source parity.
 
@@ -214,3 +218,26 @@ replay. The tested PR merge and head revisions are retained separately. Current
 macOS editor coverage is still in progress. The socket/byte/entropy
 native limitation is common to Linux, Windows and macOS; those APIs currently
 require the interpreter on all three hosts.
+
+## Current Windows source and editor follow-up
+
+At `f79b94b`, the full private Windows build records 579 passes, one portable
+path-fixture failure and three skips across 583 registrations. The corrected
+fixture passes 71 MSVC checks separately. The formerly ELF-only symbol contract
+now passes all sixteen generic ABI/IR checks against actual COFF objects.
+Nathan's interactive session passes all ten Matrix VM/native desktop and input
+cases, 137 provider checks, 235 lifecycle checks and window discovery. The retained
+route reports contain 1,138 successes and 78 expected native rejections; the
+six PostgreSQL routes and owned-cluster shutdown also pass.
+
+The full real VS Code host passes 88 distinct groups with no exclusions, using
+the `a518138` test-only physical-file alias correction with `f79b94b` products.
+Extension unit coverage is 161 passes and one Windows-inapplicable POSIX FIFO
+skip. An outer evidence wrapper incorrectly expected at least 100 host groups;
+its raw failure is retained alongside independent replay of every artifact hash,
+all six successful process phases and cleanup. This composed source evidence
+does not replace the accepted SDK. The main-thread DAP execution change at
+`8376252` subsequently passes all six debugger CTests, fourteen lifecycle sessions
+and four actual desktop sessions on Windows and both Mac architectures. Linux
+also passes all 586 source CTests at this revision. Details are in the
+[web-runtime parity notebook](../notebook/2026-11-11-web-runtime-parity.md).

@@ -59,13 +59,22 @@ exports.run = async ({ check, workspace }) => {
       ["native", "ny.checkNativeProject", "ny.buildNativeProject", "ny.runNativeProject"]
     ]) {
       await check(`${language}: ${target} project check, build and run tasks`, async () => {
-        assert.equal(await vscode.commands.executeCommand(checkCommand), 0);
-        assert.equal(await vscode.commands.executeCommand(buildCommand), 0);
-        assert.equal(await vscode.commands.executeCommand(runCommand), 0);
+        const phases = [];
+        for (const command of [checkCommand, buildCommand, runCommand]) {
+          const start = Date.now();
+          console.log(`Starting ${language} ${target} project command: ${command}`);
+          assert.equal(await vscode.commands.executeCommand(command), 0, command);
+          const milliseconds = Date.now() - start;
+          phases.push({ command, milliseconds });
+          console.log(`Completed ${language} ${target} project command: ${command} (${milliseconds} ms)`);
+        }
         const output = path.join(directory, "build", "hello" + (target === "vm" ? ".nil" : process.platform === "win32" ? ".exe" : ""));
         assert.ok((await fs.stat(output)).size > 0);
-        return { target, output };
-      });
+        return { target, output, phases };
+      // Darwin fingerprints the complete dyld backing files in independent
+      // preparation/verification phases. This group executes three real tools;
+      // retain those checks with a bounded aggregate budget and phase timings.
+      }, process.platform === "darwin" ? 180_000 : 45_000);
     }
     await check(`${language}: semantic rules and project warning policy agree with project checks`, async () => {
       const warning = language === "ny" ? 'import nil.std.text\nfn main() -> i32\n try_char_at("abc", 0)\n return 0\n println("unreachable")\nend fn\n' :

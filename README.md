@@ -249,6 +249,8 @@ such as `say formatted "value={5}"`; it works on interpreted and native routes.
 The current version is **1.0.0-rc.1**. Linux x86_64 is the reference development
 platform. The Windows x86_64 development SDK has
 [paired Linux acceptance and installed tooling coverage](notebook/2026-11-02-windows-port.md).
+The newer Windows source campaign also passes the Win32 desktop contracts and
+all 88 real VS Code host groups; a fresh SDK still needs separate qualification.
 Intel and Apple Silicon macOS have passing native build baselines with LLVM
 enabled and disabled, real interpreter/checkpoint execution, and representative
 LLVM JIT/AOT execution. Both macOS architectures also pass bounded native inline
@@ -262,8 +264,9 @@ current SDK desktop campaign remain open. The newer socket, entropy and text-byt
 intrinsics pass the same interpreter contracts on Linux, Windows and both Macs.
 File timestamps share an implementation across interpreter and native routes,
 with text/binary NIL, JIT and AOT checks passing on all four hosts.
-Darwin incremental reuse and native allocation-retention tests remain open, so full platform
-parity is not yet established.
+Both Macs now pass the native allocation-retention contracts and desktop debugger
+sessions. Darwin incremental reuse, complete Mac editor coverage and current SDK
+qualification remain open, so full platform parity is not yet established.
 The [platform support matrix](docs/platform-support.md) separates verified
 development behavior from remaining SDK, provider and release work.
 Windows and macOS release qualification remains pending. The
