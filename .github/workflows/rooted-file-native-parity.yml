@@ -2,6 +2,12 @@ name: Rooted file native macOS checks
 
 "on":
   workflow_dispatch:
+  # A new workflow cannot be dispatched until it exists on the default branch.
+  # This scoped PR trigger qualifies it before review/merge without changing
+  # the fixed source revision under test.
+  pull_request:
+    paths:
+      - .github/workflows/rooted-file-native-parity.yml
 
 permissions:
   contents: read
