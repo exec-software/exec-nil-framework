@@ -244,6 +244,7 @@ jobs:
           assert {case['name'] for case in json.loads(inventory)['tests']} == expected
           with (root/'sdk-contracts.log').open('wb') as output:
               run = subprocess.run(base+['--no-tests=error', '--output-on-failure',
+                  '--test-output-size-passed', '65536',
                   '--output-junit', str(root/'sdk-contract-results.xml')], stdout=output,
                   stderr=subprocess.STDOUT, timeout=1750)
           print((root/'sdk-contracts.log').read_text(errors='replace'))
