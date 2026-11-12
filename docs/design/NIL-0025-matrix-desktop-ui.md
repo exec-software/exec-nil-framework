@@ -1,9 +1,10 @@
 # NIL-0025: Matrix desktop UI
 
-- **Status:** Implemented Linux and Windows development GTK 4 profiles; macOS provider remains open
+- **Status:** Implemented GTK4 on Linux, Win32 on Windows and AppKit on Intel/Apple Silicon macOS; release qualification remains separate
 
-The original Linux design below is retained, followed by its Windows development
-addendum. Current platform evidence and release limits are summarized in
+The original Linux design below and dated Windows GTK addendum are retained as
+design history. The current provider addendum supersedes that Windows deployment.
+Current platform evidence and release limits are summarized in
 [platform support](../platform-support.md).
 
 ## Purpose
@@ -94,3 +95,21 @@ evidence, not Windows release, bare-host or broader accessibility qualification.
 See the [current UI deployment and test contract](../standard-library/ui.md)
 and [Windows validation notebook](../../notebook/2026-11-02-windows-port.md)
 for the supported environment, evidence and remaining boundaries.
+
+## Current native providers — 2026-11-11
+
+The checked `nil.std.ui` API now uses GTK4 only on Linux. Windows uses Win32
+directly, with no external GTK runtime or DLL-directory setting. macOS uses
+AppKit/Cocoa and CoreGraphics, with creation and event processing on the process
+main thread. The debugger keeps VM execution and UI cleanup on that same thread.
+Win32 and AppKit implement row/column/grid layout behind the common boundary,
+including hidden-child reflow, grid spans, expansion and fill.
+
+Both installed library roots pass ten interpreter/native desktop and input
+cases on Windows and each Mac architecture. Tests use verified owned windows
+on Windows and in-process AppKit responders on macOS. These checks supplement
+the provider/lifecycle tests; they do not establish arbitrary desktop automation,
+accessibility support, bare-host installation or release qualification.
+See the [UI contract](../standard-library/ui.md) and
+[platform matrix](../platform-support.md) for the current deployment requirements
+and separately recorded editor acceptance.

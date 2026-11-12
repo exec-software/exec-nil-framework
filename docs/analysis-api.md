@@ -177,8 +177,8 @@ Analysis reports also expose metadata for incremental build clients:
 | --- | --- |
 | `dependencies` | Sorted, unique `{path, digest}` entries for consumed native files. `path` is canonical and absolute; `digest` is lowercase hexadecimal SHA-256 of the exact consumed bytes. |
 | `dependenciesComplete` | True only after successful disk-based analysis with a complete, consistent dependency list containing the primary source. |
-| `compilerFiles` | Sorted compiler toolchain file paths on Linux and Windows, including loaded shared libraries and known optional code inputs. Paths require content hashing; a partial list does not certify completeness. |
-| `compilerFilesComplete` | Explicit boolean certification of the compiler file inventory, independent of source dependency completeness. Missing or false disables build reuse. Darwin currently reports false because loaded-image/shared-cache identity is incomplete. |
+| `compilerFiles` | Sorted compiler toolchain file paths on Linux, Windows and macOS, including loaded shared libraries and known optional code inputs. Darwin includes the complete backing files for admitted dyld shared-cache images. Paths require content hashing; a partial list does not certify completeness. |
+| `compilerFilesComplete` | Explicit boolean certification of the compiler file inventory, independent of source dependency completeness. Missing or false disables build reuse. Darwin certifies supported loaded-image/shared-cache profiles; unknown or unstable observations remain incomplete. |
 | `nativeRuntime` | Resolved native runtime archive path, or null when unavailable. |
 | `nativeLinker` | Resolved configured native linker driver path, or null when unavailable. |
 
