@@ -139,15 +139,15 @@ process.stdin.on('data', chunk => input += chunk);
 process.stdin.on('end', () => {
   const request = JSON.parse(input);
   const dependencies = request.sources.filter(item => sameExistingFile(item.path, ${JSON.stringify(dependencyPath)}));
-  const dependency = dependencies[0];
+  const dependency = dependencies[0] && canonicalSnapshot(dependencies[0]);
   const ours = sameExistingFile(primary, ${JSON.stringify(entryPath)});
   fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({pid:process.pid,primary,text:dependency?.text,count:dependencies.length}) + '\\n');
   const stale = dependency?.text.includes('WAIT');
   const diagnostics = ours && dependency ? [{code:stale?'STALE':'IMPORT_CURRENT',severity:'warning',message:'Imported finding',
-    path:${JSON.stringify(dependencyPath)},start:6,length:2,hint:'',fix:{start:6,length:2,replacement:'',description:'Do not offer imported edits'}}] : [];
+    path:dependency.path,start:6,length:2,hint:'',fix:{start:6,length:2,replacement:'',description:'Do not offer imported edits'}}] : [];
   setTimeout(() => process.stdout.write(JSON.stringify({schema:'nil.analysis.v1',source:primary,
     language:primary.endsWith('.ny')?'ny':'matrix',success:true,reflection:{},diagnostics,
-    sources:ours && dependency ? [{path:${JSON.stringify(dependencyPath)},text:dependency.text}] : []})), ours && stale ? 5000 : 0);
+    sources:ours && dependency ? [dependency] : []})), ours && stale ? 5000 : 0);
 });
 `);
     try {

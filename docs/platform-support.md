@@ -183,15 +183,18 @@ the complete admission rules.
   provider passes 156 display and 41 in-process keyboard checks per host,
   and `nil.ui-display` now passes there too: the provider fixture, the
   lifecycle fixture and the Matrix desktop suite. Real keyboard input is
-  covered in process by the AppKit provider fixture. The current AppKit
-  campaign does not qualify cross-process keyboard injection or accessibility;
-  the language interaction suite currently runs on Linux and Windows. Earlier
+  covered in process by the AppKit provider fixture. At `5a98403`, both Macs
+  pass all seven selected UI CTests and all ten desktop/interaction Matrix
+  cases across interpreter/native routes. The test-only input driver uses
+  each owning application's responders; its compiler adapter keeps injection
+  out of host compilation. This does not qualify cross-process keyboard
+  injection or accessibility. Earlier
   private GTK and AppKit prerequisite probes are retained as historical evidence,
   but GTK is no longer the macOS product provider. The LLVM-ON campaign at
   `965f159` passes all five selected CTests on both hosts, including all three
-  Matrix desktop cases on each interpreter/native route. The retained full
-  language reports verify all six cases; this is separate from editor acceptance
-  and the cross-process keyboard/accessibility exclusion.
+  Matrix desktop cases on each interpreter/native route. That earlier six-case
+  baseline is superseded by the ten-case campaign above; editor acceptance
+  remains separate.
 - Editor desktop integration, untested provider configurations and release-package
   acceptance remain separate from the passing installed campaigns. Shipping a
   Mach-O tool alone does not qualify these surfaces.

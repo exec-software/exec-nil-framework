@@ -216,8 +216,10 @@ for filtering, reports and timeouts.
 The macOS harness uses a test-only library inside each owning process to send
 input through its verified AppKit responder chain. It exercises the same Matrix
 interaction source and records process-bound evidence without Accessibility
-permissions or global input. This library is not installed in the SDK. Hosted
-qualification of this new language-level input path is still pending.
+permissions or global input. A test compiler adapter removes that injection
+before invoking the real compiler and host linker. Neither fixture is installed
+in the SDK. At `5a98403`, both hosted Mac architectures pass all ten desktop and
+interaction cases across the interpreter and native routes.
 
 The same display harness checks real GTK window counts during VM pauses and
 after completion, faults, resets, reloads and destruction. Native context

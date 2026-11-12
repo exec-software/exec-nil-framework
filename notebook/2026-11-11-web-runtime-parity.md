@@ -440,7 +440,10 @@ and variables, then replaces itself with the real compiler. Ordinary arguments,
 environment, PID and exit status are preserved; niltest and application children
 retain the input driver. Ten controls pass, including actual subprocess checks
 and rejection of mismatched injection or compiler targets. The adapter has no
-SDK install rule. Hosted ARM acceptance remains required.
+SDK install rule. At `5a98403`, hosted run `43132072573` passes all seven UI
+CTests on both architectures, with no case skips. Both retain all six desktop
+and four interaction language cases. Root independently replayed each route's
+niltest report against the token/PID input files and unchanged Matrix source.
 
 The first fresh Windows SDK build at `1efbe66` exposes a separate fixture
 portability error: Win32's COM headers define `interface`, which collides with
@@ -449,6 +452,22 @@ identifier. Actual MSVC then passes 137 closure checks; Linux passes 143
 (six additional POSIX symlink controls). The failed build remains recorded,
 and the clean Windows SDK retry uses that exact new commit. No runtime code
 or accepted installed SDK changed in this correction.
+
+Both `1efbe66` Mac editor runs complete 37 groups, including all project and
+real imported-file checks, before a fake compiler emits an alias path rather
+than its captured canonical source identity. A real Linux editor under aliased
+TMPDIR reproduces that failure. The fixture now returns the canonical captured
+snapshot without changing its text. The full alias run then exposes the same
+assumption in semantic navigation expectations for clean, uncaptured disk
+sources. Those expectations now accept physical identity only for clean saved
+targets without tabs; dirty, untitled and open-tab targets still require exact
+URIs. Reference cardinality and duplicate checks remain strict, and new checks
+verify that even clean open imports retain their editor URI.
+
+The corrected real Linux host passes all 88 groups, all nine modules and no
+exclusions in 44.7 seconds using VS Code 1.144.1. Analyzer bytes are unchanged.
+The complete failing/corrected chain is retained under
+`editor-workspace-alias-linux-q8g3r09h`; hosted Mac confirmation remains open.
 
 ## SQL provider environment scope
 
