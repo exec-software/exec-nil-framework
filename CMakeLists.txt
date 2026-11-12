@@ -371,6 +371,12 @@ if(BUILD_TESTING)
     target_compile_features(nil_ui_layout_tests PRIVATE cxx_std_17)
     add_test(NAME nil.ui-layout COMMAND $<TARGET_FILE:nil_ui_layout_tests>)
     set_tests_properties(nil.ui-layout PROPERTIES LABELS "ui;layout;parity" TIMEOUT 30)
+    if(UNIX)
+        # Also built on Linux for portable executable-adapter controls.
+        # This fixture has no install/export rule.
+        add_executable(nil_ui_appkit_compile_driver tests/ui_appkit_compile_driver.cpp)
+        target_compile_features(nil_ui_appkit_compile_driver PRIVATE cxx_std_17)
+    endif()
 
     # The provider fixture follows the provider: tests/ui_runtime_tests.cpp
     # inspects loaded GTK modules and symbol origins, so it describes the GTK
@@ -785,8 +791,16 @@ if(BUILD_TESTING)
         add_test(NAME nil.ui-windows-display-harness
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_windows_ui_display_contract.py")
         set_tests_properties(nil.ui-windows-display-harness PROPERTIES LABELS "ui;tools;windows" TIMEOUT 45)
+        set(NIL_UI_APPKIT_COMPILE_TEST_ARGS)
+        if(TARGET nil_ui_appkit_compile_driver)
+            set(NIL_UI_APPKIT_COMPILE_TEST_ARGS --compile-driver $<TARGET_FILE:nil_ui_appkit_compile_driver>)
+            if(TARGET nil_ui_appkit_input_driver)
+                list(APPEND NIL_UI_APPKIT_COMPILE_TEST_ARGS --input-driver $<TARGET_FILE:nil_ui_appkit_input_driver>)
+            endif()
+        endif()
         add_test(NAME nil.ui-appkit-display-harness
-            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_ui_appkit_display_contract.py")
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_ui_appkit_display_contract.py"
+                ${NIL_UI_APPKIT_COMPILE_TEST_ARGS})
         set_tests_properties(nil.ui-appkit-display-harness PROPERTIES LABELS "ui;tools;apple" TIMEOUT 30)
         set(NIL_UI_DISPLAY_CONTRACT "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/ui_display_contract.py")
         set(NIL_UI_DISPLAY_TIMEOUT 240)
@@ -794,6 +808,7 @@ if(BUILD_TESTING)
         if(APPLE)
             set(NIL_UI_DISPLAY_TIMEOUT 420)
             set(NIL_UI_DISPLAY_APPKIT_ARGS --appkit-input-driver $<TARGET_FILE:nil_ui_appkit_input_driver>
+                --appkit-compile-driver $<TARGET_FILE:nil_ui_appkit_compile_driver>
                 --appkit-evidence-directory "${CMAKE_CURRENT_BINARY_DIR}/appkit-input-evidence")
         endif()
         if(WIN32)

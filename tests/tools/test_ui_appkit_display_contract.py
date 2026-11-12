@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Portable evidence/launch controls; actual AppKit input needs a Mac desktop."""
 import contextlib
+import argparse
 import copy
 import importlib.util
 import io
@@ -18,6 +19,12 @@ spec = importlib.util.spec_from_file_location('appkit_display_contract',
     Path(__file__).with_name('ui_display_contract.py'))
 contract = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(contract)
+
+options = argparse.ArgumentParser(add_help=False)
+options.add_argument('--compile-driver', type=Path)
+options.add_argument('--input-driver', type=Path)
+fixture_options, remaining = options.parse_known_args()
+sys.argv = [sys.argv[0], *remaining]
 
 
 class AppKitHarnessTests(unittest.TestCase):
@@ -117,7 +124,7 @@ class AppKitHarnessTests(unittest.TestCase):
 
     def test_explicit_injection_preserves_environment_and_rejects_ambient_composition(self):
         original = {'PATH': '/fixture/bin', 'DYLD_FALLBACK_LIBRARY_PATH': '/fixture/runtime'}
-        result = contract.appkit_interaction_environment(original, self.driver, self.root, self.token, 'vm')
+        result = contract.appkit_interaction_environment(original, self.driver, self.root, self.token, 'vm', self.driver)
         self.assertEqual(result['PATH'], original['PATH'])
         self.assertEqual(result['DYLD_FALLBACK_LIBRARY_PATH'], original['DYLD_FALLBACK_LIBRARY_PATH'])
         self.assertNotIn('DYLD_INSERT_LIBRARIES', original)
@@ -125,14 +132,15 @@ class AppKitHarnessTests(unittest.TestCase):
         for ambient in (dict(original, DYLD_INSERT_LIBRARIES='/other.dylib'),
                         dict(original, NIL_TEST_APPKIT_INPUT_TOKEN=self.token)):
             with self.assertRaises(AssertionError):
-                contract.appkit_interaction_environment(ambient, self.driver, self.root, self.token, 'vm')
+                contract.appkit_interaction_environment(ambient, self.driver, self.root, self.token, 'vm', self.driver)
         with self.assertRaises(AssertionError):
-            contract.appkit_interaction_environment(original, self.root / 'absent', self.root, self.token, 'vm')
+            contract.appkit_interaction_environment(original, self.root / 'absent', self.root, self.token, 'vm', self.driver)
 
     def test_actual_route_orchestration_scopes_injection_and_retains_complete_evidence(self):
         source = self.root / 'unchanged.matrix'
         source.write_text('owned test fixture')
         args = SimpleNamespace(interaction_source=source, appkit_input_driver=self.driver,
+                               appkit_compile_driver=self.driver, compiler=Path(sys.executable).resolve(),
                                appkit_evidence_directory=self.root / 'runs', llvm='ON')
         ambient = {'PATH': '/owned/tools'}
         seen = []
@@ -142,13 +150,15 @@ class AppKitHarnessTests(unittest.TestCase):
             route = command[command.index('--target') + 1]
             self.assertEqual(environment['NIL_TEST_APPKIT_INPUT_ROUTE'], route)
             self.assertEqual(environment['DYLD_INSERT_LIBRARIES'], str(self.driver))
+            self.assertEqual(environment['NIL_TEST_APPKIT_INPUT_COMPILER'], str(args.compiler))
+            self.assertEqual(command[command.index('--compiler') + 1], args.appkit_compile_driver)
             self.assertEqual(capture_prefix.name, route)
             seen.append(route)
             report = self.evidence(Path(environment['NIL_TEST_APPKIT_INPUT_DIRECTORY']),
                                    environment['NIL_TEST_APPKIT_INPUT_TOKEN'], route)
             return SimpleNamespace(stdout=json.dumps(report), stderr='', pid=self.parent)
         with mock.patch.object(contract, 'checked', side_effect=checked), contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(contract.run_appkit_interaction(args, ['owned-niltest', 'run'], ambient), 4)
+            self.assertEqual(contract.run_appkit_interaction(args, ['owned-niltest', 'run', '--compiler', args.compiler], ambient), 4)
         self.assertEqual(seen, ['vm', 'native'])
         self.assertEqual(ambient, {'PATH': '/owned/tools'})
         report = json.loads(next(args.appkit_evidence_directory.glob('*/report.json')).read_text())
@@ -160,6 +170,7 @@ class AppKitHarnessTests(unittest.TestCase):
         source = self.root / 'unchanged.matrix'
         source.write_text('owned test fixture')
         args = SimpleNamespace(interaction_source=source, appkit_input_driver=self.driver,
+                               appkit_compile_driver=self.driver, compiler=Path(sys.executable).resolve(),
                                appkit_evidence_directory=self.root / 'runs', llvm='OFF')
         def failed(command, environment, timeout, capture_prefix):
             report = self.evidence(Path(environment['NIL_TEST_APPKIT_INPUT_DIRECTORY']),
@@ -168,7 +179,7 @@ class AppKitHarnessTests(unittest.TestCase):
             return SimpleNamespace(stdout=json.dumps(report), stderr='', pid=self.parent)
         with mock.patch.object(contract, 'checked', side_effect=failed), contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(AssertionError):
-                contract.run_appkit_interaction(args, ['owned-niltest', 'run'], {})
+                contract.run_appkit_interaction(args, ['owned-niltest', 'run', '--compiler', args.compiler], {})
         report = json.loads(next(args.appkit_evidence_directory.glob('*/report.json')).read_text())
         self.assertEqual(report['status'], 'failed')
 
@@ -194,6 +205,78 @@ class AppKitHarnessTests(unittest.TestCase):
                                  os.environ.copy(), timeout=.2, capture_prefix=prefix)
             self.assertEqual(prefix.with_suffix('.stdout').read_text(), 'partial stdout\n')
             self.assertEqual(prefix.with_suffix('.stderr').read_text(), 'partial stderr\n')
+
+
+if fixture_options.compile_driver:
+    class CompiledAdapterTests(unittest.TestCase):
+        def setUp(self):
+            self.temporary = tempfile.TemporaryDirectory(prefix='nil-appkit-adapter-unit-')
+            self.addCleanup(self.temporary.cleanup)
+            self.root = Path(self.temporary.name).resolve()
+            self.wrapper = fixture_options.compile_driver.resolve(strict=True)
+            if sys.platform == 'darwin':
+                self.assertIsNotNone(fixture_options.input_driver, 'Darwin adapter controls need the real compatible input dylib')
+                self.driver = fixture_options.input_driver.resolve(strict=True)
+            else:
+                self.driver = self.root / 'input.dylib'
+                self.driver.write_bytes(b'non-Darwin environment control; never loaded')
+            # No inherited override is removed silently. The control requires a
+            # clean caller and then supplies its own explicit fixture profile.
+            self.assertFalse(os.environ.get('DYLD_INSERT_LIBRARIES'))
+            self.env = contract.appkit_interaction_environment(dict(os.environ), self.driver, self.root,
+                        'b' * 32, 'native', Path(sys.executable).resolve(strict=True))
+            self.env['NIL_TEST_PRESERVED_SETTING'] = 'ordinary value with spaces $ and quotes'
+            self.env['DYLD_FALLBACK_LIBRARY_PATH'] = str(self.root)
+
+        def test_real_adapter_cleans_compile_environment_and_preserves_arguments(self):
+            program = ('import json,os,sys; print(json.dumps({'
+                       '"env":{key:os.environ.get(key) for key in ("PATH","NIL_TEST_PRESERVED_SETTING","DYLD_FALLBACK_LIBRARY_PATH","DYLD_INSERT_LIBRARIES")},'
+                       '"fixtureNames":[key for key in os.environ if key.startswith("NIL_TEST_APPKIT_INPUT_")],'
+                       '"args":sys.argv[1:],"pid":os.getpid(),"parentPid":os.getppid()}))')
+            process = subprocess.Popen([str(self.wrapper), '-c', program, 'argument with spaces', '$literal'],
+                                       env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                output, errors = process.communicate(timeout=10)
+            finally:
+                if process.poll() is None:
+                    process.kill(); process.communicate(timeout=3)
+            self.assertEqual(process.returncode, 0, errors)
+            observed = json.loads(output)
+            self.assertEqual(observed['pid'], process.pid, 'exec must preserve the owned compiler PID')
+            self.assertEqual(observed['parentPid'], os.getpid(), 'exec must preserve the parent relationship')
+            self.assertEqual(observed['args'], ['argument with spaces', '$literal'])
+            self.assertIsNone(observed['env']['DYLD_INSERT_LIBRARIES'])
+            self.assertEqual(observed['fixtureNames'], [])
+            self.assertEqual(observed['env']['NIL_TEST_PRESERVED_SETTING'], self.env['NIL_TEST_PRESERVED_SETTING'])
+            self.assertEqual(observed['env']['PATH'], self.env['PATH'])
+            self.assertEqual(observed['env'].get('DYLD_FALLBACK_LIBRARY_PATH'), self.env['DYLD_FALLBACK_LIBRARY_PATH'])
+            # The parent environment still drives niltest's application route.
+            self.assertEqual(self.env['DYLD_INSERT_LIBRARIES'], str(self.driver))
+
+        def test_real_adapter_propagates_compiler_status(self):
+            result = subprocess.run([str(self.wrapper), '-c', 'raise SystemExit(7)'], env=self.env,
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 7, result.stderr)
+
+        def test_real_adapter_rejects_mismatched_missing_and_recursive_profiles(self):
+            other = self.root / 'other-driver.dylib'
+            other.write_bytes(b'declared only; never loaded')
+            nonexecutable = self.root / 'nonexecutable-compiler'
+            nonexecutable.write_bytes(b'not executable')
+            for change in ({'NIL_TEST_APPKIT_INPUT_DRIVER': str(other)},
+                           {'DYLD_INSERT_LIBRARIES': ''},
+                           {'NIL_TEST_APPKIT_INPUT_DRIVER': ''},
+                           {'NIL_TEST_APPKIT_INPUT_COMPILER': str(self.root / 'absent')},
+                           {'NIL_TEST_APPKIT_INPUT_COMPILER': 'relative/compiler'},
+                           {'NIL_TEST_APPKIT_INPUT_COMPILER': str(self.wrapper)},
+                           {'NIL_TEST_APPKIT_INPUT_COMPILER': str(nonexecutable)},
+                           {'NIL_TEST_APPKIT_INPUT_DIRECTORY': str(self.root / 'absent')}):
+                with self.subTest(change=change):
+                    result = subprocess.run([str(self.wrapper), '-c', 'print("UNEXPECTED COMPILER EXECUTION")'],
+                                            env=dict(self.env, **change), capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, 85, result.stderr)
+                    self.assertNotIn('UNEXPECTED COMPILER EXECUTION', result.stdout)
+                    self.assertIn('AppKit test compiler adapter:', result.stderr)
 
 
 if __name__ == '__main__':

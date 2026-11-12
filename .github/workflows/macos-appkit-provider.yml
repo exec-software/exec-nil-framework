@@ -130,7 +130,8 @@ jobs:
         timeout-minutes: 40
         run: >-
           cmake --build build/ci --parallel 2 --target nilcompiler nilinterpreter
-          niltest nil_ui_runtime_appkit_tests nil_ui_lifecycle_tests nil_ui_appkit_input_driver nil_ui_layout_tests
+          niltest nil_ui_runtime_appkit_tests nil_ui_lifecycle_tests nil_ui_appkit_input_driver
+          nil_ui_appkit_compile_driver nil_ui_layout_tests
       - name: Language-level desktop contract
         timeout-minutes: 15
         run: |

@@ -416,6 +416,40 @@ including failed/timeout stream retention and malformed-evidence rejection.
 The library is excluded from SDK installation. Actual hosted compilation and
 input execution are the next gate; no Accessibility or global-input claim is made.
 
+At `1efbe66`, Linux's complete LLVM-ON source suite passes 589/589 CTests
+without skips in 377.54 seconds (run `43129952409`); LLVM-OFF and extension
+jobs also pass. The four-host web-runtime campaign (`43129952445`) again
+passes the exact six selected contracts per host, with all 148 retained files
+independently hash-verified. Local Linux's full desktop contract also passes
+all ten VM/native language cases after supplying the existing private Xvfb
+prerequisite and building the lifecycle fixture; earlier prerequisite failures
+and skips are retained separately.
+
+Hosted AppKit run `43129956297` passes all seven selected CTests on Intel,
+including all ten desktop/interaction language cases. ARM passes six of seven:
+layout, provider and all desktop cases pass, and both VM interaction cases pass.
+Native interaction compilation fails because the test-only arm64 input library
+is inherited by Apple's arm64e compiler launcher. This is an input-harness
+scope error; a follow-up must keep application injection out of compiler
+children before ARM's language interaction gate can pass. Retained route
+reports and per-process input records have been independently replayed.
+
+The correction uses a same-architecture test compiler adapter: it validates
+the explicit compiler/input declaration, removes only fixture-owned injection
+and variables, then replaces itself with the real compiler. Ordinary arguments,
+environment, PID and exit status are preserved; niltest and application children
+retain the input driver. Ten controls pass, including actual subprocess checks
+and rejection of mismatched injection or compiler targets. The adapter has no
+SDK install rule. Hosted ARM acceptance remains required.
+
+The first fresh Windows SDK build at `1efbe66` exposes a separate fixture
+portability error: Win32's COM headers define `interface`, which collides with
+a local variable in the Darwin closure test. Commit `60d4c99` changes only that
+identifier. Actual MSVC then passes 137 closure checks; Linux passes 143
+(six additional POSIX symlink controls). The failed build remains recorded,
+and the clean Windows SDK retry uses that exact new commit. No runtime code
+or accepted installed SDK changed in this correction.
+
 ## SQL provider environment scope
 
 The full Mac source/SDK workflows previously exported SQL's

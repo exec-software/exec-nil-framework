@@ -283,20 +283,22 @@ def validate_desktop_report(report, llvm):
                for test in tests), report
 
 
-def appkit_interaction_environment(environment, driver, directory, token, route):
+def appkit_interaction_environment(environment, driver, directory, token, route, compiler):
     """Explicit fixture injection; ordinary display/build commands keep their env."""
     assert driver.is_absolute() and driver.is_file(), driver
+    assert compiler.is_absolute() and compiler.is_file(), compiler
     assert directory.is_absolute() and directory.is_dir(), directory
     assert len(token) == 32 and all(byte in '0123456789abcdef' for byte in token), token
     assert route in ('vm', 'native'), route
     assert not environment.get('DYLD_INSERT_LIBRARIES'), 'AppKit input fixture cannot compose ambient injection'
     assert not any(key.startswith('NIL_TEST_APPKIT_INPUT_') for key in environment), 'AppKit fixture declaration already present'
-    # niltest's compiler/linker children inherit this declaration too. The shim
-    # is inert until its own process owns the precise interaction window. This
-    # is deliberately never used as evidence for an uninjected cache profile.
+    # The same-architecture test compiler adapter validates this declaration,
+    # then removes it before exec'ing the real compiler. niltest and its actual
+    # application children keep the input driver; system tools never load it.
     return dict(environment, DYLD_INSERT_LIBRARIES=str(driver),
                 NIL_TEST_APPKIT_INPUT_TOKEN=token, NIL_TEST_APPKIT_INPUT_DIRECTORY=str(directory),
-                NIL_TEST_APPKIT_INPUT_ROUTE=route)
+                NIL_TEST_APPKIT_INPUT_ROUTE=route, NIL_TEST_APPKIT_INPUT_DRIVER=str(driver),
+                NIL_TEST_APPKIT_INPUT_COMPILER=str(compiler))
 
 
 def validate_appkit_interaction(report, route, directory, token, parent_pid):
@@ -331,8 +333,15 @@ def validate_appkit_interaction(report, route, directory, token, parent_pid):
 
 
 def run_appkit_interaction(args, base, environment):
-    assert args.interaction_source and args.appkit_input_driver, 'macOS interaction qualification requires its input fixture'
+    assert args.interaction_source and args.appkit_input_driver and args.appkit_compile_driver, 'macOS interaction qualification requires its input and compiler fixtures'
     driver = args.appkit_input_driver.resolve(strict=True)
+    compile_driver = args.appkit_compile_driver.resolve(strict=True)
+    compiler = args.compiler.resolve(strict=True)
+    assert compile_driver.is_file() and compiler.is_file(), (compile_driver, compiler)
+    command_base = list(base)
+    compiler_slot = command_base.index('--compiler') + 1
+    assert Path(command_base[compiler_slot]).resolve() == compiler, 'niltest real compiler must match the explicit fixture declaration'
+    command_base[compiler_slot] = compile_driver
     source = args.interaction_source.resolve(strict=True)
     parent = args.appkit_evidence_directory
     if parent:
@@ -340,8 +349,10 @@ def run_appkit_interaction(args, base, environment):
     root = Path(tempfile.mkdtemp(prefix='nil-appkit-input-', dir=parent)).resolve()
     summary = {'schema': 'nil.appkit.interaction.v1', 'status': 'running', 'routes': [],
                'inputDriver': str(driver), 'inputDriverSha256': hashlib.sha256(driver.read_bytes()).hexdigest(),
+               'compileDriver': str(compile_driver), 'compileDriverSha256': hashlib.sha256(compile_driver.read_bytes()).hexdigest(),
+               'compiler': str(compiler),
                'source': str(source), 'sourceSha256': hashlib.sha256(source.read_bytes()).hexdigest(),
-               'scope': 'in-process AppKit responder input; compiler children inherit inert test injection; not default-cache proof',
+               'scope': 'in-process AppKit responder input; test compiler adapter removes fixture injection before compilation; not default-cache proof',
                'crossProcessAccessibility': 'not exercised', 'evidenceDirectory': str(root)}
     print(f'AppKit interaction evidence: {root}', flush=True)
     try:
@@ -349,8 +360,8 @@ def run_appkit_interaction(args, base, environment):
             directory = root / route
             directory.mkdir(mode=0o700)
             token = secrets.token_hex(16)
-            env = appkit_interaction_environment(environment, driver, directory, token, route)
-            command = [*base, '--target', route, '--filter', 'nil.std.ui.gtk.interaction', source]
+            env = appkit_interaction_environment(environment, driver, directory, token, route, compiler)
+            command = [*command_base, '--target', route, '--filter', 'nil.std.ui.gtk.interaction', source]
             result = checked(command, env, timeout=120, capture_prefix=root / route)
             report = json.loads(result.stdout)
             print(json.dumps(report, indent=2), flush=True)
@@ -416,6 +427,7 @@ def main():
     parser.add_argument('--provider-test', type=Path)
     parser.add_argument('--lifecycle-test', type=Path)
     parser.add_argument('--appkit-input-driver', type=Path)
+    parser.add_argument('--appkit-compile-driver', type=Path)
     parser.add_argument('--appkit-evidence-directory', type=Path)
     parser.add_argument('--llvm', choices=('ON', 'OFF'), default='OFF')
     args = parser.parse_args()
