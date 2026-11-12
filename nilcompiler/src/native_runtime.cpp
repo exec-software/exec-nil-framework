@@ -7,6 +7,7 @@
 #include "dynamic_type.hpp"
 #include "database_runtime.hpp"
 #include "ui_runtime.hpp"
+#include "webview_runtime.hpp"
 #include "integer_conversion.hpp"
 #include "memory_profile.hpp"
 #include "pattern_engine.hpp"
@@ -97,6 +98,7 @@ struct runtime_context {
   ny::memory_profile::Session profile;
   ny::database::Context databases;
   ny::ui::Context ui;
+  ny::webview::Context webview;
   struct file {
     std::unique_ptr<std::fstream> stream;
     bool readable = false;
@@ -647,9 +649,76 @@ const char *ui_text_argument(const char *text) {
   if (!text) throw std::invalid_argument("ui: expected text argument");
   return text;
 }
+template <typename Invoke>
+std::int32_t webview_number_result(std::int64_t *value, const char **error,
+                             Invoke invoke) noexcept {
+  if (!value || !error) return 0;
+  *value = 0; *error = nullptr;
+  try {
+    auto result = invoke();
+    if (!result) { set_error(error, result.error); return 0; }
+    *value = result.number;
+    return 1;
+  } catch (const std::invalid_argument &invalid) { set_error(error, invalid.what()); return 0; }
+  catch (...) { *error = "webview: host allocation failed"; return 0; }
+}
+template <typename Invoke>
+std::int32_t webview_text_result(const char **value, const char **error,
+                           Invoke invoke) noexcept {
+  if (!value || !error) return 0;
+  *value = nullptr; *error = nullptr;
+  try {
+    auto result = invoke();
+    if (!result) { set_error(error, result.error); return 0; }
+    // The snapshot may be released immediately after this call. Never return
+    // provider storage, even when its lifetime presently spans the caller.
+    *value = own_string(result.text);
+    if (!*value) { *error = "webview: host allocation failed"; return 0; }
+    return 1;
+  } catch (const std::invalid_argument &invalid) { set_error(error, invalid.what()); return 0; }
+  catch (...) { *error = "webview: host allocation failed"; return 0; }
+}
+const char *webview_text_argument(const char *text) {
+  if (!text) throw std::invalid_argument("webview: expected text argument");
+  return text;
+}
 } // namespace
 
 extern "C" {
+
+std::int32_t nyrt_webview_v1_configure(const char *path, std::int64_t *value, const char **error) noexcept {
+  return webview_number_result(value, error, [&] { return context.webview.configure(webview_text_argument(path)); });
+}
+std::int32_t nyrt_webview_v1_window(const char *title, std::int64_t width, std::int64_t height, std::int64_t *value, const char **error) noexcept {
+  return webview_number_result(value, error, [&] { return context.webview.window(webview_text_argument(title), width, height); });
+}
+std::int32_t nyrt_webview_v1_show(std::int64_t handle, std::int64_t *value, const char **error) noexcept {
+  return webview_number_result(value, error, [&] { return context.webview.show(handle); });
+}
+std::int32_t nyrt_webview_v1_poll(std::int64_t handle, std::int64_t *value, const char **error) noexcept {
+  return webview_number_result(value, error, [&] { return context.webview.poll(handle); });
+}
+std::int32_t nyrt_webview_v1_release_event(std::int64_t handle, std::int64_t *value, const char **error) noexcept {
+  return webview_number_result(value, error, [&] { return context.webview.release_event(handle); });
+}
+std::int32_t nyrt_webview_v1_close(std::int64_t handle, std::int64_t *value, const char **error) noexcept {
+  return webview_number_result(value, error, [&] { return context.webview.close(handle); });
+}
+std::int32_t nyrt_webview_v1_navigate(std::int64_t handle, const char *text, std::int64_t *value, const char **error) noexcept {
+  return webview_number_result(value, error, [&] { return context.webview.navigate(handle, webview_text_argument(text)); });
+}
+std::int32_t nyrt_webview_v1_load_html(std::int64_t handle, const char *text, std::int64_t *value, const char **error) noexcept {
+  return webview_number_result(value, error, [&] { return context.webview.load_html(handle, webview_text_argument(text)); });
+}
+std::int32_t nyrt_webview_v1_evaluate_function(std::int64_t handle, const char *text, std::int64_t *value, const char **error) noexcept {
+  return webview_number_result(value, error, [&] { return context.webview.evaluate_function(handle, webview_text_argument(text)); });
+}
+std::int32_t nyrt_webview_v1_event_number(std::int64_t handle, const char *text, std::int64_t *value, const char **error) noexcept {
+  return webview_number_result(value, error, [&] { return context.webview.event_number(handle, webview_text_argument(text)); });
+}
+std::int32_t nyrt_webview_v1_event_text(std::int64_t handle, const char *text, const char **value, const char **error) noexcept {
+  return webview_text_result(value, error, [&] { return context.webview.event_text(handle, webview_text_argument(text)); });
+}
 
 std::int64_t nyrt_ui_v1_available() noexcept { return ny::ui::available() ? 1 : 0; }
 std::int32_t nyrt_ui_v1_window(const char *title, std::int64_t width, std::int64_t height,
@@ -869,6 +938,7 @@ void nyrt_context_end() noexcept {
     nyrt_fail("NIL native runtime error: memory capture failed\n");
   context.databases.clear();
   context.ui.clear();
+  context.webview.clear();
   context.files.clear();
   nyrt_owned_v1_unwind(0);
   context.pending_fault.reset();
@@ -891,6 +961,7 @@ void nyrt_profile_site(const char *file, const char *function,
 
 [[noreturn]] void nyrt_fail(const char *message) noexcept {
   context.ui.clear();
+  context.webview.clear();
   (void)context.profile.finish("failed", false);
   if (message != nullptr)
     std::fputs(message, stderr);
