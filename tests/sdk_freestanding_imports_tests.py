@@ -189,7 +189,8 @@ class Imports(unittest.TestCase):
         section, = struct.unpack_from('<Q', e, 40)
         sym, = struct.unpack_from('<Q', e, section + 3 * 64 + 24)
         for offset, fmt, value in ((60, '<H', 0xff00), (section + 3 * 64 + 56, '<Q', 0), (section + 3 * 64 + 40, '<I', 99),
-                                   (sym + 24, '<I', 0xffffffff), (sym + 24 + 6, '<H', 0xffff)):
+                                   (sym + 24, '<I', 0xffffffff), (sym + 24 + 6, '<H', 0xffff),
+                                   (sym + 4 * 24 + 4, '<B', 0xa0)):
             changed = bytearray(e); struct.pack_into(fmt, changed, offset, value); mutations.append(changed)
         c = bytearray(coff(['memcpy']))
         for offset, fmt, value in ((8, '<I', 0xffffffff), (12, '<I', 0xffffffff), (61 + 17, '<B', 255),

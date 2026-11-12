@@ -65,7 +65,9 @@ def elf_symbols(data: bytes) -> tuple[set[str], set[str]]:
         strings = extent(data, sections[link][4], sections[link][5])
         for position in range(start, start + size, entry_size):
             index, info, _other, shndx, _value, _size = struct.unpack_from('<IBBHQQ', data, position)
-            if info >> 4 not in (1, 2):  # STB_GLOBAL/STB_WEAK, including weak imports.
+            binding = info >> 4
+            require(binding in (0, 1, 2), 'unsupported ELF symbol binding')
+            if binding == 0:  # Skip STB_LOCAL, retain GLOBAL and WEAK imports.
                 continue
             require(shndx < count or shndx in (0xfff1, 0xfff2),
                     'unsupported or out-of-range external ELF symbol section')
