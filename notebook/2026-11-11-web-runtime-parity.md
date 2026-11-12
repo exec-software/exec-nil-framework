@@ -644,6 +644,23 @@ and its reproductions must be checked against this new source before making
 further web changes. The README's remaining-parity paragraph still lists logs,
 configuration and virtual hosts as absent despite documenting them elsewhere.
 
+The clean `41eb756` handoff has now been checked against the sealed Linux
+`9fa354d` interpreter: all 653 existing checks pass from a disposable source
+copy, with four raw streams verified, all 49 repository files and all 268 SDK
+files/modes unchanged. Current code still contains the four historical
+mechanisms: permissive length/transfer framing, discarded pipelined surplus,
+Range handling before conditionals without If-Range/HEAD gating, and lexical-only
+static paths. These are code-level findings at the new revision, not fresh HTTP
+network reproductions. The existing `read_regular_bytes` protects the final
+path component only and cannot by itself establish root containment through
+intermediate directories. No diagnostic server was started; the existing suite's
+bounded loopback bind/poll/close case completed normally.
+Evidence `web-readonly-41eb756/handoff.json`, SHA-256
+`092f5c6f1605e2e58620480c2d447f9221fcf94da3c0be2df3989b175a43b2f5`,
+retains source lines and focused follow-ups. Runtime CI currently remains absent;
+the web workflow runs source audits. Framework platform acceptance remains the
+first priority before changing this consumer.
+
 
 ## Current installed Linux closeout and Mac source follow-up
 
@@ -792,3 +809,101 @@ was retained, preventing attribution to compilation, fingerprinting or task
 launch. All 211 evidence files verify and input seals remain unchanged. The
 failure remains recorded; bounded task lifecycle diagnostics and a same-deadline
 Intel follow-up are required before installed editor parity is complete.
+
+
+The Intel-only diagnostic follow-up
+[43149252918](https://github.com/exec-software/exec-nil-framework/actions/runs/43149252918)
+passes with helper `fc782892e1655601830ae20273d0b638f3e93501` and the exact same
+SDK, prerequisites and group deadlines. All twenty UI cases, four desktop DAP
+sessions, 146 debugger checks/15 sessions, checkpoints and all 88 editor
+groups/all nine modules/no exclusions pass. Independent replay verifies 213
+current evidence files, all 920 original evidence hashes, all 268 SDK files and
+unchanged helper/editor inputs. Report
+`github-sdk-desktop-43149252918/replay-report.json`, SHA-256
+`558c7714f5bc03ecd4ba367abd9cd0681b7755e192438f8ac39c5125b1011d9e`.
+
+The new test-only lifecycle collector records all 31 task executions with four
+ordered events each (124 events), and all twelve project command dispatches
+complete. Ny VM check/build/run takes 161.171 seconds within 180 seconds:
+1.426 seconds checking, 128.389 building and 31.354 running. Ny native takes
+241.450 seconds within 300; Matrix VM/native take 56.122/112.599 seconds.
+The entire editor completes in 759.587 seconds within 900. The collector changes
+no product behavior, test assertions, group inventory or deadline. Its five
+controls and all 167 extension unit tests pass. It only diagnoses still-active,
+matching workspace task processes on failure, with bounded read-only snapshots.
+
+The original timeout remains unexplained; no task-event-loss defect was
+reproduced or fixed. These timings show that first Intel project builds can
+consume much of the fixture budget. Future compiler/build-performance work
+should measure the loaded-image/shared-cache hashing phases directly before
+changing cache identity or timing policy. The passing diagnostic follow-up
+completes same-user installed Mac desktop/editor coverage together with ARM's
+original pass; it does not qualify shared deployment or a stable release.
+
+
+## Final portability and evidence-retention checks
+
+The test-only Darwin task diagnostics originally used the current host's path
+separator. Their POSIX mock inputs therefore failed two controls on Windows.
+At `85ce6ce`, the Darwin-only inspector explicitly uses POSIX path validation;
+its real Darwin behavior is unchanged. Actual Windows Node reproduces three
+passes/two failures with the old helper, then passes all five controls with the
+correction. The complete unit suite records 166 passes, no failures and its one
+expected POSIX FIFO skip from 167 registrations. All eight raw streams and 103
+copied fixture source pins verify, with no SDK rebuild, real process sampling
+or desktop/editor repeat. Report
+`sdk-9fa354d48575/diagnostic-unit-6d55b84f08/report.json`, SHA-256
+`f47059c8c8d97f0de50a80ce2f367dd04041c8df177ad7884d973ac3b0cbaf13`.
+
+The packaging CTest's successful JUnit output was truncated at the default
+1,024 bytes in the Mac campaign. Its exact pinned thirteen-test `--native`
+invocation and success exit are retained, but only eight complete named result
+lines survive in the raw stream. At `b6ad3a5`, future SDK/project contract runs
+retain up to 64 KiB of passing output per test. A real bounded local CTest
+control proves the default loses a trailing inventory marker beyond 4 KiB,
+while the new bound retains it; neither changes the test verdict. Evidence is
+`ctest-passing-output-n20zbgqp/report.json`. Existing truncated evidence is not
+rewritten or represented as a full independent replay of thirteen result lines.
+
+Both Linux source workflows at feature `59ffa97` succeed: push
+[43148948074](https://github.com/exec-software/exec-nil-framework/actions/runs/43148948074)
+and PR [43148956132](https://github.com/exec-software/exec-nil-framework/actions/runs/43148956132),
+tested merge `7c552ddcd2261891ce388d04d687d0bc0e5422d6`. Independent replay of all
+six authenticated job logs finds identical results: LLVM ON 590 passes/no skips;
+LLVM OFF 441 passes and 143 expected disabled-native skips from 584; extension
+162 passes/no skips. The workflow emits logs rather than a JUnit artifact.
+Report `source-59ffa97-monitor/linux-source-replay.json`, SHA-256
+`34d656cc4036d9b8814ad0ed69850cd94fa6146ca7cb1cb494531b1b16fa46dd`.
+The corresponding [four-host web-runtime run 43148956115](https://github.com/exec-software/exec-nil-framework/actions/runs/43148956115)
+also completes successfully on Linux, Windows, Intel macOS and Apple Silicon.
+
+The web README correction is committed and pushed as `2d3abee`, retaining the
+unchanged `41eb756` implementation and its verified 653-check baseline. It
+removes obsolete missing-feature claims, records implemented logs/configuration/
+virtual hosts, and states the four remaining HTTP/filesystem gaps. Its source
+audit CI passes. GitHub accepted the direct master push but reported a bypass
+of a PR-only rule; future web changes must use a branch and pull request.
+
+
+The final expanded Mac source campaign
+[43148956133](https://github.com/exec-software/exec-nil-framework/actions/runs/43148956133)
+passes on both architectures at feature `59ffa974632dc45c79c50fa04d7f7038db3f79eb`,
+tested merge `7c552ddcd2261891ce388d04d687d0bc0e5422d6`. Per host, the exact
+inventory is six SDK/project/packaging contracts, six debugger contracts,
+eight native contracts and two incremental contracts: all 22 pass without skips.
+Four naturally exiting desktop DAP sessions and all 88 exact-name editor
+groups/all nine modules/full-suite completion/no exclusions also pass on each
+host. All 620 evidence hashes, official artifact ZIP digests/sizes and source/
+merge-parent bindings verify. Report
+`github-applications-43148956133/replay-report.json`, SHA-256
+`39eaacc2159c8ed91a35f418636e862ec13d2a8dd56d4d698d7b449609a0aced`.
+The thirteen-test packaging invocation passes with native consumers enabled on
+both hosts, subject to the original raw-output retention limit recorded above.
+
+Installed development coverage is now complete across Linux, Windows, Intel
+macOS and Apple Silicon for the supported common profiles, using the exact
+candidate/helper identities in this notebook. The Intel timeout history and
+platform-specific release/deployment limits remain explicit. No accepted SDK,
+stable release tag, release service or Lich publication was changed. The web
+handoff retains its current code, passing existing suite and four identified
+behavior gaps for the next implementation work.

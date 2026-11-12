@@ -253,14 +253,14 @@ source/binary routes, 146 debugger checks and same-process execution checkpoints
 Linux's current SDK also passes all 590 source tests, twenty installed GTK
 desktop/input cases and all 88 real VS Code host groups without exclusions.
 
-Windows uses Win32 and macOS uses AppKit. Windows and Apple Silicon also pass
-twenty installed desktop/input cases, four desktop debugger sessions and all
-88 editor groups. Both Macs pass the expanded 21-contract application campaign,
-native incremental reuse and all 88 build-tree editor groups; the earlier Intel
-project-tool timeout is resolved. Intel's installed UI/debugger checks pass,
-but its editor run timed out during a project build and remains under
-investigation. A separate Windows account exposed a packaged-library permission
-defect; the correction now passes real cross-account access tests.
+Windows uses Win32 and macOS uses AppKit. Windows and both Mac architectures
+also pass twenty installed desktop/input cases, four desktop debugger sessions
+and all 88 editor groups. Both Macs pass the expanded application campaign and
+native incremental reuse. An earlier Intel installed-editor timeout passed a
+diagnostic rerun within the unchanged deadline; its cause remains unconfirmed
+and the failed report is retained. A separate Windows account exposed a
+packaged-library permission defect; the correction passes real cross-account
+access tests.
 
 The newer socket, entropy and text-byte APIs pass the same interpreter contracts
 on every host; these APIs currently require the interpreter on all platforms.

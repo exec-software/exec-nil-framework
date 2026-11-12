@@ -11,8 +11,8 @@ boundary. A source update does not update an installed SDK.
 | --- | --- | --- |
 | Linux x86_64 | Clean `9fa354d` SDK: all 590 source CTests pass without skips; 1,184 installed consumer routes, twelve PostgreSQL routes, 146 debugger checks, execution checkpoints, twenty GTK desktop/input cases and all 88 editor groups pass. | Qualified in a private consumer environment. The reviewed Ubuntu release toolchain and shared deployment permissions require their own gates. |
 | Windows x86_64 | Clean `9fa354d` SDK: 588 of 590 source CTests pass, with two headless display skips subsequently exercised successfully in Nathan's desktop. Relocated SDK passes all 1,184 consumer routes, twelve PostgreSQL routes, 146 debugger checks, execution checkpoints, twenty Win32 desktop/input cases, four desktop DAP sessions and all 88 editor groups. | The candidate needed a recorded, scoped read/execute grant on `nillib`. The permanent packaging correction separately passes real cross-account access tests; older SDKs do not acquire it automatically. Bare-host installation and release qualification remain open. |
-| macOS 15 Intel x86_64 | Relocated `1efbe66` SDK passes all 1,184 consumer routes, twelve PostgreSQL routes, 146 debugger checks, execution checkpoints, twenty installed AppKit desktop/input cases and four desktop DAP sessions. Current `eca43f1` source fixtures pass all 21 application/tooling CTests and all 88 build-tree editor groups. | Installed editor acceptance stops after 25 passing groups at a VM project-build deadline; diagnosis remains open. The original full source report retains four failures resolved by later fixtures and one ELF-only execution skip. Shared deployment and release qualification remain open. |
-| macOS 15 Apple Silicon arm64 | Relocated `1efbe66` SDK passes all 1,184 consumer routes, twelve PostgreSQL routes, 146 debugger checks, execution checkpoints, twenty installed AppKit desktop/input cases, four desktop DAP sessions and all 88 editor groups. Current `eca43f1` fixtures also pass all 21 application/tooling CTests. | The original full source report retains four failures and one ELF-only execution skip; subsequent hosted checks resolve the four fixture failures. Shared deployment and release qualification remain open. |
+| macOS 15 Intel x86_64 | Relocated `1efbe66` SDK passes all 1,184 consumer routes, twelve PostgreSQL routes, 146 debugger checks, execution checkpoints, twenty installed AppKit desktop/input cases, four desktop DAP sessions and all 88 editor groups. Current `59ffa97` source fixtures pass all 22 application/tooling/packaging CTests. | The installed editor needed a diagnostic rerun after a project-build timeout; it passed unchanged deadlines, with the original cause unconfirmed. The original full source report retains four failures resolved by later fixtures and one ELF-only execution skip. Shared deployment and release qualification remain open. |
+| macOS 15 Apple Silicon arm64 | Relocated `1efbe66` SDK passes all 1,184 consumer routes, twelve PostgreSQL routes, 146 debugger checks, execution checkpoints, twenty installed AppKit desktop/input cases, four desktop DAP sessions and all 88 editor groups. Current `59ffa97` source fixtures also pass all 22 application/tooling/packaging CTests. | The original full source report retains four failures and one ELF-only execution skip; subsequent hosted checks resolve the four fixture failures. Shared deployment and release qualification remain open. |
 
 The SDKs contain eleven root commands, eighteen compiled standard-library
 modules, their source, native runtimes and HTML documentation. The installed
@@ -29,6 +29,15 @@ profile. Both current Mac application campaigns use VS Code 1.146.0. Each passes
 88 distinct groups, all nine test modules, the full-suite completion sentinel
 and no exclusions. Editor results using build-tree tools are distinguished from
 results using an installed SDK.
+
+Installed desktop/editor coverage is complete on both Mac architectures:
+[ARM run 43146638765](https://github.com/exec-software/exec-nil-framework/actions/runs/43146638765)
+and [Intel run 43149252918](https://github.com/exec-software/exec-nil-framework/actions/runs/43149252918).
+The first Intel editor attempt timed out after 25 groups. With task lifecycle
+diagnostics added, all 88 groups pass using unchanged SDK bytes and deadlines;
+the Ny VM project group takes 161.171 seconds of its 180-second allowance.
+All 31 observed task lifecycles complete. This establishes successful installed
+execution, not a root-cause fix for the earlier timeout or a performance promise.
 
 Exact revisions, evidence hashes, host preparation, interrupted attempts and
 failure follow-ups are retained in the
@@ -56,6 +65,14 @@ discovery, with four desktop DAP sessions and all 88 editor groups
 These results supplement the unchanged SDK; the original failed reports remain
 failed. The ELF-only freestanding executable fixture remains an explicit
 format-specific skip. Actual Mach-O archives separately pass import validation.
+
+The next campaign at `59ffa97` adds mixed-source/native SDK packaging, including
+the destination-access regression: all 22 selected CTests, four desktop DAP
+sessions and all 88 editor groups pass per Mac architecture
+([run 43148956133](https://github.com/exec-software/exec-nil-framework/actions/runs/43148956133)).
+The exact pinned thirteen-test packaging invocation passes; its original JUnit
+output retains only eight complete result lines because CTest truncates passing
+output at 1,024 bytes. Future runs retain a bounded 64 KiB per SDK/project test.
 
 Windows's former transient native output-replacement failure is corrected at
 `9fa354d`: compiler and linker share bounded Windows sharing/lock retries and
