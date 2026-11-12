@@ -74,8 +74,13 @@ own repository. No accepted SDK or release deployment is replaced by this work.
 
 ## Follow-up
 
-Complete native snapshot qualification on both macOS architectures, then record the corrected web campaign's four-host results. Keep the platform
-checks required for public changes alongside the secret/path audit and review.
+Native snapshot qualification passed on both Mac architectures in
+[run 43162404951](https://github.com/exec-software/exec-nil-framework/actions/runs/43162404951),
+with the exact 87 host and 8/4/2/6 language-route inventories against fixed
+source `93515c3`. The corrected [web run 43162279298](https://github.com/exec-software/exec-nil-framework-web/actions/runs/43162279298)
+passed all four hosts at web head `4bcb43f`: 1,128 unit, 16 oracle, 38 wire
+and 15 static checks each. The four `web-*` checks now join `secrets` as
+required checks; review and the other existing branch protections are unchanged.
 
 The next project is a clean Matrix WebView package. The archived implementation
 has no macOS provider and advertises some Linux-only functions through a shared
