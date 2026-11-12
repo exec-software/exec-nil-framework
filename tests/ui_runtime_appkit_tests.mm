@@ -64,6 +64,125 @@ std::int64_t next_event(ny::ui::Context &context, std::int64_t window) {
   return 0;
 }
 
+NSWindow *native_window(NSString *title) {
+  NSWindow *found = nil;
+  for (NSWindow *candidate in NSApp.windows) {
+    if (![candidate.title isEqualToString:title]) continue;
+    require(found == nil, "fixture window title is unique within this process");
+    found = candidate;
+  }
+  require(found != nil, "fixture window belongs to this application");
+  return found;
+}
+
+NSControl *native_control(NSView *root, NSString *text) {
+  if ([root isKindOfClass:[NSButton class]] && [((NSButton *)root).title isEqualToString:text])
+    return (NSControl *)root;
+  if ([root isKindOfClass:[NSTextField class]] && [((NSTextField *)root).stringValue isEqualToString:text])
+    return (NSControl *)root;
+  for (NSView *child in root.subviews)
+    if (NSControl *found = native_control(child, text)) return found;
+  return nil;
+}
+
+// Native changes deliberately bypass Context setters: otherwise stale cached
+// focus and model-only sensitivity can pass without affecting real controls.
+void interaction_state_contract() {
+  @autoreleasepool {
+    ny::ui::Context context;
+    const auto window = ok(context.window("NIL AppKit interaction state", 420, 280), "create state window");
+    const auto group = ok(context.widget("column", window, ""), "create state group");
+    const auto nested = ok(context.widget("row", group, ""), "create nested state group");
+    const auto entry = ok(context.widget("entry", nested, "editable"), "create state entry");
+    const auto box = ok(context.widget("checkbox", nested, "Toggle state"), "create state checkbox");
+    const auto button = ok(context.widget("button", group, "Local disabled"), "create state button");
+    const auto sibling = ok(context.widget("button", window, "Outside group"), "create state sibling");
+    ok(context.set_number(window, "visible", 1), "show state window");
+    NSWindow *top = native_window(@"NIL AppKit interaction state");
+    auto *field = (NSTextField *)native_control(top.contentView, @"editable");
+    auto *check = (NSButton *)native_control(top.contentView, @"Toggle state");
+    auto *local = (NSButton *)native_control(top.contentView, @"Local disabled");
+    auto *outside = (NSButton *)native_control(top.contentView, @"Outside group");
+    require(field && check && local && outside, "all fixture controls are native children");
+
+    ok(context.set_number(entry, "focus", 1), "focus state entry");
+    require(field.currentEditor == top.firstResponder, "entry uses the native field editor");
+    require(ok(context.read_number(entry, "focus"), "read field focus") == 1, "field editor counts as entry focus");
+    require([top makeFirstResponder:outside], "native responder changes without a provider request");
+    require(ok(context.read_number(entry, "focus"), "old field focus") == 0, "old focus request is not cached as current focus");
+    require(ok(context.read_number(sibling, "focus"), "new native focus") == 1, "native focus change reaches the provider");
+    require(ok(context.read_number(group, "focus"), "group focus outside") == 0, "unrelated group does not own focus");
+    require([top makeFirstResponder:field], "native field focus changes without a provider request");
+    require(ok(context.read_number(nested, "focus"), "nested field focus") == 1, "field editor belongs to its logical ancestors");
+
+    ok(context.set_number(button, "sensitive", 0), "disable local button");
+    ok(context.set_number(group, "sensitive", 0), "disable ancestor of focused entry");
+    require(!field.enabled && !check.enabled && !local.enabled && outside.enabled,
+            "ancestor sensitivity disables native descendants and preserves siblings");
+    require(field.currentEditor == nil && ok(context.read_number(entry, "focus"), "disabled entry focus") == 0,
+            "disabling a focused subtree ends native editing");
+    require(ok(context.read_number(box, "sensitive"), "local checkbox sensitivity") == 1,
+            "ancestor disable preserves the local enabled flag");
+    [check performClick:nil]; [local performClick:nil];
+    require(check.state == NSControlStateValueOff && next_event(context, window) == 0,
+            "native activation of disabled descendants changes neither state nor events");
+    const auto late = ok(context.widget("button", nested, "Created disabled"), "create child under disabled ancestor");
+    auto *late_native = native_control(top.contentView, @"Created disabled");
+    require(late_native && !late_native.enabled, "new native children inherit disabled state");
+    rejected(context.set_number(late, "focus", 1), "focus", "disabled child cannot receive focus");
+    ok(context.set_number(nested, "sensitive", 0), "disable nested ancestor locally");
+    ok(context.set_number(group, "sensitive", 1), "restore outer ancestor");
+    require(!field.enabled && !check.enabled && !late_native.enabled && !local.enabled,
+            "restoring outer ancestor preserves nested and local disabled flags");
+    ok(context.set_number(nested, "sensitive", 1), "restore nested ancestor");
+    require(field.enabled && check.enabled && late_native.enabled && !local.enabled,
+            "restoring nested ancestor restores only locally enabled controls");
+    [check performClick:nil];
+    const auto event = next_event(context, window);
+    require(event != 0 && ok(context.event_number(event, "kind"), "native toggle kind") == 3 &&
+            ok(context.event_number(event, "target"), "native toggle target") == box &&
+            ok(context.event_number(event, "checked"), "native toggle state") == 1,
+            "restored native checkbox delivers its actual state change");
+    ok(context.release_event(event), "release native toggle");
+
+    ok(context.set_number(group, "hexpand", 1), "expand state group");
+    const auto old_width = ok(context.read_number(group, "width"), "state group initial width");
+    [top setContentSize:NSMakeSize(620, 380)];
+    (void)next_event(context, window);
+    require(ok(context.read_number(group, "width"), "state group resized width") > old_width,
+            "native window resize relayouts expanding children without a provider size write");
+
+    ok(context.set_text(entry, std::string(16383, 'a')), "set entry one scalar below limit");
+    ok(context.set_number(entry, "focus", 1), "focus bounded entry");
+    NSTextView *editor = (NSTextView *)field.currentEditor;
+    require(editor != nil, "bounded entry has an actual field editor");
+    [editor setSelectedRange:NSMakeRange(editor.string.length, 0)];
+    [editor insertText:@"\U0001f642" replacementRange:NSMakeRange(NSNotFound, 0)];
+    const auto inserted = next_event(context, window);
+    require(inserted != 0 && ok(context.event_number(inserted, "kind"), "boundary edit kind") == 2,
+            "native edit at exactly 16384 scalars produces a text event");
+    const std::string expected = std::string(16383, 'a') + "\xf0\x9f\x99\x82";
+    require(context.event_text(inserted).text == expected && context.read_text(entry).text == expected,
+            "entry limit counts astral characters as one scalar, not two UTF-16 units");
+    ok(context.release_event(inserted), "release boundary edit");
+    [editor insertText:@"x" replacementRange:NSMakeRange(NSNotFound, 0)];
+    require(context.read_text(entry).text == expected && next_event(context, window) == 0,
+            "native input beyond the scalar limit is rejected without a change event");
+    [editor insertText:@"ok" replacementRange:NSMakeRange(0, editor.string.length)];
+    const auto replaced = next_event(context, window);
+    require(replaced != 0 && context.read_text(entry).text == "ok", "a bounded whole-field replacement remains editable");
+    ok(context.release_event(replaced), "release replacement edit");
+
+    // An invalid NSString arriving from the toolkit must not become a valid
+    // prefix at the C++ boundary, even if it bypasses the editing formatter.
+    require([top makeFirstResponder:outside], "finish native entry editing");
+    const unichar nul_text[] = {'o', 'k', 0, 'x'};
+    field.stringValue = [NSString stringWithCharacters:nul_text length:4];
+    rejected(context.read_text(entry), "UTF-8", "native NUL is rejected rather than truncated");
+    ok(context.close(window), "close state fixture");
+  }
+}
+
 void contract() {
   ny::ui::Context context;
   const auto window = ok(context.window("NIL AppKit provider", 420, 320), "create window");
@@ -266,10 +385,11 @@ int main(int argc, char **argv) {
   if (mode == "--display") {
     require(desktop, "--display requires a window server session");
     contract();
+    interaction_state_contract();
     std::cout << "UI runtime: " << checks << " checks passed (--display)\n";
     return 0;
   }
-  if (desktop) contract();
+  if (desktop) { contract(); interaction_state_contract(); }
   else {
     ny::ui::Context context;
     rejected(context.window("no session", 320, 240), "window server",

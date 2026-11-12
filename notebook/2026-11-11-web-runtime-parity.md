@@ -337,6 +337,30 @@ consumers together, adapt C-string FFI boundaries explicitly, and reject mixed
 old/new object and runtime ABIs. A hidden pointer-length registry would retain
 the same migration burden while adding lifetime and registration ambiguity.
 
+## AppKit interaction behavior follow-up
+
+A comparison with the actual native controls found gaps beyond the old
+cross-process input fixture restriction. AppKit's container sensitivity affected
+only model flags, focus queries remembered the last explicit request, native
+window resizes did not rerun layout, and editing could exceed the shared entry
+scalar limit. The provider now propagates effective sensitivity while preserving
+local flags, maps the real responder/field editor back to its widget, relayouts
+on resize and validates edits through an NSFormatter. NSString conversion retains
+embedded NUL bytes so the common text validator rejects them.
+
+New real-control assertions cover disabled descendants and later children,
+nested re-enable behavior, externally changed focus, field-editor termination,
+native resize, astral Unicode at the 16,384-scalar limit, bounded replacement and
+NUL rejection. Source review found no blocker; actual hosted compilation and
+window-server execution remain required for these new cases.
+
+Shared layout behavior is a separate follow-up: Win32 and AppKit retain hidden
+children's layout slots, represent spanned grid tracks by their starting track,
+and do not distribute extra grid space using expansion flags. Exact cross-toolkit
+geometry is not currently specified by the public contract. These observations
+are retained for an explicit layout contract rather than being called macOS-only
+implementation gaps.
+
 ## SQL provider environment scope
 
 The full Mac source/SDK workflows previously exported SQL's
