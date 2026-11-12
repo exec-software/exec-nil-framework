@@ -226,6 +226,58 @@ reader. All sixteen generic checks pass with the real Windows `f79b94b` compiler
 and assembler; Linux passes those plus both ELF relocation checks. Mach-O
 framework execution remains in the next hosted campaign.
 
+At `a518138`, both actual Mac allocator control sets pass. ARM also passes the
+unchanged managed-lifetime workload and all sixteen generic Mach-O symbol
+checks. Owned-lifetime coverage exposes a fixture assumption: `owned<i32>(16384)`
+allocates 65,540 bytes, including its four-byte guard, rather than 65,536.
+The target size is corrected with the Ny source unchanged. Twelve portable
+control cases pass under GCC and Clang. The exact retained Ny workload, linked
+against the real Linux runtime with accounting wrappers, observes 36,000
+allocations and frees in each memory mode; withholding those exact frees rejects
+at 1,535 retained blocks. The 96 MiB bound is unchanged. Hosted confirmation
+of both owned memory modes remains required.
+
+The Mac synthetic toolchain fixture now canonicalizes its private temporary
+root, avoiding the incidental `/var` alias while retaining deliberate symlink
+controls. Native dependency refusal reports the first bounded, sanitized reason;
+environment values are never included. Eighty portable controls pass. An early
+actual-host probe builds only the runtime and dependency collector, so further
+SDK/linker failures are visible before the LLVM application build finishes.
+It validates input discovery only; full-content identity and real incremental
+reuse remain separate mandatory tests.
+
+The Windows `f79b94b` full run finishes with 583 registrations: 579 pass, the
+known portable path-fixture failure, and three skips. Follow-up evidence fixes
+the path fixture, executes the sixteen COFF checks and passes both desktop gates
+in Nathan's session (ten language VM/native UI/keyboard cases plus window
+discovery). All 1,138 retained route successes and 78 expected native rejections
+replay correctly; PostgreSQL's six routes and owned cluster shutdown pass too.
+Source, installed SDK and the original dirty guest checkout remain unchanged.
+The real editor campaign is separate and still running; its first launch missed
+a required Windows test-only Node setting and is retained as a setup failure.
+
+## DAP execution ownership
+
+DAP previously constructed a new worker for every continue or source step.
+AppKit cannot create or poll its windows there, and desktop resources could
+cross owning threads after a stop. VM construction, loading, execution,
+inspection and disposal now stay on process main; one protocol reader forwards
+bounded requests and accepts cooperative pause/terminate while instructions run.
+
+Fourteen lifecycle sessions verify normal, EOF, malformed-frame and disconnect
+paths, including clients that keep stdin open. A strict wire oracle requires
+acknowledgement before continued/debuggee events. Four real GTK desktop sessions
+exercise retained handles and queued events across stops, and natural disconnect
+with an open window. All existing debugger tests pass. GTK alone cannot prove
+the fix: the old adapter can reuse pthread IDs and pass that test. A deterministic
+stream observer instead checks the actual writer of two debuggee output events;
+it passes the new adapter and rejects the exact previous implementation.
+
+Win32 and AppKit DAP desktop confirmation remains required. Paused windows are
+not pumped, and adapter transport failures use best-effort terminal notification
+before the reader accepts disconnect/EOF; cancellable arbitrary input streams
+are outside this slice. No new native debugger or checkpoint profile is claimed.
+
 Native socket/byte/entropy parity needs a binary-safe value boundary. The new
 VM APIs deliberately carry embedded NUL and arbitrary bytes in `text`; the
 current native text ABI and several LLVM operations use null-terminated strings

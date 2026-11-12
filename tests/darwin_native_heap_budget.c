@@ -393,6 +393,7 @@ __attribute__((constructor)) static void initialize_budget(void) {
     }
     if (strcmp(target, "16384") == 0) target_size = 16384;
     else if (strcmp(target, "65536") == 0) target_size = 65536;
+    else if (strcmp(target, "65540") == 0) target_size = 65540;
     else tracker_error("initialization-target");
     if (strcmp(mode, "0") == 0) withhold_mode = 0;
     else if (strcmp(mode, "1") == 0) withhold_mode = 1;

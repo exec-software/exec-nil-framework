@@ -62,6 +62,19 @@ if(BUILD_TESTING)
                 "$<TARGET_FILE:nildebugger>" "$<TARGET_FILE:nilcompiler>"
     )
     set_tests_properties(nildebugger.dap-protocol PROPERTIES TIMEOUT 90 LABELS "debugger;rc")
+    add_test(NAME nildebugger.dap-lifecycle
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/dap_lifecycle.py"
+                --debugger "$<TARGET_FILE:nildebugger>" --compiler "$<TARGET_FILE:nilcompiler>"
+                --output-parent "${CMAKE_BINARY_DIR}/test-evidence")
+    set_tests_properties(nildebugger.dap-lifecycle PROPERTIES TIMEOUT 180 LABELS "debugger;rc")
+    add_executable(nildebugger_dap_owner_tests
+        tests/dap_owner_tests.cpp debugger_core.cpp dap.cpp ../nillsp/json_rpc.cpp)
+    target_compile_features(nildebugger_dap_owner_tests PRIVATE cxx_std_17)
+    target_include_directories(nildebugger_dap_owner_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../nillsp")
+    target_link_libraries(nildebugger_dap_owner_tests PRIVATE nilcompiler_core Threads::Threads)
+    add_test(NAME nildebugger.dap-owner COMMAND nildebugger_dap_owner_tests)
+    set_tests_properties(nildebugger.dap-owner PROPERTIES TIMEOUT 20 LABELS "debugger;rc")
     add_executable(nildebugger_source_metadata_tests tests/source_metadata_tests.cpp)
     target_compile_features(nildebugger_source_metadata_tests PRIVATE cxx_std_17)
     target_link_libraries(nildebugger_source_metadata_tests PRIVATE nilcompiler_core)

@@ -123,6 +123,26 @@ static void positive(void) {
     write_all(1, "heap-controls-ok\n");
 }
 
+static void guarded_positive(void) {
+    const struct nil_heap_snapshot before = state();
+    require(before.target_size == 65540, "guarded target differs\n");
+    /* The unchanged owned<i32>(16384) native fixture requests 64 KiB plus
+     * its one-i32 guard element. Pin that real allocation/free size too. */
+    for (size_t index = 0; index < 34000; ++index) {
+        unsigned char *value = calloc(1, 65540);
+        require(value != NULL, "guarded calloc failed\n");
+        observed = value[0]; observed = value[65539];
+        free(value);
+    }
+    live_is(before.live);
+    const struct nil_heap_snapshot after = state();
+    require(after.target_allocations - before.target_allocations == 34000 &&
+            after.target_frees - before.target_frees == 34000 &&
+            after.cumulative - before.cumulative >= UINT64_C(34000) * 65540,
+            "guarded payload interception incomplete\n");
+    write_all(1, "guarded-controls-ok\n");
+}
+
 int main(int argc, char **argv) {
     snapshot = (nil_heap_snapshot_fn)dlsym(RTLD_DEFAULT, "nil_heap_budget_snapshot");
     fail_next_realloc = (nil_heap_fail_realloc_fn)dlsym(RTLD_DEFAULT, "nil_heap_budget_fail_next_realloc");
@@ -134,11 +154,14 @@ int main(int argc, char **argv) {
         nil_heap_nested_verify_threads();
 #endif
     if (strcmp(argv[1], "positive") == 0) { positive(); return 0; }
-    require(strcmp(argv[1], "retain") == 0, "unknown control mode\n");
+    if (strcmp(argv[1], "guarded-positive") == 0) { guarded_positive(); return 0; }
+    const int guarded = strcmp(argv[1], "guarded-retain") == 0;
+    require(guarded || strcmp(argv[1], "retain") == 0, "unknown control mode\n");
+    require(state().target_size == (guarded ? 65540 : 65536), "retained target differs\n");
     /* Do not touch payload pages: a footprint-only replacement can miss this.
-     * Even if the oracle fails, this control requests at most 128 MiB. */
+     * Even if the oracle fails, this requests at most 128 MiB plus 8 KiB. */
     for (size_t index = 0; index < 2048; ++index) {
-        retained[index] = calloc(1, 65536);
+        retained[index] = calloc(1, guarded ? 65540 : 65536);
         require(retained[index] != NULL, "retention control allocator failed first\n");
     }
     require(0, "retention control exceeded its independent safety ceiling\n");

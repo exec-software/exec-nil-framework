@@ -148,6 +148,14 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME nil.darwin-toolchain-inputs COMMAND $<TARGET_FILE:nil_darwin_toolchain_inputs_tests>)
     set_tests_properties(nil.darwin-toolchain-inputs PROPERTIES LABELS "tools;project;rc" TIMEOUT 60)
+    if(APPLE)
+        add_executable(nil_darwin_native_inputs_tests tests/darwin_native_inputs_tests.cpp)
+        target_compile_features(nil_darwin_native_inputs_tests PRIVATE cxx_std_17)
+        add_dependencies(nil_darwin_native_inputs_tests nilruntime)
+        add_test(NAME nil.darwin-native-inputs COMMAND $<TARGET_FILE:nil_darwin_native_inputs_tests>
+            "${NIL_NATIVE_LINKER_DRIVER}" "$<TARGET_FILE:nilruntime>")
+        set_tests_properties(nil.darwin-native-inputs PROPERTIES LABELS "tools;project;rc" TIMEOUT 180)
+    endif()
 
     # Test-only launcher for isolated editor integration runs. Reuse the
     # toolchain's bounded process/Job cleanup; never ship it in the SDK.

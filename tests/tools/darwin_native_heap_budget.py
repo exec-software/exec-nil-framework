@@ -203,6 +203,14 @@ class DarwinHeapBudget:
         self.injected('control-retained-untouched', self.control, ['retain'], target=65536, negative=True)
         self.injected('control-withheld-free', self.control, ['positive'], target=65536,
                       withhold=True, negative=True)
+        guarded = self.injected('control-guarded-positive', self.control, ['guarded-positive'],
+                                target=65540, wanted=b'guarded-controls-ok\n')
+        if guarded['target_allocations'] != 34000 or guarded['target_frees'] != 34000:
+            raise AssertionError('guarded native-buffer allocation/free control coverage differs')
+        self.injected('control-guarded-retained', self.control, ['guarded-retain'], target=65540,
+                      negative=True)
+        self.injected('control-guarded-withheld', self.control, ['guarded-positive'], target=65540,
+                      withhold=True, negative=True)
 
     def compile(self, name, command):
         self.command(name, command, seconds=90)

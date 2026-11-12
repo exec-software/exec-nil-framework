@@ -701,7 +701,7 @@ bool compiler_files_complete(const json &report) {
 // driver for startup objects, libraries and its linker rather than guessing a
 // host installation layout. Missing identities disable reuse, not compilation.
 bool native_inputs(input_map &inputs, const json &report, const project &value,
-                    nilbuild::digest_phase *phase = nullptr) {
+                    nilbuild::digest_phase *phase = nullptr, std::string *reason = nullptr) {
   const auto runtime = report.object.find("nativeRuntime"), linker = report.object.find("nativeLinker");
   if (runtime == report.object.end() || runtime->second.type != json::kind::string) return false;
   add_input(inputs, runtime->second.text, phase);
@@ -716,7 +716,7 @@ bool native_inputs(input_map &inputs, const json &report, const project &value,
     }
   }
   const auto files = nilbuild::native_toolchain_files(linker->second.text, value.directory,
-                                                      runtime->second.text, library_paths);
+                                                      runtime->second.text, library_paths, reason);
   if (!files) return false;
   for (const auto &file : *files) add_input(inputs, file, phase);
   return true;
@@ -872,7 +872,11 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
             for (const auto &file : string_list(reports[i].at("compilerFiles"), "compilerFiles")) add_input(*task.inputs, file, preparation);
           }
           if (native) {
-            if (!native_inputs(task.native_files, reports[i], value, preparation)) task.cacheable = false;
+            std::string reason;
+            if (!native_inputs(task.native_files, reports[i], value, preparation, &reason)) {
+              task.cacheable = false;
+              if (!reason.empty()) std::cerr << "nilbuild: native reuse unavailable: " << reason << '\n';
+            }
             task.inputs->insert(task.native_files.begin(), task.native_files.end());
           }
         }

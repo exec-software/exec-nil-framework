@@ -56,15 +56,20 @@ def main():
             argv += ['-ldl'] + ['-Wl,--wrap=' + name for name in
                                ('malloc', 'calloc', 'realloc', 'free', 'aligned_alloc', 'posix_memalign', 'valloc')]
             command(kind + '-build', argv + ['-o', executable])
-            for case, mode, withhold in (('positive', 'positive', False),
-                                         ('retained', 'retain', False), ('withheld', 'positive', True)):
+            for case, mode, withhold, target in (
+                    ('positive', 'positive', False, 65536), ('retained', 'retain', False, 65536),
+                    ('withheld', 'positive', True, 65536),
+                    ('guarded-positive', 'guarded-positive', False, 65540),
+                    ('guarded-retained', 'guarded-retain', False, 65540),
+                    ('guarded-withheld', 'guarded-positive', True, 65540)):
                 name = kind + '-' + case
                 events_path = output / (name + '.jsonl')
-                negative = case != 'positive'
+                negative = not case.endswith('positive')
+                positive_output = b'heap-controls-ok\n' if target == 65536 else b'guarded-controls-ok\n'
                 command(name, [executable, mode], code=86 if negative else 0,
-                        stdout=b'' if negative else b'heap-controls-ok\n', variables={
+                        stdout=b'' if negative else positive_output, variables={
                             'NIL_DARWIN_HEAP_REPORT': str(events_path), 'NIL_DARWIN_HEAP_TOKEN': 'a' * 32,
-                            'NIL_DARWIN_HEAP_TARGET': '65536', 'NIL_DARWIN_HEAP_WITHHOLD': str(int(withhold))})
+                            'NIL_DARWIN_HEAP_TARGET': str(target), 'NIL_DARWIN_HEAP_WITHHOLD': str(int(withhold))})
                 events = [json.loads(line) for line in events_path.read_text().splitlines()]
                 if len(events) != 2 or events[0]['event'] != 'ready':
                     raise AssertionError(name + ': initialization/final event pair absent')
@@ -74,12 +79,13 @@ def main():
                 if nested and (initial['cumulative'] != 1024 or initial['allocations'] != 1 or initial['live']):
                     raise AssertionError(name + ': pre-initialization nested request was not counted exactly once')
                 if negative:
-                    if not (BUDGET - 65536 <= final['live'] <= BUDGET and final['denied_request'] == 65536):
+                    if not (BUDGET - target <= final['live'] <= BUDGET and final['denied_request'] == target):
                         raise AssertionError(name + ': retained payload did not trigger the real budget')
                     if withhold and not final['withheld']:
                         raise AssertionError(name + ': actual target frees were not withheld')
                 elif (final['live'] or final['cumulative'] - initial['cumulative'] <= 2 * 1024**3 or
-                      final['target_allocations'] - initial['target_allocations'] < 34000 + (4 if nested else 0)
+                      final['target_allocations'] - initial['target_allocations'] <
+                      34000 + (4 if nested and target == 65536 else 0)
                       or final['unknown_frees'] - initial['unknown_frees']):
                     raise AssertionError(name + ': sustained/nested/threaded allocation coverage differs')
                 report['cases'].append({'name': name, 'events': events})

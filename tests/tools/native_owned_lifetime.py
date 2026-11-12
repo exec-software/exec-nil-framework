@@ -73,7 +73,10 @@ end fn
                 "--native", *flags, "--output", str(output), str(source)]
             if darwin:
                 darwin.compile('compile-' + name, command)
-                darwin.fixture(name, source, output, "35994000\n", target=65536, count=36000)
+                # The native raw-buffer ABI allocates one additional i32 guard
+                # element, so this unchanged owned<i32>(16384) loop requests
+                # exactly 65540 bytes for each payload, in both memory modes.
+                darwin.fixture(name, source, output, "35994000\n", target=65540, count=36000)
             else:
                 compiled = subprocess.run(command, cwd=root,
                     env=environment, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90)

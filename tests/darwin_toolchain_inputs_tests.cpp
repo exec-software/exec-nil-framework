@@ -262,11 +262,25 @@ void closure(const fs::path &root) {
   check(collect().has_value(), "implicit standard local path alone never falls back outside the SDK");
   fs::remove(plan.lto);
   check(!collect(), "missing required linker helper disables reuse");
+  std::string reason;
+  check(!detail::collector(driver, project, runtime, plan, inspect, host, &reason).files() &&
+        reason.find("libLTO.dylib") != std::string::npos,
+        "failed dependency closure explains its first missing helper");
+  reason.clear();
+  detail::explain(&reason, "unsafe\r\n\t" + std::string(2048, 'x'));
+  check(reason.size() == 1024 && reason.find_first_of("\r\n\t") == std::string::npos,
+        "untrusted tool/path diagnostics are bounded and control sanitized");
+  const auto first_reason = reason;
+  detail::explain(&reason, "later failure");
+  check(reason == first_reason, "later generic failures preserve the first concrete reason");
 }
 } // namespace
 
 int main() {
-  const auto root = nil::detail::create_private_directory(fs::temp_directory_path(), "nil-darwin-closure-");
+  // macOS's temporary parent may be a /var -> /private/var alias. Keep the
+  // synthetic toolchain rooted consistently; alias behavior is tested below
+  // through deliberate fixture links rather than an incidental host prefix.
+  const auto root = fs::canonical(nil::detail::create_private_directory(fs::temp_directory_path(), "nil-darwin-closure-"));
   try {
     closure(root);
     fs::remove_all(root);

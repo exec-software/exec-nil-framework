@@ -72,9 +72,11 @@ possible GTK configuration. AppKit is the supported source implementation.
 On macOS, creation and polling must run on the process main thread, which is
 where AppKit requires its windows to be used. Ordinary interpreter, JIT and
 native entry routes use the main thread. The LLVM-ON display campaign verifies
-the interpreter and native application cases on both architectures. DAP currently executes the
-debuggee on a worker, so DAP with macOS UI is outside this port, and pausing a
-text or JSON debug session does not automatically pump window events. AppKit
+the interpreter and native application cases on both architectures. DAP now
+keeps the VM and its UI resources on the process main thread across source
+stops. Its real GTK ownership/event tests pass; Win32 and AppKit debugger
+desktop qualification is being added separately from ordinary UI execution.
+Paused debug sessions do not automatically pump window events. AppKit
 supplies no box or grid container, so, as on Win32, the provider owns the
 layout pass and sizes come from each control's fitting size.
 

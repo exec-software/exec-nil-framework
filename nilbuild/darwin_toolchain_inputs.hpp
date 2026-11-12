@@ -20,6 +20,14 @@
 namespace nilbuild::darwin_toolchain_detail {
 namespace fs = std::filesystem;
 
+inline void explain(std::string *reason, std::string message) {
+  if (!reason || !reason->empty()) return;
+  if (message.size() > 1024) message.resize(1024);
+  for (char &byte : message)
+    if (static_cast<unsigned char>(byte) < 32 || byte == 127) byte = '?';
+  *reason = std::move(message);
+}
+
 inline std::string trim(const std::string &text) {
   const auto first = text.find_first_not_of(" \r\n\t");
   return first == std::string::npos ? "" : text.substr(first, text.find_last_not_of(" \r\n\t") - first + 1);
@@ -315,14 +323,24 @@ private:
   std::set<std::string> inspected_contexts;
   std::map<fs::path, image_description> image_descriptions;
   std::size_t entries = 0;
+  std::string *reason;
+
+  bool fail(const char *message, const fs::path &path = {}) {
+    if (reason) explain(reason, std::string(message) + (path.empty() ? "" : ": " + path.string()));
+    return false;
+  }
+  std::optional<std::vector<fs::path>> refuse(const char *message, const fs::path &path = {}) {
+    fail(message, path); return {};
+  }
 
   fs::path host_path(const fs::path &path) const { return host / path.relative_path(); }
   bool add(const fs::path &path) {
-    if (!clean_path(path) || !regular(path) || files_seen.size() >= 65536) return false;
+    if (!clean_path(path) || !regular(path)) return fail("required input is not a normalized regular file", path);
+    if (files_seen.size() >= 65536) return fail("input file inventory exceeded 65536 entries", path);
     if (path.extension() == ".a") {
       std::ifstream archive(path, std::ios::binary); char magic[8]{};
       archive.read(magic, sizeof(magic));
-      if (archive.gcount() == 8 && std::string(magic, sizeof(magic)) == "!<thin>\n") return false;
+      if (archive.gcount() == 8 && std::string(magic, sizeof(magic)) == "!<thin>\n") return fail("thin archive has unmodeled external members", path);
     }
     files_seen.insert(path); return true;
   }
@@ -330,24 +348,25 @@ private:
     std::ifstream stream(path, std::ios::binary); std::string text; char block[8192];
     while (stream.read(block, sizeof(block)) || stream.gcount()) {
       text.append(block, static_cast<std::size_t>(stream.gcount()));
-      if (text.size() > 32 * 1024 * 1024) return false;
+      if (text.size() > 32 * 1024 * 1024) return fail("TBD input exceeds 32 MiB", path);
     }
-    return !stream.bad() && supported_stub(text, &stub_references);
+    if (stream.bad()) return fail("could not read TBD input", path);
+    return supported_stub(text, &stub_references) || fail("unsupported TBD dependency profile", path);
   }
   bool tree(const fs::path &path, bool sdk, unsigned depth = 0) {
     std::error_code error;
-    if (depth > 32 || ++entries > 1000000) return false;
+    if (depth > 32 || ++entries > 1000000) return fail("SDK traversal exceeded depth or entry bound", path);
     const auto canonical = fs::canonical(path, error);
-    if (error || !active_directories.insert(canonical).second) return false;
+    if (error || !active_directories.insert(canonical).second) return fail("unreadable or cyclic SDK directory", path);
     fs::directory_iterator iterator(path, error), end;
-    if (error) return false;
+    if (error) return fail("could not enumerate SDK directory", path);
     for (; iterator != end; iterator.increment(error)) {
-      if (error || ++entries > 1000000) return false;
+      if (error || ++entries > 1000000) return fail("SDK enumeration failed or exceeded entry bound", path);
       const auto entry = iterator->path();
       const auto status = fs::status(entry, error);
-      if (error) return false;
+      if (error) return fail("could not stat SDK entry", entry);
       if (fs::is_directory(status)) {
-        // Header/resource trees cannot be selected as linked library files.
+        // Header/module trees cannot be selected as linked library files.
         const auto name = entry.filename();
         if (name == "Headers" || name == "PrivateHeaders" || name == "Modules") continue;
         if (!tree(entry, sdk, depth + 1)) return false;
@@ -358,7 +377,7 @@ private:
             std::ifstream stream(entry, std::ios::binary); char prefix[16]{};
             stream.read(prefix, sizeof(prefix));
             const auto size = static_cast<std::size_t>(stream.gcount());
-            if (stream.bad()) return false;
+            if (stream.bad()) return fail("could not inspect extensionless SDK entry", entry);
             const std::string bytes(prefix, size);
             if (bytes.rfind("--- !tapi-tbd", 0) == 0) {
               if (!add(entry) || !read_stub(entry)) return false;
@@ -366,34 +385,36 @@ private:
                 (size >= 4 && (bytes.compare(0, 4, "\xfe\xed\xfa\xce", 4) == 0 || bytes.compare(0, 4, "\xce\xfa\xed\xfe", 4) == 0 ||
                                bytes.compare(0, 4, "\xfe\xed\xfa\xcf", 4) == 0 || bytes.compare(0, 4, "\xcf\xfa\xed\xfe", 4) == 0 ||
                                bytes.compare(0, 4, "\xca\xfe\xba\xbe", 4) == 0 || bytes.compare(0, 4, "\xbe\xba\xfe\xca", 4) == 0 ||
-                               bytes.compare(0, 4, "\xca\xfe\xba\xbf", 4) == 0 || bytes.compare(0, 4, "\xbf\xba\xfe\xca", 4) == 0))) return false;
+                               bytes.compare(0, 4, "\xca\xfe\xba\xbf", 4) == 0 || bytes.compare(0, 4, "\xbf\xba\xfe\xca", 4) == 0))) return fail("unmodeled extensionless binary SDK input", entry);
             continue; // Non-linkable metadata such as framework PkgInfo.
           }
           if (!add(entry) || (extension == ".tbd" && !read_stub(entry))) return false;
-          if (sdk && (extension == ".dylib" || extension == ".so")) return false; // binary SDK stubs need load-command analysis
+          if (sdk && (extension == ".dylib" || extension == ".so")) return fail("unmodeled binary SDK input", entry);
         }
-      } else return false;
+      } else return fail("SDK entry is not a regular file or directory", entry);
     }
     active_directories.erase(canonical);
-    return !error;
+    return !error || fail("SDK enumeration failed", path);
   }
   bool image(const fs::path &path, const fs::path &executable_directory, unsigned depth = 0,
              const std::vector<fs::path> &inherited_rpaths = {}, std::vector<fs::path> *effective_rpaths = nullptr) {
-    if (depth > 32 || !add(path)) return false;
+    if (depth > 32) return fail("tool image dependency depth exceeded 32", path);
+    if (!add(path)) return false;
     std::error_code error;
     const auto physical = fs::canonical(path, error);
-    if (error || !add(physical)) return false;
+    if (error) return fail("could not resolve tool image", path);
+    if (!add(physical)) return false;
     auto cached = image_descriptions.find(path);
     if (cached == image_descriptions.end()) {
       const auto description = dependencies(path);
-      if (!description) return false;
+      if (!description) return fail("tool image inspection failed", path);
       cached = image_descriptions.emplace(path, *description).first;
     }
     const auto &description = cached->second;
     if (physical.parent_path() != path.parent_path()) {
       const auto loader_relative = [](const std::string &name) { return name.rfind("@loader_path", 0) == 0; };
       if (std::any_of(description.rpaths.begin(), description.rpaths.end(), loader_relative) ||
-          std::any_of(description.libraries.begin(), description.libraries.end(), loader_relative)) return false;
+          std::any_of(description.libraries.begin(), description.libraries.end(), loader_relative)) return fail("cross-directory image alias uses loader-relative paths", path);
     }
     // Compiler identity separately proves the active system dyld image and all
     // shared-cache backing bytes. Include an ordinary loader path as well when
@@ -406,7 +427,7 @@ private:
       else if (name.rfind("@executable_path/", 0) == 0) selected = (executable_directory / name.substr(17)).lexically_normal();
       else selected = name;
       if (!clean_path(selected) || (!inside(selected, plan.installed.parent_path()) &&
-                                    !system_install_name(selected.string()))) return false;
+                                    !system_install_name(selected.string()))) return fail("tool rpath escapes modeled roots", selected);
       rpaths.push_back(selected);
     }
     rpaths.insert(rpaths.end(), inherited_rpaths.begin(), inherited_rpaths.end());
@@ -418,12 +439,12 @@ private:
     std::string context = path.string() + '\0' + executable_directory.string();
     for (const auto &root : rpaths) context += '\0' + root.string();
     if (!inspected_contexts.insert(context).second) return true;
-    if (inspected_contexts.size() > 1024) return false;
+    if (inspected_contexts.size() > 1024) return fail("tool image contexts exceeded 1024", path);
     for (const auto &name : description.libraries) {
       fs::path selected;
       if (name.rfind("@rpath/", 0) == 0) {
         const auto tail = fs::path(name.substr(7));
-        if (tail.has_parent_path()) return false;
+        if (tail.has_parent_path()) return fail("tool rpath dependency has an unmodeled suffix", name);
         for (const auto &root : rpaths) {
           const auto candidate = root / tail;
           if (regular(candidate)) { selected = candidate; break; }
@@ -431,10 +452,10 @@ private:
         // A dylib's install ID may use its parent's rpath and appear in otool
         // -L. It names this file, not an additional dependency.
         if (selected.empty() && path.filename() == tail && path.extension() == ".dylib") selected = path;
-        if (selected.empty()) return false;
+        if (selected.empty()) return fail("tool rpath dependency could not be resolved", name);
       } else if (name.rfind("@loader_path/", 0) == 0) {
         selected = (physical.parent_path() / name.substr(13)).lexically_normal();
-        if (!inside(selected, plan.installed.parent_path())) return false;
+        if (!inside(selected, plan.installed.parent_path())) return fail("loader-relative dependency escapes toolchain", selected);
       } else if (system_install_name(name)) {
         selected = host_path(name);
         // Non-file system images are represented by the compiler's complete
@@ -442,7 +463,7 @@ private:
         if (!regular(selected)) continue;
       } else {
         selected = name;
-        if (!clean_path(selected) || !inside(selected, plan.installed.parent_path())) return false;
+        if (!clean_path(selected) || !inside(selected, plan.installed.parent_path())) return fail("tool dependency escapes modeled roots", selected);
       }
       if (selected != path && !image(selected, executable_directory, depth + 1, rpaths)) return false;
     }
@@ -452,12 +473,12 @@ private:
     const auto directory = plan.installed.parent_path() / "lib";
     std::error_code error;
     fs::directory_iterator iterator(directory, error), end;
-    if (error) return false;
+    if (error) return fail("could not enumerate adjacent toolchain helpers", directory);
     for (; iterator != end; iterator.increment(error)) {
-      if (error || ++entries > 1000000) return false;
+      if (error || ++entries > 1000000) return fail("adjacent helper enumeration failed or exceeded entry bound", directory);
       if (iterator->path().extension() == ".dylib" && !add(iterator->path())) return false;
     }
-    return !error;
+    return !error || fail("adjacent helper enumeration failed", directory);
   }
   bool local_library_inputs() {
     if (!plan.local_libraries) return true;
@@ -467,12 +488,12 @@ private:
     // back to the host. Inspect this choice anew on every collection.
     const auto sdk_directory = plan.sdk / "usr/local/lib";
     const bool sdk_directory_exists = fs::is_directory(sdk_directory, error);
-    if (error && error != std::errc::no_such_file_or_directory) return false;
+    if (error && error != std::errc::no_such_file_or_directory) return fail("could not inspect SDK local library directory", sdk_directory);
     if (sdk_directory_exists) return true; // Complete SDK tree was collected.
     error.clear();
     const auto directory = host_path("/usr/local/lib");
     const bool host_directory_exists = fs::is_directory(directory, error);
-    if (error && error != std::errc::no_such_file_or_directory) return false;
+    if (error && error != std::errc::no_such_file_or_directory) return fail("could not inspect host local library directory", directory);
     if (!host_directory_exists) return true;
 
     // The default command's two -l roots and every architecture/OS SDK
@@ -495,7 +516,7 @@ private:
         candidates.insert(leaf.string());
         auto stub = leaf; stub.replace_extension(".tbd"); candidates.insert(stub.string());
       }
-      if (candidates.size() > 131072) return false;
+      if (candidates.size() > 131072) return fail("local-library candidate bound exceeded", directory);
       bool changed = false;
       for (const auto &name : candidates) {
         if (!checked.insert(name).second) continue;
@@ -503,7 +524,7 @@ private:
         const auto path = directory / name;
         error.clear(); const auto status = fs::status(path, error);
         if (error == std::errc::no_such_file_or_directory || status.type() == fs::file_type::not_found) continue;
-        if (error || !fs::is_regular_file(status)) return false;
+        if (error || !fs::is_regular_file(status)) return fail("local-library candidate is unreadable or not regular", path);
         // A selected ordinary binary/archive requires its own link-input
         // dependency closure; don't confuse that with the tools' dyld graph.
         // Admit only supported text stubs, including a stub behind an alias
@@ -516,25 +537,26 @@ private:
   }
 public:
   collector(fs::path selected_driver, fs::path directory, fs::path selected_runtime,
-            link_plan selected_plan, probe inspect_image, fs::path host_root = "/")
+            link_plan selected_plan, probe inspect_image, fs::path host_root = "/", std::string *failure_reason = nullptr)
       : driver(std::move(selected_driver)), cwd(std::move(directory)), runtime(std::move(selected_runtime)),
-        host(std::move(host_root)), plan(std::move(selected_plan)), dependencies(std::move(inspect_image)) {}
+        host(std::move(host_root)), plan(std::move(selected_plan)), dependencies(std::move(inspect_image)), reason(failure_reason) {}
 
   std::optional<std::vector<fs::path>> files() {
     std::error_code error;
     const auto actual_driver = fs::canonical(driver, error);
-    if (error) return {};
+    if (error) return refuse("could not resolve selected driver", driver);
     const auto actual_compiler = fs::canonical(plan.installed / "clang++", error);
-    if (error) return {};
+    if (error) return refuse("could not resolve selected compiler", plan.installed / "clang++");
     const auto actual_linker = fs::canonical(plan.linker, error);
-    if (error) return {};
+    if (error) return refuse("could not resolve selected linker", plan.linker);
     std::vector<fs::path> linker_rpaths;
-    if (!clean_path(driver) || !clean_path(cwd) || !add(runtime) || !image(driver, actual_driver.parent_path()) ||
+    if (!clean_path(driver) || !clean_path(cwd)) return refuse("driver or working directory is not normalized");
+    if (!add(runtime) || !image(driver, actual_driver.parent_path()) ||
         !image(plan.installed / "clang++", actual_compiler.parent_path()) ||
         !image(plan.linker, actual_linker.parent_path(), 0, {}, &linker_rpaths) ||
         !image(plan.lto, actual_linker.parent_path(), 0, linker_rpaths) || !add(plan.compiler_rt)) return {};
     if (!add(plan.sdk / "SDKSettings.json") || !add(host_path("/System/Library/CoreServices/SystemVersion.plist"))) return {};
-    if (fs::exists(plan.sdk / "AppleInternal", error) || error) return {};
+    if (fs::exists(plan.sdk / "AppleInternal", error) || error) return refuse("AppleInternal SDK profile or lookup failure", plan.sdk);
     for (const auto &directory : {plan.sdk / "usr/lib", plan.sdk / "System/Library/Frameworks"})
       if (!tree(directory, true)) return {};
     if (!adjacent_helpers()) return {};
@@ -545,7 +567,8 @@ public:
     for (const auto &relative : {"usr/local/lib", "Library/Frameworks", "System/Library/PrivateFrameworks"}) {
       const auto directory = plan.sdk / relative;
       const bool present = fs::exists(directory, error);
-      if (error || (present && !tree(directory, true))) return {};
+      if (error) return refuse("could not inspect optional SDK directory", directory);
+      if (present && !tree(directory, true)) return {};
     }
     if (!local_library_inputs()) return {};
     // Absolute re-export lookup differs from standard -L/-F lookup: when the
@@ -556,15 +579,15 @@ public:
       const auto relative = fs::path(name).relative_path();
       auto sdk_stub = plan.sdk / relative; sdk_stub.replace_extension(".tbd");
       if (regular(plan.sdk / relative)) {
-        if (!files_seen.count(plan.sdk / relative)) return {};
+        if (!files_seen.count(plan.sdk / relative)) return refuse("SDK re-export missing from inventory", plan.sdk / relative);
         continue;
       }
       if (regular(sdk_stub)) {
-        if (!files_seen.count(sdk_stub)) return {};
+        if (!files_seen.count(sdk_stub)) return refuse("SDK re-export stub missing from inventory", sdk_stub);
         continue;
       }
       auto host_stub = host_path(name); host_stub.replace_extension(".tbd");
-      if (regular(host_path(name)) || regular(host_stub)) return {};
+      if (regular(host_path(name)) || regular(host_stub)) return refuse("unmodeled ordinary host re-export fallback", name);
     }
     return std::vector<fs::path>(files_seen.begin(), files_seen.end());
   }

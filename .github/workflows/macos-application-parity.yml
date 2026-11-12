@@ -17,10 +17,12 @@ name: macOS application platform checks
       - 'nillinker/process_runner*'
       - 'validation/ny-3d/scripts/debugger_process.py'
       - 'scripts/ci/macos-toolchain-census.py'
-      - 'tests/darwin_native_heap_budget*'
+      - 'tests/darwin*'
+      - 'tests/compiler_module_darwin_tests.cpp'
       - 'tests/tools/darwin_native_heap_budget.py'
       - 'tests/tools/native_managed_lifetime.py'
       - 'tests/tools/native_owned_lifetime.py'
+      - 'tests/tools/native_symbol_surface.py'
       - 'tests/tools/file_modified_at_contract.py'
       - 'vscode/**'
   workflow_dispatch:
@@ -112,6 +114,32 @@ jobs:
             build/application-evidence/heap-*.log
           if-no-files-found: warn
           retention-days: 14
+      - name: Build early native dependency probe
+        id: native_inputs
+        if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
+        timeout-minutes: 8
+        run: |
+          set -o pipefail
+          cmake --build build/application --parallel 2 --target nil_darwin_native_inputs_tests \
+            2>&1 | tee build/application-evidence/native-inputs-build.log
+      - name: Check the selected native dependency profile
+        if: ${{ !cancelled() && steps.native_inputs.outcome == 'success' }}
+        timeout-minutes: 4
+        run: |
+          set -o pipefail
+          ctest --test-dir build/application -R '^nil[.]darwin-native-inputs$' \
+            --no-tests=error --output-on-failure --output-junit native-inputs-results.xml \
+            2>&1 | tee build/application-evidence/native-inputs.log
+      - name: Preserve early native dependency evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-native-inputs-${{ matrix.host.arch }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            build/application-evidence/native-inputs*.log
+            build/application/native-inputs-results.xml
+          if-no-files-found: warn
+          retention-days: 14
       - name: Build application tools
         id: tools
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
@@ -122,7 +150,39 @@ jobs:
             nilcompiler nilinterpreter nilassembler nillsp nildebugger nilbuild niltest aperture \
             nil_vscode_host_runner nil_file_time_support_tests nil_compiler_module_darwin_tests \
             nil_darwin_toolchain_inputs_tests nil_freestanding_hook_default nil_freestanding_hook_override \
+            nildebugger_core_tests nildebugger_source_metadata_tests nildebugger_dap_owner_tests \
             2>&1 | tee build/application-evidence/build.log
+      - name: Verify debugger protocols and owned desktop sessions
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        timeout-minutes: 12
+        run: |
+          set -o pipefail
+          python3 - <<'PYTHON'
+          import json, subprocess, xml.etree.ElementTree as ET
+          from pathlib import Path
+          expected = {'nildebugger.'+name for name in
+                      ('core', 'json-protocol', 'dap-protocol', 'source-metadata', 'dap-lifecycle', 'dap-owner')}
+          base = ['ctest', '--test-dir', 'build/application', '-R',
+                  r'^nildebugger[.](core|json-protocol|dap-protocol|source-metadata|dap-lifecycle|dap-owner)$']
+          root = Path('build/application-evidence').resolve()
+          inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
+          (root/'debugger-inventory.json').write_bytes(inventory)
+          assert {case['name'] for case in json.loads(inventory)['tests']} == expected
+          with (root/'debugger.log').open('wb') as output:
+              run = subprocess.run(base+['--no-tests=error', '--output-on-failure',
+                  '--output-junit', str(root/'debugger-results.xml')], stdout=output,
+                  stderr=subprocess.STDOUT, timeout=480)
+          print((root/'debugger.log').read_text(errors='replace'))
+          run.check_returncode()
+          cases = list(ET.parse(root/'debugger-results.xml').getroot().iter('testcase'))
+          assert len(cases) == len(expected) and {case.get('name') for case in cases} == expected
+          assert all(case.get('status') == 'run' and all(case.find(kind) is None
+              for kind in ['failure','error','skipped']) for case in cases)
+          PYTHON
+          python3 -B nildebugger/tests/dap_desktop.py \
+            --debugger build/application/bin/nildebugger --compiler build/application/bin/nilcompiler \
+            --nilstd nilstd/src --output-parent build/application/test-evidence \
+            2>&1 | tee build/application-evidence/debugger-desktop.log
       - name: Record selected native SDK and linker inputs
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         timeout-minutes: 2
@@ -189,7 +249,8 @@ jobs:
           # Version 1.146.0; architecture-specific SHA256 values from Microsoft's
           # update API on 2026-11-11. No auto-update or system installation.
           mkdir -p build/editor-download
-          curl --fail --location --max-time 180 --max-filesize 800000000 \
+          curl --fail --location --max-time 120 --max-filesize 800000000 \
+            --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 180 \
             "https://vscode.download.prss.microsoft.com/dbazure/download/stable/69047191fc427f2f92828279aae1d90d8eeda7ab/$NIL_EDITOR_ARCHIVE" \
             -o build/editor-download/editor.zip
           python3 - <<'PYTHON'
