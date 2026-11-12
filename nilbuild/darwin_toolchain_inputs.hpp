@@ -648,6 +648,61 @@ private:
     }
     return true;
   }
+  bool direct_library_inputs() {
+    // Options.cpp:861-873 searches each directory for dylib/TBD, .so, then
+    // archive before advancing. Only the two command-line -l roots may select
+    // an archive: supported TBD re-exports name dylibs/frameworks explicitly.
+    // A selected archive could carry new LC_LINKER_OPTION roots, so require
+    // captured text interfaces for these two lookups. Unrelated SDK archives
+    // and archives shadowed by an earlier interface remain harmless inputs.
+    // Selection precedes architecture parsing: InputFiles.cpp's constructor /
+    // parseWorkerThread ignores or errors on incompatible inputs, never resumes
+    // findLibrary. textstub_dylib_file.cpp's architecture fallback reparses the
+    // same selected interface, so it cannot expose a shadowed archive either.
+    std::vector<fs::path> directories;
+    const auto directory = [&](const fs::path &path) -> std::optional<bool> {
+      std::error_code error;
+      const bool present = fs::is_directory(path, error);
+      if (error && error != std::errc::no_such_file_or_directory) {
+        fail("could not inspect direct library search directory", path); return {};
+      }
+      return present;
+    };
+    const auto sdk_local = plan.sdk / "usr/local/lib";
+    const auto has_sdk_local = directory(sdk_local);
+    if (!has_sdk_local) return false;
+    if (plan.local_libraries) {
+      if (*has_sdk_local) directories.push_back(sdk_local);
+      else {
+        const auto local = host_path("/usr/local/lib");
+        const auto present = directory(local);
+        if (!present) return false;
+        if (*present) directories.push_back(local);
+      }
+    }
+    // The one-SDK profile omits absent implicit host directories. Explicit -L
+    // comes first; the implicit SDK order is /usr/lib, then /usr/local/lib.
+    directories.push_back(plan.sdk / "usr/lib");
+    if (*has_sdk_local) directories.push_back(sdk_local);
+    for (const auto *name : {"c++", "System"}) {
+      bool selected = false;
+      for (const auto &root : directories) {
+        for (const auto *extension : {".tbd", ".dylib", ".so", ".a"}) {
+          const auto path = root / (std::string("lib") + name + extension);
+          std::error_code error;
+          const auto status = fs::status(path, error);
+          if (error == std::errc::no_such_file_or_directory || status.type() == fs::file_type::not_found) continue;
+          if (error || !fs::is_regular_file(status)) return fail("direct library candidate is unreadable or not regular", path);
+          if (path.extension() == ".a") return fail("selected SDK archive has unmodeled autolink dependencies", path);
+          if (!files_seen.count(path) || !read_stub(path)) return fail("direct library root is not a captured text interface", path);
+          selected = true; break;
+        }
+        if (selected) break;
+      }
+      if (!selected) return fail("required direct library text interface was not found", name);
+    }
+    return true;
+  }
 public:
   collector(fs::path selected_driver, fs::path directory, fs::path selected_runtime,
             link_plan selected_plan, probe inspect_image, fs::path host_root = "/", std::string *failure_reason = nullptr)
@@ -683,7 +738,7 @@ public:
       if (error) return refuse("could not inspect optional SDK directory", directory);
       if (present && !tree(directory, true)) return {};
     }
-    if (!local_library_inputs()) return {};
+    if (!local_library_inputs() || !direct_library_inputs()) return {};
     // Absolute re-export lookup differs from standard -L/-F lookup: when the
     // SDK/inlined stub cannot satisfy it, ld can try the raw host pathname.
     // Until ordinary host link-input closure is modeled, refuse that profile.

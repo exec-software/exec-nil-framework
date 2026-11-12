@@ -208,6 +208,7 @@ void closure(const fs::path &root) {
   write(plan.sdk / "SDKSettings.json", "SDK15.5");
   write(host / "System/Library/CoreServices/SystemVersion.plist", "macOS15");
   write(plan.sdk / "usr/lib/libSystem.tbd", stub());
+  write(plan.sdk / "usr/lib/libc++.tbd", stub("/usr/lib/libc++.1.dylib"));
   write(plan.sdk / "usr/lib/system/libdyld.tbd", stub("/usr/lib/system/libdyld.dylib"));
   write(plan.sdk / "System/Library/Frameworks/Cocoa.framework/Cocoa.tbd", stub("/System/Library/Frameworks/Cocoa.framework/Cocoa"));
   write(plan.sdk / "System/Library/Frameworks/CoreGraphics.framework/CoreGraphics.tbd", stub("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"));
@@ -220,6 +221,38 @@ void closure(const fs::path &root) {
   auto files = collect();
   check(files.has_value(), "default SDK/toolchain closure resolves");
   auto before = identities(*files);
+  write(plan.sdk / "usr/lib/libunrelated.a", "!<arch>\n");
+  check(collect().has_value(), "unrelated SDK archive cannot introduce autolinks into fixed direct roots");
+  for (const auto *name : {"c++", "System"}) {
+    const auto direct = plan.sdk / "usr/lib" / (std::string("lib") + name);
+    const auto archive = fs::path(direct.string() + ".a"), interface = fs::path(direct.string() + ".tbd");
+    write(archive, "!<arch>\n");
+    check(collect().has_value(), "same-directory text interface precedes a direct archive fallback");
+    const auto text = name == std::string("c++") ? stub("/usr/lib/libc++.1.dylib") : stub();
+    auto incompatible = text;
+    const std::string compatible_targets = "arm64-macos, x86_64-macos";
+    incompatible.replace(incompatible.find(compatible_targets), compatible_targets.size(), "i386-macos");
+    write(interface, incompatible);
+    check(collect().has_value(), "architecture parsing cannot resume path search into a shadowed archive (no link success claim)");
+    fs::remove(interface);
+    std::string archive_reason;
+    check(!detail::collector(driver, project, runtime, plan, inspect, host, &archive_reason).files() &&
+          archive_reason.find("selected SDK archive") != std::string::npos,
+          "removing direct stub exposes archive autolinks and disables reuse");
+    fs::remove(archive);
+    check(!collect(), "missing direct text root cannot certify successful native reuse");
+    write(interface, text);
+  }
+  const auto early_archive = plan.sdk / "usr/local/lib/libc++.a";
+  write(early_archive, "!<arch>\n");
+  check(collect().has_value(), "implicit SDK usr/lib interface precedes a later local archive");
+  plan.local_libraries = true;
+  check(!collect(), "explicit SDK-local archive precedes the standard SDK text interface");
+  write(plan.sdk / "usr/local/lib/libc++.tbd", stub("/usr/lib/libc++.1.dylib"));
+  check(collect().has_value(), "earlier SDK-local text interface safely shadows its archive");
+  fs::remove_all(plan.sdk / "usr/local/lib");
+  plan.local_libraries = false;
+  files = collect(); before = identities(*files);
   for (const auto &path : {driver, plan.linker, plan.lto, plan.compiler_rt, runtime,
        plan.installed.parent_path() / "lib/libtapi.dylib", plan.sdk / "usr/lib/system/libdyld.tbd"})
     check(before.count(path.generic_string()) != 0, "driver, helpers, runtime and transitive stub bytes included");

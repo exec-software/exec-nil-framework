@@ -10,6 +10,17 @@ async function eventually(operation, description) {
   throw new Error(`Timed out: ${description}`);
 }
 const findings = uri => vscode.languages.getDiagnostics(uri).filter(item => item.source === "nil-analysis");
+// Imported files which are not open are reported by their compiler-resolved
+// path. A workspace may use a physical alias (notably /tmp on Darwin). Inspect
+// every matching URI without deduplication, so duplicate Problems still fail.
+async function importedFindings(uri) {
+  const results = [];
+  for (const [candidate, diagnostics] of vscode.languages.getDiagnostics()) {
+    if (candidate.scheme === "file" && await sameFile(candidate.fsPath, uri.fsPath))
+      results.push(...diagnostics.filter(item => item.source === "nil-analysis"));
+  }
+  return results;
+}
 async function replace(document, text) {
   const edit = new vscode.WorkspaceEdit();
   edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length)), text);
@@ -114,7 +125,7 @@ exports.run = async ({ check, workspace }) => {
       await vscode.window.showTextDocument(document);
       await eventually(() => vscode.commands.executeCommand("ny.analyzeCurrentFile"), "current compiler check");
     }
-    const errors = findings(depUri).filter(item => item.severity === vscode.DiagnosticSeverity.Error);
+    const errors = (await importedFindings(depUri)).filter(item => item.severity === vscode.DiagnosticSeverity.Error);
     assert.equal(errors.length, 1, "Two entry reports should not duplicate a dependency finding.");
     assert.equal(errors[0].range.start.line, 3, "UTF-8 and CRLF offsets must map the imported source exactly.");
     const depDocument = await vscode.workspace.openTextDocument(depUri);
@@ -122,17 +133,17 @@ exports.run = async ({ check, workspace }) => {
     await replace(depDocument, broken.replace('"bad"', "1"));
     await vscode.window.showTextDocument(entries[0]);
     await eventually(() => vscode.commands.executeCommand("ny.analyzeCurrentFile"), "current compiler check");
-    await eventually(() => findings(depUri).length === 0, "dirty import diagnostic removal");
+    await eventually(async () => (await importedFindings(depUri)).length === 0, "dirty import diagnostic removal");
     assert.equal(await fs.readFile(dependency, "utf8"), broken, "Analysis must not save imported buffers.");
     assert.equal(await depDocument.save(), true);
-    await eventually(() => entries.every(document => findings(document.uri).length === 0) && findings(depUri).length === 0, "saved import diagnostics refreshed");
+    await eventually(async () => entries.every(document => findings(document.uri).length === 0) && (await importedFindings(depUri)).length === 0, "saved import diagnostics refreshed");
     // A disk-only edit must invalidate entries even when the import is closed.
     await vscode.window.showTextDocument(depDocument);
     await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
     await fs.writeFile(dependency, broken);
-    await eventually(() => findings(depUri).some(item => item.range.start.line === 3), "external import change refreshed Problems");
+    await eventually(async () => (await importedFindings(depUri)).some(item => item.range.start.line === 3), "external import change refreshed Problems");
     await fs.writeFile(dependency, broken.replace('"bad"', "1"));
-    await eventually(() => findings(depUri).length === 0, "external import repair cleared Problems");
+    await eventually(async () => (await importedFindings(depUri)).length === 0, "external import repair cleared Problems");
     return { importedLine: 4, duplicateCount: errors.length };
   });
 };

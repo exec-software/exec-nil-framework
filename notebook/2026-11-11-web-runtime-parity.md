@@ -337,6 +337,30 @@ consumers together, adapt C-string FFI boundaries explicitly, and reject mixed
 old/new object and runtime ABIs. A hidden pointer-length registry would retain
 the same migration burden while adding lifetime and registration ambiguity.
 
+At `860750e`, both actual Mac native-input probes collect 8,321 regular inputs.
+Both native incremental steps also pass: ARM's verified report contains 131
+closure and 78 real/fake incremental checks, including positive VM/native reuse
+and invalidation of changed bytes with unchanged timestamps. Intel's successful
+step takes roughly 387 seconds; its final raw artifact is still pending.
+
+A subsequent source review closes an additional cache-admission gap: an SDK
+archive selected for the direct c++/System library roots could add unmodeled
+link options. The collector now follows the supported linker's directory order
+and requires the selected roots to be captured text interfaces. It permits
+unrelated or shadowed archives while rejecting a newly exposed archive fallback.
+All 143 strict-warning and ASan/UBSan checks pass; the old source fails the new
+stub-removal regression. Default hosted acceptance of this refinement remains
+required.
+
+The ARM editor at `860750e` completes 32 groups, including all four Ny/Matrix
+VM/native project check/build/run groups. Measured totals are approximately
+48–50 seconds for VM and 90–93 seconds for native. Its next failure is a lookup
+assumption for a closed imported file: the correct single diagnostic is present
+under `/private/tmp`, while the test reads `/tmp`. The test now collects findings
+by physical file identity without deduplicating them, preserving the exact
+one-finding, source, location, dirty-buffer and external-edit checks. Full editor
+acceptance remains pending.
+
 ## AppKit interaction behavior follow-up
 
 A comparison with the actual native controls found gaps beyond the old
@@ -351,15 +375,16 @@ embedded NUL bytes so the common text validator rejects them.
 New real-control assertions cover disabled descendants and later children,
 nested re-enable behavior, externally changed focus, field-editor termination,
 native resize, astral Unicode at the 16,384-scalar limit, bounded replacement and
-NUL rejection. Source review found no blocker; actual hosted compilation and
-window-server execution remain required for these new cases.
+NUL rejection. At `40017f1`, hosted run `43127447798` passes the real provider on
+both Macs: 156 display checks and 41 in-process keyboard checks per host, plus
+availability. This targeted run does not yet qualify the new Matrix input shim.
 
-Shared layout behavior is a separate follow-up: Win32 and AppKit retain hidden
-children's layout slots, represent spanned grid tracks by their starting track,
-and do not distribute extra grid space using expansion flags. Exact cross-toolkit
-geometry is not currently specified by the public contract. These observations
-are retained for an explicit layout contract rather than being called macOS-only
-implementation gaps.
+Further comparison confirms actual shared layout gaps in Win32 and AppKit:
+hidden children retain slots, a lone spanning control can be clipped to a
+fraction of its requested size, and grids ignore expansion. Nested containers
+also fail to inherit descendant expansion. These affect real layouts beyond
+font/pixel differences and are being corrected with shared bounded allocation
+math and native geometry assertions against the same public Context API.
 
 ## SQL provider environment scope
 
