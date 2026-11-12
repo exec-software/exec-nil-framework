@@ -1,12 +1,12 @@
 # Web runtime and platform parity — 2026-11-11
 
-The web handoff resumes at framework `dfb7ad7` on `nil-sockets-entropy-bytes`
+The web handoff began at framework `dfb7ad7` on `nil-sockets-entropy-bytes`
 ([PR 38](https://github.com/exec-software/exec-nil-framework/pull/38)) and web
 `594579a` plus preserved local changes. The archived originals are under
 `atoma/archived-exec-ny-web` and `atoma/archived-exec-ny-webview`. Platform work
 comes first; the web changes are not discarded, reset or overwritten.
 
-## Current baseline and remaining boundaries
+## Starting baseline and boundaries
 
 Windows now uses Win32 and macOS uses AppKit; Linux uses GTK4. November 9 native
 AppKit provider and interpreter display results supersede the earlier private
@@ -24,7 +24,7 @@ current native application/editor acceptance remain open. The platform/readme
 documentation now separates current source implementation from the recorded SDK
 and route baselines.
 
-The latest source validation push run
+At recovery, source validation push run
 [43095105713](https://github.com/exec-software/exec-nil-framework/actions/runs/43095105713)
 failed before any runner executed: GitHub reports an internal server error,
 correlation ID `0fbc4710-ecca-4198-a05c-f35c1d8d4bef`. It supplies no product
@@ -512,6 +512,92 @@ CTests pass in 12.99 seconds; actual hosted follow-up remains required. Full SDK
 workflows also upload their source inventory immediately, before lengthy
 installed campaigns, so failed gates are visible without waiting for packaging.
 
+## Source checkpoint at `9fb6c04`
+
+At `9fb6c04`, Linux's complete LLVM-ON suite passes all 590 registrations
+without skips in 258.36 seconds; LLVM-OFF and extension jobs also pass
+([source run 43135334607](https://github.com/exec-software/exec-nil-framework/actions/runs/43135334607)).
+The raw log independently yields 590 unique passing test names, including the
+new freestanding archive-import contract. The tested PR merge is
+`94979957a693bf725211001cc1434c14c1fbef3c`, distinct from the feature head.
+
+The matching [web-runtime run 43135334608](https://github.com/exec-software/exec-nil-framework/actions/runs/43135334608)
+passes the exact six interpreter contracts on Linux, Windows and both Macs,
+with no failures or skips. All 148 retained evidence files were independently
+hash-verified, together with unchanged source identity, exact JUnit inventories
+and the retained timestamp command/cleanup reports. These focused checks do
+not qualify native socket support or replace the installed SDK campaigns.
+
+Both architecture jobs in
+[application run 43135334578](https://github.com/exec-software/exec-nil-framework/actions/runs/43135334578)
+pass all twenty exact CTests, four owned desktop DAP sessions each and the complete
+VS Code 1.146.0 host: 88 unique passing groups, all nine modules, no exclusions
+and the full-suite completion sentinel on each host. All 620 evidence files
+match their manifest hashes and the source remains unchanged. The formerly failing native
+memory-profile groups now pass with the adjacent `nillinker` build target.
+The final independent replay is `github-applications-43135334578/replay-report.json`,
+SHA-256 `c362343a73c2adc1a567113a4a0a718306f72889fade367897625128775eb129`.
+
+## Windows executable replacement
+
+The fresh `9fb6c04` Windows suite completes all 589 registrations with
+586 passes, two headless desktop skips and a different failure in
+`ny.global-contract`: after running `control.exe`, the next successful native
+link cannot replace it because `MoveFileExW` reports access denied. The fixture
+subsequently cleans its directory successfully; the particular lock holder was
+not captured, so it is not attributed to a specific process or scanner.
+
+The compiler already retries access/sharing/lock failures up to fifty times
+with a 20 ms delay, but the standalone linker made only one attempt. Both now
+use the same helper and preserve the existing output on persistent failure.
+The helper neither removes the destination first nor changes its permissions.
+This matches Windows' documented
+[file-sharing contract](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew):
+an open handle without delete sharing prevents rename until that handle closes.
+Four relevant Linux CTests pass after the refactor. The first local invocation
+had one unbuilt process-fixture executable; that incomplete result is retained
+alongside the complete rerun after building it.
+
+At `9fa354d`, strict MSVC (`/W4 /WX /O2`) passes all 46 checks against real
+Windows handles: temporary and permanent sharing failures, read-only output,
+missing source, exact binary payload preservation, error clearing and cleanup.
+The single-attempt mutant fails precisely at the transient-release success
+assertion. Eight raw streams and cleanup were independently verified under
+`atomic-publication-v1/replay.json`; the original outer wrapper's
+`released`/`release` diagnostic wording mismatch is preserved and reconciled
+against those native exit results. The clean `9fa354d` compiler/linker build
+then passes four exact focused CTests: atomic replacement, global contracts,
+the native object pipeline and host-object linking. Their raw reports and
+cleanup are verified in `sdk-9fa354d48575/replay-publication-focused.json`.
+A corrected complete SDK still needs qualification.
+
+## Intel discovery deadline and SDK build limits
+
+The completed Intel `1efbe66` SDK also records 583 passes, four failures and
+one ELF-only execution skip from 588 registrations. Its AppKit desktop tests
+pass; the fourth failure instead comes from tool discovery. The first
+adjacent-tool `nilbuild check` succeeds, then the first VM `nilbuild run`
+exceeds the fixture's 60-second child deadline. This is not its 180-second
+CTest limit or the workflow's 35-minute suite limit. The older failure did
+not retain the child's partial output, so its internal active phase is unknown.
+
+Only the discovery fixture's two real Darwin project runs now receive the
+same 180-second VM allowance as the project/editor fixtures. Other commands
+retain 60 seconds. Timings and captured timeout output are retained, with a
+600-second Darwin aggregate CTest guard. The Mac application workflow admits
+discovery as its fifth SDK contract, for 21 total platform contracts, with a
+bounded 30-minute combined step. The actual Linux discovery contract passes
+all 21 checks; hosted Darwin follow-up remains required.
+
+The Linux SDK builder also passed a bare `--parallel` to CMake, overriding
+`CMAKE_BUILD_PARALLEL_LEVEL=4`. A private empty-project control demonstrates
+Make receives unbounded `-j` with that option and `-j4` without it. Removing
+the bare option restores the documented caller-controlled build limit.
+Both actual driver commands and raw results are retained under
+`sdk-parallel-control`. Interrupted local build logs remain preserved; resumed
+qualification uses a bounded transient user service and does not replace an
+accepted SDK.
+
 ## SQL provider environment scope
 
 The full Mac source/SDK workflows previously exported SQL's
@@ -532,7 +618,7 @@ Actual Mac source and SDK campaigns must confirm the new provider scope.
 
 ## Preserved web handoff
 
-The interrupted web tree contains the listener-to-engine replacement, template
+The initial interrupted web snapshot contained the listener-to-engine replacement, template
 cache changes, static-file changes, status/main/test edits and four new template
 fixtures. Its existing 330 Matrix checks pass. Private, bounded loopback checks
 against copies of that source exposed gaps the current unit suite misses:
@@ -545,6 +631,15 @@ against copies of that source exposed gaps the current unit suite misses:
   that directory. Root-constrained file access needs an actual filesystem boundary.
 
 All diagnostic servers were owned, stopped and reaped. The web source was not
-changed. Its README still describes 272 checks and the deleted serial listener;
-CI audits source paths but does not execute its runtime suite. These are the next
-web tasks after platform parity work, not evidence of IIS/Apache equivalence.
+changed by this audit. At that snapshot its README still described 272 checks
+and the deleted serial listener; CI audited source paths without executing its
+runtime suite. These are historical observations, not evidence of IIS/Apache
+equivalence.
+
+A subsequent read-only check found separate work had advanced the web repository
+to a clean `41eb756`: `9183727` commits the event loop, `c175582` adds logging and
+HTTP dates, and `41eb756` adds configuration and virtual hosts. Its README now
+reports 653 checks. Those changes are preserved; the older 330-check snapshot
+and its reproductions must be checked against this new source before making
+further web changes. The README's remaining-parity paragraph still lists logs,
+configuration and virtual hosts as absent despite documenting them elsewhere.

@@ -93,15 +93,18 @@ not extend the v1 language or debugger guarantees. The LSP has a deliberately
 limited capability set. `nilbuild` supports the [local-project profile](../tools/projects.md),
 with process execution qualified on Linux. `nypm` and `nilaix` are not part of this release.
 
-Sixteen logical standard-library modules are strictly compiled and packaged,
-including `prelude`. Public imports use `nil.std.*`, with `ny.lang.*` retained
-as aliases. Both frontends share the flat module-family layout. Runtime support
+Current development SDKs strictly compile and package eighteen logical
+standard-library modules, including `prelude`. Public imports use `nil.std.*`,
+with `ny.lang.*` retained as aliases. Both frontends share the flat module-family
+layout. Runtime support
 is API-specific, as described in the [library status](../standard-library/index.md).
 `nil.std.reflection` provides declaration/annotation snapshots, and `nil.std.db`
 provides bounded SQLite/PostgreSQL text/NULL operations through shared VM/native
-providers. Complete semantic reference graphs, automatically hosted analyzer plugins,
-typed/binary database values, network transports, cryptography, compression,
-and general stream handles remain outside these implemented slices.
+providers. Bounded TCP sockets and OS entropy are implemented for the interpreter;
+their binary-text values do not yet have native/JIT support. Complete semantic
+reference graphs, automatically hosted analyzer plugins, typed/binary database
+values, TLS/general cryptography, compression and general stream handles remain
+outside these implemented slices.
 Quarantined modules are not promoted by their presence in a design or by a
 module compiling successfully.
 

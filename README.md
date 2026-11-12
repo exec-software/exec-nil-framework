@@ -247,7 +247,8 @@ such as `say formatted "value={5}"`; it works on interpreted and native routes.
 ## Project status
 
 The current version is **1.0.0-rc.1**. Linux x86_64 is the reference development
-platform. The Windows x86_64 development SDK has
+platform; the `9fb6c04` LLVM-enabled source suite passes all 590 CTests without
+skips. The Windows x86_64 development SDK has
 [paired Linux acceptance and installed tooling coverage](notebook/2026-11-02-windows-port.md).
 The newer Windows source campaign also passes the Win32 desktop contracts and
 all 88 real VS Code host groups; a fresh SDK still needs separate qualification.
@@ -259,14 +260,15 @@ checks. Both macOS development SDKs also pass the full installed
 standard-library campaign, isolated PostgreSQL application routes, installed
 debugger checks and execution checkpoints. Both hosts now pass the underlying
 AppKit provider and interpreter/native language-level desktop checks. Windows uses its
-native Win32 provider; Linux uses GTK4. macOS editor integration and a complete
-current SDK desktop campaign remain open. The newer socket, entropy and text-byte
+native Win32 provider; Linux uses GTK4. Both Mac architectures pass all 88 real
+editor groups at `9fb6c04`. Current SDK qualification and an Intel project-tool
+timeout follow-up remain open. The newer socket, entropy and text-byte
 intrinsics pass the same interpreter contracts on Linux, Windows and both Macs.
 File timestamps share an implementation across interpreter and native routes,
 with text/binary NIL, JIT and AOT checks passing on all four hosts.
 Both Macs now pass native allocation-retention contracts, desktop debugger
-sessions and native incremental reuse. Complete Mac editor coverage and current SDK
-qualification remain open, so full platform parity is not yet established.
+sessions and native incremental reuse. Full platform parity awaits those
+remaining SDK and project-tool checks.
 The [platform support matrix](docs/platform-support.md) separates verified
 development behavior from remaining SDK, provider and release work.
 Windows and macOS release qualification remains pending. The

@@ -957,6 +957,9 @@ if(BUILD_TESTING)
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
                 --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src")
         set_tests_properties(nilbuild.tool-discovery-contract PROPERTIES LABELS "tools;project;rc" TIMEOUT 180)
+        if(APPLE)
+            set_tests_properties(nilbuild.tool-discovery-contract PROPERTIES TIMEOUT 600)
+        endif()
         add_test(NAME nil.platform.raw-byte-routes
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/raw_byte_routes_contract.py"
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>

@@ -7,7 +7,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
+import time
 
 
 def main() -> None:
@@ -51,11 +53,29 @@ end test
         path_environment = {**environment, 'PATH': os.pathsep.join(
             [str(work / 'missing tool directory'), str(compiler.parent), *retained_path])}
 
-        def run(command, *, env=adjacent_environment, status=0, executable=None):
+        def run(command, *, env=adjacent_environment, status=0, executable=None, timeout=60):
             nonlocal checks
-            result = subprocess.run(list(map(str, command)), cwd=work, env=env,
-                                    stdin=subprocess.DEVNULL, capture_output=True,
-                                    text=True, timeout=60, executable=executable)
+            argv = list(map(str, command))
+            phase = f'{checks + 1}: {Path(argv[0]).name} {argv[1]}'
+            print(f'tool discovery phase {phase}: starting, timeout={timeout}s', flush=True)
+            started = time.monotonic()
+            try:
+                result = subprocess.run(argv, cwd=work, env=env,
+                                        stdin=subprocess.DEVNULL, capture_output=True,
+                                        text=True, timeout=timeout, executable=executable)
+            except subprocess.TimeoutExpired as error:
+                # TimeoutExpired may carry bytes even when text=True. Preserve
+                # captured diagnostics before the traceback loses those fields.
+                def captured(value):
+                    return value.decode('utf-8', errors='replace') if isinstance(value, bytes) else value or ''
+                print(json.dumps({'phase': phase, 'command': argv,
+                                  'elapsed_seconds': time.monotonic() - started,
+                                  'timeout_seconds': timeout,
+                                  'stdout': captured(error.stdout),
+                                  'stderr': captured(error.stderr)}), file=sys.stderr, flush=True)
+                raise
+            print(f'tool discovery phase {phase}: exit={result.returncode}, '
+                  f'elapsed={time.monotonic() - started:.2f}s', flush=True)
             assert result.returncode == status, (command, result.returncode,
                                                   result.stdout, result.stderr)
             checks += 1
@@ -68,7 +88,11 @@ end test
             checked = run([build_command, 'check', *build_options, '--format', 'json',
                            *flags], env=env)
             assert json.loads(checked.stdout)['success']
-            ran = run([build_command, 'run', *build_options, *flags], env=env)
+            # Real Darwin project runs fingerprint the complete toolchain before
+            # executing the VM. Use the measured project VM budget for only
+            # these two calls; discovery/check/error paths retain sixty seconds.
+            ran = run([build_command, 'run', *build_options, *flags], env=env,
+                      timeout=180 if sys.platform == 'darwin' else 60)
             assert ran.stdout == 'discovered application\n', ran
             tested = run([build_command, 'test', *build_options, '--format', 'json',
                           *flags], env=env)
