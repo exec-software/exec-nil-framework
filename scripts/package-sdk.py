@@ -241,6 +241,27 @@ def logical_module_name(source: Path, nilstd: Path) -> str:
     return ".".join(relative.parts)
 
 
+def install_library_payload(temporary_root: Path, nillib: Path) -> None:
+    """Copy completed private build outputs with destination-inherited access."""
+    files = regular_tree_files(temporary_root)
+    if nillib.exists() or nillib.is_symlink():
+        raise SystemExit("refusing to replace an existing staged nillib directory")
+    # Renaming a TemporaryDirectory preserves its private mode/DACL. Recreate
+    # every published entry under the SDK stage instead, honoring its default
+    # ACL and the caller's umask; copy no private staging permission metadata.
+    # The enclosing SDK stage is not activated until packaging has succeeded.
+    nillib.mkdir()
+    try:
+        for source in files:
+            destination = nillib / source.relative_to(temporary_root)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
+    except BaseException:
+        # mkdir succeeded above, so this subtree belongs to this attempt.
+        shutil.rmtree(nillib)
+        raise
+
+
 def compile_standard_library(
     compiler: Path, nilstd: Path, stage_dir: Path, runtime_source: Path,
     shared_source: Path | None = None, freestanding_source: Path | None = None
@@ -374,10 +395,7 @@ def compile_standard_library(
                 lines.append("\n[{}]\n{}".format(module_name, compact))
             raise SystemExit("\n".join(lines))
 
-        nillib = stage_dir / "nillib"
-        if nillib.exists() or nillib.is_symlink():
-            raise SystemExit("refusing to replace an existing staged nillib directory")
-        os.replace(temporary_root, nillib)
+        install_library_payload(temporary_root, stage_dir / "nillib")
         runtime_source.unlink()
         if shared_source is not None:
             shared_source.unlink()

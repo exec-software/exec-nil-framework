@@ -8,10 +8,12 @@ import importlib.util
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -212,6 +214,107 @@ value `library` is 1
                 PACKAGER.compile_standard_library(OPTIONS.compiler, nilstd, stage, runtime)
             self.assertFalse((stage / "nillib").exists())
             self.assertTrue(runtime.exists())
+
+    def test_published_library_inherits_access_without_exposing_private_build(self):
+        masks = (0o022, 0o027, 0o077) if os.name != "nt" else (None,)
+        for mask in masks:
+            with self.subTest(umask=mask), tempfile.TemporaryDirectory(prefix="nil-sdk-access-") as temporary:
+                root = Path(temporary)
+                destination_root = root / "stage/nillib"
+                copied = []
+                original_copy = shutil.copyfile
+
+                def observe_copy(source, destination, *args, **kwargs):
+                    source, destination = Path(source), Path(destination)
+                    publishing = destination.is_relative_to(destination_root)
+                    if publishing:
+                        private = next(parent for parent in source.parents
+                                       if parent.name.startswith(".nillib.stage."))
+                        self.assertEqual(private.parent, root / "stage")
+                        if os.name != "nt":
+                            self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o700)
+                        copied.append(destination)
+                    result = original_copy(source, destination, *args, **kwargs)
+                    if publishing:
+                        self.assertEqual(PACKAGER.sha256(source), PACKAGER.sha256(destination), destination)
+                    return result
+
+                previous = os.umask(mask) if mask is not None else None
+                try:
+                    with mock.patch.object(PACKAGER.shutil, "copyfile", side_effect=observe_copy):
+                        stage, unused = self.make_stage(root, {
+                            "demo/nested/answer.matrix": "book demo.nested\npublic answer returns override integer begin paragraph\ngive 42\nend paragraph\n",
+                        })
+                finally:
+                    if previous is not None:
+                        os.umask(previous)
+                self.assertGreaterEqual(len(copied), 4)  # module, alias and both runtimes
+                self.assertEqual(list(stage.glob(".nillib.stage.*")), [])
+                if mask is not None:
+                    for path in (destination_root, *destination_root.rglob("*")):
+                        expected = (0o777 if path.is_dir() else 0o666) & ~mask
+                        self.assertEqual(stat.S_IMODE(path.stat().st_mode), expected, path)
+
+    def test_library_copy_failure_removes_partial_output_and_preserves_inputs(self):
+        with tempfile.TemporaryDirectory(prefix="nil-sdk-copy-failure-") as temporary:
+            stage = Path(temporary) / "stage"
+            nilstd = stage / "nilstd"
+            nilstd.mkdir(parents=True)
+            (nilstd / "answer.matrix").write_text(
+                "book demo.answer\npublic answer returns override integer begin paragraph\ngive 42\nend paragraph\n",
+                encoding="utf-8", newline="\n")
+            originals = (OPTIONS.runtime, OPTIONS.shared_runtime)
+            inputs = [stage / source.name for source in originals]
+            for source, destination in zip(originals, inputs):
+                shutil.copyfile(source, destination)
+            expected = {path: PACKAGER.sha256(path) for path in inputs}
+            original_copy = shutil.copyfile
+            published = []
+
+            def fail_second_copy(source, destination, *args, **kwargs):
+                if Path(destination).is_relative_to(stage / "nillib"):
+                    published.append(Path(destination))
+                    if len(published) == 2:
+                        raise OSError("injected publication copy failure")
+                return original_copy(source, destination, *args, **kwargs)
+
+            with mock.patch.object(PACKAGER.shutil, "copyfile", side_effect=fail_second_copy):
+                with self.assertRaisesRegex(OSError, "injected publication copy failure"):
+                    PACKAGER.compile_standard_library(OPTIONS.compiler, nilstd, stage, *inputs)
+            self.assertEqual(len(published), 2)
+            self.assertFalse((stage / "nillib").exists())
+            self.assertEqual(list(stage.glob(".nillib.stage.*")), [])
+            self.assertEqual({path: PACKAGER.sha256(path) for path in inputs}, expected)
+
+    def test_library_install_preserves_existing_targets_and_rejects_links(self):
+        with tempfile.TemporaryDirectory(prefix="nil-sdk-copy-target-") as temporary:
+            root = Path(temporary)
+            private = root / "private"
+            private.mkdir(mode=0o700)
+            (private / "module.nil").write_bytes(b"completed output")
+            nillib = root / "nillib"
+            nillib.write_bytes(b"existing file")
+            with self.assertRaisesRegex(SystemExit, "existing staged nillib"):
+                PACKAGER.install_library_payload(private, nillib)
+            self.assertEqual(nillib.read_bytes(), b"existing file")
+            nillib.unlink()
+            nillib.mkdir()
+            (nillib / "keep").write_bytes(b"existing directory")
+            with self.assertRaisesRegex(SystemExit, "existing staged nillib"):
+                PACKAGER.install_library_payload(private, nillib)
+            self.assertEqual((nillib / "keep").read_bytes(), b"existing directory")
+            shutil.rmtree(nillib)
+            if os.name != "nt":
+                nillib.symlink_to(root / "absent", target_is_directory=True)
+                with self.assertRaisesRegex(SystemExit, "existing staged nillib"):
+                    PACKAGER.install_library_payload(private, nillib)
+                self.assertTrue(nillib.is_symlink())
+                self.assertEqual(nillib.readlink(), root / "absent")
+                nillib.unlink()
+                (private / "link.nil").symlink_to(private / "module.nil")
+                with self.assertRaisesRegex(SystemExit, "must not contain symlinks"):
+                    PACKAGER.install_library_payload(private, nillib)
+                self.assertFalse(nillib.exists())
 
 
 if __name__ == "__main__":
