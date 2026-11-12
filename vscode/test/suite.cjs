@@ -6,6 +6,7 @@ const { promisify } = require("node:util");
 const vscode = require("vscode");
 const executeFile = promisify(execFile);
 const { sameFile } = require("./host-support.cjs");
+const { createTaskEvidence } = require("./task-evidence.cjs");
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function bounded(promise, description, timeout = 25_000) {
@@ -43,6 +44,8 @@ exports.run = async function run() {
   assert.ok(runId, "Isolated host run identity is required.");
   const report = { status: "RUNNING", runId, vscode: vscode.version, platform: process.platform, workspace, checks, skippedChecks: [],
     fullSuiteCompleted: false, completedModules: [] };
+  const taskEvidence = createTaskEvidence();
+  report.taskLifecycle = taskEvidence.report;
   const check = async (name, operation, timeout = 45_000) => {
     const start = Date.now();
     const detail = await bounded(operation(), name, timeout);
@@ -50,7 +53,7 @@ exports.run = async function run() {
     console.log(`PASS ${name}`);
   };
   const runModule = async name => {
-    await require(`./${name}.cjs`).run({ check, workspace });
+    await require(`./${name}.cjs`).run({ check, workspace, taskEvidence });
     report.completedModules.push(name);
   };
   const events = [];
@@ -68,10 +71,16 @@ exports.run = async function run() {
     })().catch(error => { capture.error = String(error); });
   });
   const taskSubscription = vscode.tasks.onDidEndTaskProcess((event) => {
+    taskEvidence.event("process-end", event.execution, { exitCode: event.exitCode });
     const execution = event.execution.task.execution;
     events.push({ task: event.execution.task.definition.task, source: event.execution.task.definition.source, exitCode: event.exitCode,
       command: execution?.command || execution?.process, args: execution?.args });
   });
+  const lifecycleSubscriptions = [
+    vscode.tasks.onDidStartTask(event => taskEvidence.event("task-start", event.execution)),
+    vscode.tasks.onDidStartTaskProcess(event => taskEvidence.event("process-start", event.execution, { processId: event.processId })),
+    vscode.tasks.onDidEndTask(event => taskEvidence.event("task-end", event.execution))
+  ];
   try {
     assert.equal(vscode.workspace.isTrusted, true);
     const extension = vscode.extensions.getExtension("exec-software.ny-language-support");
@@ -385,11 +394,17 @@ exports.run = async function run() {
   } catch (error) {
     report.status = "FAIL";
     report.error = error.stack || String(error);
+    try {
+      const directory = path.join(path.dirname(reportFile), `${runId}-task-diagnostics`);
+      await fs.mkdir(directory, { recursive: true });
+      await taskEvidence.failure(report.error, vscode.tasks.taskExecutions, workspace, directory);
+    } catch (diagnosticError) { report.taskDiagnosticError = String(diagnosticError); }
     report.diagnostics = vscode.languages.getDiagnostics().map(([uri, items]) => ({ uri: uri.toString(),
       items: items.map(item => ({ source: item.source, message: item.message, line: item.range.start.line })) }));
     throw error;
   } finally {
     taskSubscription.dispose();
+    lifecycleSubscriptions.forEach(subscription => subscription.dispose());
     terminalSubscription?.dispose();
     await fs.writeFile(reportFile, JSON.stringify(report, null, 2) + "\n");
   }

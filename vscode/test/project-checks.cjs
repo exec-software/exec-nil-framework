@@ -26,7 +26,7 @@ async function replace(document, text) {
   edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length)), text);
   assert.equal(await vscode.workspace.applyEdit(edit), true);
 }
-exports.run = async ({ check, workspace }) => {
+exports.run = async ({ check, workspace, taskEvidence }) => {
   for (const language of ["ny", "matrix"]) {
     const directory = path.join(workspace, `project ${language}`);
     await fs.mkdir(path.join(directory, "src"), { recursive: true });
@@ -73,8 +73,11 @@ exports.run = async ({ check, workspace }) => {
         const phases = [];
         for (const command of [checkCommand, buildCommand, runCommand]) {
           const start = Date.now();
+          const dispatch = taskEvidence?.dispatch(command);
           console.log(`Starting ${language} ${target} project command: ${command}`);
-          assert.equal(await vscode.commands.executeCommand(command), 0, command);
+          const exitCode = await vscode.commands.executeCommand(command);
+          if (dispatch) taskEvidence.complete(dispatch, exitCode);
+          assert.equal(exitCode, 0, command);
           const milliseconds = Date.now() - start;
           phases.push({ command, milliseconds });
           console.log(`Completed ${language} ${target} project command: ${command} (${milliseconds} ms)`);
