@@ -7,6 +7,7 @@
 #include "../../common/native_executable_path.hpp"
 #include "../../common/windows_utf8_manifest.hpp"
 #include "../../common/windows_private_storage.hpp"
+#include "../../common/atomic_file_replace.hpp"
 #include "compiler_module_fingerprint.hpp"
 #ifdef _WIN32
 #include "../../nillinker/process_runner.hpp"
@@ -314,37 +315,6 @@ create_private_staging_directory(const std::filesystem::path &output,
 
   error = std::make_error_code(std::errc::file_exists);
   return std::nullopt;
-}
-
-static bool replace_output_file(const std::filesystem::path &staging,
-                                const std::filesystem::path &output,
-                                std::error_code &error) {
-#ifdef _WIN32
-  // Windows can refuse to replace an executable that ran moments ago: the
-  // image section outlives the process for a short while, and a scanner may
-  // hold a freshly written file open while it inspects it. Both clear on their
-  // own within milliseconds, and neither means the compiler did anything
-  // wrong, so retry briefly rather than fail the build. Observed as
-  // "Failed to install linked executable: Access is denied." on a test that
-  // compiles to the same output path twice and runs it in between.
-  for (int attempt = 0;; ++attempt) {
-    if (MoveFileExW(staging.c_str(), output.c_str(),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-      return true;
-    const DWORD code = GetLastError();
-    const bool transient = code == ERROR_ACCESS_DENIED ||
-                           code == ERROR_SHARING_VIOLATION ||
-                           code == ERROR_LOCK_VIOLATION;
-    if (!transient || attempt >= 50) {
-      error = std::error_code(static_cast<int>(code), std::system_category());
-      return false;
-    }
-    Sleep(20);
-  }
-#else
-  std::filesystem::rename(staging, output, error);
-  return !error;
-#endif
 }
 
 static bool ensure_staged_regular_file_permissions(
@@ -2006,7 +1976,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
     if (!ensure_staged_regular_file_permissions(nil_out_path,
             std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
             output_error) ||
-        !replace_output_file(nil_out_path, output_path, output_error)) {
+        !nil::detail::replace_output_file(nil_out_path, output_path, output_error)) {
       std::cerr << "Error: failed to install complete test artifact: "
                 << output_error.message() << '\n';
       return 1;
@@ -2130,7 +2100,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
       }
 
       output_error.clear();
-      if (!replace_output_file(staging_path, out_exe, output_error)) {
+      if (!nil::detail::replace_output_file(staging_path, out_exe, output_error)) {
         std::cerr << "Error: failed to install bundled executable: "
                   << output_error.message() << "\n";
         return 1;
@@ -2398,7 +2368,7 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
         }
 
         std::error_code install_error;
-        if (!replace_output_file(link_output_path, exe_path, install_error)) {
+        if (!nil::detail::replace_output_file(link_output_path, exe_path, install_error)) {
           std::cerr << "[Native] Failed to install linked executable: "
                     << install_error.message() << "\n";
           return 1;

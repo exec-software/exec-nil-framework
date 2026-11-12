@@ -115,6 +115,11 @@ if(BUILD_TESTING)
         set_tests_properties(nil.freestanding-hook-${nil_hook_profile} PROPERTIES LABELS "runtime;rc" TIMEOUT 15)
     endforeach()
     if(WIN32)
+        add_executable(nil_atomic_file_replace_tests tests/atomic_file_replace_tests.cpp)
+        target_compile_features(nil_atomic_file_replace_tests PRIVATE cxx_std_17)
+        target_link_libraries(nil_atomic_file_replace_tests PRIVATE advapi32)
+        add_test(NAME nil.atomic-file-replace COMMAND $<TARGET_FILE:nil_atomic_file_replace_tests>)
+        set_tests_properties(nil.atomic-file-replace PROPERTIES LABELS "tools;windows;publication;rc" TIMEOUT 15)
         # Keep the public backend declarations usable after real Windows RPC
         # headers, even in an LLVM-OFF build that normally hides this interface.
         add_library(nil_native_windows_header_contract OBJECT tests/native_windows_header_contract.cpp)

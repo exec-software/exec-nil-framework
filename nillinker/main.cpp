@@ -6,6 +6,7 @@
 #include "../common/standard_streams.hpp"
 #include "../common/windows_utf8_manifest.hpp"
 #include "../common/windows_private_storage.hpp"
+#include "../common/atomic_file_replace.hpp"
 #include "nillinker.hpp"
 #include "process_runner.hpp"
 #include "secure_file_io.hpp"
@@ -992,23 +993,6 @@ bool secure_executable(const fs::path &path, std::error_code &error) {
   return true;
 }
 
-bool replace_output_file(const fs::path &staging, const fs::path &output,
-                         std::error_code &error) {
-#ifdef _WIN32
-  if (MoveFileExW(staging.c_str(), output.c_str(),
-                  MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-    error.clear();
-    return true;
-  }
-  error =
-      std::error_code(static_cast<int>(GetLastError()), std::system_category());
-  return false;
-#else
-  fs::rename(staging, output, error);
-  return !error;
-#endif
-}
-
 void print_usage(std::ostream &out) {
   out << "Usage: nillinker [options] object...\n"
       << "\nOptions:\n"
@@ -1602,7 +1586,7 @@ bool Linker::link(const fs::path &requested_output) {
              output_error.message();
     return false;
   }
-  if (!replace_output_file(staged_output, output, output_error)) {
+  if (!nil::detail::replace_output_file(staged_output, output, output_error)) {
     error_ = "cannot atomically publish linked executable to '" +
              display_path(output) + "': " + output_error.message();
     return false;

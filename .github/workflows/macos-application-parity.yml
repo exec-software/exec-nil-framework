@@ -15,7 +15,7 @@ name: macOS application platform checks
       - 'nillsp/**'
       - 'aperture/**'
       - 'common/**'
-      - 'nillinker/process_runner*'
+      - 'nillinker/**'
       - 'validation/ny-3d/scripts/debugger_process.py'
       - 'scripts/ci/macos-toolchain-census.py'
       - 'tests/darwin*'
