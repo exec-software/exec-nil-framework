@@ -225,23 +225,23 @@ void closure(const fs::path &root) {
   check(collect().has_value(), "unrelated SDK archive cannot introduce autolinks into fixed direct roots");
   for (const auto *name : {"c++", "System"}) {
     const auto direct = plan.sdk / "usr/lib" / (std::string("lib") + name);
-    const auto archive = fs::path(direct.string() + ".a"), interface = fs::path(direct.string() + ".tbd");
+    const auto archive = fs::path(direct.string() + ".a"), text_interface = fs::path(direct.string() + ".tbd");
     write(archive, "!<arch>\n");
     check(collect().has_value(), "same-directory text interface precedes a direct archive fallback");
     const auto text = name == std::string("c++") ? stub("/usr/lib/libc++.1.dylib") : stub();
     auto incompatible = text;
     const std::string compatible_targets = "arm64-macos, x86_64-macos";
     incompatible.replace(incompatible.find(compatible_targets), compatible_targets.size(), "i386-macos");
-    write(interface, incompatible);
+    write(text_interface, incompatible);
     check(collect().has_value(), "architecture parsing cannot resume path search into a shadowed archive (no link success claim)");
-    fs::remove(interface);
+    fs::remove(text_interface);
     std::string archive_reason;
     check(!detail::collector(driver, project, runtime, plan, inspect, host, &archive_reason).files() &&
           archive_reason.find("selected SDK archive") != std::string::npos,
           "removing direct stub exposes archive autolinks and disables reuse");
     fs::remove(archive);
     check(!collect(), "missing direct text root cannot certify successful native reuse");
-    write(interface, text);
+    write(text_interface, text);
   }
   const auto early_archive = plan.sdk / "usr/local/lib/libc++.a";
   write(early_archive, "!<arch>\n");
