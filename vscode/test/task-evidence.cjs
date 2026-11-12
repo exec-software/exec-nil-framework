@@ -7,8 +7,10 @@ const execute = promisify(execFile);
 
 async function inspectProcess(task, workspace, output, run = execute) {
   const evidence = { processId: task.processId, expectedCommand: task.command, expectedArgs: task.args };
-  if (!Number.isSafeInteger(task.processId) || task.processId <= 0 || !path.isAbsolute(task.command || "") ||
-      !task.args?.some(value => typeof value === "string" && value.startsWith(workspace + path.sep))) {
+  // These diagnostics run only on Darwin. Keep their path contract explicit
+  // so the same mocked controls also exercise it on Windows.
+  if (!Number.isSafeInteger(task.processId) || task.processId <= 0 || !path.posix.isAbsolute(task.command || "") ||
+      !task.args?.some(value => typeof value === "string" && value.startsWith(workspace + path.posix.sep))) {
     return { ...evidence, sampled: false, reason: "No owned workspace task process declaration" };
   }
   const options = { timeout: 2500, maxBuffer: 64 * 1024, encoding: "utf8" };
@@ -20,7 +22,7 @@ async function inspectProcess(task, workspace, output, run = execute) {
     // no longer matches this run's executable and private workspace arguments.
     // The command observation and subsequent sample are not atomic.
     if (!evidence.command.startsWith(task.command + " ") ||
-        !evidence.command.includes(workspace + path.sep) || !task.args.every(value => evidence.command.includes(value))) {
+        !evidence.command.includes(workspace + path.posix.sep) || !task.args.every(value => evidence.command.includes(value))) {
       return { ...evidence, sampled: false, reason: "Observed process does not match the owned task" };
     }
     try { await fs.access(output); return { ...evidence, sampled: false, reason: "Sample path already exists" }; }
