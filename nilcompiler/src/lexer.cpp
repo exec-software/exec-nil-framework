@@ -45,6 +45,22 @@ std::vector<token> lexer::scan_tokens() {
 
     switch (c) {
     case '$':
+      // '$markup' on its own line opens a document literal. The sigil is what
+      // keeps it unambiguous: Ny has no 'begin', and a bare word before a
+      // newline could be an ordinary name.
+      if (src.compare(current, 6, "markup") == 0 &&
+          (current + 6 >= src.size() ||
+           !(std::isalnum(static_cast<unsigned char>(src[current + 6])) ||
+             src[current + 6] == '_'))) {
+        auto probe = current + 6;
+        while (probe < src.size() && (src[probe] == ' ' || src[probe] == '\t' ||
+                                      src[probe] == '\r'))
+          ++probe;
+        if (probe >= src.size() || src[probe] == '\n') {
+          formatted_block(tokens, true);
+          continue;
+        }
+      }
       if (peek() == '"' && peek_next() == '"' && current + 2 < src.size() &&
           src[current + 2] == '"') {
         formatted_block(tokens);
@@ -565,10 +581,12 @@ token lexer::string() {
 // what makes a path, a regular expression or embedded JSON writable here.
 // Indentation removal applies to the literal segments only, so a hole keeps
 // its original file coordinates and stays editable.
-void lexer::formatted_block(std::vector<token> &tokens) {
+void lexer::formatted_block(std::vector<token> &tokens, bool markup) {
   const int opening_line = line;
   const auto opening = start;
-  current += 3; // the three opening quotes
+  const std::string closing = markup ? "end markup" : "\"\"\"";
+  // The '$' is already consumed: skip 'markup', or the three quotes.
+  current += markup ? 6 : 3;
   while (!is_at_end() && peek() != '\n') advance();
   if (!is_at_end()) advance();
   const auto header_end = current;
@@ -596,10 +614,11 @@ void lexer::formatted_block(std::vector<token> &tokens) {
     // The terminator is the first line whose content STARTS with three quotes,
     // and lexing resumes immediately after them.
     const auto first = raw.find_first_not_of(" \t");
-    if (first != std::string::npos && raw.compare(first, 3, "\"\"\"") == 0) {
+    if (first != std::string::npos &&
+        raw.compare(first, closing.size(), closing) == 0) {
       terminated = true;
       terminator = begin + first;
-      current = terminator + 3;
+      current = terminator + closing.size();
       break;
     }
     lines.push_back({begin, raw});
@@ -613,7 +632,8 @@ void lexer::formatted_block(std::vector<token> &tokens) {
   };
   if (!terminated) {
     emit(token_kind::invalid,
-         "unterminated formatted block; close it with a line whose only content is \"\"\"",
+         markup ? "unterminated markup block; close it with a line that begins with 'end markup'"
+                : "unterminated formatted block; close it with a line that begins with \"\"\"",
          opening, 1);
     line = positions.line(current);
     return;
@@ -648,13 +668,16 @@ void lexer::formatted_block(std::vector<token> &tokens) {
     return source_starts[row] + (logical - logical_starts[row]);
   };
 
-  const auto scanned = scan_formatted_block(content, false, interpolation_depth_);
+  const auto scanned = markup ? scan_markup_content(content, interpolation_depth_)
+                              : scan_formatted_block(content, false, interpolation_depth_);
   if (!scanned.error.empty()) {
     emit(token_kind::invalid, scanned.error, source_offset(scanned.error_offset), 1);
     line = positions.line(current);
     return;
   }
-  tokens.push_back(token{token_kind::formatted_string_begin, "$\"\"\"", opening_line,
+  tokens.push_back(token{markup ? token_kind::markup_begin
+                                : token_kind::formatted_string_begin,
+                         markup ? "$markup" : "$\"\"\"", opening_line,
                          opening, header_end - opening});
   for (const auto &piece : scanned.pieces) {
     const auto begin = source_offset(piece.start);
@@ -673,7 +696,8 @@ void lexer::formatted_block(std::vector<token> &tokens) {
     }
     emit(token_kind::interpolation_end, "}", end, 1);
   }
-  emit(token_kind::formatted_string_end, "\"\"\"", terminator, 3);
+  emit(markup ? token_kind::markup_end : token_kind::formatted_string_end,
+       closing, terminator, closing.size());
   line = positions.line(current);
 }
 

@@ -3150,7 +3150,7 @@ if(BUILD_TESTING)
                                         bugpass-constructor-context
                                         bugpass-call-context
                                         collected-queries collected-queries-matrix
-                                        markup-matrix
+                                        markup markup-matrix
                                         signed-numbers-matrix
                                         integer-literal-widths integer-literal-widths-matrix
                                         checked-text-spans checked-text-spans-matrix

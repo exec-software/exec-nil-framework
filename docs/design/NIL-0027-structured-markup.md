@@ -1,8 +1,7 @@
 # NIL-0027: Multiline formatted text and structured markup literals
 
-- **Status:** §2 implemented for both surfaces on 2026-11-13. §3 implemented
-  for Matrix the same day, with the representation revised as recorded in
-  §3.6; the Ny spelling of §3 is settled in §6 and not yet built.
+- **Status:** §2 and §3 implemented for both surfaces on 2026-11-13, with the
+  representation revised as recorded in §3.6.
 - **Scope:** Ny and Matrix syntax, shared hole lexing and AST, checking,
   lowering, `nil.std.markup`, text builder
 - **Date:** 2026-11-13
@@ -52,7 +51,7 @@ member of that family.
 | --- | --- | --- | --- |
 | `formatted "..."` | yes | none, one line | NIL-0014, implemented |
 | `formatted begin text ... end text` / `$"""` | yes | none, multiline | §2, implemented |
-| `begin markup ... end markup` | yes | elements, attributes, control flow | §3, implemented (Matrix) |
+| `begin markup ... end markup` / `$markup` | yes | elements, attributes, control flow | §3, implemented |
 
 All three use the hole lexer NIL-0014 already built, which emits an expression's
 tokens with their original byte offsets rather than re-lexing decoded text.
@@ -309,6 +308,10 @@ file access from a document.
    once.
 4. `nil.std.markup` constructors beyond `raw` and `empty`, so a document can be
    assembled from values rather than written literally, and the XML table.
+   Ny reached parity on 2026-11-13: `markup_structure` holds the document
+   parsing, the checks and the escape decisions, and each frontend supplies
+   only its own directive words and its own expression lexing, so the two
+   surfaces cannot drift in what a document means.
 5. Diffing two documents, which is what would bring §3.6's arena back.
 
 ## 6. Open questions
@@ -325,8 +328,17 @@ file access from a document.
 - **Performance claims.** §3.6 asserts an append count, not a measurement.
   Benchmark the rendered page against the concatenated equivalent before the
   claim appears in any guide.
-- **Ny spelling.** `$"""` for §2 is settled by analogy; the Ny surface for
-  §3 is not. `markup { ... }` is the obvious candidate and is not yet decided.
+- ~~**Ny spelling.**~~ Settled while implementing. `markup { ... }`, this
+  record's original candidate, does not survive contact with the content: a
+  markup block is full of braces — holes, and CSS or JavaScript inside a
+  raw-text element — so a brace-delimited block would end at the first `}` in a
+  stylesheet. The terminator has to be a line-anchored keyword, which is what
+  lets the block hold any bytes without escapes. Ny therefore opens with
+  `$markup` on its own line and closes with `end markup`. The `$` is what keeps
+  it unambiguous: Ny has no `begin`, so a bare word before a newline could be
+  an ordinary name, while `$` already means "a literal with holes in it" in
+  that surface. Matrix needs no sigil because `begin` supplies the same
+  disambiguation.
 
 ## 7. Compatibility
 

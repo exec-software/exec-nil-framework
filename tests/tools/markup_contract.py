@@ -78,6 +78,56 @@ def main():
                 assert result.stderr.strip(), (name, flags)
                 checks += 1
 
+        # Ny rejects the same documents through the same shared structure,
+        # with its own control words.
+        ny_rejected = [
+            ('ny-mismatched-close', '<div><p>x</div>'),
+            ('ny-unclosed-element', '<div><p>x</p>'),
+            ('ny-arm-opens-only', '<div>{if flag}<p>a{end if}</div>'),
+            ('ny-hole-names-attribute', '<div {label}="x">y</div>'),
+            ('ny-unquoted-attribute', '<div class=x>y</div>'),
+            ('ny-document-in-attribute', '<div class="{inner}">y</div>'),
+            ('ny-script-hole-without-raw', '<script>{label}</script>'),
+            ('ny-end-without-open', '<p>x</p>{end if}'),
+            ('ny-condition-not-boolean', '{if label}<p>x</p>{end if}'),
+            ('ny-unsupported-hole-type', '<p>{rows}</p>'),
+        ]
+        for name, body in ny_rejected:
+            source = ('import nil.std.markup.escaping\n'
+                      'fn main() -> i32\n'
+                      '    let flag = true\n'
+                      '    let label = "cls"\n'
+                      '    let rows = [1, 2]\n'
+                      '    let inner = $markup\n        <em>x</em>\n    end markup\n'
+                      '    let page = $markup\n'
+                      f'        {body}\n'
+                      '    end markup\n'
+                      '    return 0\n'
+                      'end fn\n')
+            path = root / f'{name}.ny'
+            path.write_text(source, newline='\n')
+            for flags in routes:
+                output = root / 'protected-output'
+                output.write_bytes(b'previous artifact')
+                result = subprocess.run([compiler, '--quiet', '-I', str(stdlib),
+                                         *flags, '--output', output, path],
+                                        capture_output=True, text=True, timeout=60)
+                assert result.returncode != 0, (name, flags, result.stdout)
+                assert output.read_bytes() == b'previous artifact', (name, flags)
+                assert result.stderr.strip(), (name, flags)
+                checks += 1
+
+        # An unterminated Ny block is a lexer error too.
+        path = root / 'ny-unterminated.ny'
+        path.write_text('import nil.std.markup.escaping\n'
+                        'fn main() -> i32\n    let page = $markup\n        <p>x</p>\n'
+                        '    return 0\nend fn\n', newline='\n')
+        result = subprocess.run([compiler, '--quiet', '-I', str(stdlib), '--no-bundle',
+                                 '--output', root / 'ny-unterminated.nil', path],
+                                capture_output=True, text=True, timeout=60)
+        assert result.returncode != 0 and 'markup block' in result.stderr, result.stderr
+        checks += 1
+
         # An unterminated block is a lexer error, before any markup parsing.
         path = root / 'unterminated.matrix'
         path.write_text(HEAD + 'main returns override integer begin paragraph\n'

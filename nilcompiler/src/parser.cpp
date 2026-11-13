@@ -18,6 +18,7 @@ Design notes:
 
 #include <optional>
 #include "parser.hpp"
+#include "markup_structure.hpp"
 #include "numeric_literal.hpp"
 #include "pattern_syntax.hpp"
 #include "pattern_engine.hpp"
@@ -473,6 +474,7 @@ parser::parser(const std::string &source, const parser_options &opts)
         (number.lexeme.find("interpolation") != std::string::npos ||
          number.lexeme.find("formatted text") != std::string::npos ||
          number.lexeme.find("formatted block") != std::string::npos ||
+         number.lexeme.find("markup block") != std::string::npos ||
          number.lexeme.rfind("Unterminated block comment", 0) == 0))
       add_error(number, number.lexeme);
     if (number.kind == token_kind::number_literal &&
@@ -3545,6 +3547,84 @@ std::shared_ptr<ast_expr> parser::parse_primary() {
       integer_boundaries_.emplace(pos_ - 1, number);
     return number;
   }
+  // A markup literal (NIL-0027 section 3). The same shared structure Matrix
+  // uses reads the segments; only the directive words differ, because they are
+  // each surface's own control words rather than a vocabulary markup invents.
+  if (match(token_kind::markup_begin)) {
+    const int line = previous().line;
+    auto markup = std::make_shared<ast_markup_expr>(line);
+    markup_structure document;
+    while (!check(token_kind::markup_end) && !is_at_end()) {
+      if (match(token_kind::formatted_text)) {
+        document.literal(previous().lexeme, previous().line);
+        continue;
+      }
+      if (!match(token_kind::interpolation_begin)) {
+        add_error(peek(), "Expected markup or an interpolation");
+        advance();
+        continue;
+      }
+      const int hole_line = previous().line;
+      if (match(token_kind::if_kw)) {
+        document.open_when(parse_expression(), hole_line);
+        match(token_kind::then_kw);
+      } else if (match(token_kind::elseif_kw)) {
+        document.else_arm(parse_expression(), hole_line);
+        match(token_kind::then_kw);
+      } else if (match(token_kind::else_kw)) {
+        if (match(token_kind::if_kw)) {
+          document.else_arm(parse_expression(), hole_line);
+          match(token_kind::then_kw);
+        } else {
+          document.else_arm(nullptr, hole_line);
+        }
+      } else if (match(token_kind::for_kw)) {
+        std::string binding;
+        if (!check(token_kind::identifier))
+          add_error(peek(), "Expected a row name after '{for'");
+        else
+          binding = advance().lexeme;
+        if (!match(token_kind::in_kw))
+          add_error(peek(), "Expected 'in' after the row name");
+        auto source = parse_expression();
+        match(token_kind::do_kw);
+        document.open_repeat(std::move(binding), std::move(source), hole_line);
+      } else if (match(token_kind::end_kw)) {
+        const bool closing_for = match(token_kind::for_kw);
+        const bool closing_if = !closing_for && match(token_kind::if_kw);
+        if (!closing_for && !closing_if)
+          add_error(peek(), "Expected '{end if}' or '{end for}'");
+        document.close_directive(closing_for ? 2 : 1, hole_line);
+      } else if (check(token_kind::interpolation_end)) {
+        add_error(peek(), "Interpolation requires an expression");
+        advance();
+        continue;
+      } else {
+        // '{raw x}' splices unescaped; a lone '{raw}' is still a name.
+        const bool raw = check(token_kind::identifier) && peek().lexeme == "raw" &&
+                         pos_ + 1 < tokens_.size() &&
+                         tokens_[pos_ + 1].kind != token_kind::interpolation_end;
+        if (raw) advance();
+        document.hole(parse_expression(), raw, hole_line);
+      }
+      if (!check(token_kind::interpolation_end)) {
+        add_error(peek(), "Expected '}' after the interpolation expression");
+        while (!check(token_kind::interpolation_end) &&
+               !check(token_kind::markup_end) && !is_at_end()) advance();
+      }
+      consume(token_kind::interpolation_end, "Expected '}' after interpolation");
+    }
+    consume(token_kind::markup_end, "Expected 'end markup' after a markup block");
+    document.finish(line);
+    if (document.failed()) {
+      add_error_at_line(document.error_line, document.error,
+                        document.hint.empty() ? std::nullopt
+                                              : std::optional<std::string>(document.hint));
+    }
+    markup->items = std::move(document.items);
+    return markup;
+  }
+
   if (match(token_kind::formatted_string_begin)) {
     const int line = previous().line;
     std::vector<interpolated_part> parts;
@@ -3939,6 +4019,7 @@ bool parser::is_switch_start() const {
   case token_kind::if_kw: case token_kind::match_kw:
   case token_kind::self_kw: case token_kind::left_bracket:
   case token_kind::formatted_string_begin:
+  case token_kind::markup_begin:
     return true;
   default:
     return false;

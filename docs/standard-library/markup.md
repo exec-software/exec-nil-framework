@@ -1,6 +1,7 @@
 # Markup documents
 
-`read nil.std.markup` from Matrix, or import it from Ny. The module holds the
+`read nil.std.markup` from Matrix, or `import nil.std.markup.escaping` from Ny
+and call through `nil.std.markup::`. The module holds the
 document type a `begin markup` literal produces ([NIL-0027](../design/NIL-0027-structured-markup.md))
 and the escaping that literal lowers to. The functions are ordinary public
 functions, not compiler internals: the escaping a generated page depends on is

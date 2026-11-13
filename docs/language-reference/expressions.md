@@ -271,6 +271,61 @@ rename behave inside a block exactly as they do inside a quoted formatted
 literal. A block and a quoted literal produce the same interpolation AST, the
 same shared conversion and the same lowering on both execution routes.
 
+## Markup literals
+
+A markup literal holds a document — elements, attributes, text and holes — and
+its own control flow, so a generated page is written as one unit instead of
+assembled from concatenated fragments. Matrix opens one with `begin markup`,
+Ny with `$markup`, and both close with the block's own terminator:
+
+```ny
+import nil.std.markup.escaping
+
+fn page(signed_in: bool, who: text, names: array<text>) -> document
+    return $markup
+        <nav>
+          {if signed_in}
+            <a href="/logout">Log out, {who}</a>
+          {else}
+            <a href="/login">Log in</a>
+          {end if}
+        </nav>
+        <ul>
+          {for name in names}
+            <li class="{name}">{name}</li>
+          {end for}
+        </ul>
+    end markup
+end fn
+```
+
+The directive words are each surface's own: Ny writes `{if}`, `{elseif}`,
+`{else}`, `{end if}`, `{for x in xs}` and `{end for}`, while Matrix writes
+`{when}`, `{otherwise when}`, `{otherwise}`, `{end when}`,
+`{repeat for each x in xs}` and `{end repeat}`. Everything else is shared,
+including the parsing of the document, the checks, the escaping and the value.
+
+The literal segments are parsed as markup at compile time. Unbalanced or
+unclosed elements, an unterminated directive, an arm that opens an element it
+does not close, and a hole that would name an element or an attribute are
+compile errors. Element and attribute names are fixed; that is what keeps the
+document checkable.
+
+Each hole is escaped for the context it landed in — element content, attribute
+value, a whole URL attribute, or a component inside one — and `{raw ...}` is
+the only way to interpolate without escaping.
+[`nil.std.markup`](../standard-library/markup.md) holds those functions and the
+`document` type the block produces, so a document interpolated into another
+document is spliced rather than escaped a second time. Serialize one with
+`render`.
+
+Inside `<script>` and `<style>` a brace is an ordinary character, so CSS and
+JavaScript paste in unaltered; a body that is exactly one hole must be
+`{raw ...}`. Elsewhere `{{` and `}}` are literal braces, as in formatted text.
+
+`$markup` must be the last thing on its line, and `markup` after `$` is not a
+reserved word: both surfaces keep `markup` and `raw` usable as ordinary names.
+
 ## Lambda / Anonymous Functions
 
 ```ny

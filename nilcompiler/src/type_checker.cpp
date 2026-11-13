@@ -8048,6 +8048,27 @@ void type_checker::visit(ast_markup_expr &e) {
   };
   if (!symbols_.lookup_type(document_type))
     add_error(e.line, "A markup block produces a nil.std.markup document; add 'read nil.std.markup'");
+  // Ny names an imported type by its short spelling, so comparing the
+  // resolved name alone would both miss 'document' there and splice a
+  // program's own unrelated struct of that name. Compare declarations.
+  const auto is_document = [&](const std::string &name) {
+    if (name == document_type) return true;
+    const auto *expected = symbols_.lookup_type(document_type);
+    if (!expected) return false;
+    if (const auto *actual = symbols_.lookup_type(name))
+      // One declaration can be registered under both spellings, so compare the
+      // AST node that declared it rather than the symbol entry.
+      return expected->defining_node && expected->defining_node == actual->defining_node;
+    // Ny records an imported type by the spelling the author wrote, and that
+    // short name has no entry of its own. Accept it only as the document
+    // type's own leaf name, and only while no other visible type claims it --
+    // splicing the wrong type would be markup injected unescaped.
+    const std::string leaf = "::" + name;
+    return name.find("::") == std::string::npos &&
+           document_type.size() > leaf.size() &&
+           document_type.compare(document_type.size() - leaf.size(),
+                                 leaf.size(), leaf) == 0;
+  };
   std::size_t rows = 0;
   for (auto &item : e.items) {
     using item_kind = ast_markup_item::item_kind;
@@ -8060,7 +8081,7 @@ void type_checker::visit(ast_markup_expr &e) {
       if (!item.expr) break;
       item.expr->accept(*this);
       const auto type = resolve_type(last_expr_type_.value_or(type_unknown).name).name;
-      if (type == document_type) {
+      if (is_document(type)) {
         // Already escaped markup composes as nodes, never as escaped text --
         // but only where markup belongs. A document in an attribute would be
         // markup injected into someone else's quotes.

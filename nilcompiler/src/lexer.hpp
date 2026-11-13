@@ -63,6 +63,11 @@ enum class token_kind {
   interpolation_begin,
   interpolation_end,
   formatted_string_end,
+  // A markup literal reuses formatted_text and the interpolation tokens for
+  // its segments and holes; only the delimiters differ, because the parser
+  // reads the segments as markup rather than as text.
+  markup_begin,
+  markup_end,
   char_literal,
   annotation, // '@' followed by identifier (e.g., @inline, parsed by
               // lexer/parser)
@@ -185,7 +190,7 @@ private:
   token number(bool tuple_position = false);
   token string();
   void formatted_string(std::vector<token> &tokens);
-  void formatted_block(std::vector<token> &tokens);
+  void formatted_block(std::vector<token> &tokens, bool markup = false);
   token character(); // Lex a character literal 'c'
   token
   annotation(); // Lex an annotation token starting with '@' (e.g., @inline)
