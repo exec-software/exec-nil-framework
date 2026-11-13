@@ -11,6 +11,8 @@ and explicit about evidence, uncertainty, and implementation status.
 
 ## Contents
 
+- [`2026-11-13-formatted-markup-handoff.md`](2026-11-13-formatted-markup-handoff.md) —
+  multiline text and structured markup completion review, route checks and SDK handoff.
 - [`2026-11-12-matrix-webview.md`](2026-11-12-matrix-webview.md) — checked
   browser providers, asynchronous operation identity and honest message provenance.
 - [`2026-11-12-web-server-boundaries.md`](2026-11-12-web-server-boundaries.md) —

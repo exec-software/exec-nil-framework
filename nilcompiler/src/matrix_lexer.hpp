@@ -131,6 +131,11 @@ enum class token_kind {
   interpolation_begin,
   interpolation_end,
   formatted_string_end,
+  // A markup literal reuses formatted_text and the interpolation tokens for
+  // its segments and holes; only the delimiters differ, because the parser
+  // reads the segments as markup rather than as text.
+  markup_begin,
+  markup_end,
   left_paren, right_paren,
   left_bracket, right_bracket,
   comma,
@@ -222,8 +227,19 @@ private:
   // Raw block literal: consumes lines after 'begin text' until a line whose
   // only content is 'end text', then dedents by the common indentation.
   token scan_text_block(int line, int col);
+  // Interpolated block literal: the raw 'begin text' block with holes, or the
+  // 'begin markup' document. The literal text is dedented; every hole keeps
+  // its original source position.
+  void scan_block_literal(std::vector<token> &tokens, const token &word,
+                          bool markup);
   // True when 'begin' is immediately followed by 'text' and end of line.
   bool text_block_follows() const;
+  // True when 'formatted' is followed by 'begin text' and end of line.
+  bool formatted_block_follows() const;
+  // True when 'begin' is immediately followed by 'markup' and end of line.
+  bool markup_block_follows() const;
+  // Shared tail of the probes: the word at probe, then nothing but spacing.
+  bool word_ends_line(std::size_t probe, const char *word) const;
   token scan_backtick_identifier();
   void error(int line, int col, std::string message, std::string hint = {});
 };

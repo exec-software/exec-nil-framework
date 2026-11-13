@@ -1,0 +1,59 @@
+book markup_contract
+read everything from nil.std.markup
+
+!!! A component: an ordinary paragraph returning a document, so that
+!!! composing pages does not go back through text.
+card receives title as text, count as number returns nil.std.markup.document begin paragraph
+    give begin markup
+        <section class="card">
+          <h2>{title}</h2>
+          <p>{count} items</p>
+        </section>
+    end markup
+end paragraph
+
+page receives signed-in as boolean, who as text, names as array of text,
+     query as text, target as text returns nil.std.markup.document begin paragraph
+    give begin markup
+        <html>
+          <head><title>Report &amp; Review</title></head>
+          <body>
+            {card with title being "Pro & Con", count being (the length of names)}
+            <nav>
+              {when signed-in}
+                <a href="/logout">Log out, {who}</a>
+              {otherwise when who equals "guest"}
+                <a href="/register">Register</a>
+              {otherwise}
+                <a href="/login">Log in</a>
+              {end when}
+            </nav>
+            <ul class="names">
+              {repeat for each name in names}
+                <li class="{name}" data-total="{the length of names}">{name}</li>
+              {end repeat}
+            </ul>
+            <a href="{target}">target</a>
+            <a href="/search?q={query}">search</a>
+            <br/>
+            <img src="/logo.png">
+            <!-- comments survive -->
+            <style>body { margin: 0 }</style>
+            <script>{raw "var ready = 1 < 2;"}</script>
+            <p>{{literal braces}} and {raw "<em>trusted</em>"}</p>
+          </body>
+        </html>
+    end markup
+end paragraph
+
+main returns override integer begin paragraph
+    value names as array of text is ["alpha", "b<ad>", "gamma"]
+    value signed is page with signed-in being true, who being "Na<me>",
+        names being names, query being "a b&c", target being "/dashboard"
+    say nil.std.markup::render with doc being signed
+    value guest is page with signed-in being false, who being "guest",
+        names being [], query being "x", target being "javascript:alert(1)"
+    say nil.std.markup::render with doc being guest
+    say nil.std.markup::render with doc being (nil.std.markup::empty with nothing)
+    give 0
+end paragraph

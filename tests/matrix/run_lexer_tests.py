@@ -62,6 +62,9 @@ SOFT_WORDS = {
     # NIL-0023 keeps ordinary variables and parameters named flag valid.
     "flag",
     "expect",
+    # NIL-0027: 'markup' is contextual after 'begin', and 'raw' only in front
+    # of an expression inside a markup hole. Both stay ordinary names.
+    "markup", "raw",
 }
 
 # Lowercase markers inside a numeric token are not standalone word terminals.

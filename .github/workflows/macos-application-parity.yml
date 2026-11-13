@@ -25,6 +25,12 @@ name: macOS application platform checks
       - 'tests/tools/native_owned_lifetime.py'
       - 'tests/tools/native_symbol_surface.py'
       - 'tests/tools/file_modified_at_contract.py'
+      - 'tests/tools/formatted_text_contract.py'
+      - 'tests/tools/markup_contract.py'
+      - 'tests/language/formatted-text*'
+      - 'tests/language/markup*'
+      - 'tests/routes/ny_route_matrix.py'
+      - 'tests/tools/native_toolchain_pipeline.py'
       - 'tests/tools/project_build_contract.py'
       - 'tests/tools/tool_discovery_contract.py'
       - 'tests/tools/context_manifest.py'
@@ -163,6 +169,34 @@ jobs:
             nil_darwin_toolchain_inputs_tests nil_freestanding_hook_default nil_freestanding_hook_override \
             nildebugger_core_tests nildebugger_source_metadata_tests nildebugger_dap_owner_tests \
             2>&1 | tee build/application-evidence/build.log
+      - name: Verify formatted text and markup through interpreter and native routes
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        timeout-minutes: 8
+        run: |
+          python3 - <<'PYTHON'
+          import json, subprocess, xml.etree.ElementTree as ET
+          from pathlib import Path
+          expected = {'nil.formatted-text-contract', 'nil.markup-contract'}
+          expected.update('ny.'+route+'.'+fixture for route in ['routes', 'tools']
+                          for fixture in ['formatted-text', 'formatted-text-matrix', 'markup', 'markup-matrix'])
+          pattern = r'^(nil[.](formatted-text-contract|markup-contract)|ny[.](routes|tools)[.](formatted-text|markup)(-matrix)?)$'
+          base = ['ctest', '--test-dir', 'build/application', '-R', pattern]
+          root = Path('build/application-evidence').resolve()
+          inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
+          (root/'markup-inventory.json').write_bytes(inventory)
+          assert {case['name'] for case in json.loads(inventory)['tests']} == expected
+          with (root/'markup.log').open('wb') as output:
+              run = subprocess.run(base+['--no-tests=error', '--output-on-failure',
+                  '--test-output-size-passed', '65536',
+                  '--output-junit', str(root/'markup-results.xml')], stdout=output,
+                  stderr=subprocess.STDOUT, timeout=450)
+          print((root/'markup.log').read_text(errors='replace'))
+          run.check_returncode()
+          cases = list(ET.parse(root/'markup-results.xml').getroot().iter('testcase'))
+          assert len(cases) == len(expected) and {case.get('name') for case in cases} == expected
+          assert all(case.get('status') == 'run' and all(case.find(kind) is None
+              for kind in ['failure', 'error', 'skipped']) for case in cases)
+          PYTHON
       - name: Verify debugger protocols and owned desktop sessions
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         timeout-minutes: 12

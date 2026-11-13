@@ -198,6 +198,7 @@ enum class ast_node_kind {
   hotreload_expr_node, // hotreload.method(args) - intrinsic hot reload
   if_expr_node, // if cond then expr else expr end if - conditional expression
   query_expr_node, // eager collect query over a checked array
+  markup_expr_node, // markup literal: a checked document with holes
 
   // Ny testing nodes
   test_block_node,
@@ -336,6 +337,7 @@ struct ast_node::ast_visitor {
   virtual void visit(struct ast_hotreload_expr &e) {}
   virtual void visit(struct ast_if_expr &e) {}
   virtual void visit(struct ast_query_expr &e) {}
+  virtual void visit(struct ast_markup_expr &e) {}
 };
 
 enum class visibility_kind {
@@ -1202,6 +1204,36 @@ struct ast_query_expr : public ast_expr {
 
   explicit ast_query_expr(int line = 0)
       : ast_expr(ast_node_kind::query_expr_node, line) {}
+  void accept(ast_node::ast_visitor &v) override { v.visit(*this); }
+};
+
+// A markup literal (NIL-0027). The block is parsed as markup at compile time,
+// which is what makes its structure checkable and lets each hole learn the
+// context it landed in; what survives into the AST is a flat program of
+// literal output, escaped holes and control flow, because that is all the
+// serialized result needs. Escaping is chosen here, never by the author, and
+// a hole that is already a document is spliced rather than escaped again.
+struct ast_markup_item {
+  enum class item_kind {
+    literal, hole, when_begin, else_when, else_arm, end_when, repeat_begin,
+    end_repeat
+  };
+  item_kind kind = item_kind::literal;
+  std::string text;      // literal output, already serialized
+  ast_expr_ptr expr;     // hole value, condition, or repeat source
+  std::string escape;    // text | attribute | url | url_component | raw
+  std::string binding;   // repeat row name
+  std::string element_type; // checked repeat element type
+  bool splice = false;   // checked: the hole is already a document
+  int line = 0;
+};
+
+struct ast_markup_expr : public ast_expr {
+  std::vector<ast_markup_item> items;
+  bool checked_markup = false;
+
+  explicit ast_markup_expr(int line = 0)
+      : ast_expr(ast_node_kind::markup_expr_node, line) {}
   void accept(ast_node::ast_visitor &v) override { v.visit(*this); }
 };
 

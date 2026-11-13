@@ -3214,6 +3214,148 @@ public:
 
   // Queries lower to ordinary typed NIL arrays and loops. Row expressions are
   // evaluated here in the enclosing frame, so captures require no closures.
+  // A markup literal builds its serialized document in one text local. The
+  // literal segments are constants decided at compile time; only the holes and
+  // the control flow cost anything at run time, and each hole carries the
+  // escape its position earned during parsing.
+  void emit_markup(const ast_markup_expr &markup) {
+    if (!markup.checked_markup) {
+      cg_.reject_codegen_construct(markup.line,
+          "a markup block requires checked holes and nil.std.markup",
+          "enable type checking and read nil.std.markup");
+      return;
+    }
+    using item_kind = ast_markup_item::item_kind;
+    const int line = markup.line;
+    const auto push = [&](const std::string &op, std::vector<std::string> args = {},
+                          int at = 0) { push_instr(op, args, at ? at : line); };
+    const auto result = new_temp("markup.result");
+    push("PUSH_CONST_STR", {get_or_add_const_string_name("")});
+    push("STORE_LOCAL", {result});
+
+    struct when_frame { std::string next, end; };
+    struct repeat_frame { std::string rows, index, count, top, done; };
+    std::vector<when_frame> whens;
+    std::vector<repeat_frame> repeats;
+    std::vector<std::unique_ptr<lexical_scope>> scopes;
+
+    for (const auto &item : markup.items) {
+      switch (item.kind) {
+      case item_kind::literal: {
+        push("LOAD_LOCAL", {result}, item.line);
+        push("PUSH_CONST_STR", {get_or_add_const_string_name(item.text)}, item.line);
+        push("STR_CONCAT", {}, item.line);
+        push("STORE_LOCAL", {result}, item.line);
+        break;
+      }
+      case item_kind::hole: {
+        if (!item.expr) break;
+        push("LOAD_LOCAL", {result}, item.line);
+        emit_expr(*item.expr);
+        if (item.splice) {
+          push("GET_FIELD", {"content"}, item.line);
+        } else {
+          const auto expr_type = scalar_text_type(substitute_nil_type_name(
+              item.expr->inferred_type.value_or(""), substitutions));
+          if (!supports_scalar_text(expr_type)) {
+            cg_.reject_codegen_construct(item.expr->line,
+                "a markup hole requires a checked scalar, text or document",
+                "enable type checking and call an explicit formatter for other types");
+            break;
+          }
+          if (expr_type != "text")
+            push("TO_STRING", {expr_type}, item.line);
+          if (item.escape != "raw")
+            push("CALL", {"nil__std__markup__escape_" + item.escape, "1"}, item.line);
+        }
+        push("STR_CONCAT", {}, item.line);
+        push("STORE_LOCAL", {result}, item.line);
+        break;
+      }
+      case item_kind::when_begin: {
+        when_frame frame{new_label("L_markup_next"), new_label("L_markup_when_end")};
+        if (item.expr) emit_expr(*item.expr);
+        push("JMP_IF_NOT", {frame.next}, item.line);
+        whens.push_back(frame);
+        break;
+      }
+      case item_kind::else_when: {
+        if (whens.empty()) break;
+        push("JMP", {whens.back().end}, item.line);
+        push("LABEL", {whens.back().next}, item.line);
+        whens.back().next = new_label("L_markup_next");
+        if (item.expr) emit_expr(*item.expr);
+        push("JMP_IF_NOT", {whens.back().next}, item.line);
+        break;
+      }
+      case item_kind::else_arm: {
+        if (whens.empty()) break;
+        push("JMP", {whens.back().end}, item.line);
+        push("LABEL", {whens.back().next}, item.line);
+        whens.back().next.clear();
+        break;
+      }
+      case item_kind::end_when: {
+        if (whens.empty()) break;
+        if (!whens.back().next.empty())
+          push("LABEL", {whens.back().next}, item.line);
+        push("LABEL", {whens.back().end}, item.line);
+        whens.pop_back();
+        break;
+      }
+      case item_kind::repeat_begin: {
+        repeat_frame frame{new_temp("markup.rows"), new_temp("markup.index"),
+                           new_temp("markup.count"), new_label("L_markup_row"),
+                           new_label("L_markup_rows_done")};
+        if (item.expr) emit_expr(*item.expr);
+        push("STORE_LOCAL", {frame.rows}, item.line);
+        push("LOAD_LOCAL", {frame.rows}, item.line);
+        push("LEN", {}, item.line);
+        push("CAST", {"i64"}, item.line);
+        push("STORE_LOCAL", {frame.count}, item.line);
+        push("PUSH_CONST", {"0"}, item.line);
+        push("CAST", {"i64"}, item.line);
+        push("STORE_LOCAL", {frame.index}, item.line);
+        push("LABEL", {frame.top}, item.line);
+        push("LOAD_LOCAL", {frame.index}, item.line);
+        push("LOAD_LOCAL", {frame.count}, item.line);
+        push("CMP_LT", {}, item.line);
+        push("JMP_IF_NOT", {frame.done}, item.line);
+        scopes.push_back(std::make_unique<lexical_scope>(*this));
+        declare_local(item.binding, item.element_type);
+        push("LOAD_LOCAL", {frame.rows}, item.line);
+        push("LOAD_LOCAL", {frame.index}, item.line);
+        push("GET_INDEX", {}, item.line);
+        push("STORE_LOCAL", {item.binding}, item.line);
+        repeats.push_back(frame);
+        break;
+      }
+      case item_kind::end_repeat: {
+        if (repeats.empty()) break;
+        const auto frame = repeats.back();
+        repeats.pop_back();
+        if (!scopes.empty()) scopes.pop_back();
+        push("LOAD_LOCAL", {frame.index}, item.line);
+        push("PUSH_CONST", {"1"}, item.line);
+        push("CAST", {"i64"}, item.line);
+        push("ADD", {"i64"}, item.line);
+        push("STORE_LOCAL", {frame.index}, item.line);
+        push("JMP", {frame.top}, item.line);
+        push("LABEL", {frame.done}, item.line);
+        break;
+      }
+      }
+    }
+    // The result is a document, not text: the type is what keeps an already
+    // escaped fragment from being escaped a second time when it is composed.
+    const auto content = new_temp("markup.document");
+    push("LOAD_LOCAL", {result});
+    push("STORE_LOCAL", {content});
+    push("NEW_STRUCT", {"nil::std::markup::document"});
+    push("LOAD_LOCAL", {content});
+    push("SET_FIELD", {"content"});
+  }
+
   void emit_query(const ast_query_expr &query) {
     if (!query.checked_query || !query.source || !query.projection) {
       cg_.reject_codegen_construct(query.line,
@@ -3444,6 +3586,9 @@ public:
     }
     case ast_node_kind::query_expr_node:
       emit_query(static_cast<const ast_query_expr &>(e));
+      break;
+    case ast_node_kind::markup_expr_node:
+      emit_markup(static_cast<const ast_markup_expr &>(e));
       break;
     case ast_node_kind::array_literal_expr_node: {
       const auto &arr = static_cast<const ast_array_literal_expr &>(e);

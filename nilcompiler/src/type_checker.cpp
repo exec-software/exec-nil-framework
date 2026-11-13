@@ -8037,6 +8037,109 @@ void type_checker::visit(ast_match_expr &e) {
 
 }
 
+// A markup literal checks its holes, not its tags: the parser already proved
+// the document is balanced. What is decided here is whether each hole is
+// escaped or spliced, which is the one thing the author must not have to get
+// right by hand.
+void type_checker::visit(ast_markup_expr &e) {
+  e.checked_markup = false;
+  const auto errors_before = diagnostics_.size();
+  static const std::string document_type = "nil::std::markup::document";
+  const auto scalar = [](const std::string &type) {
+    return type == "i32" || type == "i64" || type == "u8" || type == "bool" ||
+           type == "f64" || type == "text" || type == "String";
+  };
+  if (!symbols_.lookup_type(document_type))
+    add_error(e.line, "A markup block produces a nil.std.markup document; add 'read nil.std.markup'");
+  // Ny names an imported type by its short spelling, so comparing the
+  // resolved name alone would both miss 'document' there and splice a
+  // program's own unrelated struct of that name. Compare declarations.
+  const auto is_document = [&](const std::string &name) {
+    if (name == document_type) return true;
+    const auto *expected = symbols_.lookup_type(document_type);
+    if (!expected) return false;
+    if (const auto *actual = symbols_.lookup_type(name))
+      // One declaration can be registered under both spellings, so compare the
+      // AST node that declared it rather than the symbol entry.
+      return expected->defining_node && expected->defining_node == actual->defining_node;
+    // Ny records an imported type by the spelling the author wrote, and that
+    // short name has no entry of its own. Accept it only as the document
+    // type's own leaf name, and only while no other visible type claims it --
+    // splicing the wrong type would be markup injected unescaped.
+    const std::string leaf = "::" + name;
+    return name.find("::") == std::string::npos &&
+           document_type.size() > leaf.size() &&
+           document_type.compare(document_type.size() - leaf.size(),
+                                 leaf.size(), leaf) == 0;
+  };
+  std::size_t rows = 0;
+  for (auto &item : e.items) {
+    using item_kind = ast_markup_item::item_kind;
+    switch (item.kind) {
+    case item_kind::literal:
+    case item_kind::else_arm:
+    case item_kind::end_when:
+      break;
+    case item_kind::hole: {
+      if (!item.expr) break;
+      item.expr->accept(*this);
+      const auto type = resolve_type(last_expr_type_.value_or(type_unknown).name).name;
+      if (is_document(type)) {
+        // Already escaped markup composes as nodes, never as escaped text --
+        // but only where markup belongs. A document in an attribute would be
+        // markup injected into someone else's quotes.
+        if (item.escape == "attribute" || item.escape == "url" ||
+            item.escape == "url_component")
+          add_error(item.line, "A document can only be interpolated into element content, not into an attribute value;"
+                    " render it first if its text is what you meant");
+        item.splice = true;
+      } else if (item.escape == "raw") {
+        // 'text' is the Matrix spelling of the checker's 'String'.
+        if (type != "text" && type != "String")
+          add_error(item.line, "'{raw ...}' requires text or a document, got '" + type + "'");
+      } else if (!scalar(type)) {
+        add_error(item.line, "A markup hole requires text, a scalar or a document, got '" +
+                  type + "'; call an explicit formatter for other types");
+      }
+      break;
+    }
+    case item_kind::when_begin:
+    case item_kind::else_when: {
+      if (!item.expr) break;
+      item.expr->accept(*this);
+      if (resolve_type(last_expr_type_.value_or(type_unknown).name).name != "bool")
+        add_error(item.line, "A markup '{when ...}' condition must be boolean");
+      break;
+    }
+    case item_kind::repeat_begin: {
+      if (!item.expr) break;
+      item.expr->accept(*this);
+      const auto source = parse_generic_type_string(
+          resolve_type(last_expr_type_.value_or(type_unknown).name).name);
+      if (source.base_name != "array" || source.type_args.size() != 1) {
+        add_error(item.line, "A markup '{repeat for each ...}' requires an array");
+        item.element_type = "<unknown>";
+      } else {
+        item.element_type = source.type_args.front();
+      }
+      symbols_.enter_scope();
+      ++rows;
+      symbol binding(item.binding, symbol_kind::variable_symbol, nullptr,
+                     item.element_type, false, false, std::nullopt);
+      symbols_.insert_symbol(binding);
+      break;
+    }
+    case item_kind::end_repeat:
+      if (rows) { symbols_.leave_scope(); --rows; }
+      break;
+    }
+  }
+  while (rows--) symbols_.leave_scope();
+  e.inferred_type = document_type;
+  last_expr_type_ = type_info{document_type, false};
+  e.checked_markup = diagnostics_.size() == errors_before;
+}
+
 void type_checker::visit(ast_query_expr &e) {
   e.checked_query = false;
   const auto errors_before = diagnostics_.size();
