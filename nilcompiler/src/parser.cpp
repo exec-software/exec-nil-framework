@@ -472,6 +472,7 @@ parser::parser(const std::string &source, const parser_options &opts)
     if (number.kind == token_kind::invalid &&
         (number.lexeme.find("interpolation") != std::string::npos ||
          number.lexeme.find("formatted text") != std::string::npos ||
+         number.lexeme.find("formatted block") != std::string::npos ||
          number.lexeme.rfind("Unterminated block comment", 0) == 0))
       add_error(number, number.lexeme);
     if (number.kind == token_kind::number_literal &&

@@ -45,6 +45,11 @@ std::vector<token> lexer::scan_tokens() {
 
     switch (c) {
     case '$':
+      if (peek() == '"' && peek_next() == '"' && current + 2 < src.size() &&
+          src[current + 2] == '"') {
+        formatted_block(tokens);
+        continue; // Every emitted token already has its original range.
+      }
       if (peek() == '"') {
         formatted_string(tokens);
         continue; // Every emitted token already has its original range.
@@ -549,6 +554,127 @@ token lexer::string() {
   advance();
 
   return token{token_kind::string_literal, value, line};
+}
+
+// A multiline formatted block: $""" on its own line, content, then a line
+// whose only content is """. It is the Ny spelling of Matrix's
+// 'formatted begin text' (NIL-0027 section 2) and keeps the same rules: the
+// block's common indentation is removed from the literal text, deeper
+// indentation is kept, leading and trailing blank lines are dropped, and
+// nothing inside is escaped -- a backslash in a block is a backslash, which is
+// what makes a path, a regular expression or embedded JSON writable here.
+// Indentation removal applies to the literal segments only, so a hole keeps
+// its original file coordinates and stays editable.
+void lexer::formatted_block(std::vector<token> &tokens) {
+  const int opening_line = line;
+  const auto opening = start;
+  current += 3; // the three opening quotes
+  while (!is_at_end() && peek() != '\n') advance();
+  if (!is_at_end()) advance();
+  const auto header_end = current;
+
+  const auto trimmed = [](const std::string &value) {
+    const auto first = value.find_first_not_of(" \t\r");
+    if (first == std::string::npos) return std::string();
+    const auto last = value.find_last_not_of(" \t\r");
+    return value.substr(first, last - first + 1);
+  };
+
+  struct block_line { std::size_t start; std::string text; };
+  std::vector<block_line> lines;
+  bool terminated = false;
+  std::size_t terminator = current;
+  while (!is_at_end()) {
+    const auto begin = current;
+    std::string raw;
+    while (!is_at_end() && peek() != '\n') raw.push_back(advance());
+    const bool had_newline = !is_at_end();
+    if (had_newline) advance();
+    if (!raw.empty() && raw.back() == '\r') raw.pop_back();
+    // Ny is expression oriented, so the closing delimiter cannot own its line
+    // the way Matrix's 'end text' does: println($"""...""") has to work.
+    // The terminator is the first line whose content STARTS with three quotes,
+    // and lexing resumes immediately after them.
+    const auto first = raw.find_first_not_of(" \t");
+    if (first != std::string::npos && raw.compare(first, 3, "\"\"\"") == 0) {
+      terminated = true;
+      terminator = begin + first;
+      current = terminator + 3;
+      break;
+    }
+    lines.push_back({begin, raw});
+    if (!had_newline) break;
+  }
+
+  const formatted_source_positions positions(src, opening, current, opening_line);
+  const auto emit = [&](token_kind kind, std::string value, std::size_t offset,
+                        std::size_t length) {
+    tokens.push_back(token{kind, std::move(value), positions.line(offset), offset, length});
+  };
+  if (!terminated) {
+    emit(token_kind::invalid,
+         "unterminated formatted block; close it with a line whose only content is \"\"\"",
+         opening, 1);
+    line = positions.line(current);
+    return;
+  }
+
+  while (!lines.empty() && trimmed(lines.front().text).empty())
+    lines.erase(lines.begin());
+  while (!lines.empty() && trimmed(lines.back().text).empty()) lines.pop_back();
+
+  std::size_t indent = std::string::npos;
+  for (const auto &entry : lines) {
+    const auto first = entry.text.find_first_not_of(" \t");
+    if (first == std::string::npos) continue; // a blank line sets no indent
+    indent = std::min(indent, first);
+  }
+  if (indent == std::string::npos) indent = 0;
+
+  std::string content;
+  std::vector<std::size_t> logical_starts, source_starts;
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    if (i != 0) content.push_back('\n');
+    const auto strip = std::min(indent, lines[i].text.size());
+    logical_starts.push_back(content.size());
+    source_starts.push_back(lines[i].start + strip);
+    content += lines[i].text.substr(strip);
+  }
+  const auto source_offset = [&](std::size_t logical) -> std::size_t {
+    if (logical_starts.empty()) return header_end;
+    const auto row = static_cast<std::size_t>(
+        std::upper_bound(logical_starts.begin(), logical_starts.end(), logical) -
+        logical_starts.begin() - 1);
+    return source_starts[row] + (logical - logical_starts[row]);
+  };
+
+  const auto scanned = scan_formatted_block(content, false, interpolation_depth_);
+  if (!scanned.error.empty()) {
+    emit(token_kind::invalid, scanned.error, source_offset(scanned.error_offset), 1);
+    line = positions.line(current);
+    return;
+  }
+  tokens.push_back(token{token_kind::formatted_string_begin, "$\"\"\"", opening_line,
+                         opening, header_end - opening});
+  for (const auto &piece : scanned.pieces) {
+    const auto begin = source_offset(piece.start);
+    const auto end = source_offset(piece.start + piece.length);
+    if (!piece.expression) {
+      emit(token_kind::formatted_text, piece.text, begin, end - begin);
+      continue;
+    }
+    emit(token_kind::interpolation_begin, "{", begin - 1, 1);
+    lexer expression(piece.text, interpolation_depth_ + 1);
+    for (auto value : expression.scan_tokens()) {
+      if (value.kind == token_kind::eof) continue;
+      value.offset += begin;
+      value.line += positions.line(begin) - 1;
+      tokens.push_back(std::move(value));
+    }
+    emit(token_kind::interpolation_end, "}", end, 1);
+  }
+  emit(token_kind::formatted_string_end, "\"\"\"", terminator, 3);
+  line = positions.line(current);
 }
 
 void lexer::formatted_string(std::vector<token> &tokens) {

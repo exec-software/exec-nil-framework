@@ -185,6 +185,7 @@ private:
   token number(bool tuple_position = false);
   token string();
   void formatted_string(std::vector<token> &tokens);
+  void formatted_block(std::vector<token> &tokens);
   token character(); // Lex a character literal 'c'
   token
   annotation(); // Lex an annotation token starting with '@' (e.g., @inline)

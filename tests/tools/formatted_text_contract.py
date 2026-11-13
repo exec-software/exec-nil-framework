@@ -43,6 +43,32 @@ def main():
                     assert output.read_bytes() == b'previous artifact', (path, flags)
                     assert result.stderr.strip(), (path, flags)
                     checks += 1
+        # Ny's multiline block rejects the same malformed holes.
+        ny_blocks = [
+            'hello\n',                               # never closed
+            'a } b\n"\"\"\n',                        # unmatched brace
+            '{1 +\n2}\n"\"\"\n',                     # hole spans a line
+            '{}\n"\"\"\n',                           # empty hole
+            '{unknown}\n"\"\"\n',                     # undefined identifier
+            '{[1, 2]}\n"\"\"\n',                      # no text contract
+        ]
+        for index, block in enumerate(ny_blocks):
+            source = ('fn main() -> i32\n'
+                      f'let result = $"\"\"\n{block}'
+                      'return 0\nend fn\n')
+            path = root / f'invalid-ny-block-{index}.ny'
+            path.write_text(source, newline='\n')
+            for flags in routes:
+                output = root / 'protected-output'
+                output.write_bytes(b'previous artifact')
+                result = subprocess.run([compiler, '--quiet', '--no-stdlib',
+                                         *flags, '--output', output, path],
+                                        capture_output=True, text=True, timeout=30)
+                assert result.returncode != 0, (path, flags, result.stdout)
+                assert output.read_bytes() == b'previous artifact', (path, flags)
+                assert result.stderr.strip(), (path, flags)
+                checks += 1
+
         # A multiline Matrix block rejects the same malformed holes, and an
         # unterminated block is a lexer error rather than a silent literal.
         blocks = [

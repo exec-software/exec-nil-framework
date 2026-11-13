@@ -205,14 +205,32 @@ and the same conversion is used by the interpreter and native compiler.
 Native text retains its existing NUL-free restriction; formatted text does not
 change the text storage ABI or permit embedded NUL constants natively.
 
+Ny's multiline form opens with `$"""` and closes with the first line whose
+content begins with `"""`, so a block can sit inside a call:
+
+```ny
+println($"""
+    <p>Signed in as {who}</p>
+    <p>{count + 1} projects</p>
+""")
+```
+
+A block is **raw**: unlike the quoted form, its literal segments carry no
+backslash escapes, which is what makes a path, a regular expression or embedded
+JSON writable without doubling anything. The block's common leading indentation
+is removed and deeper indentation is kept, leading and trailing blank lines are
+dropped, and indentation removal touches literal segments only, so every hole
+keeps its original file coordinates.
+
 `{{` and `}}` insert literal braces. Ny's normal backslash escapes still apply
-to the literal portions, so `\n` inserts a newline in the result. Embedded
+to the literal portions of a **quoted** formatted string, so `\n` inserts a
+newline in the result. Embedded
 expressions keep their own string delimiters; no extra escaping is needed for
 `$"Result: {choose("first", "second")}"`.
 
 A quoted explicit string, including its expressions, must fit on one source
-line; the Matrix block form below spans lines, and a single hole still stays on
-one of them. Empty holes, trailing tokens, unmatched braces and missing quotes
+line. Both surfaces have a block form that spans lines, and a single hole still
+stays on one of them. Empty holes, trailing tokens, unmatched braces and missing quotes
 are errors. Formatting flags and precision specifiers are not part of this syntax;
 use an explicit formatting function inside a hole when needed.
 

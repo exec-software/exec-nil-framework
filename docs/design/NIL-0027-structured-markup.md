@@ -1,8 +1,8 @@
 # NIL-0027: Multiline formatted text and structured markup literals
 
-- **Status:** §2 and §3 implemented for Matrix on 2026-11-13, with the
-  representation revised as recorded in §3.6. The Ny spellings of both remain
-  open.
+- **Status:** §2 implemented for both surfaces on 2026-11-13. §3 implemented
+  for Matrix the same day, with the representation revised as recorded in
+  §3.6; the Ny spelling of §3 is settled in §6 and not yet built.
 - **Scope:** Ny and Matrix syntax, shared hole lexing and AST, checking,
   lowering, `nil.std.markup`, text builder
 - **Date:** 2026-11-13
@@ -51,7 +51,7 @@ member of that family.
 | Surface | Holes | Structure | Status |
 | --- | --- | --- | --- |
 | `formatted "..."` | yes | none, one line | NIL-0014, implemented |
-| `formatted begin text ... end text` | yes | none, multiline | §2, implemented (Matrix) |
+| `formatted begin text ... end text` / `$"""` | yes | none, multiline | §2, implemented |
 | `begin markup ... end markup` | yes | elements, attributes, control flow | §3, implemented (Matrix) |
 
 All three use the hole lexer NIL-0014 already built, which emits an expression's
@@ -69,7 +69,10 @@ value page is formatted begin text
 end text
 ```
 
-Ny spells the same construct `$"""` ... `"""`.
+Ny spells the same construct `$"""` ... `"""`. One difference is forced by the
+surface: Matrix's `end text` owns its line, while Ny closes on the first line
+whose content *begins* with `"""` and resumes lexing immediately after it,
+because Ny is expression oriented and `println($"""..."""）` has to work.
 
 The block follows the existing raw-block rules exactly — line-anchored
 terminator, common leading indentation removed, deeper indentation kept,
@@ -103,7 +106,10 @@ routes; malformed blocks rejected on every route in
 word inside doubled braces in the dedented literal is left alone, which is the
 proof that indentation removal did not move the expression.
 
-Ny still has only `$"..."`. Its multiline spelling is §6's open question.
+**Ny followed on 2026-11-13.** `lexer::formatted_block` mirrors the Matrix
+scanner and shares `scan_formatted_block`, so both surfaces produce the same
+token stream and the same AST. A block is raw in both: Ny's backslash escapes
+apply to a quoted `$"..."` and not inside `$"""`.
 
 ## 3. Markup literals
 
