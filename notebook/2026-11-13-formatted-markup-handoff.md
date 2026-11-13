@@ -108,8 +108,23 @@ No accepted SDK, installer or Lich release is changed.
 The [Matrix WebView repository](https://github.com/exec-software/exec-nil-framework-webview)
 is now public, with source secret/path audits, four required platform checks
 and an independent review requirement matching the web server repository.
-Linux and both Mac architectures have passed real browser consumers through
-text/binary NIL, AOT and JIT. Windows has passed compilation, shared/framework
-contracts and synthetic routes; its real browser initialization correction is
-being qualified. The repository's platform notes record exact source evidence.
+Its [qualification PR](https://github.com/exec-software/exec-nil-framework-webview/pull/1)
+tracks provider startup, navigation and teardown across textual/binary NIL,
+AOT and JIT, with exact source evidence in the repository's platform notes.
 This follows the language handoff without activating an accepted SDK.
+
+## Separate editor dependency follow-up
+
+GitHub's existing [Dependabot alert 9](https://github.com/exec-software/exec-nil-framework/security/dependabot/9)
+reports minimatch 10.2.6 in the editor lockfile. The
+[upstream advisory](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249)
+describes a moderate glob-pattern denial of service, fixed in 11.0.1.
+Both `vscode-languageclient` and `@vscode/vsce` currently require the older
+major. Minimatch 11 replaces the matcher and removes APIs; an override is a
+compatibility change, not a routine lockfile refresh.
+
+Keep that update separate from this completed language qualification. Before
+changing it, audit both consumers' API use, exercise adversarial and ordinary
+glob patterns, and rerun extension compilation, packaging and actual editor
+host checks on the supported platforms. No dependency override or alert
+dismissal was made in this handoff.
