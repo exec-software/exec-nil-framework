@@ -43,6 +43,34 @@ def main():
                     assert output.read_bytes() == b'previous artifact', (path, flags)
                     assert result.stderr.strip(), (path, flags)
                     checks += 1
+        # A multiline Matrix block rejects the same malformed holes, and an
+        # unterminated block is a lexer error rather than a silent literal.
+        blocks = [
+            'hello\n',                              # never closed
+            'a } b\nend text\n',                    # unmatched brace
+            '{1 plus\n2}\nend text\n',             # hole spans a line
+            '{}\nend text\n',                       # empty hole
+            '{unknown}\nend text\n',                # undefined identifier
+            '{[1, 2]}\nend text\n',                 # no text contract
+        ]
+        for index, block in enumerate(blocks):
+            source = ('book invalid_formatted_block\n'
+                      'main returns override integer begin paragraph\n'
+                      f'value result is formatted begin text\n{block}'
+                      'give 0\nend paragraph\n')
+            path = root / f'invalid-block-{index}.matrix'
+            path.write_text(source, newline='\n')
+            for flags in routes:
+                output = root / 'protected-output'
+                output.write_bytes(b'previous artifact')
+                result = subprocess.run([compiler, '--quiet', '--no-stdlib',
+                                         *flags, '--output', output, path],
+                                        capture_output=True, text=True, timeout=30)
+                assert result.returncode != 0, (path, flags, result.stdout)
+                assert output.read_bytes() == b'previous artifact', (path, flags)
+                assert result.stderr.strip(), (path, flags)
+                checks += 1
+
         # A function identifier has a return type, but is not a scalar value.
         path = root / 'function.ny'
         path.write_text('fn number() -> i32\nreturn 1\nend fn\n'

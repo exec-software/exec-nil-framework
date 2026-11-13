@@ -141,10 +141,26 @@ Scalars and text convert themselves; any other type needs an explicit
 conversion first. There is no format-specifier language inside the braces —
 precision and padding are library calls. `{{` and `}}` are literal braces in
 this form only: an ordinary literal and a `begin text` block stay raw, and a
-backslash stays a backslash in both. A formatted literal and its expressions
-must fit on one physical source line, so interpolate `newline` for a line
-break. `formatted` remains an ordinary name anywhere it is not followed by a
-quote.
+backslash stays a backslash in both. A quoted formatted literal stays on one
+physical source line, like every quoted literal.
+
+**A multi-line formatted literal is the raw block with holes.** `formatted` in
+front of `begin text` opts that block into interpolation, and every other rule
+of the block is unchanged — the terminator is a line, the common indentation is
+removed, deeper indentation is kept, and nothing inside is escaped:
+
+```matrix
+give formatted begin text
+    <html>
+      <head><title>{title}</title></head>
+      <body><nav>{nav}</nav></body>
+    </html>
+end text
+```
+
+A single hole still stays on one physical line; the text around it spans as
+many as it likes. `formatted` remains an ordinary name anywhere it is not
+followed by a quote or by `begin text`.
 
 There are no character literals. A one-letter text value is `"a"`.
 
@@ -764,10 +780,6 @@ contract method bodies, supertraits, associated types, `i16`/`u16`/`u32`/`u64`/
 
 Reserved but unimplemented: `chapter` (a third namespace level), `forever` as a
 `static` modifier, and `requires` for declaring a book's authorities.
-
-A `formatted` literal is one physical source line: multi-line interpolated text
-is not available yet. Build it from `newline`, or concatenate a raw `begin text`
-block with `plus`.
 
 Matrix and Ny share the interpreter and native routes. Native aggregate-array
 and foreign-call limitations apply to both languages.

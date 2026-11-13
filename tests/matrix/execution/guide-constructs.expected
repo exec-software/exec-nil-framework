@@ -50,4 +50,8 @@ cleanup
 Count: 4; who: Nathan
 Result: one
 {literal braces} and 3
+<html>
+  <head><title>Home</title></head>
+  <body><nav>Dashboard</nav></body>
+</html>
 1

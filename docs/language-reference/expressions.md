@@ -210,9 +210,10 @@ to the literal portions, so `\n` inserts a newline in the result. Embedded
 expressions keep their own string delimiters; no extra escaping is needed for
 `$"Result: {choose("first", "second")}"`.
 
-The entire explicit string, including its expressions, must fit on one source
-line. Empty holes, trailing tokens, unmatched braces and missing quotes are
-errors. Formatting flags and precision specifiers are not part of this syntax;
+A quoted explicit string, including its expressions, must fit on one source
+line; the Matrix block form below spans lines, and a single hole still stays on
+one of them. Empty holes, trailing tokens, unmatched braces and missing quotes
+are errors. Formatting flags and precision specifiers are not part of this syntax;
 use an explicit formatting function inside a hole when needed.
 
 Legacy ordinary strings such as `"Hello {name}"` retain identifier-only
@@ -233,6 +234,24 @@ formatted Matrix text, backslashes remain ordinary characters; use the named
 `newline`, `tab` and `quote` values where needed, such as
 `formatted "First{newline}Second"`. Braces delimit ordinary Matrix expressions,
 including named calls such as `{choose with first being "one"}`.
+
+`formatted` in front of `begin text` opts a raw block into interpolation:
+
+```text
+value page is formatted begin text
+    <p>Signed in as {who}</p>
+    <p>{count plus 1} projects</p>
+end text
+```
+
+The block keeps every raw-block rule — a line-anchored `end text` terminator,
+removal of the common leading indentation, retained deeper indentation, dropped
+leading and trailing blank lines, and no escape sequences — and adds the holes.
+Indentation removal applies to literal segments only. Every hole retains its
+original file coordinates, so definition, completion, signature help and local
+rename behave inside a block exactly as they do inside a quoted formatted
+literal. A block and a quoted literal produce the same interpolation AST, the
+same shared conversion and the same lowering on both execution routes.
 
 ## Lambda / Anonymous Functions
 

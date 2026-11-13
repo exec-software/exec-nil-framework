@@ -52,6 +52,17 @@ inline formatted_text_scan scan_formatted_text(const std::string &source,
                                                 bool matrix,
                                                 unsigned depth = 0);
 
+// A multiline formatted block. The caller has already removed the block's
+// common indentation and joined its lines, so 'content' is the logical text
+// and every piece offset is an offset into it; the caller maps those back to
+// original source coordinates, which is what keeps a hole's tokens editable.
+// A block has no closing quote: its terminator is a line-anchored keyword the
+// caller consumed, so a newline is ordinary literal text here. Literal bytes
+// are never decoded, matching the raw block the form extends.
+inline formatted_text_scan scan_formatted_block(const std::string &content,
+                                                bool matrix,
+                                                unsigned depth = 0);
+
 inline std::size_t formatted_expression_end(const std::string &source,
                                            std::size_t begin, bool matrix,
                                            unsigned depth,
@@ -221,6 +232,60 @@ inline formatted_text_scan scan_formatted_text(const std::string &source,
     }
   }
   fail(quote, "unterminated formatted text; expected a closing quote");
+  return result;
+}
+
+inline formatted_text_scan scan_formatted_block(const std::string &content,
+                                                bool matrix, unsigned depth) {
+  formatted_text_scan result;
+  result.end = content.size();
+  const auto fail = [&](std::size_t at, const std::string &message) {
+    result.error_offset = at;
+    result.error = message;
+  };
+  if (depth >= 64) {
+    fail(0, "interpolation nesting exceeds 64 levels");
+    return result;
+  }
+  std::size_t cursor = 0;
+  std::size_t literal_start = 0;
+  std::string literal;
+  const auto flush = [&]() {
+    if (!literal.empty())
+      result.pieces.push_back({false, std::move(literal), literal_start,
+                               cursor - literal_start});
+    literal.clear();
+  };
+  while (cursor < content.size()) {
+    const char c = content[cursor];
+    if (c == '{') {
+      if (cursor + 1 < content.size() && content[cursor + 1] == '{') {
+        literal += '{';
+        cursor += 2;
+        continue;
+      }
+      flush();
+      const auto begin = cursor + 1;
+      const auto end = formatted_expression_end(content, begin, matrix, depth + 1, result);
+      if (!result.error.empty()) return result;
+      result.pieces.push_back({true, content.substr(begin, end - begin), begin, end - begin});
+      cursor = end + 1;
+      literal_start = cursor;
+      continue;
+    }
+    if (c == '}') {
+      if (cursor + 1 < content.size() && content[cursor + 1] == '}') {
+        literal += '}';
+        cursor += 2;
+        continue;
+      }
+      fail(cursor, "unmatched '}' in formatted text; write '}}' for a literal brace");
+      return result;
+    }
+    literal += c;
+    ++cursor;
+  }
+  flush();
   return result;
 }
 

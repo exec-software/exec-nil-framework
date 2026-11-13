@@ -433,11 +433,136 @@ void lexer::scan_formatted_string(std::vector<token> &tokens,
   col_ = positions.column(pos_);
 }
 
-// 'begin text' at end of line opens a raw block literal.
-bool lexer::text_block_follows() const {
-  size_t probe = pos_;
-  while (probe < src_.size() && (src_[probe] == ' ' || src_[probe] == '\t'))
-    ++probe;
+// A multi-line formatted block is the raw 'begin text' block with holes. The
+// literal text is dedented exactly as a raw block's is, while every hole keeps
+// its ORIGINAL source coordinates: indentation removal applies to literal
+// segments only, never to an expression, so definition, completion, signature
+// help and rename behave inside a block exactly as they do inside a
+// single-line formatted literal.
+void lexer::scan_formatted_text_block(std::vector<token> &tokens,
+                                      const token &word) {
+  const int line = word.line, col = word.column;
+  while (!at_end() && peek() != '\n') advance(); // 'begin text' and its line
+  if (!at_end()) advance();                      // the newline itself
+  const std::size_t header_end = pos_;
+
+  struct block_line {
+    std::size_t start;
+    std::string text;
+  };
+  std::vector<block_line> lines;
+  bool terminated = false;
+  std::size_t terminator = pos_;
+  while (!at_end()) {
+    const std::size_t start = pos_;
+    std::string raw;
+    while (!at_end() && peek() != '\n') raw.push_back(advance());
+    if (!at_end()) advance();
+    if (!raw.empty() && raw.back() == '\r') raw.pop_back();
+    if (normalise_line(raw) == "end text") {
+      terminated = true;
+      terminator = start;
+      break;
+    }
+    lines.push_back({start, raw});
+  }
+  if (!terminated) {
+    error(line, col, "unterminated 'formatted begin text' block",
+          "close it with a line whose only content is 'end text'");
+    tokens.push_back(make(token_kind::invalid, "", line, col));
+    return;
+  }
+
+  while (!lines.empty() && normalise_line(lines.front().text).empty())
+    lines.erase(lines.begin());
+  while (!lines.empty() && normalise_line(lines.back().text).empty())
+    lines.pop_back();
+
+  size_t indent = std::string::npos;
+  for (const auto &entry : lines) {
+    const size_t first = entry.text.find_first_not_of(" \t");
+    if (first == std::string::npos) continue; // blank lines do not set indent
+    indent = std::min(indent, first);
+  }
+  if (indent == std::string::npos) indent = 0;
+
+  // The logical text, beside the source offset each logical line starts at.
+  // Dedent is therefore a per-line shift, and mapping a logical offset back to
+  // the file is exact rather than a second synthetic source.
+  std::string content;
+  std::vector<std::size_t> logical_starts, source_starts;
+  for (size_t i = 0; i < lines.size(); ++i) {
+    if (i != 0) content.push_back('\n');
+    const std::size_t strip = std::min(indent, lines[i].text.size());
+    logical_starts.push_back(content.size());
+    source_starts.push_back(lines[i].start + strip);
+    content += lines[i].text.substr(strip);
+  }
+  const auto source_offset = [&](std::size_t logical) -> std::size_t {
+    if (logical_starts.empty()) return header_end;
+    const auto row = static_cast<std::size_t>(
+        std::upper_bound(logical_starts.begin(), logical_starts.end(), logical) -
+        logical_starts.begin() - 1);
+    return source_starts[row] + (logical - logical_starts[row]);
+  };
+
+  const auto scanned =
+      ny::scan_formatted_block(content, true, interpolation_depth_);
+  const ny::formatted_source_positions positions(src_, word.start, pos_,
+                                                 word.line, word.column);
+  const auto emit = [&](token_kind kind, std::string value, std::size_t offset,
+                        std::size_t length) {
+    token result;
+    result.kind = kind;
+    result.lexeme = std::move(value);
+    result.key = result.lexeme;
+    result.line = positions.line(offset);
+    result.column = positions.column(offset);
+    result.start = offset;
+    result.length = length;
+    tokens.push_back(std::move(result));
+  };
+
+  if (!scanned.error.empty()) {
+    const auto at = source_offset(scanned.error_offset);
+    error(positions.line(at), positions.column(at), scanned.error);
+    emit(token_kind::invalid, scanned.error, at, 1);
+    return;
+  }
+
+  emit(token_kind::formatted_string_begin, "formatted begin text", word.start,
+       header_end - word.start);
+  for (const auto &piece : scanned.pieces) {
+    const auto start = source_offset(piece.start);
+    const auto end = source_offset(piece.start + piece.length);
+    if (!piece.expression) {
+      emit(token_kind::formatted_text, piece.text, start, end - start);
+      continue;
+    }
+    emit(token_kind::interpolation_begin, "{", start - 1, 1);
+    lexer expression(piece.text, interpolation_depth_ + 1);
+    for (auto value : expression.scan()) {
+      if (value.kind == token_kind::end_of_file) continue;
+      if (value.line == 1) value.column += positions.column(start) - 1;
+      value.line += positions.line(start) - 1;
+      value.start += start;
+      tokens.push_back(std::move(value));
+    }
+    for (const auto &failure : expression.errors()) {
+      const auto column =
+          failure.column +
+          (failure.line == 1 ? positions.column(start) - 1 : 0);
+      error(failure.line + positions.line(start) - 1, column, failure.message,
+            failure.hint);
+    }
+    emit(token_kind::interpolation_end, "}", end, 1);
+  }
+  emit(token_kind::formatted_string_end, "end text", terminator, 8);
+}
+
+// The tail both block probes share: 'text' at 'probe', not running on into a
+// longer identifier, and nothing but spacing left on the line.
+bool lexer::text_word_ends_line(std::size_t probe) const {
   const char *word = "text";
   for (size_t i = 0; i < 4; ++i) {
     if (probe + i >= src_.size()) return false;
@@ -453,6 +578,34 @@ bool lexer::text_block_follows() const {
                                  src_[probe] == '\r'))
     ++probe;
   return probe >= src_.size() || src_[probe] == '\n';
+}
+
+// 'begin text' at end of line opens a raw block literal.
+bool lexer::text_block_follows() const {
+  size_t probe = pos_;
+  while (probe < src_.size() && (src_[probe] == ' ' || src_[probe] == '\t'))
+    ++probe;
+  return text_word_ends_line(probe);
+}
+
+// 'formatted begin text' at end of line opens an interpolated block literal.
+// 'formatted' has been consumed; 'begin' must follow on the same line.
+bool lexer::formatted_block_follows() const {
+  size_t probe = pos_;
+  while (probe < src_.size() && (src_[probe] == ' ' || src_[probe] == '\t'))
+    ++probe;
+  const char *word = "begin";
+  for (size_t i = 0; i < 5; ++i) {
+    if (probe + i >= src_.size()) return false;
+    if (ascii_lower(static_cast<unsigned char>(src_[probe + i])) != word[i])
+      return false;
+  }
+  probe += 5;
+  if (probe < src_.size() && name_part(static_cast<unsigned char>(src_[probe])))
+    return false;
+  while (probe < src_.size() && (src_[probe] == ' ' || src_[probe] == '\t'))
+    ++probe;
+  return text_word_ends_line(probe);
 }
 
 // Consume a raw block: every line after 'begin text' up to a line whose only
@@ -550,6 +703,11 @@ std::vector<token> lexer::scan() {
         while (quote < src_.size() && (src_[quote] == ' ' || src_[quote] == '\t')) ++quote;
         if (quote < src_.size() && src_[quote] == '"') {
           scan_formatted_string(tokens, word, quote);
+          continue;
+        }
+        // 'formatted begin text' opens the same raw block with holes in it.
+        if (formatted_block_follows()) {
+          scan_formatted_text_block(tokens, word);
           continue;
         }
       }

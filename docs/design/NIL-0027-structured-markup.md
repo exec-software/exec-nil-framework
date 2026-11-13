@@ -1,6 +1,7 @@
 # NIL-0027: Multiline formatted text and structured markup literals
 
-- **Status:** Proposed. Staged; nothing in this record ships yet.
+- **Status:** §2 implemented for Matrix on 2026-11-13. §3 proposed; the Ny
+  spelling of §2 remains open.
 - **Scope:** Ny and Matrix syntax, shared hole lexing and AST, checking,
   lowering, `nil.std.markup`, text builder
 - **Date:** 2026-11-13
@@ -49,7 +50,7 @@ member of that family.
 | Surface | Holes | Structure | Status |
 | --- | --- | --- | --- |
 | `formatted "..."` | yes | none, one line | NIL-0014, implemented |
-| `formatted begin text ... end text` | yes | none, multiline | §2 of this record |
+| `formatted begin text ... end text` | yes | none, multiline | §2, implemented (Matrix) |
 | `begin markup ... end markup` | yes | elements, attributes, control flow | §3 of this record |
 
 All three use the hole lexer NIL-0014 already built, which emits an expression's
@@ -86,6 +87,22 @@ This is the smallest useful step and it is worth taking on its own: it is what
 a C# raw interpolated string gives, and it removes most `plus` ladders from
 ordinary code. It does not solve §3's problem, because the control flow still
 lives outside the document.
+
+**Implemented for Matrix on 2026-11-13.** `scan_formatted_block` in
+`nilcompiler/src/formatted_text.hpp` scans the dedented block content, and
+`matrix::lexer::scan_formatted_text_block` maps every piece back through a
+per-line offset table before emitting the existing `formatted_string_begin` /
+`formatted_text` / `interpolation_*` tokens. The parser, checker, lowering and
+both execution routes are untouched, because the token stream and therefore the
+AST are the ones the quoted form already produced. Coverage: the
+`formatted-text-matrix` parity fixture across the VM, binary-NIL and native
+routes; malformed blocks rejected on every route in
+`tests/tools/formatted_text_contract.py`; and a CRLF block in
+`tests/tools/semantic_contract.py` whose hole is renamed while an identical
+word inside doubled braces in the dedented literal is left alone, which is the
+proof that indentation removal did not move the expression.
+
+Ny still has only `$"..."`. Its multiline spelling is §6's open question.
 
 ## 3. Markup literals
 

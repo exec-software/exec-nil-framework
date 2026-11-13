@@ -189,6 +189,19 @@ def main():
         query(formatted_ny.replace('{sam|}', '{{sam|}}'), name='formatted_literal.ny', available=False, status=0)
         query(formatted_matrix.replace('{sam|}', '{{sam|}}'), name='formatted_literal.matrix', available=False, status=0)
 
+        # A hole inside a multiline block is an ordinary expression position
+        # even though the block's literal text has been dedented.
+        block_matrix = ('!!! \u00e9\U0001F600\r\nbook formatted-block-completion\r\n'
+                        'main returns number begin paragraph\r\n'
+                        '    value sample-value is 7\r\n'
+                        '    say formatted begin text\r\n'
+                        '        {{literal}} {sam|}\r\n'
+                        '    end text\r\n'
+                        '    give 0\r\nend paragraph\r\n')
+        assert set(items(query(block_matrix, name='formatted-block.matrix'))) == {'sample-value'}
+        query(block_matrix.replace('{sam|}', '{{sam|}}'), name='formatted_block_literal.matrix',
+              available=False, status=0)
+
         # Independent result budgets withhold the optional query rather than
         # return truncated candidates or omit contributing source snapshots.
         large = '# ' + 'x' * (1500 * 1024) + '\n'

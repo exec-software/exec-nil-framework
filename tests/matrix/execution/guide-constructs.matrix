@@ -246,6 +246,15 @@ main returns number begin paragraph
     say formatted "Result: {choose with first being "one", second being "two"}"
     say formatted "{{literal braces}} and {tally}"
 
+    value page-title as text is "Home"
+    value page-nav as text is "Dashboard"
+    say formatted begin text
+        <html>
+          <head><title>{page-title}</title></head>
+          <body><nav>{page-nav}</nav></body>
+        </html>
+    end text
+
     value started as override long is now in milliseconds
     sleep for 1 milliseconds
     say (now in milliseconds) is at least started

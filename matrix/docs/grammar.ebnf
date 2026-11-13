@@ -454,11 +454,21 @@ text_literal    = '"' { character_except_quote_or_newline } '"'
                 | text_block ;
 named_character = 'quote' | 'newline' | 'tab' ;
 formatted_text  = 'formatted' '"' { formatted_segment | '{{' | '}}'
-                | '{' expression '}' } '"' ;
+                | '{' expression '}' } '"'
+                | 'formatted' formatted_block ;
 (* formatted_segment is raw text excluding quotes, braces and newlines.
  * Expressions use the complete Matrix grammar, including their own quoted
  * literals. Doubled braces are literal text; backslashes remain ordinary.
- * 'formatted' is contextual only before a quote, and remains a name elsewhere. *)
+ * 'formatted' is contextual before a quote and before 'begin text', and
+ * remains an ordinary name elsewhere. *)
+
+(* The block form is text_block with holes: identical terminator, dedent and
+ * blank-line rules, no escapes, and literal text that may span lines. A single
+ * hole still stays on one physical line. Indentation removal applies to the
+ * literal segments only, so a hole keeps its original source coordinates. *)
+formatted_block = 'begin' 'text' newline
+                  { any_line_with { '{{' | '}}' | '{' expression '}' } }
+                  'end' 'text' ;
 
 (* A raw block, following the universal 'begin <kind>' / 'end <kind>' shape.
  * It is terminated by a line whose only content is 'end text' -- a

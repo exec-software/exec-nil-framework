@@ -2480,3 +2480,36 @@ RHS lowering receives the destination context. Paired Ny/Matrix fixtures cover
 local and record-field assignments of `Option<Record>`, with side effects
 proving each payload is evaluated once. They run through textual/binary NIL,
 bundles, LLVM JIT and AOT. This does not extend native global storage to enums.
+
+### F88 — A generated document needs multiline interpolation before it needs a document type
+
+**Observed:** Every generator written against the framework builds its output
+by concatenation, because a `formatted` literal was confined to one physical
+source line (NIL-0014) and a raw `begin text` block carried no holes. The
+result is the shape this framework exists to avoid: the document's structure
+spread across bindings and `plus` chains, its control flow outside the markup,
+and no check that the output is even balanced. Writing a page shell by hand
+produced four bindings and six concatenations for eleven tags.
+
+A second, quieter cost: `MATRIX-GUIDE.md` documented none of `formatted`,
+`collect begin query` or `begin pattern`, all of which had shipped. An agent
+writing Matrix from the guide therefore could not have used them even where
+they applied.
+
+**Fixed:** `formatted` in front of `begin text` opts a raw block into
+interpolation, keeping every raw-block rule — line-anchored terminator, common
+indentation removed, deeper indentation kept, no escapes — and adding holes. A
+single hole still stays on one physical line. Indentation removal applies to
+literal segments only: the lexer records the source offset each dedented line
+starts at and maps every piece back through it, so hole tokens keep their
+original coordinates and NIL-0014's editing contract holds unchanged. The
+block emits the token stream the quoted form already emitted, so the parser,
+checker, lowering, VM and native routes needed no change at all. The three
+shipped constructs are now documented in the guide and asserted by
+`tests/matrix/execution/guide-constructs.matrix` and
+`guide-queries-patterns.matrix`.
+
+**Remaining:** Ny has no multiline spelling yet; `$"""` is the candidate. The
+larger problem F88 only dents — control flow living inside the document, with
+context-correct escaping and a checkable tree — is
+[NIL-0027](../../docs/design/NIL-0027-structured-markup.md) §3.
