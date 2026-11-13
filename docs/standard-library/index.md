@@ -1,7 +1,8 @@
 # Standard-library status
 
 Ny and Matrix share `nilstd`, one standard library compiled to NIL. Its active
-Ny and Matrix sources form 18 logical SDK modules, including `prelude`.
+Ny and Matrix sources form 19 logical SDK modules, including `prelude` and
+`nil.std.markup`.
 Support remains evidence-scoped. Focused fixtures exercise `nilstd` and `nillib`
 through textual/binary NIL, bundles, LLVM JIT and AOT, and standalone
 assembler/linker pipelines. Local SDK qualification records the exact source
@@ -38,7 +39,7 @@ averaging, nonfinite compatibility behavior and numerical accuracy limits.
 
 ```text
 nilstd/
-  src/           Ny and Matrix sources organized as 18 logical modules
+  src/           Ny and Matrix sources organized as 19 logical modules
   native/        14 preserved C and C++ interoperability shims
   tests/         8 preserved design-era library tests
   experimental/  65 quarantined Ny sources excluded from the SDK
@@ -49,7 +50,7 @@ The active tree uses neutral family folders: `nil.std.io` lives under
 remain aliases of the same module identities.
 
 The active logical modules are `prelude` and `nil.std.core`, `collections`,
-`datetime`, `db`, `diagnostics`, `io`, `math`, `net`, `nildata`, `reflection`, `runtime`,
+`datetime`, `db`, `diagnostics`, `io`, `markup`, `math`, `net`, `nildata`, `reflection`, `runtime`,
 `security`, `system`, `testing`, `text`, `threading`, and `ui`. Quarantine is broader than parser
 failure: an experimental source may compile yet still lack complete language
 semantics, an executable provider, or behavioral evidence.

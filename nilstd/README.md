@@ -24,10 +24,10 @@ are first-party packages rather than standard-library modules and live in
 
 ## Current status
 
-The active tree contains 80 sources (68 Ny and 12 Matrix) organized into 18
+The active tree contains 84 sources (72 Ny and 12 Matrix) organized into 19
 logical SDK modules:
 `prelude` plus `nil.std.core`, `collections`, `datetime`, `db`, `diagnostics`,
-`io`, `math`, `net`, `nildata`, `reflection`, `runtime`, `security`, `system`, `testing`, `text`,
+`io`, `markup`, `math`, `net`, `nildata`, `reflection`, `runtime`, `security`, `system`, `testing`, `text`,
 `threading`, and `ui`. The SDK packaging gate compiles every logical module with normal
 type checking, emits a NIL library (v2, or v4 when carrying classes), and fails
 atomically rather than publishing a partial set. Matrix sources retain their
@@ -46,7 +46,7 @@ below.
 
 | Area | Files | Status |
 | --- | ---: | --- |
-| `src/` | 68 Ny files, 12 Matrix files | Eighteen logical SDK modules. Matrix contributes checked arrays/text spans, sorting, reflection values, vector helpers, random generators, testing helpers and the desktop UI library, consumed from both frontends. |
+| `src/` | 72 Ny files, 12 Matrix files | Nineteen logical SDK modules. Matrix contributes checked arrays/text spans, sorting, reflection values, vector helpers, random generators, testing helpers and the desktop UI library, consumed from both frontends. |
 | `experimental/` | 65 Ny files | Design sources excluded from `nilstd`/`nillib` because language semantics, executable providers, or behavioral evidence are incomplete. |
 | `tests/` | 8 Ny files | Preserved design-era tests; these are still separate from the registered route fixtures under the repository-level `tests/` tree. |
 | `native/` | 14 C/C++ files | Preserved platform/provider shims; source presence alone is neither a build, shipment, nor native-support claim. |
@@ -55,10 +55,15 @@ below.
 
 `nil.std.testing` supplies checks and checked value extraction with co-located
 niltest cases. `nil.std.ui` supplies typed windows, layouts, controls, events and
-model synchronization through the optional GTK 4 provider on Linux and the
-Windows development target. See the
+model synchronization through GTK 4 on Linux, Win32 on Windows and AppKit on
+macOS. See the
 [testing guide](../docs/tools/testing.md) and [UI reference](../docs/standard-library/ui.md)
 for execution evidence and current scope.
+
+`nil.std.markup` provides serialized documents, composition and context-specific
+escaping for checked markup blocks in Ny and Matrix. See the
+[markup contract](../docs/standard-library/markup.md) for supported HTML contexts
+and the explicit trusted `raw` bypass.
 
 `nil.std.nildata` replaces NyData with versioned data blocks, one array kind,
 exact numeric tokens and checked JSON interchange. The compiler conversions and
