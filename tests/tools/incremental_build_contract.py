@@ -30,6 +30,30 @@ def read_event(path):
     return event
 
 
+def event_summary(directory):
+    """Bounded failure evidence without entry paths or source contents."""
+    counts = {'start': 0, 'finish': 0, 'fail': 0}
+    records = []
+    invalid = 0
+    truncated = False
+    for index, path in enumerate(directory.glob('event-*/record.json')):
+        if index == 256:
+            truncated = True
+            break
+        try:
+            kind, _, timestamp = read_event(path)
+            if timestamp > (1 << 63) - 1:
+                raise ValueError('fixture timestamp exceeds the diagnostic bound')
+        except (OSError, ValueError, AssertionError):
+            invalid += 1
+            continue
+        counts[kind] += 1
+        records.append({'kind': kind, 'monotonic_ns': timestamp})
+    records.sort(key=lambda record: (record['monotonic_ns'], record['kind']))
+    return {'counts': counts, 'latest': records[-16:],
+            'invalid_records': invalid, 'truncated': truncated}
+
+
 def check_event_publication(root):
     path = root / 'publication-check.json'
     expected = ['start', str(root / 'source é.ny'), time.monotonic_ns()]
@@ -215,8 +239,22 @@ event('finish')
             # Keep fake/containment checks at 60 s and bound real Darwin builds
             # separately; this changes no assertion or cache admission rule.
             timeout = 300 if sys.platform == 'darwin' and tool == compiler else 60
-            result = subprocess.run(command, cwd=cwd, text=True, capture_output=True, timeout=timeout)
+            before = event_summary(events) if arguments[0] == 'build' and tool == fake else None
+
+            def report_fixture_events():
+                if before is not None:
+                    print('nilbuild fixture events: ' + json.dumps({
+                        'before': before, 'after': event_summary(events)}, sort_keys=True),
+                        file=sys.stderr, flush=True)
+
+            try:
+                result = subprocess.run(command, cwd=cwd, text=True, capture_output=True, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                report_fixture_events()
+                raise
             checks += 1
+            if result.returncode != status:
+                report_fixture_events()
             assert result.returncode == status, (command, result.returncode, result.stdout, result.stderr)
             return result
 

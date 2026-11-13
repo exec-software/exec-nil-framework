@@ -3,6 +3,7 @@
 
 import argparse
 from contextlib import contextmanager
+import errno
 import json
 import os
 from pathlib import Path
@@ -27,7 +28,7 @@ DRIVER = r'''
 std::string prefix(const std::string &text) {
   if (text.empty()) return "-";
   std::ostringstream output;
-  for (unsigned char c : text.substr(0, 32))
+  for (unsigned char c : text.substr(0, 128))
     output << std::hex << std::setw(2) << std::setfill('0') << unsigned(c);
   return output.str();
 }
@@ -217,15 +218,17 @@ def process_diagnostic(returncode, output, error):
             f'stdout={output!r}\nstderr={error!r}')
 
 
-def run_driver(call, **kwargs):
+def run_driver(call, *, record_directory=None, **kwargs):
     completed = subprocess.run(call, text=True, capture_output=True,
                                **console_options(), **kwargs)
-    record_driver(call, completed.returncode, completed.stdout, completed.stderr)
+    record_driver(call, completed.returncode, completed.stdout, completed.stderr,
+                  directory=record_directory)
     return completed
 
 
-def record_driver(call, returncode, output, error):
-    (Path(call[2]) / 'driver-result.json').write_text(json.dumps({
+def record_driver(call, returncode, output, error, *, directory=None):
+    output_directory = Path(call[2]) if directory is None else directory
+    (output_directory / 'driver-result.json').write_text(json.dumps({
         'command': call, 'returncode': returncode,
         'exitHex': f'0x{returncode & 0xffffffff:08x}',
         'stdout': output, 'stderr': error,
@@ -264,6 +267,31 @@ def main():
             (case / 'first-wave').write_text(str(min(jobs, len(modes))))
             return case, [str(driver), str(jobs), str(case), sys.executable,
                           str(worker), *modes]
+
+        if os.name != 'nt':
+            # These exercise the real fork/exec path, preserving the setup
+            # failure distinction even when no child program has started.
+            case, call = command('missing-working-directory', 1, ['queued'])
+            call[2] = str(case / 'absent')
+            completed = run_driver(call, record_directory=case, timeout=10)
+            assert completed.returncode == 0, completed
+            record = results(completed.stdout)[0]
+            expected = f'nilbuild: child setup failed at chdir (errno={errno.ENOENT})\n'
+            assert record == {'status': 126, 'started': True, 'cancelled': False,
+                              'outsize': 0, 'errsize': len(expected),
+                              'out': '', 'err': expected}, record
+            assert not (case / 'started-0').exists()
+
+            case, call = command('missing-executable', 1, ['queued'])
+            call[3] = str(case / 'absent-tool')
+            completed = run_driver(call, timeout=10)
+            assert completed.returncode == 0, completed
+            record = results(completed.stdout)[0]
+            expected = 'nilbuild: cannot execute child tool\n'
+            assert record == {'status': 127, 'started': True, 'cancelled': False,
+                              'outsize': 0, 'errsize': len(expected),
+                              'out': '', 'err': expected}, record
+            assert not (case / 'started-0').exists()
 
         for jobs, count, delayed in ((1, 5, False), (2, 5, False), (2, 2, True)):
             case, call = command(f'success-{jobs}' + ('-delayed' if delayed else ''),

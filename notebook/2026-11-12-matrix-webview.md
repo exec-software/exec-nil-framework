@@ -73,8 +73,21 @@ host operations, and they do not automatically log page content or credentials.
 - The Matrix consumer contract passed text NIL, binary NIL, LLVM AOT and JIT
   using a synthetic provider, including records retained after event/window
   teardown. This is interface proof, not browser proof.
-- Shared provider logic passed 196 native controls with sanitizers and 36 checks
-  of the generated JavaScript transport. Real browser builds and desktop tests
-  on Windows, Linux and both Mac architectures remain the next required gate.
+- The initial shared provider logic passed 196 native controls with sanitizers
+  and 36 checks of the generated JavaScript transport. Browser qualification
+  was a separate follow-up to this initial synthetic-provider evidence.
+
+### Browser qualification follow-up — 2026-11-13
+
+The public [WebView qualification PR](https://github.com/exec-software/exec-nil-framework-webview/pull/1)
+now passes on Linux, Windows, Intel macOS and Apple Silicon macOS at
+`63d3e49d953179c81231402cf07dc7d6dbe17939`, using framework
+`e7bc2a00e6854084b7b5084e29fa50456cbe8977`. Each host runs all 17 browser
+behavior groups through text NIL, binary NIL, AOT and JIT, alongside four
+synthetic-provider routes, 209 shared controls and 36 JavaScript checks.
+The [platform notes](https://github.com/exec-software/exec-nil-framework-webview/blob/63d3e49d953179c81231402cf07dc7d6dbe17939/docs/platform-support.md)
+record the exact engine versions, request counts, cleanup checks, source seals
+and limits of the implemented profile. This qualifies the initial API profile;
+it does not claim that every archived WebView feature has been ported.
 
 No accepted SDK, installer or release deployment is changed by this work.

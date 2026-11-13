@@ -271,6 +271,11 @@ File timestamps also pass textual/binary NIL, LLVM JIT and AOT checks everywhere
 The [platform support matrix](docs/platform-support.md) records exact SDK/source
 revisions, retained failures and remaining deployment boundaries.
 
+The [current framework integration](https://github.com/exec-software/exec-nil-framework/pull/41)
+combines rooted file snapshots, the Matrix WebView bridge and the completed
+formatted-text/markup work. Its [qualification record](notebook/2026-11-13-formatted-markup-handoff.md#current-framework-integration)
+tracks current-source checks separately from the installed SDK results above.
+
 These are development results. Windows and macOS release qualification remains
 pending. The
 [release profile](docs/release/v1-profile.md) defines supported configurations
