@@ -211,6 +211,12 @@ std::int32_t nyrt_read_regular_bytes(const char *path,
                                      std::int64_t maximum_bytes,
                                      void **bytes_out,
                                      const char **error_out) noexcept;
+// All outputs describe the same bounded, rooted file read. The compiler owns
+// the language record layout; this ABI only returns its independent fields.
+std::int32_t nyrt_read_rooted_snapshot(
+    const char *root, const char *relative, std::int64_t maximum_bytes,
+    void **bytes_out, std::int64_t *modified_ms_out, const char **sha256_out,
+    const char **error_out) noexcept;
 std::int32_t nyrt_write_bytes_atomic(const char *path, const void *bytes,
                                      std::int32_t replace,
                                      const char **error_out) noexcept;

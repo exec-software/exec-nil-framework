@@ -1,6 +1,7 @@
 #include "native_runtime.hpp"
 #include "../../common/standard_streams.hpp"
 #include "../../common/strict_json.hpp"
+#include "../../common/content_digest.hpp"
 #include "../../common/windows_environment.hpp"
 #include "ordinary_io_intrinsic.hpp"
 #include "dynamic_type.hpp"
@@ -1965,6 +1966,48 @@ std::int32_t nyrt_io_v1(const char *operation, std::uint64_t first,
       return 1;
     }
     set_error(error, "ordinary I/O: invalid text/path or host operation failed");
+    return 0;
+  }
+}
+
+std::int32_t nyrt_read_rooted_snapshot(
+    const char *root, const char *relative, std::int64_t maximum_bytes,
+    void **bytes_out, std::int64_t *modified_ms_out, const char **sha256_out,
+    const char **error_out) noexcept {
+  if (bytes_out) *bytes_out = nullptr;
+  if (modified_ms_out) *modified_ms_out = 0;
+  if (sha256_out) *sha256_out = nullptr;
+  if (error_out) *error_out = nullptr;
+  if (!root || !relative || !bytes_out || !modified_ms_out || !sha256_out ||
+      maximum_bytes < 0 ||
+      static_cast<std::uint64_t>(maximum_bytes) > maximum_file_bytes) {
+    set_error(error_out, "file.read_rooted_snapshot: invalid arguments");
+    return 0;
+  }
+  try {
+    auto loaded = ny::detail::read_rooted_file_snapshot_utf8(
+        root, relative, static_cast<std::uint64_t>(maximum_bytes));
+    if (!loaded.ok) {
+      set_error(error_out, loaded.error);
+      return 0;
+    }
+    nil::detail::sha256 hash;
+    hash.update(loaded.bytes.data(), loaded.bytes.size());
+    const auto digest = hash.finish();
+    auto *array = make_array(NYRT_ARRAY_U8, loaded.bytes.size());
+    const auto *digest_text = own_string(digest);
+    if (!array || !digest_text) {
+      set_error(error_out, "file.read_rooted_snapshot: allocation failed");
+      return 0;
+    }
+    if (!loaded.bytes.empty())
+      std::memcpy(array->data, loaded.bytes.data(), loaded.bytes.size());
+    *bytes_out = array;
+    *modified_ms_out = loaded.modified_ms;
+    *sha256_out = digest_text;
+    return 1;
+  } catch (...) {
+    set_error(error_out, "file.read_rooted_snapshot: host operation failed");
     return 0;
   }
 }

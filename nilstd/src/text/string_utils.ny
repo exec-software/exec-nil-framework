@@ -800,7 +800,7 @@ end fn
 # outside ASCII was unreachable because of this, and so was reading the bytes
 # off a socket.
 #
-# These two are about bytes and say so in their names. They know nothing about
+# These operations are about bytes and say so in their names. They know nothing about
 # UTF-8; assembling characters from bytes is the caller's job, and now it is a
 # job that can be done.
 
@@ -821,3 +821,11 @@ pub fn byte_at(s: text, index: i64) -> i64
 # A code outside 0..255 gives empty text.
 @intrinsic("text.from_byte")
 pub fn from_byte(code: i64) -> text
+
+# Copy a byte array into interpreter text in one operation. Every byte is
+# preserved, including NUL and invalid UTF-8; no decoding or normalization is
+# performed, and later array mutation does not change the returned text.
+# Interpreter-only, like byte_at/from_byte: native text currently requires
+# NUL-free values, so native compilation rejects this intrinsic explicitly.
+@intrinsic("text.from_bytes")
+pub fn from_bytes(data: array<u8>) -> text
