@@ -7,6 +7,7 @@
 #include "diagnostics.hpp"
 #include "dynamic_type.hpp"
 #include "ui_intrinsic.hpp"
+#include "webview_intrinsic.hpp"
 #include "executable_context.hpp"
 #include "native_runtime.hpp"
 #include "ordinary_io_intrinsic.hpp"
@@ -2955,10 +2956,13 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           impl_->builder->CreateRet(value);
         }
         annotation_handled = true;
-      } else if (dispatch_name == "@intrinsic" && dispatch_provider.rfind("ui.v1.", 0) == 0) {
-        const auto contract = ui::intrinsic(dispatch_provider);
+      } else if (dispatch_name == "@intrinsic" &&
+                 (dispatch_provider.rfind("ui.v1.", 0) == 0 || dispatch_provider.rfind("webview.v1.", 0) == 0)) {
+        const bool is_webview = dispatch_provider.rfind("webview.v1.", 0) == 0;
+        const auto contract = is_webview ? webview::intrinsic(dispatch_provider) : ui::intrinsic(dispatch_provider);
+        const std::string family = is_webview ? "WebView" : "UI";
         if (!contract) {
-          std::cerr << "[NativeCodegen] unknown UI intrinsic '" << dispatch_provider << "'\n";
+          std::cerr << "[NativeCodegen] unknown " << family << " intrinsic '" << dispatch_provider << "'\n";
           return false;
         }
         std::vector<std::string> parameter_types;
@@ -2980,7 +2984,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           valid = valid && schemas == 1;
         }
         if (!valid) {
-          std::cerr << "[NativeCodegen] " << dispatch_provider << " requires the exact UI ABI "
+          std::cerr << "[NativeCodegen] " << dispatch_provider << " requires the exact " << family << " ABI "
                     << ui::signature(*contract) << " and the standard Result schema\n";
           return false;
         }
@@ -3000,7 +3004,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         std::vector<llvm::Type *> types;
         for (auto *argument : arguments) types.push_back(argument->getType());
         auto *runtime_type = llvm::FunctionType::get(capability ? word_type : llvm::Type::getInt32Ty(ctx), types, false);
-        auto runtime = impl_->module->getOrInsertFunction("nyrt_ui_v1_" + contract->operation, runtime_type);
+        auto runtime = impl_->module->getOrInsertFunction(std::string(is_webview ? "nyrt_webview_v1_" : "nyrt_ui_v1_") + contract->operation, runtime_type);
         auto *status = impl_->builder->CreateCall(runtime_type, runtime.getCallee(), arguments);
         if (capability) {
           impl_->builder->CreateRet(impl_->builder->CreateIntCast(status, impl_->current_function->getReturnType(), false));
@@ -9410,6 +9414,17 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
         llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(address),
                                      llvm::JITSymbolFlags::Exported);
   };
+  expose_runtime_symbol("nyrt_webview_v1_configure", &nyrt_webview_v1_configure);
+  expose_runtime_symbol("nyrt_webview_v1_window", &nyrt_webview_v1_window);
+  expose_runtime_symbol("nyrt_webview_v1_show", &nyrt_webview_v1_show);
+  expose_runtime_symbol("nyrt_webview_v1_poll", &nyrt_webview_v1_poll);
+  expose_runtime_symbol("nyrt_webview_v1_release_event", &nyrt_webview_v1_release_event);
+  expose_runtime_symbol("nyrt_webview_v1_close", &nyrt_webview_v1_close);
+  expose_runtime_symbol("nyrt_webview_v1_navigate", &nyrt_webview_v1_navigate);
+  expose_runtime_symbol("nyrt_webview_v1_load_html", &nyrt_webview_v1_load_html);
+  expose_runtime_symbol("nyrt_webview_v1_evaluate_function", &nyrt_webview_v1_evaluate_function);
+  expose_runtime_symbol("nyrt_webview_v1_event_number", &nyrt_webview_v1_event_number);
+  expose_runtime_symbol("nyrt_webview_v1_event_text", &nyrt_webview_v1_event_text);
   expose_runtime_symbol("nyrt_ui_v1_available", &nyrt_ui_v1_available);
   expose_runtime_symbol("nyrt_ui_v1_window", &nyrt_ui_v1_window);
   expose_runtime_symbol("nyrt_ui_v1_widget", &nyrt_ui_v1_widget);
