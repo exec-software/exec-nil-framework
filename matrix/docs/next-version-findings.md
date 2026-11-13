@@ -1637,10 +1637,12 @@ record, array or tuple arguments at the callsite before code generation.
 Doubled braces insert literal braces in explicit formatted text. Ordinary
 Matrix quoted strings and `begin text` blocks remain raw; legacy Ny identifier
 interpolation stays available for compatibility. `formatted` is contextual
-before a quote and remains an ordinary Matrix name elsewhere. Explicit strings
-and their expressions currently occupy one physical source line. Empty holes,
-trailing tokens, unmatched braces and unterminated strings are errors; the
-parser does not silently convert malformed expressions back into text.
+before a quote or `begin text` and remains an ordinary Matrix name elsewhere.
+Quoted formatted strings occupy one physical source line. Multiline blocks are
+implemented for both surfaces (F88); each hole still stays on one physical
+line. Empty holes, trailing tokens, unmatched braces and unterminated strings
+are errors; the parser does not silently convert malformed expressions back
+into text.
 
 **Coverage:** Source-span tests include decoded Ny prefixes, raw Matrix
 backslashes, nested formatted strings, quoted expression arguments, UTF-8,
@@ -1650,8 +1652,8 @@ contract checks local references and applies an actual rename, proving that
 matching words inside doubled-brace literal text remain unchanged. Execution
 contracts cover the shared scalar conversion and evaluation order.
 
-**Follow-up:** Add multiline formatted text only with an explicit original
-source map through indentation removal. Custom record formatting should use
+**Follow-up:** Multiline formatted text now preserves an explicit original
+source map through indentation removal (F88). Custom record formatting should use
 the existing `Display` contract once dispatch is qualified on all routes;
 currently callers must explicitly produce a supported scalar or text value.
 Precision and presentation options remain library calls rather than a second
@@ -2480,3 +2482,87 @@ RHS lowering receives the destination context. Paired Ny/Matrix fixtures cover
 local and record-field assignments of `Option<Record>`, with side effects
 proving each payload is evaluated once. They run through textual/binary NIL,
 bundles, LLVM JIT and AOT. This does not extend native global storage to enums.
+
+### F88 — A generated document needs multiline interpolation before it needs a document type
+
+**Observed:** Every generator written against the framework builds its output
+by concatenation, because a `formatted` literal was confined to one physical
+source line (NIL-0014) and a raw `begin text` block carried no holes. The
+result is the shape this framework exists to avoid: the document's structure
+spread across bindings and `plus` chains, its control flow outside the markup,
+and no check that the output is even balanced. Writing a page shell by hand
+produced four bindings and six concatenations for eleven tags.
+
+A second, quieter cost: `MATRIX-GUIDE.md` documented none of `formatted`,
+`collect begin query` or `begin pattern`, all of which had shipped. An agent
+writing Matrix from the guide therefore could not have used them even where
+they applied.
+
+**Fixed:** `formatted` in front of `begin text` opts a raw block into
+interpolation, keeping every raw-block rule — line-anchored terminator, common
+indentation removed, deeper indentation kept, no escapes — and adding holes. A
+single hole still stays on one physical line. Indentation removal applies to
+literal segments only: the lexer records the source offset each dedented line
+starts at and maps every piece back through it, so hole tokens keep their
+original coordinates and NIL-0014's editing contract holds unchanged. The
+block emits the token stream the quoted form already emitted, so the parser,
+checker, lowering, VM and native routes needed no change at all. The three
+shipped constructs are now documented in the guide and asserted by
+`tests/matrix/execution/guide-constructs.matrix` and
+`guide-queries-patterns.matrix`.
+
+**Ny parity:** `$"""` now opens the same raw formatted block. The opener
+must end its line; the first later line beginning with `"""` closes the block
+and permits an expression continuation such as a call's closing `)`. Both
+surfaces share the interpolation scanner and preserve original hole spans.
+Structured document support followed in F89 and
+[NIL-0027](../../docs/design/NIL-0027-structured-markup.md) §3.
+
+### F89 — A document assembled from fragments cannot be checked or escaped
+
+**Observed:** F88 gave a generator readable interpolation, and left the real
+problem untouched: the control flow still lived outside the document. A page
+shell was still four bindings and a conditional that produced two different
+strings of tags, nothing checked that the result was balanced, and every
+interpolated value carried whatever escaping its author remembered. The
+escaping is the part that cannot be fixed by discipline — the correct escape
+differs between element content, an attribute value and a URL attribute, and a
+string does not know which one it landed in.
+
+**Fixed:** `begin markup` (NIL-0027 §3). The literal segments are parsed as
+markup at compile time, so unbalanced elements and unterminated directives are
+compile errors, and each hole is escaped for the position it occupies. The
+block's value is a `nil.std.markup.document`, a distinct type whose whole job
+is that an already-escaped fragment composed into another document is spliced
+rather than escaped twice. `{raw ...}` is the single, greppable way to bypass
+escaping. Control flow is written with the language's own words inside the
+document, and every arm must leave the element stack as it found it.
+
+Three things fell out of building it, each recorded where it belongs:
+
+- The node tree the design record specified cannot execute natively, and would
+  have bought only the capability that was already deferred. The value is
+  serialized at compile time instead; NIL-0027 §3.6 records the reversal.
+- `nil.std.text::to_lower` reaches `_char_code`, which has no native ABI, so a
+  page that used it compiled for the VM and failed natively. The URL scheme
+  check folds case with `replace`. Making `to_lower` native is open work.
+- The checker spells `text` as `String` internally while the diagnostic
+  renderer prints `text`, so a comparison against `"text"` alone fails while
+  reporting that it got `text`. Any new check over text types must accept both
+  spellings.
+
+**Ny reached parity the same day.** `markup_structure` holds the document
+parsing, the checks and the escape decisions; each frontend supplies only its
+own directive words (`{if}`/`{for}` in Ny, `{when}`/`{repeat}` in Matrix) and
+its own expression lexing. Ny opens a block with `$markup` rather than the
+`markup { ... }` the design record first guessed: a markup block is full of
+braces, so a brace-delimited block would end at the first `}` in a stylesheet.
+Two frictions showed up only on the Ny side — the sigil skips six characters
+after the already-consumed `$`, not seven, and Ny names an imported type by its
+short spelling, so the document type has to be recognised by declaration rather
+than by name.
+
+**Remaining:** whitespace is emitted as written, so
+a composed document keeps its own indentation; a compact renderer and the XML
+dialect are future work. Element and attribute names are fixed, so dynamic
+attribute sets (`data-*` generation) still need a design.

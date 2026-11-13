@@ -16,6 +16,8 @@ bounded conventional regex, captures, byte spans, match iteration, whole-match
 collections, splitting and literal replacement.
 The [query reference](queries.md) defines eager filtering, stable ordering,
 pagination, projection and the Matrix-authored collection terminals.
+The [markup reference](markup.md) defines the document type a markup literal
+produces and the per-context escaping it lowers to.
 
 The [vector norm reference](math-vectors.md) describes stable two- and
 three-component lengths, finite-value checks, and checked normalization shared

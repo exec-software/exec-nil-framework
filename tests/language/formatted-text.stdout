@@ -14,3 +14,9 @@ value=17
 value=1.25
 value=text
 legacy=-1.6
+hello world and 7
+  kept indentation, C:\raw\path and a "quote"
+{literal braces} plus 4:5
+5
+0
+nested inner 11 done

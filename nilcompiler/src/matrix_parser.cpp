@@ -1,4 +1,5 @@
 #include "matrix_parser.hpp"
+#include "markup_structure.hpp"
 #include "numeric_literal.hpp"
 #include "pattern_syntax.hpp"
 #include "pattern_engine.hpp"
@@ -2998,6 +2999,8 @@ ny::ast_expr_ptr parser::parse_primary() {
     return number;
   }
 
+  if (check(matrix::token_kind::markup_begin)) return parse_markup_expression();
+
   if (match(matrix::token_kind::formatted_string_begin)) {
     std::vector<ny::interpolated_part> parts;
     while (!check(matrix::token_kind::formatted_string_end) && !at_end()) {
@@ -3227,6 +3230,84 @@ ny::ast_expr_ptr parser::parse_primary() {
   error(start, "expected a value, found '" + start.lexeme + "'");
   advance();
   return std::make_shared<ny::ast_number_literal>("0", line);
+}
+
+// A markup literal (NIL-0027). The literal segments are read as markup by the
+// shared structure, which checks the document and tells each hole which
+// context it landed in; the directives are Matrix's own control words.
+ny::ast_expr_ptr parser::parse_markup_expression() {
+  const token start = advance(); // markup_begin
+  auto markup = std::make_shared<ny::ast_markup_expr>(start.line);
+  ny::markup_structure document;
+
+  while (!check(matrix::token_kind::markup_end) && !at_end()) {
+    if (match(matrix::token_kind::formatted_text)) {
+      document.literal(previous().lexeme, previous().line);
+      continue;
+    }
+    if (!match(matrix::token_kind::interpolation_begin)) {
+      error(peek(), "expected markup or an interpolation");
+      advance();
+      continue;
+    }
+    const token opening = previous();
+    const bool is_when = check(kw::when);
+    const bool is_otherwise = check(kw::otherwise);
+    const bool is_repeat = check(kw::repeat);
+    const bool is_end = check(kw::end);
+    if (is_when || is_otherwise || is_repeat || is_end) {
+      if (is_when) {
+        advance();
+        document.open_when(parse_expression(), opening.line);
+      } else if (is_otherwise) {
+        advance();
+        document.else_arm(match(kw::when) ? parse_expression() : nullptr, opening.line);
+      } else if (is_repeat) {
+        advance();
+        if (!match(kw::for_)) error(peek(), "expected 'for each' after '{repeat'");
+        if (!exact_phrase_word(peek(), "each"))
+          error(peek(), "expected 'each' after '{repeat for'");
+        else
+          advance();
+        std::string binding;
+        if (!peek().is_name()) {
+          error(peek(), "expected a row name after '{repeat for each'");
+        } else {
+          binding = resolve_name(advance().lexeme);
+        }
+        if (!match(kw::in_)) error(peek(), "expected 'in' after the row name");
+        document.open_repeat(std::move(binding), parse_expression(), opening.line);
+      } else {
+        advance(); // end
+        const bool closing_when = match(kw::when);
+        const bool closing_repeat = !closing_when && match(kw::repeat);
+        if (!closing_when && !closing_repeat)
+          error(peek(), "expected '{end when}' or '{end repeat}'");
+        document.close_directive(closing_repeat ? 2 : 1, opening.line);
+      }
+      if (!check(matrix::token_kind::interpolation_end))
+        error(peek(), "expected '}' after the directive");
+      expect(matrix::token_kind::interpolation_end, "'}'", "after a markup directive");
+      continue;
+    }
+    // '{raw x}' splices unescaped; a lone '{raw}' is still an ordinary name.
+    const bool raw = exact_phrase_word(peek(), "raw") &&
+                     peek(1).kind != matrix::token_kind::interpolation_end;
+    if (raw) advance();
+    document.hole(parse_expression(), raw, opening.line);
+    if (!check(matrix::token_kind::interpolation_end))
+      error(peek(), "expected '}' after the interpolation expression");
+    expect(matrix::token_kind::interpolation_end, "'}'", "after interpolation");
+  }
+  expect(matrix::token_kind::markup_end, "'end markup'", "after a markup block");
+  document.finish(start.line);
+  if (document.failed()) {
+    token at = start;
+    at.line = document.error_line;
+    error(at, document.error, document.hint);
+  }
+  markup->items = std::move(document.items);
+  return markup;
 }
 
 ny::ast_expr_ptr parser::parse_query_expression() {

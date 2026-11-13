@@ -29,5 +29,22 @@ main returns override integer begin paragraph
     say render of floating with input being 1.25
     say render of text with input being "text"
     say "raw={amount}"
+
+    !!! A multiline formatted block: the common indentation is removed, deeper
+    !!! indentation is kept, nothing is escaped and every hole is an ordinary
+    !!! expression evaluated once in written order.
+    value who as text is "world"
+    say formatted begin text
+        hello {who} and {items at 0}
+          kept indentation, C:\raw\path and a "quote"
+        {{literal braces}} plus {next with nothing}:{next with nothing}
+    end text
+    say tally
+    value empty is formatted begin text
+    end text
+    say the length of empty
+    say formatted begin text
+        nested {formatted "inner {items at 1}"} done
+    end text
     give 0
 end paragraph

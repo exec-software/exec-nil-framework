@@ -75,7 +75,10 @@ The framework includes:
   typed faults, and bounded parallel execution.
 - **Shared language features.** Structural tuples provide typed multiple
   results and local destructuring. Explicit string interpolation supports
-  expressions with consistent scalar formatting across execution routes.
+  expressions with consistent scalar formatting across execution routes, including
+  multiline blocks. [Structured markup](docs/standard-library/markup.md) keeps
+  generated HTML and its conditionals in one checked document, with context-specific
+  escaping and document composition in both Ny and Matrix.
   [Collected queries](docs/standard-library/queries.md) compose filtering, stable
   ordering and projection. [Text patterns](docs/standard-library/text-patterns.md)
   offer readable declarations, bounded regex matching with named captures,

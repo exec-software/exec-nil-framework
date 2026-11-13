@@ -52,6 +52,26 @@ inline formatted_text_scan scan_formatted_text(const std::string &source,
                                                 bool matrix,
                                                 unsigned depth = 0);
 
+// A multiline formatted block. The caller has already removed the block's
+// common indentation and joined its lines, so 'content' is the logical text
+// and every piece offset is an offset into it; the caller maps those back to
+// original source coordinates, which is what keeps a hole's tokens editable.
+// A block has no closing quote: its terminator is a line-anchored keyword the
+// caller consumed, so a newline is ordinary literal text here. Literal bytes
+// are never decoded, matching the raw block the form extends.
+inline formatted_text_scan scan_formatted_block(const std::string &content,
+                                                bool matrix,
+                                                unsigned depth = 0);
+
+// A markup block's content (NIL-0027). The hole rules are the block's, with
+// one exception: inside a raw-text element a brace is an ordinary character,
+// because CSS and JavaScript are full of them and an author must be able to
+// paste either one unaltered. A raw-text element whose body is exactly one
+// hole still interpolates, which is how a generated script or stylesheet is
+// spliced in.
+inline formatted_text_scan scan_markup_content(const std::string &content,
+                                               bool matrix, unsigned depth = 0);
+
 inline std::size_t formatted_expression_end(const std::string &source,
                                            std::size_t begin, bool matrix,
                                            unsigned depth,
@@ -221,6 +241,216 @@ inline formatted_text_scan scan_formatted_text(const std::string &source,
     }
   }
   fail(quote, "unterminated formatted text; expected a closing quote");
+  return result;
+}
+
+inline formatted_text_scan scan_formatted_block(const std::string &content,
+                                                bool matrix, unsigned depth) {
+  formatted_text_scan result;
+  result.end = content.size();
+  const auto fail = [&](std::size_t at, const std::string &message) {
+    result.error_offset = at;
+    result.error = message;
+  };
+  if (depth >= 64) {
+    fail(0, "interpolation nesting exceeds 64 levels");
+    return result;
+  }
+  std::size_t cursor = 0;
+  std::size_t literal_start = 0;
+  std::string literal;
+  const auto flush = [&]() {
+    if (!literal.empty())
+      result.pieces.push_back({false, std::move(literal), literal_start,
+                               cursor - literal_start});
+    literal.clear();
+  };
+  while (cursor < content.size()) {
+    const char c = content[cursor];
+    if (c == '{') {
+      if (cursor + 1 < content.size() && content[cursor + 1] == '{') {
+        literal += '{';
+        cursor += 2;
+        continue;
+      }
+      flush();
+      const auto begin = cursor + 1;
+      const auto end = formatted_expression_end(content, begin, matrix, depth + 1, result);
+      if (!result.error.empty()) return result;
+      result.pieces.push_back({true, content.substr(begin, end - begin), begin, end - begin});
+      cursor = end + 1;
+      literal_start = cursor;
+      continue;
+    }
+    if (c == '}') {
+      if (cursor + 1 < content.size() && content[cursor + 1] == '}') {
+        literal += '}';
+        cursor += 2;
+        continue;
+      }
+      fail(cursor, "unmatched '}' in formatted text; write '}}' for a literal brace");
+      return result;
+    }
+    literal += c;
+    ++cursor;
+  }
+  flush();
+  return result;
+}
+
+// The byte ranges of raw-text element bodies, in order. Only 'script' and
+// 'style' are raw-text elements in HTML; an unterminated one is left to the
+// markup parser to report, so scanning stops at the end of the content.
+struct markup_raw_region {
+  std::size_t begin = 0, end = 0;
+  bool single_hole = false;
+};
+
+inline bool markup_name_follows(const std::string &content, std::size_t at,
+                                const char *name) {
+  std::size_t index = 0;
+  for (; name[index]; ++index) {
+    if (at + index >= content.size()) return false;
+    char letter = content[at + index];
+    if (letter >= 'A' && letter <= 'Z') letter += 'a' - 'A';
+    if (letter != name[index]) return false;
+  }
+  const auto after = at + index;
+  if (after >= content.size()) return true;
+  const unsigned char next = static_cast<unsigned char>(content[after]);
+  return std::isspace(next) || next == '/' || next == '>';
+}
+
+inline std::vector<markup_raw_region> markup_raw_regions(const std::string &content,
+                                                        bool matrix, unsigned depth) {
+  std::vector<markup_raw_region> regions;
+  // A marker inside a comment, quoted attribute, or interpolation expression
+  // is not an element. Walk literal tags before looking for raw-text bodies;
+  // otherwise a harmless attribute such as title="<script>" disables holes
+  // in the rest of the document.
+  const auto skip_hole = [&](std::size_t cursor) {
+    if (cursor + 1 < content.size() && content[cursor + 1] == '{') return cursor + 2;
+    formatted_text_scan scanned;
+    const auto end = formatted_expression_end(content, cursor + 1, matrix, depth + 1, scanned);
+    return scanned.error.empty() ? end + 1 : content.size();
+  };
+  const auto tag_end = [&](std::size_t cursor) {
+    char quote = 0;
+    while (cursor < content.size()) {
+      const char c = content[cursor];
+      if (c == '{') { cursor = skip_hole(cursor); continue; }
+      if (quote) {
+        if (c == quote) quote = 0;
+      } else if (c == '\'' || c == '"') {
+        quote = c;
+      } else if (c == '>') {
+        return cursor;
+      }
+      ++cursor;
+    }
+    return content.size();
+  };
+  for (std::size_t cursor = 0; cursor < content.size();) {
+    if (content[cursor] == '{') { cursor = skip_hole(cursor); continue; }
+    if (content[cursor] != '<') { ++cursor; continue; }
+    if (content.compare(cursor, 4, "<!--") == 0) {
+      const auto close = content.find("-->", cursor + 4);
+      cursor = close == std::string::npos ? content.size() : close + 3;
+      continue;
+    }
+    const char *name = nullptr;
+    if (markup_name_follows(content, cursor + 1, "script")) name = "script";
+    else if (markup_name_follows(content, cursor + 1, "style")) name = "style";
+    const auto open_end = tag_end(cursor + 1);
+    if (open_end == content.size()) break;
+    if (!name || (open_end > cursor && content[open_end - 1] == '/')) {
+      cursor = open_end + 1;
+      continue;
+    }
+    std::size_t close = open_end + 1;
+    for (; close < content.size(); ++close) {
+      if (content[close] != '<' || close + 1 >= content.size() ||
+          content[close + 1] != '/')
+        continue;
+      if (markup_name_follows(content, close + 2, name)) break;
+    }
+    markup_raw_region region{open_end + 1, close, false};
+    auto first = region.begin;
+    while (first < region.end && std::isspace(static_cast<unsigned char>(content[first]))) ++first;
+    auto last = region.end;
+    while (last > first && std::isspace(static_cast<unsigned char>(content[last - 1]))) --last;
+    if (first < last && content[first] == '{' && content[last - 1] == '}') {
+      formatted_text_scan scanned;
+      const auto end = formatted_expression_end(content, first + 1, matrix, depth + 1, scanned);
+      // Preserve diagnostics for a malformed whole-body hole. A scanning
+      // error must not turn the author's interpolation into literal text.
+      region.single_hole = !scanned.error.empty() || end == last - 1;
+    }
+    regions.push_back(region);
+    cursor = region.end;
+  }
+  return regions;
+}
+
+inline formatted_text_scan scan_markup_content(const std::string &content,
+                                               bool matrix, unsigned depth) {
+  formatted_text_scan result;
+  result.end = content.size();
+  const auto regions = markup_raw_regions(content, matrix, depth);
+  const auto fail = [&](std::size_t at, const std::string &message) {
+    result.error_offset = at;
+    result.error = message;
+  };
+  if (depth >= 64) {
+    fail(0, "interpolation nesting exceeds 64 levels");
+    return result;
+  }
+  std::size_t cursor = 0, literal_start = 0, region = 0;
+  std::string literal;
+  const auto flush = [&]() {
+    if (!literal.empty())
+      result.pieces.push_back({false, std::move(literal), literal_start,
+                               cursor - literal_start});
+    literal.clear();
+  };
+  while (cursor < content.size()) {
+    // A raw-text body that is not exactly one hole is literal, braces and all.
+    while (region < regions.size() && regions[region].end <= cursor) ++region;
+    if (region < regions.size() && !regions[region].single_hole &&
+        cursor >= regions[region].begin && cursor < regions[region].end) {
+      literal.append(content, cursor, regions[region].end - cursor);
+      cursor = regions[region].end;
+      continue;
+    }
+    const char c = content[cursor];
+    if (c == '{') {
+      if (cursor + 1 < content.size() && content[cursor + 1] == '{') {
+        literal += '{';
+        cursor += 2;
+        continue;
+      }
+      flush();
+      const auto begin = cursor + 1;
+      const auto end = formatted_expression_end(content, begin, matrix, depth + 1, result);
+      if (!result.error.empty()) return result;
+      result.pieces.push_back({true, content.substr(begin, end - begin), begin, end - begin});
+      cursor = end + 1;
+      literal_start = cursor;
+      continue;
+    }
+    if (c == '}') {
+      if (cursor + 1 < content.size() && content[cursor + 1] == '}') {
+        literal += '}';
+        cursor += 2;
+        continue;
+      }
+      fail(cursor, "unmatched '}' in markup; write '}}' for a literal brace");
+      return result;
+    }
+    literal += c;
+    ++cursor;
+  }
+  flush();
   return result;
 }
 

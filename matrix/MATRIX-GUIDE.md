@@ -127,6 +127,41 @@ end text
 The common indentation is removed, deeper indentation kept. The one limitation:
 a block cannot contain a line that is exactly `end text`.
 
+**Interpolation is `formatted`.** The word in front of a quoted literal opts
+that literal into holes. Each `{...}` is an ordinary Matrix expression,
+evaluated once, in written order:
+
+```matrix
+value summary is formatted "Count: {count plus 1}; who: {who}"
+say formatted "Result: {choose with first being "one", second being "two"}"
+say formatted "{{literal braces}} and {count}"
+```
+
+Scalars and text convert themselves; any other type needs an explicit
+conversion first. There is no format-specifier language inside the braces —
+precision and padding are library calls. `{{` and `}}` are literal braces in
+this form only: an ordinary literal and a `begin text` block stay raw, and a
+backslash stays a backslash in both. A quoted formatted literal stays on one
+physical source line, like every quoted literal.
+
+**A multi-line formatted literal is the raw block with holes.** `formatted` in
+front of `begin text` opts that block into interpolation, and every other rule
+of the block is unchanged — the terminator is a line, the common indentation is
+removed, deeper indentation is kept, and nothing inside is escaped:
+
+```matrix
+give formatted begin text
+    <html>
+      <head><title>{title}</title></head>
+      <body><nav>{nav}</nav></body>
+    </html>
+end text
+```
+
+A single hole still stays on one physical line; the text around it spans as
+many as it likes. `formatted` remains an ordinary name anywhere it is not
+followed by a quote or by `begin text`.
+
 There are no character literals. A one-letter text value is `"a"`.
 
 ---
@@ -805,3 +840,213 @@ out-of-range tuple-array read fails because there is no default tuple value.
 Native arrays of records, choices and nested arrays remain unsupported.
 See the shared
 [tuple reference](../docs/language-reference/tuples.md) for the exact contract.
+
+---
+
+## 20. Queries
+
+`collect begin query` filters, orders, pages and reshapes an array in one
+expression, and collects the result into a new array:
+
+```matrix
+value top is collect begin query
+    from each score in scores
+    where score is greater than 10
+    order by score descending
+    take 2
+    give score times 2
+end query
+```
+
+Clauses appear at most once, in exactly this order: `from each`, `where`,
+`order by`, `skip`, `take`, `give`. Only `from each` and `give` are required.
+Out-of-order, duplicate and missing clauses are errors, and the clause words
+stay ordinary names everywhere else.
+
+`order by` takes one scalar or text key, with `ascending` (the default) or
+`descending`; equal keys keep their input order. The source expression is
+evaluated once and snapshotted, so mutating the original array mid-query
+cannot change which values are enumerated. The row name — `score` above —
+is visible only inside the query's own clauses.
+
+Execution is **eager**: this is a loop the compiler writes for you, not a lazy
+iterator chain and not a database query. The source must be an array of
+scalars, text or tuples of those; records, choices and nested arrays are
+outside this profile.
+
+`nil.std.collections` holds the terminals that inspect a collected result:
+`query-count`, `query-any`, `query-first` and `query-last` (an `Option`), and
+`query-single` (a `Result`, with distinct empty and multiple errors). They read
+an array that already exists — they do not re-run the query — so use `take 1`
+rather than collecting everything to look at the first row.
+
+---
+
+## 21. Text patterns
+
+A pattern declaration spells a regular expression in words, so no page has to
+carry escape-dense pattern source:
+
+```matrix
+dollar-amount begin pattern
+    capture amount matching one or more ascii digits
+    require next to match literal " USD"
+end pattern
+```
+
+The declaration is an immutable **text constant** holding the pattern source —
+not a new type — and `nil.std.text` compiles and runs it:
+
+```matrix
+read everything from nil.std.text
+
+value compiled is (compile_pattern with source being dollar-amount).unwrap with nothing
+value found is ((first_match with pattern being compiled,
+                 input being "price: 12 USD").unwrap with nothing).unwrap with nothing
+say (capture_named with found being found, name being "amount").unwrap with nothing
+```
+
+Atoms are `literal "..."` (also `literal newline`, `literal tab`,
+`literal quote`), `ascii digit`/`digits`/`letter`/`letters`/`whitespace`,
+`any character`, `character from "0" through "9"`, `start of input`,
+`end of input`, `capture <name> matching <atom>`,
+`require next [not] to match <atom>` for lookahead, `either <atom> or <atom>`
+with further `or` arms, and a nested `begin pattern` ... `end pattern` block
+that makes a whole sequence into one atom. Repetition goes in front of an atom:
+`one or more`, `zero or more`, `optional`, `exactly 3`, `between 2 and 4`, and
+`fewest` before any of those makes it lazy. Counts stop at 1000. Adjacent
+phrases are a sequence.
+
+`compile_pattern` also accepts conventional notation, so
+`"(?<amount>[0-9]+)(?= USD)"` is the same pattern. Matching is byte-oriented
+and case-sensitive. Backreferences, lookbehind, flags, word boundaries and
+Unicode properties are rejected rather than silently given another meaning.
+Matrix lowercases capture labels and turns hyphens into underscores; look them
+up by the resulting name.
+
+---
+
+## 22. Markup documents
+
+`begin markup` writes a document as a document, with its conditionals and
+loops inside it, instead of assembling one from concatenated fragments:
+
+```matrix
+read everything from nil.std.markup
+
+page-shell receives title as text, signed-in as boolean, who as text
+           returns nil.std.markup.document begin paragraph
+    give begin markup
+        <html>
+          <head><title>{title}</title></head>
+          <body>
+            <nav>
+              {when signed-in}
+                <a href="/logout">Log out, {who}</a>
+              {otherwise}
+                <a href="/login">Log in</a>
+              {end when}
+            </nav>
+          </body>
+        </html>
+    end markup
+end paragraph
+```
+
+The block evaluates to a `nil.std.markup.document` record containing serialized
+text. Static segments stay literal; the holes and directives assemble its
+content at run time. `nil.std.markup::render with doc being page` returns that
+content, without a runtime DOM or tree walk. A markup block needs
+`read nil.std.markup` for the document type and escaping functions.
+
+**Escaping is the position's, not yours.** A hole is escaped for the context it
+landed in, decided while the block is parsed:
+
+| Where the hole is | What happens |
+| --- | --- |
+| element content | `&`, `<`, `>` escaped |
+| attribute value | `&`, `<`, `>`, `"`, `'` escaped |
+| a whole URL attribute | `javascript:`, `vbscript:` or `data:` is neutralised, then escaped |
+| inside a longer URL value | percent-encoded as one component after a fixed safe prefix |
+| a code-bearing or URL-list attribute | ordinary holes rejected; explicit trusted `raw` required |
+| `{raw expression}` | trusted input inserted without escaping or filtering |
+
+Ordinary holes accept `text`, `boolean`, `number`, `floating`, and the exact
+integer/byte/double representations reached through `override` (§4). A document
+also composes into element content. Arrays and
+optional values need explicit loops or conversions; a hole does not omit an
+attribute automatically. `{raw ...}` accepts text or a document and bypasses
+escaping. A manually constructed document and `nil.std.markup::raw` also require
+trusted content; the public record is not a safety guarantee.
+
+**Documents compose as documents.** A paragraph returning a document
+interpolates into another block as markup, so it is spliced rather than escaped
+a second time:
+
+```matrix
+<main>{card with title being title, count being total}</main>
+```
+
+An ordinary document hole in an attribute value is an error. An explicit
+`{raw ...}` bypass can insert trusted text or a document into an already quoted
+value, but the caller is responsible for keeping that value valid and safe.
+Even `raw` cannot stand in for an element or attribute name or appear in a
+comment.
+
+**Control flow uses the language's own words.** `{when ...}`,
+`{otherwise when ...}`, `{otherwise}`, `{end when}`,
+`{repeat for each <name> in <expression>}` and `{end repeat}` are the whole
+set. A directive may sit between elements, between attributes, or inside text:
+
+```matrix
+<ul class="list">
+  {repeat for each name in names}
+    <li class="{name}">{name}</li>
+  {end repeat}
+</ul>
+<a {when active}class="on"{otherwise}class="off"{end when} href="/x">link</a>
+```
+
+Every arm must restore both the element stack and its tag/attribute context.
+An arm cannot leave an element or quote open for another arm to close. Numeric
+range directives are not implemented, and directives inside URL attribute
+values are rejected; calculate the URL beforehand or conditionally emit the
+complete element. For a conditional boolean attribute, emit a complete quoted
+attribute such as `disabled=""` inside the arm, or conditionally emit the whole
+element. A bare `disabled` arm is not supported in this profile.
+
+**What the compiler checks:** every element is closed, in order; every
+directive is closed; and every hole has a type the renderer can use. An
+unclosed `<div>` is a compile error, not something a browser discovers.
+
+**Braces inside `<script>` and `<style>` are ordinary characters,** so CSS and
+JavaScript paste in unaltered. The exception is a body that is exactly one
+hole, which must be `{raw ...}`:
+
+```matrix
+<style>body { margin: 0 }</style>
+<script>{raw bundle-source}</script>
+```
+
+Elsewhere, `{{` and `}}` are literal braces, as in formatted text.
+
+**URL and code contexts need distinct handling.** A whole URL hole filters
+`javascript:`, `vbscript:` and `data:` after browser-relevant ASCII control/space
+normalization and case folding, then applies attribute escaping. It encodes
+the colons of a matched value rather than throwing or dropping the attribute;
+other schemes are allowed. Component holes require a fixed safe URL prefix,
+such as `/search?q=`, `https://example.com/`, `?q=` or `#section-`. A variable
+scheme such as `href="{scheme}:example"` is rejected. Ordinary holes in `on*`,
+`style`, `srcdoc`, `srcset`, `imagesrcset` and `ping` require explicit trusted
+`raw`; HTML escaping is not a sanitizer for those languages. See the
+[exact escaping contract](../docs/standard-library/markup.md).
+
+**Known limits.** Self-closing syntax is limited to HTML void elements such as
+`<br/>`; other elements need matching closing tags. The parser uses HTML tables
+and does not model SVG or MathML namespace semantics. Element and attribute
+names are fixed: a hole cannot name either, because that is what keeps the
+document checkable. An attribute value
+must be quoted, and the source's quote style is preserved. Text is emitted
+after the block's common indentation and surrounding blank lines are removed;
+a spliced document keeps its own remaining indentation. The dialect is HTML;
+XML serialization and a compact renderer are not available yet.
