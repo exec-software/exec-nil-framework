@@ -475,11 +475,24 @@ formatted_block = 'begin' 'text' newline
  * literal segments are parsed as elements, attributes, comments and text so
  * that balance is checked and each hole learns its context, then emitted
  * verbatim. Holes carry the context's escaping, which the author never spells.
- * Directives reuse the language's own control words and must each leave the
- * element stack as they found it. Element and attribute names are fixed: a
- * hole may not name either. Inside a raw-text element ('script', 'style') a
- * brace is an ordinary character unless the body is exactly one hole. The
- * value is a nil.std.markup document, not text. *)
+ * Directives reuse the language's own control words and each arm must restore
+ * both the element stack and its tag/attribute context. Directives inside URL
+ * attribute values are rejected; numeric-range directives are not implemented.
+ * Element and attribute names are fixed, even for raw holes; comments cannot
+ * contain holes. Attribute values must be quoted; source quotes are preserved.
+ * Conditional bare boolean attributes are not supported; emit a complete
+ * quoted attribute inside the arm or conditionally emit the whole element.
+ * Self-closing syntax is limited to HTML void elements. This profile does not
+ * model SVG or MathML namespace semantics.
+ * Ordinary holes take text or formatted-text scalars. A document splices only
+ * into element content. Arrays/optional values need explicit control flow.
+ * Inside a raw-text element ('script', 'style') a brace is ordinary unless the
+ * body is exactly one hole, which must be explicit raw. Code-bearing and
+ * URL-list attribute holes likewise require trusted raw. A whole URL hole uses
+ * a limited scheme filter; component holes require a fixed safe URL prefix.
+ * Raw inserts trusted text/document bytes without validating or escaping them.
+ * The value is a nil.std.markup.document record of serialized text, with no
+ * runtime DOM, XML dialect or compact renderer in this profile. *)
 markup_block    = 'begin' 'markup' newline
                   { markup_content } 'end' 'markup' ;
 markup_content  = markup_literal | '{{' | '}}'

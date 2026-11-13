@@ -510,7 +510,7 @@ void lexer::scan_block_literal(std::vector<token> &tokens, const token &word,
   };
 
   const auto scanned =
-      markup ? ny::scan_markup_content(content, interpolation_depth_)
+      markup ? ny::scan_markup_content(content, true, interpolation_depth_)
              : ny::scan_formatted_block(content, true, interpolation_depth_);
   const ny::formatted_source_positions positions(src_, word.start, pos_,
                                                  word.line, word.column);

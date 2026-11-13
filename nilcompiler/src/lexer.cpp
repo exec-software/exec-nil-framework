@@ -573,7 +573,7 @@ token lexer::string() {
 }
 
 // A multiline formatted block: $""" on its own line, content, then a line
-// whose only content is """. It is the Ny spelling of Matrix's
+// beginning with """. It is the Ny spelling of Matrix's
 // 'formatted begin text' (NIL-0027 section 2) and keeps the same rules: the
 // block's common indentation is removed from the literal text, deeper
 // indentation is kept, leading and trailing blank lines are dropped, and
@@ -587,6 +587,12 @@ void lexer::formatted_block(std::vector<token> &tokens, bool markup) {
   const std::string closing = markup ? "end markup" : "\"\"\"";
   // The '$' is already consumed: skip 'markup', or the three quotes.
   current += markup ? 6 : 3;
+  auto header_tail = current;
+  while (header_tail < src.size() &&
+         (src[header_tail] == ' ' || src[header_tail] == '\t' ||
+          src[header_tail] == '\r'))
+    ++header_tail;
+  const bool valid_header = header_tail == src.size() || src[header_tail] == '\n';
   while (!is_at_end() && peek() != '\n') advance();
   if (!is_at_end()) advance();
   const auto header_end = current;
@@ -614,7 +620,11 @@ void lexer::formatted_block(std::vector<token> &tokens, bool markup) {
     // The terminator is the first line whose content STARTS with three quotes,
     // and lexing resumes immediately after them.
     const auto first = raw.find_first_not_of(" \t");
-    if (first != std::string::npos &&
+    const auto after = first == std::string::npos ? raw.size() : first + closing.size();
+    const bool keyword_boundary = !markup || after >= raw.size() ||
+        !(std::isalnum(static_cast<unsigned char>(raw[after])) ||
+          raw[after] == '_' || static_cast<unsigned char>(raw[after]) >= 128);
+    if (first != std::string::npos && keyword_boundary &&
         raw.compare(first, closing.size(), closing) == 0) {
       terminated = true;
       terminator = begin + first;
@@ -630,6 +640,13 @@ void lexer::formatted_block(std::vector<token> &tokens, bool markup) {
                         std::size_t length) {
     tokens.push_back(token{kind, std::move(value), positions.line(offset), offset, length});
   };
+  if (!valid_header) {
+    emit(token_kind::invalid,
+         "formatted block opener must end its line; put content on the following line",
+         header_tail, 1);
+    line = positions.line(current);
+    return;
+  }
   if (!terminated) {
     emit(token_kind::invalid,
          markup ? "unterminated markup block; close it with a line that begins with 'end markup'"
@@ -668,7 +685,7 @@ void lexer::formatted_block(std::vector<token> &tokens, bool markup) {
     return source_starts[row] + (logical - logical_starts[row]);
   };
 
-  const auto scanned = markup ? scan_markup_content(content, interpolation_depth_)
+  const auto scanned = markup ? scan_markup_content(content, false, interpolation_depth_)
                               : scan_formatted_block(content, false, interpolation_depth_);
   if (!scanned.error.empty()) {
     emit(token_kind::invalid, scanned.error, source_offset(scanned.error_offset), 1);

@@ -100,7 +100,18 @@ end fn
 # True when a URL's scheme can execute. Compared after folding case and after
 # removing the leading whitespace a browser ignores.
 fn executable_scheme(content: text) -> bool
-    let trimmed = fold_scheme(nil.std.text::trim(content))
+    # The URL parser removes these controls anywhere in a URL, not just at
+    # the ends. Decide on those same bytes while preserving the original
+    # rendered value (apart from an unsafe scheme's colon).
+    let tabs = nil.std.text::replace(content, "\t", "")
+    let lines = nil.std.text::replace(tabs, "\n", "")
+    let normalized = nil.std.text::replace(lines, "\r", "")
+    let mut start = 0
+    while start < normalized.len() do
+        if normalized.substr(start, 1) > " " then break end if
+        start = start + 1
+    end while
+    let trimmed = fold_scheme(normalized.substr(start, normalized.len() - start))
     let colon = nil.std.text::index_of(trimmed, ":")
     if colon < 0 then return false end if
     let slash = nil.std.text::index_of(trimmed, "/")
@@ -126,6 +137,11 @@ end fn
 # browser to encode. '%' is encoded first so nothing is encoded twice.
 pub fn escape_url_component(content: text) -> text
     let mut result = nil.std.text::replace(content, "%", "%25")
+    result = nil.std.text::replace(result, "\t", "%09")
+    result = nil.std.text::replace(result, "\n", "%0a")
+    result = nil.std.text::replace(result, "\r", "%0d")
+    result = nil.std.text::replace(result, "\v", "%0b")
+    result = nil.std.text::replace(result, "\f", "%0c")
     result = nil.std.text::replace(result, " ", "%20")
     result = nil.std.text::replace(result, "\"", "%22")
     result = nil.std.text::replace(result, "#", "%23")

@@ -1637,10 +1637,12 @@ record, array or tuple arguments at the callsite before code generation.
 Doubled braces insert literal braces in explicit formatted text. Ordinary
 Matrix quoted strings and `begin text` blocks remain raw; legacy Ny identifier
 interpolation stays available for compatibility. `formatted` is contextual
-before a quote and remains an ordinary Matrix name elsewhere. Explicit strings
-and their expressions currently occupy one physical source line. Empty holes,
-trailing tokens, unmatched braces and unterminated strings are errors; the
-parser does not silently convert malformed expressions back into text.
+before a quote or `begin text` and remains an ordinary Matrix name elsewhere.
+Quoted formatted strings occupy one physical source line. Multiline blocks are
+implemented for both surfaces (F88); each hole still stays on one physical
+line. Empty holes, trailing tokens, unmatched braces and unterminated strings
+are errors; the parser does not silently convert malformed expressions back
+into text.
 
 **Coverage:** Source-span tests include decoded Ny prefixes, raw Matrix
 backslashes, nested formatted strings, quoted expression arguments, UTF-8,
@@ -1650,8 +1652,8 @@ contract checks local references and applies an actual rename, proving that
 matching words inside doubled-brace literal text remain unchanged. Execution
 contracts cover the shared scalar conversion and evaluation order.
 
-**Follow-up:** Add multiline formatted text only with an explicit original
-source map through indentation removal. Custom record formatting should use
+**Follow-up:** Multiline formatted text now preserves an explicit original
+source map through indentation removal (F88). Custom record formatting should use
 the existing `Display` contract once dispatch is qualified on all routes;
 currently callers must explicitly produce a supported scalar or text value.
 Precision and presentation options remain library calls rather than a second
@@ -2509,9 +2511,11 @@ shipped constructs are now documented in the guide and asserted by
 `tests/matrix/execution/guide-constructs.matrix` and
 `guide-queries-patterns.matrix`.
 
-**Remaining:** Ny has no multiline spelling yet; `$"""` is the candidate. The
-larger problem F88 only dents — control flow living inside the document, with
-context-correct escaping and a checkable tree — is
+**Ny parity:** `$"""` now opens the same raw formatted block. The opener
+must end its line; the first later line beginning with `"""` closes the block
+and permits an expression continuation such as a call's closing `)`. Both
+surfaces share the interpolation scanner and preserve original hole spans.
+Structured document support followed in F89 and
 [NIL-0027](../../docs/design/NIL-0027-structured-markup.md) §3.
 
 ### F89 — A document assembled from fragments cannot be checked or escaped
@@ -2547,7 +2551,18 @@ Three things fell out of building it, each recorded where it belongs:
   reporting that it got `text`. Any new check over text types must accept both
   spellings.
 
-**Remaining:** Ny has no markup spelling. Whitespace is emitted as written, so
+**Ny reached parity the same day.** `markup_structure` holds the document
+parsing, the checks and the escape decisions; each frontend supplies only its
+own directive words (`{if}`/`{for}` in Ny, `{when}`/`{repeat}` in Matrix) and
+its own expression lexing. Ny opens a block with `$markup` rather than the
+`markup { ... }` the design record first guessed: a markup block is full of
+braces, so a brace-delimited block would end at the first `}` in a stylesheet.
+Two frictions showed up only on the Ny side — the sigil skips six characters
+after the already-consumed `$`, not seven, and Ny names an imported type by its
+short spelling, so the document type has to be recognised by declaration rather
+than by name.
+
+**Remaining:** whitespace is emitted as written, so
 a composed document keeps its own indentation; a compact renderer and the XML
 dialect are future work. Element and attribute names are fixed, so dynamic
 attribute sets (`data-*` generation) still need a design.

@@ -3,6 +3,7 @@
 
 #include "ast.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <string>
 #include <vector>
@@ -54,7 +55,7 @@ public:
         continue;
       }
       if (state_ == context::raw_text) {
-        const auto close = lower(text).find("</" + raw_name_, cursor);
+        const auto close = raw_close(text, cursor);
         const auto stop = close == std::string::npos ? text.size() : close;
         emit(text.substr(cursor, stop - cursor), line);
         cursor = stop;
@@ -65,12 +66,12 @@ public:
       if (state_ == context::attribute_value) {
         const auto close = text.find(quote_, cursor);
         const auto stop = close == std::string::npos ? text.size() : close + 1;
+        if (!value_started_)
+          value_prefix_ += text.substr(cursor, (close == std::string::npos ? stop : close) - cursor);
         emit(text.substr(cursor, stop - cursor), line);
         if (close != std::string::npos) {
           state_ = context::tag;
           attribute_.clear();
-        } else {
-          value_started_ = true;
         }
         cursor = stop;
         continue;
@@ -88,6 +89,16 @@ public:
           continue;
         }
         if (c == '/' && cursor + 1 < text.size() && text[cursor + 1] == '>') {
+          if (current_pushed_) {
+            if (!arm_base_.empty() && open_.size() <= arm_base_.back())
+              fail(line, "this arm closes an element it did not open");
+            // HTML ignores the self-closing flag on non-void elements. In
+            // particular, <script/> still opens a script body in a browser.
+            // Until the renderer has namespace semantics, never model it as
+            // a closed element (including SVG/custom element spellings).
+            fail(line, "only HTML void elements can use '/>'",
+                 "write an explicit closing tag for this element");
+          }
           emit("/>", line);
           cursor += 2;
           if (current_pushed_ && !open_.empty()) open_.pop_back();
@@ -103,6 +114,7 @@ public:
           if (cursor < text.size() && (text[cursor] == '"' || text[cursor] == '\'')) {
             quote_ = text[cursor];
             value_started_ = false;
+            value_prefix_.clear();
             state_ = context::attribute_value;
             emit(std::string(1, text[cursor++]), line);
           } else {
@@ -140,6 +152,8 @@ public:
       }
       if (cursor + 1 < text.size() && text[cursor + 1] == '!') {
         const auto close = text.find('>', cursor);
+        if (close == std::string::npos)
+          fail(line, "an unfinished markup declaration");
         const auto stop = close == std::string::npos ? text.size() : close + 1;
         emit(text.substr(cursor, stop - cursor), line);
         cursor = stop;
@@ -152,6 +166,10 @@ public:
           ++name_end;
         const auto name = lower(text.substr(cursor + 2, name_end - cursor - 2));
         const auto close = text.find('>', name_end);
+        if (close == std::string::npos)
+          fail(line, "an unfinished closing tag");
+        else if (text.find_first_not_of(" \t\r\n", name_end) != close)
+          fail(line, "a closing tag cannot contain attributes");
         const auto stop = close == std::string::npos ? text.size() : close + 1;
         emit(text.substr(cursor, stop - cursor), line);
         cursor = stop;
@@ -196,12 +214,27 @@ public:
     entry.expr = std::move(expr);
     if (raw) {
       entry.escape = "raw";
+      if (state_ == context::tag)
+        fail(line, "a hole cannot name an element or an attribute");
+      if (state_ == context::comment)
+        fail(line, "a hole cannot appear inside a comment");
+      if (state_ == context::attribute_value) value_started_ = true;
     } else {
       switch (state_) {
       case context::attribute_value:
-        if (url_attribute(attribute_)) {
-          entry.escape = value_started_ ? "url_component" : "url";
-          if (!value_started_) pending_url_ = items.size();
+        if (code_attribute(attribute_) || url_list_attribute(attribute_)) {
+          entry.escape = "attribute";
+          fail(line, "this attribute requires explicitly trusted '{raw ...}' content",
+               "ordinary attribute escaping cannot make code, nested HTML or a URL list safe");
+        } else if (url_attribute(attribute_)) {
+          entry.escape = "url_component";
+          if (!value_started_ && value_prefix_.empty()) {
+            entry.escape = "url";
+            pending_url_ = items.size();
+          } else if (!safe_url_prefix(value_prefix_)) {
+            fail(line, "a URL component requires a fixed safe URL prefix",
+                 "interpolate the entire URL as one hole, or start with a fixed path, fragment, query or safe scheme");
+          }
         } else {
           entry.escape = "attribute";
         }
@@ -231,8 +264,7 @@ public:
 
   void open_when(ast_expr_ptr condition, int line) {
     add(ast_markup_item::item_kind::when_begin, line).expr = std::move(condition);
-    directive_.push_back(1);
-    arm_base_.push_back(open_.size());
+    open_arm(1, line);
   }
 
   // 'otherwise' with no condition closes the arm and opens the final one.
@@ -241,9 +273,10 @@ public:
       fail(line, "an alternative without an open conditional");
       return;
     }
-    if (open_.size() != arm_base_.back())
-      fail(line, "this arm leaves an element open",
-           "close every element the arm opens before the next one");
+    check_arm(line);
+    if (final_else_.back())
+      fail(line, "a conditional cannot have an alternative after its final else");
+    final_else_.back() = !condition;
     if (condition)
       add(ast_markup_item::item_kind::else_when, line).expr = std::move(condition);
     else
@@ -254,8 +287,7 @@ public:
     auto &entry = add(ast_markup_item::item_kind::repeat_begin, line);
     entry.binding = std::move(binding);
     entry.expr = std::move(source);
-    directive_.push_back(2);
-    arm_base_.push_back(open_.size());
+    open_arm(2, line);
   }
 
   void close_directive(int kind, int line) {
@@ -263,9 +295,7 @@ public:
       fail(line, "a closing directive without an open one");
       return;
     }
-    if (open_.size() != arm_base_.back())
-      fail(line, "this arm leaves an element open",
-           "each arm of a conditional or a repeat must be a complete fragment");
+    check_arm(line);
     if (directive_.back() != kind)
       fail(line, directive_.back() == 1 ? "expected the conditional to close here"
                                         : "expected the repeat to close here");
@@ -273,10 +303,14 @@ public:
                   : ast_markup_item::item_kind::end_when, line);
     directive_.pop_back();
     arm_base_.pop_back();
+    arm_context_.pop_back();
+    final_else_.pop_back();
   }
 
   void finish(int line) {
     resolve_pending_url(std::string());
+    if (state_ != context::text)
+      fail(line, "an unfinished tag, attribute value, comment or raw-text body");
     if (!open_.empty())
       fail(line, "'<" + open_.back() + ">' is never closed",
            "every element a markup block opens must close inside it");
@@ -290,7 +324,15 @@ private:
   std::vector<std::string> open_;
   std::vector<std::size_t> arm_base_;
   std::vector<int> directive_; // 1 conditional, 2 repeat
-  std::string attribute_, raw_name_;
+  std::string attribute_, raw_name_, value_prefix_;
+  struct arm_context {
+    context state;
+    std::string attribute;
+    char quote;
+    std::vector<std::string> elements;
+  };
+  std::vector<arm_context> arm_context_;
+  std::vector<bool> final_else_;
   char quote_ = 0;
   bool value_started_ = false;
   // A void element is never pushed, so '<br/>' must not pop whatever is.
@@ -326,8 +368,78 @@ private:
   void resolve_pending_url(const std::string &next) {
     if (pending_url_ == std::string::npos) return;
     const bool whole = !next.empty() && next[0] == quote_;
+    if (!whole)
+      fail(items[pending_url_].line, "a dynamic URL must occupy the entire attribute value",
+           "URL components need a fixed safe prefix before the first hole");
     items[pending_url_].escape = whole ? "url" : "url_component";
     pending_url_ = std::string::npos;
+  }
+
+  void open_arm(int kind, int line) {
+    if (state_ == context::comment || state_ == context::raw_text)
+      fail(line, "a markup directive cannot appear inside a comment or raw-text body");
+    if (state_ == context::attribute_value && url_attribute(attribute_))
+      fail(line, "a URL attribute cannot contain a markup directive",
+           "choose the URL before the block, then interpolate its whole value");
+    directive_.push_back(kind);
+    arm_base_.push_back(open_.size());
+    arm_context_.push_back({state_, attribute_, quote_, open_});
+    final_else_.push_back(false);
+  }
+
+  void check_arm(int line) {
+    if (open_ != arm_context_.back().elements)
+      fail(line, "this arm changes the surrounding element stack",
+           "each arm of a conditional or a repeat must be a complete fragment");
+    const auto &base = arm_context_.back();
+    if (state_ != base.state ||
+        ((state_ == context::attribute_value || state_ == context::tag) &&
+         attribute_ != base.attribute) ||
+        (state_ == context::attribute_value && quote_ != base.quote))
+      fail(line, "this arm changes the surrounding tag or attribute context",
+           "finish each attribute, tag or comment inside the arm that opens it");
+  }
+
+  std::size_t raw_close(const std::string &text, std::size_t cursor) const {
+    const auto folded = lower(text);
+    const auto prefix = "</" + raw_name_;
+    while ((cursor = folded.find(prefix, cursor)) != std::string::npos) {
+      const auto after = cursor + prefix.size();
+      if (after == text.size() || text[after] == '>' || text[after] == '/' ||
+          std::isspace(static_cast<unsigned char>(text[after]))) return cursor;
+      ++cursor;
+    }
+    return std::string::npos;
+  }
+
+  // The prefix is compile-time literal text. Never allow a hole to supply
+  // a scheme (including a fragment of one) or rely on HTML entities/control
+  // characters in the prefix: browser normalization happens after rendering.
+  static bool safe_url_prefix(const std::string &prefix) {
+    if (prefix.empty()) return false;
+    if (prefix[0] == '/' || prefix[0] == '#' || prefix[0] == '?' ||
+        prefix.compare(0, 2, "./") == 0 || prefix.compare(0, 3, "../") == 0)
+      return true;
+    const auto colon = prefix.find(':');
+    const auto boundary = prefix.find_first_of("/?#");
+    const auto decision = std::min(colon, boundary);
+    for (std::size_t i = 0; i < std::min(decision, prefix.size()); ++i) {
+      const auto c = static_cast<unsigned char>(prefix[i]);
+      if (c <= 32 || c == 127 || c == '&' || c == '\\') return false;
+    }
+    if (boundary != std::string::npos && (colon == std::string::npos || boundary < colon))
+      return true;
+    if (colon == std::string::npos) return false;
+    const auto scheme = lower(prefix.substr(0, colon));
+    return scheme == "http" || scheme == "https" || scheme == "mailto" ||
+           scheme == "tel" || scheme == "ftp" || scheme == "ftps";
+  }
+
+  static bool code_attribute(const std::string &name) {
+    return name == "style" || name == "srcdoc" || name.compare(0, 2, "on") == 0;
+  }
+  static bool url_list_attribute(const std::string &name) {
+    return name == "srcset" || name == "imagesrcset" || name == "ping";
   }
 
   static std::string lower(std::string value) {
@@ -355,7 +467,7 @@ private:
   static bool url_attribute(const std::string &name) {
     static const char *const names[] = {
         "href", "src", "action", "formaction", "cite", "poster",
-        "data", "srcset", "background", "ping", "manifest"};
+        "data", "background", "manifest", "xlink:href"};
     for (const auto *candidate : names)
       if (name == candidate) return true;
     return false;

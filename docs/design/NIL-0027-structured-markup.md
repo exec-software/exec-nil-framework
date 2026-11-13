@@ -1,7 +1,8 @@
 # NIL-0027: Multiline formatted text and structured markup literals
 
-- **Status:** §2 and §3 implemented for both surfaces on 2026-11-13, with the
-  representation revised as recorded in §3.6.
+- **Status:** The initial §2 and §3 profile is implemented for both surfaces
+  on 2026-11-13. The current contract below and §3.6 supersede the original
+  runtime-tree, optional-hole and dialect-renderer proposals.
 - **Scope:** Ny and Matrix syntax, shared hole lexing and AST, checking,
   lowering, `nil.std.markup`, text builder
 - **Date:** 2026-11-13
@@ -53,6 +54,17 @@ member of that family.
 | `formatted begin text ... end text` / `$"""` | yes | none, multiline | §2, implemented |
 | `begin markup ... end markup` / `$markup` | yes | elements, attributes, control flow | §3, implemented |
 
+**Current implementation contract.** A markup literal is checked as a document
+at compile time, then evaluates to `nil.std.markup.document`, a record of
+serialized text. Static markup stays literal; holes and directives assemble
+the result at run time. `render` returns that text. There is no runtime DOM,
+XML mode, compact renderer or automatic attribute omission. Ordinary holes
+accept text and the formatted-text scalar types; a document splices only into
+element content. Arrays and optional values need an explicit loop or
+conversion. The original tree and renderer proposals are retained in §3.4–3.5
+as design history, not available APIs. The library reference records the
+[current escaping policy](../standard-library/markup.md).
+
 All three use the hole lexer NIL-0014 already built, which emits an expression's
 tokens with their original byte offsets rather than re-lexing decoded text.
 Everything in this record inherits that contract, and no construct here
@@ -71,7 +83,9 @@ end text
 Ny spells the same construct `$"""` ... `"""`. One difference is forced by the
 surface: Matrix's `end text` owns its line, while Ny closes on the first line
 whose content *begins* with `"""` and resumes lexing immediately after it,
-because Ny is expression oriented and `println($"""..."""）` has to work.
+because Ny is expression oriented and the closing `""")` must be allowed in
+a call. The `$"""` opener must end its source line, apart from spaces or tabs;
+content starts on the following line.
 
 The block follows the existing raw-block rules exactly — line-anchored
 terminator, common leading indentation removed, deeper indentation kept,
@@ -79,12 +93,11 @@ leading and trailing blank lines dropped, no escape sequences — and adds
 `{expression}` holes with `{{` and `}}` for literal braces. A single hole
 stays on one physical line, which keeps the expression lexer unchanged.
 
-The one implementation constraint, named as follow-up work in NIL-0014: **the
-dedent must not move the holes.** Indentation removal applies to literal
-segments at lowering. The lexer records each segment's original span and the
-number of stripped bytes per line, and hole tokens keep their original
-coordinates, so definition, completion, signature help and local rename behave
-as they do inside a single-line formatted literal.
+The implementation constraint, named as follow-up work in NIL-0014: **the
+dedent must not move the holes.** The block scanner removes common indentation
+and retains a per-line mapping back to the source. Hole tokens therefore keep
+their original coordinates, so definition, completion, signature help and
+local rename behave as they do inside a single-line formatted literal.
 
 This is the smallest useful step and it is worth taking on its own: it is what
 a C# raw interpolated string gives, and it removes most `plus` ladders from
@@ -113,8 +126,10 @@ apply to a quoted `$"..."` and not inside `$"""`.
 ## 3. Markup literals
 
 ```text
+read nil.std.markup
+
 public page-shell receives title as text, signed-in as boolean, who as text
-                  returns markup begin paragraph
+                  returns nil.std.markup.document begin paragraph
     give begin markup
         <html>
           <head><title>{title}</title></head>
@@ -139,8 +154,10 @@ page remains one unit a person can read, edit and paste.
 
 ### 3.1 What the block contains
 
-Elements `<name attributes>children</name>`, self-closing `<name/>`, text,
-comments, holes, and directives. Directives are spelled with the language's own
+Elements `<name attributes>children</name>`, HTML void elements such as `<br/>`,
+text, comments, holes, and directives. Self-closing syntax is accepted only for
+HTML void elements; a non-void element needs its matching closing tag. This
+profile uses HTML tables and does not model SVG or MathML namespace semantics. Directives are spelled with the language's own
 control words, so the block introduces no second vocabulary:
 
 ```text
@@ -152,12 +169,19 @@ control words, so the block introduces no second vocabulary:
 ```
 
 `{when ...}` / `{otherwise when ...}` / `{otherwise}` / `{end when}` and
-`{repeat for each ... in ...}` / `{repeat for ... from ... to ...}` /
-`{end repeat}` are the complete directive set. A directive may stand between
-elements, between attributes, or inside a text node or attribute value. Its
-arms must each be well-formed: a directive cannot open an element in one arm
-and close it in another, because that reintroduces exactly the fragment
-assembly this record exists to remove.
+`{repeat for each ... in ...}` / `{end repeat}` are the implemented Matrix
+directives. Ny uses `{if ...}`, `{elseif ...}`, `{else}`, `{end if}`,
+`{for ... in ...}` and `{end for}`. Numeric-range directives from the original
+proposal are not implemented.
+
+A directive may stand between elements, between attributes, or inside text or
+an ordinary attribute value. Each arm must restore both the element stack and
+the surrounding tag/attribute context: it cannot leave an element or quote
+open for another arm to close. Directives inside URL attribute values are
+rejected in this profile; calculate the URL beforehand or conditionally emit
+the complete element. A bare boolean attribute cannot be an arm's entire
+content: use a complete quoted attribute such as `disabled=""` inside that arm,
+or conditionally emit the complete element.
 
 **A hole cannot name an element or an attribute.** Both are fixed at compile
 time, which is what makes the tree checkable. Dynamic attribute sets are
@@ -165,16 +189,22 @@ future work (§6).
 
 ### 3.2 Hole typing, by position
 
-| Position | Accepted | Notes |
-| --- | --- | --- |
-| Text node | `text`, scalar, `markup`, `array of markup`, `nothing` | `markup` splices as nodes, never as escaped text |
-| Attribute value | `text`, scalar, `nothing` | `nothing` omits the attribute entirely |
-| URL attribute | `text` | scheme-checked; see §3.4 |
-| Raw-text element body | `text` via `{raw ...}` only | see §3.3 |
+The initial proposal included arrays of documents and `nothing` holes. Those
+are not implemented; this table describes the current checker.
 
-`{raw expression}` splices text without escaping. It is deliberately a word a
-reviewer can grep for, and it is the only way to put unescaped text into a
-document.
+| Position | Accepted | Behavior |
+| --- | --- | --- |
+| Element content | `text`, `bool`, `i32`, `i64`, `u8`, `f64`, `document` | Text/scalars escape; a document splices its serialized content |
+| Ordinary attribute value | `text` and the same scalar types | Escape within the source's existing quotes; no implicit omission |
+| URL attribute | `text` and the same scalar types | Whole-value scheme filter or fixed-prefix component encoding; see §3.4 |
+| Code-bearing attribute or raw-text element body | Explicit `{raw ...}` only | Trusted bypass, not an escaping or sanitizing operation |
+
+Use a loop for an array and explicit control flow for an optional value.
+`{raw expression}` is the explicit trusted bypass. It accepts text or a
+document in content or an already quoted attribute value, and does not
+validate or escape the inserted bytes. Even `raw` cannot name an element or
+attribute or appear in a comment. A manually constructed document and `nil.std.markup::raw` likewise require trusted input;
+the public record is not a security boundary.
 
 ### 3.3 Decision: raw-text elements are literal
 
@@ -191,7 +221,13 @@ The rule is a single lookahead over the element body and needs no escaping
 convention, which keeps the no-escapes property of Matrix text intact in the
 place where escaping would hurt most.
 
-### 3.4 Decision: the parser is dialect-free
+### 3.4 Original proposal: a dialect-free renderer (superseded)
+
+**Design history.** The following renderer/table proposal preceded §3.6.
+The implementation instead uses shared compiler-side HTML tables and library
+escaping. Source quotes and self-closing spelling are preserved, and only HTML
+is supported. The proposed scheme allowlist and runtime rejection below were
+not implemented; see the current policy after the list.
 
 The block parses generic elements, attributes, text, comments and holes, and
 checks balance. Everything specific to HTML lives in one table the **renderer**
@@ -211,7 +247,21 @@ Escaping is per context and belongs to the same table:
   A hole producing a `javascript:` or `data:` URL is refused at run time unless
   it came through `{raw}`.
 
-### 3.5 Decision: the value is a tree, not text
+**Current URL policy.** A whole-value hole is checked for `javascript:`,
+`vbscript:` and `data:` after browser-relevant ASCII control/space normalization
+and ASCII case folding. A match encodes the colons as `%3a`, then applies
+attribute escaping; it does not throw or omit the attribute. Other schemes
+are not allowlisted. A component hole requires a fixed safe prefix such as
+`/search?q=`, `https://example.com/`, `?q=` or `#section-`; variable scheme
+assembly is rejected. Ordinary holes in `on*`, `style`, `srcdoc`, `srcset`,
+`imagesrcset` and `ping` attributes require an explicit trusted `raw` bypass.
+This policy is not an HTML, JavaScript, CSS or URL-list sanitizer.
+
+### 3.5 Original proposal: a runtime tree (superseded)
+
+**Design history.** This argument motivated the first design. §3.6 replaced
+its runtime representation and rendering API; `render ... as xml` and
+`render ... compact` below are proposals, not implemented syntax.
 
 `begin markup` evaluates to `markup`. `nil.std.markup::render with document
 being page` produces `text`; `render ... as xml` and a `compact` option select
@@ -230,7 +280,7 @@ doing this at all:
    what a future webview host wants, and it is unavailable from a string
    forever after.
 
-### 3.6 Representation: revised — serialized at compile time
+### 3.6 Representation: revised — compiled serialization with runtime holes
 
 **This section replaced its original proposal on 2026-11-13, during
 implementation.** It first specified a runtime arena: parallel scalar arrays
@@ -246,8 +296,9 @@ arrays does work on both routes, so the plan was sound.
 The second is that it buys almost nothing here. Of §3.5's four reasons for a
 tree, three do not need one at run time:
 
-- **Context-correct escaping** is decided while the block is parsed, so it
-  costs nothing at run time and is *more* reliable than a tree walk.
+- **Context selection** happens while the block is parsed. The generated
+  code still calls the escaping functions at run time, but does not traverse
+  a runtime tree to decide which escaper to use.
 - **Balance checking** happens at parse time, whatever the value becomes.
 - **Composition without seams** needs only that a document be a distinct
   *type*, not a distinct *shape*: an already-escaped fragment spliced into
@@ -256,11 +307,14 @@ tree, three do not need one at run time:
 Only the fourth — rendering one document to several dialects, or diffing two —
 needs a runtime tree, and that was already deferred to §5.
 
-So a `markup` value is `nil.std.markup.document`, a record holding the
-serialized, already-escaped text. The literal's static segments are compile-
-time constants; only holes and control flow cost anything. The type is what
-carries the guarantee, and the shape behind it stays an implementation detail:
-moving to an arena later changes no source.
+The implemented value type is `nil.std.markup.document`, a record holding
+serialized text whose ordinary holes have already been escaped. Static
+segments are compile-time constants; holes, control flow and result assembly
+execute at run time. The type distinguishes
+composition from ordinary text interpolation. Its public field and `raw`
+constructor still allow trusted callers to supply arbitrary markup; the type
+does not certify that manually constructed content is safe. A future arena
+would need to preserve the public API or explicitly migrate its callers.
 
 What this costs, stated plainly: the dialect is fixed when the block is
 compiled rather than when it is rendered, so `begin markup as xml` becomes a
@@ -302,26 +356,29 @@ file access from a document.
    `parser::parse_markup_expression`, checked in `type_checker::visit`
    (escape versus splice) and emitted by `emit_markup` as ordinary NIL, so both
    execution routes are covered by one emitter. Coverage: the `markup-matrix`
-   parity fixture across the VM, binary, native and native-toolchain routes;
-   `tests/tools/markup_contract.py` rejecting sixteen malformed documents on
-   every route and proving hostile input is escaped in each context exactly
-   once.
+   parity fixtures across the VM, binary, native and native-toolchain routes;
+   `tests/tools/markup_contract.py` checks malformed-document rejection and
+   context-specific escaping on the supported routes.
 4. `nil.std.markup` constructors beyond `raw` and `empty`, so a document can be
    assembled from values rather than written literally, and the XML table.
-   Ny reached parity on 2026-11-13: `markup_structure` holds the document
-   parsing, the checks and the escape decisions, and each frontend supplies
-   only its own directive words and its own expression lexing, so the two
-   surfaces cannot drift in what a document means.
+   **Deferred.**
 5. Diffing two documents, which is what would bring §3.6's arena back.
+   **Deferred.**
+
+Ny reached the initial profile on 2026-11-13: `markup_structure` holds document
+parsing, structural checks and escape decisions. Each frontend supplies its
+own directive words and expression lexing; parity fixtures exercise the shared
+semantics.
 
 ## 6. Open questions
 
 - **Dynamic attribute sets.** `{spread attrs}` in attribute position, taking a
   list of name/value pairs, would cover `data-*` generation. Deferred: it
   weakens compile-time checking and is not needed by the first consumers.
-- **Whitespace.** The initial rule is to preserve the block's text as written,
-  because HTML whitespace is sometimes significant, with collapsing offered by
-  `render ... compact`. Worth revisiting once there is real output to compare.
+- **Whitespace.** The initial rule preserves text after the block's common
+  indentation and surrounding blank lines are removed. A composed document
+  keeps its own remaining indentation. `render ... compact` is a deferred
+  proposal; there is no whitespace-collapsing renderer in this version.
 - **Editor support.** Holes keep original spans by construction (§2), but the
   VS Code grammar needs markup-inside-Matrix highlighting or the construct will
   look worse in an editor than the string it replaces.
@@ -334,7 +391,9 @@ file access from a document.
   raw-text element — so a brace-delimited block would end at the first `}` in a
   stylesheet. The terminator has to be a line-anchored keyword, which is what
   lets the block hold any bytes without escapes. Ny therefore opens with
-  `$markup` on its own line and closes with `end markup`. The `$` is what keeps
+  `$markup` at the end of its opening line and closes with line-leading
+  `end markup`. Ny resumes the surrounding expression after that terminator;
+  Matrix requires the terminator to occupy its line. The `$` is what keeps
   it unambiguous: Ny has no `begin`, so a bare word before a newline could be
   an ordinary name, while `$` already means "a literal with holes in it" in
   that surface. Matrix needs no sigil because `begin` supplies the same

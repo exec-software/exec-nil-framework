@@ -11,6 +11,8 @@ and explicit about evidence, uncertainty, and implementation status.
 
 ## Contents
 
+- [`2026-11-13-formatted-markup-handoff.md`](2026-11-13-formatted-markup-handoff.md) —
+  multiline text and structured markup completion review, route checks and SDK handoff.
 - [`2026-11-04-macos-parity-plan.md`](2026-11-04-macos-parity-plan.md) — initial
   Darwin/Apple Silicon gap audit, hosted and VM testing options, and the
   Windows-first sequence for establishing macOS parity.

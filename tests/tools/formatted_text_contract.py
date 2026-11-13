@@ -69,6 +69,25 @@ def main():
                 assert result.stderr.strip(), (path, flags)
                 checks += 1
 
+        # A Ny block opener owns the rest of its line. Previously the lexer
+        # silently discarded trailing content instead of diagnosing the source.
+        for index, tail in enumerate(('lost content', ' \t{42}', '\t# comment')):
+            source = ('fn main() -> i32\n'
+                      f'let result = $"\"\"{tail}\nkept\n"\"\"\n'
+                      'return 0\nend fn\n')
+            path = root / f'invalid-ny-block-header-{index}.ny'
+            path.write_text(source, newline='\n')
+            for flags in routes:
+                output = root / 'protected-output'
+                output.write_bytes(b'previous artifact')
+                result = subprocess.run([compiler, '--quiet', '--no-stdlib',
+                                         *flags, '--output', output, path],
+                                        capture_output=True, text=True, timeout=30)
+                assert result.returncode != 0, (path, flags, result.stdout)
+                assert output.read_bytes() == b'previous artifact', (path, flags)
+                assert 'formatted block opener must end its line' in result.stderr, (path, flags, result.stderr)
+                checks += 1
+
         # A multiline Matrix block rejects the same malformed holes, and an
         # unterminated block is a lexer error rather than a silent literal.
         blocks = [

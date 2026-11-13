@@ -11,6 +11,11 @@ name: Web runtime platform checks
       - 'tests/file_time_support_tests.cpp'
       - 'tests/tools/net_socket_contract.py'
       - 'tests/tools/file_modified_at_contract.py'
+      - 'tests/tools/formatted_text_contract.py'
+      - 'tests/tools/markup_contract.py'
+      - 'tests/language/formatted-text*'
+      - 'tests/language/markup*'
+      - 'tests/routes/ny_route_matrix.py'
       - 'tests/matrix/**'
   workflow_dispatch:
 
@@ -89,13 +94,14 @@ jobs:
           "$NIL_CI_PYTHON" - <<'PY'
           import json, subprocess
           from pathlib import Path
-          pattern = r'^(net[.](support-contract|lifecycle-contract|socket-contract)|nil[.](file-time-support|file-modified-at-contract)|matrix[.]execution)$'
+          pattern = r'^(net[.](support-contract|lifecycle-contract|socket-contract)|nil[.](file-time-support|file-modified-at-contract|formatted-text-contract|markup-contract)|matrix[.]execution)$'
           base = ['ctest', '--test-dir', 'build/web-parity', '-C', 'Release', '-R', pattern]
           root = Path('build/web-parity-evidence').resolve()
           inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
           (root/'inventory.json').write_bytes(inventory)
           expected = {'net.support-contract', 'net.lifecycle-contract', 'net.socket-contract',
-                      'nil.file-time-support', 'nil.file-modified-at-contract', 'matrix.execution'}
+                      'nil.file-time-support', 'nil.file-modified-at-contract', 'matrix.execution',
+                      'nil.formatted-text-contract', 'nil.markup-contract'}
           assert {test['name'] for test in json.loads(inventory)['tests']} == expected
           with (root/'ctest.log').open('wb') as output:
               result = subprocess.run(base+['--no-tests=error', '--output-on-failure',
@@ -109,6 +115,32 @@ jobs:
           assert all(case.get('status') == 'run' and case.find('skipped') is None and case.find('failure') is None and
                      case.find('error') is None for case in cases), 'Unexpected failure or skipped contract'
           PY
+      - name: Run formatted text and markup on every interpreted artifact route
+        timeout-minutes: 6
+        run: |
+          "$NIL_CI_PYTHON" - <<'PYTHON'
+          import json, subprocess, sys
+          from pathlib import Path
+          root = Path('build/web-parity-evidence').resolve()
+          tests = json.loads((root/'inventory.json').read_text())['tests']
+          command = next(test['command'] for test in tests if test['name'] == 'nil.markup-contract')
+          compiler = command[command.index('--compiler')+1]
+          interpreter = command[command.index('--interpreter')+1]
+          routes = ['text-interpreter', 'binary-interpreter', 'bundle-text', 'bundle-binary']
+          for fixture in ['formatted-text', 'formatted-text-matrix', 'markup', 'markup-matrix']:
+              language = 'matrix' if fixture.endswith('-matrix') else 'ny'
+              report = root/(fixture+'-routes.json')
+              subprocess.run([sys.executable, 'tests/routes/ny_route_matrix.py',
+                  '--compiler', compiler, '--interpreter', interpreter,
+                  '--source', f'tests/language/{fixture}.{language}',
+                  '--expected-stdout', f'tests/language/{fixture}.stdout', '--expected-exit', '0',
+                  '--routes', ','.join(routes), '--strict', '--compiler-arg=--sdk-path',
+                  '--compiler-arg='+str(Path('nilstd/src').resolve()),
+                  '--work-dir', 'build/web-parity/language-routes', '--report-json', str(report)],
+                  check=True, timeout=75)
+              data = json.loads(report.read_text())
+              assert len(data['results']) == 4 and all(item['status'] == 'PASS' for item in data['results'])
+          PYTHON
       - name: Preserve source identity and evidence
         if: always()
         timeout-minutes: 2

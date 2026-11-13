@@ -70,7 +70,7 @@ inline formatted_text_scan scan_formatted_block(const std::string &content,
 // hole still interpolates, which is how a generated script or stylesheet is
 // spliced in.
 inline formatted_text_scan scan_markup_content(const std::string &content,
-                                               unsigned depth = 0);
+                                               bool matrix, unsigned depth = 0);
 
 inline std::size_t formatted_expression_end(const std::string &source,
                                            std::size_t begin, bool matrix,
@@ -318,20 +318,55 @@ inline bool markup_name_follows(const std::string &content, std::size_t at,
   const auto after = at + index;
   if (after >= content.size()) return true;
   const unsigned char next = static_cast<unsigned char>(content[after]);
-  return !(std::isalnum(next) || next == '-' || next == '_');
+  return std::isspace(next) || next == '/' || next == '>';
 }
 
-inline std::vector<markup_raw_region> markup_raw_regions(const std::string &content) {
+inline std::vector<markup_raw_region> markup_raw_regions(const std::string &content,
+                                                        bool matrix, unsigned depth) {
   std::vector<markup_raw_region> regions;
-  for (std::size_t cursor = 0; cursor + 1 < content.size(); ++cursor) {
-    if (content[cursor] != '<') continue;
+  // A marker inside a comment, quoted attribute, or interpolation expression
+  // is not an element. Walk literal tags before looking for raw-text bodies;
+  // otherwise a harmless attribute such as title="<script>" disables holes
+  // in the rest of the document.
+  const auto skip_hole = [&](std::size_t cursor) {
+    if (cursor + 1 < content.size() && content[cursor + 1] == '{') return cursor + 2;
+    formatted_text_scan scanned;
+    const auto end = formatted_expression_end(content, cursor + 1, matrix, depth + 1, scanned);
+    return scanned.error.empty() ? end + 1 : content.size();
+  };
+  const auto tag_end = [&](std::size_t cursor) {
+    char quote = 0;
+    while (cursor < content.size()) {
+      const char c = content[cursor];
+      if (c == '{') { cursor = skip_hole(cursor); continue; }
+      if (quote) {
+        if (c == quote) quote = 0;
+      } else if (c == '\'' || c == '"') {
+        quote = c;
+      } else if (c == '>') {
+        return cursor;
+      }
+      ++cursor;
+    }
+    return content.size();
+  };
+  for (std::size_t cursor = 0; cursor < content.size();) {
+    if (content[cursor] == '{') { cursor = skip_hole(cursor); continue; }
+    if (content[cursor] != '<') { ++cursor; continue; }
+    if (content.compare(cursor, 4, "<!--") == 0) {
+      const auto close = content.find("-->", cursor + 4);
+      cursor = close == std::string::npos ? content.size() : close + 3;
+      continue;
+    }
     const char *name = nullptr;
     if (markup_name_follows(content, cursor + 1, "script")) name = "script";
     else if (markup_name_follows(content, cursor + 1, "style")) name = "style";
-    if (!name) continue;
-    const auto open_end = content.find('>', cursor);
-    if (open_end == std::string::npos) break;
-    if (open_end > cursor && content[open_end - 1] == '/') { cursor = open_end; continue; }
+    const auto open_end = tag_end(cursor + 1);
+    if (open_end == content.size()) break;
+    if (!name || (open_end > cursor && content[open_end - 1] == '/')) {
+      cursor = open_end + 1;
+      continue;
+    }
     std::size_t close = open_end + 1;
     for (; close < content.size(); ++close) {
       if (content[close] != '<' || close + 1 >= content.size() ||
@@ -339,13 +374,18 @@ inline std::vector<markup_raw_region> markup_raw_regions(const std::string &cont
         continue;
       if (markup_name_follows(content, close + 2, name)) break;
     }
-    if (close > content.size()) close = content.size();
-    markup_raw_region region{open_end + 1, std::min(close, content.size()), false};
+    markup_raw_region region{open_end + 1, close, false};
     auto first = region.begin;
     while (first < region.end && std::isspace(static_cast<unsigned char>(content[first]))) ++first;
     auto last = region.end;
     while (last > first && std::isspace(static_cast<unsigned char>(content[last - 1]))) --last;
-    region.single_hole = first < last && content[first] == '{' && content[last - 1] == '}';
+    if (first < last && content[first] == '{' && content[last - 1] == '}') {
+      formatted_text_scan scanned;
+      const auto end = formatted_expression_end(content, first + 1, matrix, depth + 1, scanned);
+      // Preserve diagnostics for a malformed whole-body hole. A scanning
+      // error must not turn the author's interpolation into literal text.
+      region.single_hole = !scanned.error.empty() || end == last - 1;
+    }
     regions.push_back(region);
     cursor = region.end;
   }
@@ -353,10 +393,10 @@ inline std::vector<markup_raw_region> markup_raw_regions(const std::string &cont
 }
 
 inline formatted_text_scan scan_markup_content(const std::string &content,
-                                               unsigned depth) {
+                                               bool matrix, unsigned depth) {
   formatted_text_scan result;
   result.end = content.size();
-  const auto regions = markup_raw_regions(content);
+  const auto regions = markup_raw_regions(content, matrix, depth);
   const auto fail = [&](std::size_t at, const std::string &message) {
     result.error_offset = at;
     result.error = message;
@@ -391,7 +431,7 @@ inline formatted_text_scan scan_markup_content(const std::string &content,
       }
       flush();
       const auto begin = cursor + 1;
-      const auto end = formatted_expression_end(content, begin, true, depth + 1, result);
+      const auto end = formatted_expression_end(content, begin, matrix, depth + 1, result);
       if (!result.error.empty()) return result;
       result.pieces.push_back({true, content.substr(begin, end - begin), begin, end - begin});
       cursor = end + 1;

@@ -953,10 +953,11 @@ page-shell receives title as text, signed-in as boolean, who as text
 end paragraph
 ```
 
-The block's value is a **document**, not text. `nil.std.markup::render with
-doc being page` serializes one, and a markup block needs
-`read nil.std.markup` because that is where the document type and its escaping
-live.
+The block evaluates to a `nil.std.markup.document` record containing serialized
+text. Static segments stay literal; the holes and directives assemble its
+content at run time. `nil.std.markup::render with doc being page` returns that
+content, without a runtime DOM or tree walk. A markup block needs
+`read nil.std.markup` for the document type and escaping functions.
 
 **Escaping is the position's, not yours.** A hole is escaped for the context it
 landed in, decided while the block is parsed:
@@ -965,13 +966,18 @@ landed in, decided while the block is parsed:
 | --- | --- |
 | element content | `&`, `<`, `>` escaped |
 | attribute value | `&`, `<`, `>`, `"`, `'` escaped |
-| a whole URL attribute | an executable scheme is neutralised, then escaped |
-| inside a longer URL value | percent-encoded as one component |
-| `{raw expression}` | nothing; the caller owns the proof |
+| a whole URL attribute | `javascript:`, `vbscript:` or `data:` is neutralised, then escaped |
+| inside a longer URL value | percent-encoded as one component after a fixed safe prefix |
+| a code-bearing or URL-list attribute | ordinary holes rejected; explicit trusted `raw` required |
+| `{raw expression}` | trusted input inserted without escaping or filtering |
 
-A hole takes `text`, a scalar, or a document. `{raw ...}` is the only way to
-put unescaped text into a page, which is what makes it the word to look for in
-review.
+Ordinary holes accept `text`, `boolean`, `number`, `floating`, and the exact
+integer/byte/double representations reached through `override` (§4). A document
+also composes into element content. Arrays and
+optional values need explicit loops or conversions; a hole does not omit an
+attribute automatically. `{raw ...}` accepts text or a document and bypasses
+escaping. A manually constructed document and `nil.std.markup::raw` also require
+trusted content; the public record is not a safety guarantee.
 
 **Documents compose as documents.** A paragraph returning a document
 interpolates into another block as markup, so it is spliced rather than escaped
@@ -981,8 +987,11 @@ a second time:
 <main>{card with title being title, count being total}</main>
 ```
 
-A document may only go where markup belongs. Interpolating one into an
-attribute value is an error.
+An ordinary document hole in an attribute value is an error. An explicit
+`{raw ...}` bypass can insert trusted text or a document into an already quoted
+value, but the caller is responsible for keeping that value valid and safe.
+Even `raw` cannot stand in for an element or attribute name or appear in a
+comment.
 
 **Control flow uses the language's own words.** `{when ...}`,
 `{otherwise when ...}`, `{otherwise}`, `{end when}`,
@@ -998,9 +1007,13 @@ set. A directive may sit between elements, between attributes, or inside text:
 <a {when active}class="on"{otherwise}class="off"{end when} href="/x">link</a>
 ```
 
-Every arm must be a complete fragment. An arm that opens an element it does not
-close is an error — which is the rule that stops a document from going back to
-being assembled out of pieces.
+Every arm must restore both the element stack and its tag/attribute context.
+An arm cannot leave an element or quote open for another arm to close. Numeric
+range directives are not implemented, and directives inside URL attribute
+values are rejected; calculate the URL beforehand or conditionally emit the
+complete element. For a conditional boolean attribute, emit a complete quoted
+attribute such as `disabled=""` inside the arm, or conditionally emit the whole
+element. A bare `disabled` arm is not supported in this profile.
 
 **What the compiler checks:** every element is closed, in order; every
 directive is closed; and every hole has a type the renderer can use. An
@@ -1017,8 +1030,23 @@ hole, which must be `{raw ...}`:
 
 Elsewhere, `{{` and `}}` are literal braces, as in formatted text.
 
-**Known limits.** Element and attribute names are fixed: a hole cannot name
-either, because that is what keeps the document checkable. An attribute value
-must be quoted. Text is emitted as written, so a spliced document keeps the
-indentation it was written with. The dialect is HTML; XML serialization and a
-compact renderer are not available yet.
+**URL and code contexts need distinct handling.** A whole URL hole filters
+`javascript:`, `vbscript:` and `data:` after browser-relevant ASCII control/space
+normalization and case folding, then applies attribute escaping. It encodes
+the colons of a matched value rather than throwing or dropping the attribute;
+other schemes are allowed. Component holes require a fixed safe URL prefix,
+such as `/search?q=`, `https://example.com/`, `?q=` or `#section-`. A variable
+scheme such as `href="{scheme}:example"` is rejected. Ordinary holes in `on*`,
+`style`, `srcdoc`, `srcset`, `imagesrcset` and `ping` require explicit trusted
+`raw`; HTML escaping is not a sanitizer for those languages. See the
+[exact escaping contract](../docs/standard-library/markup.md).
+
+**Known limits.** Self-closing syntax is limited to HTML void elements such as
+`<br/>`; other elements need matching closing tags. The parser uses HTML tables
+and does not model SVG or MathML namespace semantics. Element and attribute
+names are fixed: a hole cannot name either, because that is what keeps the
+document checkable. An attribute value
+must be quoted, and the source's quote style is preserved. Text is emitted
+after the block's common indentation and surrounding blank lines are removed;
+a spliced document keeps its own remaining indentation. The dialect is HTML;
+XML serialization and a compact renderer are not available yet.

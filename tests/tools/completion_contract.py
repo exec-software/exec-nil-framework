@@ -202,6 +202,16 @@ def main():
         query(block_matrix.replace('{sam|}', '{{sam|}}'), name='formatted_block_literal.matrix',
               available=False, status=0)
 
+        block_ny = ('# \u00e9\U0001F600\r\nfn main() -> i32\r\n'
+                    '    let sample_value = 7\r\n'
+                    '    println($"\"\"\r\n'
+                    '        {{literal}} {sam|}\r\n'
+                    '    "\"\")\r\n'
+                    '    return 0\r\nend fn\r\n')
+        assert set(items(query(block_ny, name='formatted-block.ny'))) == {'sample_value'}
+        query(block_ny.replace('{sam|}', '{{sam|}}'), name='formatted_block_literal.ny',
+              available=False, status=0)
+
         # Independent result budgets withhold the optional query rather than
         # return truncated candidates or omit contributing source snapshots.
         large = '# ' + 'x' * (1500 * 1024) + '\n'

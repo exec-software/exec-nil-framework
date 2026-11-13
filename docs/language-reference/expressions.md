@@ -205,8 +205,10 @@ and the same conversion is used by the interpreter and native compiler.
 Native text retains its existing NUL-free restriction; formatted text does not
 change the text storage ABI or permit embedded NUL constants natively.
 
-Ny's multiline form opens with `$"""` and closes with the first line whose
-content begins with `"""`, so a block can sit inside a call:
+Ny's multiline form opens with `$"""` at the end of its source line, apart
+from spaces or tabs; content starts on the following line. It closes with the
+first line whose non-indentation content begins with `"""`. Lexing resumes
+after that delimiter, so a block can sit inside a call:
 
 ```ny
 println($"""
@@ -309,22 +311,35 @@ The literal segments are parsed as markup at compile time. Unbalanced or
 unclosed elements, an unterminated directive, an arm that opens an element it
 does not close, and a hole that would name an element or an attribute are
 compile errors. Element and attribute names are fixed; that is what keeps the
-document checkable.
+document checkable. Self-closing syntax is limited to HTML void elements such
+as `<br/>`; other elements need a closing tag. The initial profile uses HTML
+tables, without SVG or MathML namespace semantics.
 
-Each hole is escaped for the context it landed in — element content, attribute
-value, a whole URL attribute, or a component inside one — and `{raw ...}` is
-the only way to interpolate without escaping.
-[`nil.std.markup`](../standard-library/markup.md) holds those functions and the
-`document` type the block produces, so a document interpolated into another
-document is spliced rather than escaped a second time. Serialize one with
-`render`.
+Ordinary holes accept `text`, `bool`, `i32`, `i64`, `u8` and `f64`, escaping
+them for their position. A `nil.std.markup.document` also composes into element
+content without being escaped again. Arrays and optional values need explicit
+loops or conversions; they do not splice or omit attributes automatically.
+
+A whole URL hole uses a limited executable-scheme filter, while a component
+hole needs a fixed safe URL prefix. Directives inside URL attribute values and
+ordinary holes in code-bearing or URL-list attributes are rejected. See the
+[`nil.std.markup` escaping contract](../standard-library/markup.md) for the
+exact policy. `{raw ...}` explicitly trusts its input and bypasses escaping;
+it is not a sanitizer.
+
+The block evaluates to a document record containing serialized text. `render`
+returns that text; it does not walk a runtime tree. XML serialization and a
+compact renderer are not implemented.
 
 Inside `<script>` and `<style>` a brace is an ordinary character, so CSS and
 JavaScript paste in unaltered; a body that is exactly one hole must be
 `{raw ...}`. Elsewhere `{{` and `}}` are literal braces, as in formatted text.
 
-`$markup` must be the last thing on its line, and `markup` after `$` is not a
-reserved word: both surfaces keep `markup` and `raw` usable as ordinary names.
+`$markup` must be the last thing on its line apart from spaces or tabs. Ny's
+terminator begins a line after indentation, and lexing resumes after
+`end markup`, allowing the surrounding expression to continue. Matrix's
+`end markup` occupies its own line. Both surfaces keep `markup` and `raw`
+usable as ordinary names outside these constructs.
 
 ## Lambda / Anonymous Functions
 

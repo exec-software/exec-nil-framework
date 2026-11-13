@@ -348,6 +348,26 @@ def main():
         assert '{{local-value}}' in snapshot, snapshot
         assert '{renamed-value plus 1}' in snapshot, snapshot
 
+        # Ny closes the block inside the enclosing call. Its independently
+        # emitted tokens must preserve the same UTF-8/CRLF editing spans.
+        block_ny = ('# \u00e9\U0001F600\r\nfn message() -> i32\r\n'
+                    '    let local_value = 7\r\n'
+                    '    println($"\"\" \t\r\n'
+                    '        {{local_value}} {local_value + 1}\r\n'
+                    '    "\"\")\r\n'
+                    '    return local_value\r\nend fn\r\n')
+        name = 'formatted-block.ny'
+        result = analyze({name: block_ny}, name)
+        target = binding(result, name, '{local_value +', 'local_value')
+        assert target['rename_safe'] and target['references_complete'], target
+        assert len([use for use in result['semantic']['references']
+                    if use['symbol_id'] == target['id']]) == 2
+        renamed = rename_local(result, name, target, 'renamed_value')
+        snapshot = next(item['text'] for item in renamed['semantic']['sources']
+                        if item['path'] == str(root / name))
+        assert '{{local_value}}' in snapshot, snapshot
+        assert '{renamed_value + 1}' in snapshot, snapshot
+
         interpolation = ('fn message(input: i32) -> i32\nprintln("\\n{input}")\nreturn input\nend fn\n')
         result = analyze({'interpolation.ny': interpolation}, 'interpolation.ny')
         assert len(result['semantic']['references']) == 1
