@@ -1,0 +1,332 @@
+name: Rooted file native macOS checks
+
+"on":
+  workflow_dispatch:
+  # A new workflow cannot be dispatched until it exists on the default branch.
+  # This scoped PR trigger qualifies it before review/merge without changing
+  # the fixed source revision under test.
+  pull_request:
+    paths:
+      - .github/workflows/rooted-file-native-parity.yml
+
+permissions:
+  contents: read
+
+# This campaign tests a fixed source revision. The workflow revision is recorded
+# separately; neither an installed SDK nor any release artifact is replaced.
+jobs:
+  native:
+    name: macOS ${{ matrix.host.arch }} rooted file native contract
+    runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 65
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        host:
+          - {runner: macos-15-intel, arch: x86_64}
+          - {runner: macos-15, arch: arm64}
+    defaults:
+      run:
+        shell: bash
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONUTF8: '1'
+      NIL_TESTED_SOURCE: 93515c3d4c2b6e0e7c3b870eb283fce26392d613
+      NIL_EXPECTED_ARCH: ${{ matrix.host.arch }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: 93515c3d4c2b6e0e7c3b870eb283fce26392d613
+          path: source
+          persist-credentials: false
+      - name: Record identities and prepare bounded commands
+        timeout-minutes: 2
+        run: |
+          mkdir -p build/rooted-native-evidence
+          cat > build/rooted_native_campaign.py <<'PY'
+          import hashlib, json, os, stat, subprocess, sys
+          from pathlib import Path
+
+          ROOT = Path(os.environ['GITHUB_WORKSPACE']).resolve()
+          SOURCE = ROOT / 'source'
+          BUILD = ROOT / 'build/rooted-native'
+          EVIDENCE = ROOT / 'build/rooted-native-evidence'
+          sys.path.insert(0, str(SOURCE / 'tests/tools'))
+          import ordinary_io_parity_contract as support
+
+          def save(name, value):
+              (EVIDENCE / name).write_text(json.dumps(value, indent=2) + '\n')
+
+          def record(path):
+              return {**support.file_record(path), 'mode': stat.S_IMODE(path.stat().st_mode)}
+
+          def source_identity():
+              revision = subprocess.check_output(['git', '-C', str(SOURCE), 'rev-parse', 'HEAD'],
+                                                 text=True, timeout=15).strip()
+              dirty = subprocess.check_output(['git', '-C', str(SOURCE), 'status', '--porcelain',
+                                               '--untracked-files=no'], text=True, timeout=15)
+              assert revision == os.environ['NIL_TESTED_SOURCE'] and not dirty
+              return revision
+
+          def run(name, command, timeout, environment=None):
+              # The canonical owner retains/reaps the process group and caps raw
+              # pipes. Keep full bounded logs, but print only their final 64 KiB.
+              support.MAX_OUTPUT = 8 * 1024**2
+              row = support.run_process(support.load_ownership(SOURCE), command, ROOT,
+                  environment or dict(os.environ), EVIDENCE, name, timeout)
+              save(name + '.json', row)
+              for key in ('stdout', 'stderr'):
+                  path = EVIDENCE / row[key]
+                  if path.is_file():
+                      data = path.read_bytes()
+                      print(key + ': ' + str(len(data)) + ' bytes retained')
+                      print(data[-65536:].decode('utf-8', errors='replace'))
+              assert row['status'] == 'PASS' and row['exit_code'] == 0
+              assert row['cleanup_verified'] is True and not row.get('timed_out') and not row.get('error')
+              return row
+
+          def seal():
+              files = [BUILD / 'bin' / name for name in
+                       ('nilcompiler', 'nilinterpreter', 'nil_rooted_file_snapshot_tests')]
+              files.append(BUILD / 'lib/libnil.a')
+              files.extend(path for path in (SOURCE / 'nilstd/src').rglob('*') if path.is_file())
+              files.extend(SOURCE / name for name in (
+                  'tests/tools/rooted_file_snapshot_contract.py',
+                  'tests/tools/ordinary_io_parity_contract.py', 'tests/native_output_staging.py',
+                  'validation/ny-3d/scripts/debugger_process.py', 'tests/rooted_file_snapshot_tests.cpp',
+                  'tests/language/rooted-file-snapshot.ny', 'tests/language/text-from-bytes.ny',
+                  'tests/language/text-from-bytes-native-reject.ny',
+                  'tests/language/rooted-file-snapshot-invalid-schema.ny',
+                  'tests/language/rooted-file-snapshot-invalid-signature.ny'))
+              return {str(path.relative_to(ROOT)): record(path) for path in sorted(files)}
+          PY
+          python3 - <<'PY'
+          import os, platform, re, subprocess, sys
+          sys.path.insert(0, 'build')
+          import rooted_native_campaign as campaign
+          assert platform.system() == 'Darwin' and platform.machine() == os.environ['NIL_EXPECTED_ARCH']
+          workflow_revision = os.environ['GITHUB_WORKFLOW_SHA']
+          assert re.fullmatch(r'[0-9a-f]{40}', workflow_revision)
+          campaign.save('identity.json', dict(tested_source_revision=campaign.source_identity(),
+              workflow_revision=workflow_revision, dispatch_revision=os.environ['GITHUB_SHA'],
+              workflow_ref=os.environ['GITHUB_WORKFLOW_REF'], run_id=os.environ['GITHUB_RUN_ID'],
+              run_attempt=os.environ['GITHUB_RUN_ATTEMPT'], system=platform.system(),
+              machine=platform.machine(), python=sys.version,
+              macos=subprocess.check_output(['sw_vers'], text=True, timeout=15),
+              llvm=True, scope='Pinned source-library host, interpreter, LLVM AOT/JIT contracts; no installed SDK or release activation'))
+          PY
+      - name: Configure LLVM Release build
+        timeout-minutes: 8
+        run: |
+          python3 - <<'PY'
+          import subprocess, sys
+          from pathlib import Path
+          sys.path.insert(0, 'build')
+          import rooted_native_campaign as campaign
+          prefix = Path(subprocess.check_output(['brew', '--prefix', 'llvm@18'], text=True, timeout=30).strip())
+          version = subprocess.check_output([str(prefix/'bin/llvm-config'), '--version'], text=True, timeout=15).strip()
+          assert version.startswith('18.')
+          campaign.save('toolchain.json', dict(llvm_prefix=str(prefix), llvm_version=version,
+              sdk_path=subprocess.check_output(['xcrun', '--show-sdk-path'], text=True, timeout=15).strip(),
+              xcode=subprocess.check_output(['xcodebuild', '-version'], text=True, timeout=15)))
+          campaign.run('configure', ['cmake', '-S', str(campaign.SOURCE), '-B', str(campaign.BUILD),
+              '-DCMAKE_BUILD_TYPE=Release', '-DBUILD_TESTING=ON', '-DNIL_ENABLE_LLVM=ON',
+              '-DLLVM_DIR=' + str(prefix/'lib/cmake/llvm'), '-DPython3_EXECUTABLE=' + sys.executable,
+              '-DNILCOMPILER_SQLITE_INCLUDE_DIR=OFF', '-DNILCOMPILER_POSTGRESQL_INCLUDE_DIR=OFF'], 390)
+          PY
+      - name: Build compiler interpreter and host fixture
+        timeout-minutes: 40
+        run: |
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, 'build')
+          import rooted_native_campaign as campaign
+          campaign.run('build', ['cmake', '--build', str(campaign.BUILD), '--config', 'Release',
+              '--parallel', '2', '--target', 'nilcompiler', 'nilinterpreter', 'nil_rooted_file_snapshot_tests'], 2350)
+          campaign.save('seal-before.json', campaign.seal())
+          PY
+      - name: Run exactly two rooted file contracts
+        timeout-minutes: 8
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys, xml.etree.ElementTree as ET
+          sys.path.insert(0, 'build')
+          import rooted_native_campaign as campaign
+          expected = {'nil.rooted-file-snapshot', 'nil.rooted-file-snapshot-contract'}
+          base = ['ctest', '--test-dir', str(campaign.BUILD), '-C', 'Release', '-R',
+                  r'^nil[.]rooted-file-snapshot(-contract)?$']
+          inventory = subprocess.check_output(base + ['--show-only=json-v1'], timeout=30)
+          (campaign.EVIDENCE/'inventory.json').write_bytes(inventory)
+          tests = json.loads(inventory)['tests']
+          assert len(tests) == 2 and {test['name'] for test in tests} == expected
+          language = next(test for test in tests if test['name'].endswith('-contract'))['command']
+          assert language[language.index('--llvm') + 1] == 'ON'
+          assert language[language.index('--compiler') + 1] == str(campaign.BUILD/'bin/nilcompiler')
+          assert language[language.index('--interpreter') + 1] == str(campaign.BUILD/'bin/nilinterpreter')
+          assert language[language.index('--nilstd') + 1] == str(campaign.SOURCE/'nilstd/src')
+          temporary = campaign.BUILD/'owned-test-temp'
+          temporary.mkdir(mode=0o700)
+          environment = dict(os.environ, TMPDIR=str(temporary) + os.sep)
+          campaign.run('ctest', base + ['--parallel', '1', '--no-tests=error', '--output-on-failure',
+              '--test-output-size-passed', '65536', '--test-output-size-failed', '65536',
+              '--output-junit', str(campaign.EVIDENCE/'results.xml')], 440, environment)
+          cases = list(ET.parse(campaign.EVIDENCE/'results.xml').getroot().iter('testcase'))
+          assert len(cases) == 2 and {case.get('name') for case in cases} == expected
+          assert all(case.get('status') == 'run' and all(case.find(kind) is None
+              for kind in ('failure', 'error', 'skipped')) for case in cases)
+          host = next(case for case in cases if case.get('name') == 'nil.rooted-file-snapshot')
+          assert host.findtext('system-out', '').strip() == '87 rooted snapshot checks passed'
+          assert not list(temporary.iterdir()), 'Owned host/compiler temporary files remain'
+          PY
+      - name: Independently verify route inventories raw output and seals
+        timeout-minutes: 3
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, sys
+          from pathlib import Path
+          sys.path.insert(0, 'build')
+          import rooted_native_campaign as campaign
+          roots = list((campaign.BUILD/'test-evidence').glob('rooted-file-snapshot-*'))
+          assert len(roots) == 1 and roots[0].is_dir() and not roots[0].is_symlink()
+          root = roots[0]
+          report = json.loads((root/'report.json').read_text())
+          assert report['schema'] == 'nil.rooted-file-snapshot.v1' and report['status'] == 'PASS'
+          assert report['llvm_enabled'] is True and report['cleanup_verified'] is True
+          routes = {'text-interpreter', 'binary-interpreter', 'llvm-aot', 'llvm-jit'}
+          stages = {'initial', 'same-size-time-replacement'}
+          snapshot = report['snapshot_routes']
+          assert len(snapshot) == 8 and {(row['stage'], row['route']) for row in snapshot} == {
+              (stage, route) for stage in stages for route in routes}
+          for row in snapshot:
+              seed = 19 if row['stage'] == 'initial' else 21
+              digest = hashlib.sha256(bytes((index * 73 + seed) % 256 for index in range(256))).hexdigest()
+              assert row['status'] == 'PASS' and row['sha256'] == digest and row['bytes'] == 256
+              assert row['exact_payload_bytes_checked'] == 256 and row['modified_ms'] == 1600000000123
+              assert all(row[key] is True for key in ('empty_file_checked',
+                  'descendant_and_final_links_rejected', 'namespace_unchanged'))
+          unbox = report['unbox_rejections']
+          assert len(unbox) == 4 and {row['route'] for row in unbox} == routes
+          conversions = report['conversion_routes']
+          assert len(conversions) == 2 and {row['route'] for row in conversions} == {'text-interpreter', 'binary-interpreter'}
+          for row in conversions:
+              assert row['status'] == 'PASS' and all(row[key] is True for key in
+                  ('all_256_byte_values', 'copy_independent_of_source_mutation', 'empty_and_1MiB_payloads'))
+          rejections = report['native_rejections']
+          assert len(rejections) == 6 and {(row['case'], row['route']) for row in rejections} == {
+              (case, route) for case in ('text.from_bytes', 'invalid-schema', 'invalid-signature')
+              for route in ('llvm-aot', 'llvm-jit')}
+          expected_output = {'compile-snapshot-' + encoding: b'' for encoding in ('text', 'binary', 'native')}
+          for stage in stages:
+              for route in routes:
+                  expected_output[stage + '-' + route] = b'snapshot-content-ok\nsnapshot-errors-ok\nsnapshot-links-ok\n'
+          expected_errors = {}
+          for row in unbox:
+              reason = ("anything type mismatch: expected 'array<i64>', got 'array<u8>'"
+                        if row['route'].startswith('llvm-') else
+                        "anything contains 'array<u8>', cannot extract 'array<i64>'")
+              assert row['status'] == 'PASS' and row['reason'] == reason
+              expected_errors['wrong-element-' + row['route']] = reason.encode()
+          for encoding in ('text', 'binary'):
+              expected_output['compile-conversion-' + encoding] = b''
+              expected_output['conversion-' + encoding] = b'from-bytes-ok\n'
+          for row in rejections:
+              if row['case'] == 'text.from_bytes':
+                  name = 'conversion-rejected-' + row['route']
+                  reason = "unsupported native annotation '@intrinsic(\"text.from_bytes\")'"
+              else:
+                  name = 'snapshot-rejected-' + row['case'] + '-' + row['route']
+                  reason = 'file.read_rooted_snapshot requires (text,text,i64) -> Result<FileSnapshot,text>'
+              assert row['status'] == 'PASS' and row['reason'] == reason
+              expected_errors[name] = reason.encode()
+          commands = report['commands']
+          assert len(commands) == 25 and {row['name'] for row in commands} == set(expected_output) | set(expected_errors)
+          for row in commands:
+              assert row['cleanup_verified'] is True and not row.get('timed_out') and not row.get('error')
+              streams = {}
+              for stream in ('stdout', 'stderr'):
+                  path = root/'logs'/row[stream]
+                  assert path.parent == root/'logs' and path.name == row['name'] + '.' + stream
+                  assert campaign.support.file_record(path, 1024**2) == row[stream + '_record']
+                  streams[stream] = path.read_bytes()
+              if row['name'] in expected_errors:
+                  assert row['status'] == 'FAIL' and row['exit_code'] > 0 and not streams['stdout']
+                  assert expected_errors[row['name']] in streams['stderr']
+                  if '-rejected-' in row['name']:
+                      target = Path(row['argv'][row['argv'].index('-o') + 1])
+                      assert not target.exists() and not target.is_symlink()
+              else:
+                  assert row['status'] == 'PASS' and row['exit_code'] == 0 and not streams['stderr']
+                  assert streams['stdout'] == expected_output[row['name']]
+          paths = {name: campaign.SOURCE/'tests/language'/name for name in (
+              'rooted-file-snapshot.ny', 'text-from-bytes.ny', 'text-from-bytes-native-reject.ny',
+              'rooted-file-snapshot-invalid-schema.ny', 'rooted-file-snapshot-invalid-signature.ny')}
+          paths.update(compiler=campaign.BUILD/'bin/nilcompiler', interpreter=campaign.BUILD/'bin/nilinterpreter',
+              file_library=campaign.SOURCE/'nilstd/src/io/file.ny', text_library=campaign.SOURCE/'nilstd/src/text/string_utils.ny',
+              contract=campaign.SOURCE/'tests/tools/rooted_file_snapshot_contract.py',
+              process_owner=campaign.SOURCE/'validation/ny-3d/scripts/debugger_process.py',
+              process_support=campaign.SOURCE/'tests/tools/ordinary_io_parity_contract.py')
+          assert set(report['inputs']) == set(paths) and report['nilstd'] == str(campaign.SOURCE/'nilstd/src')
+          for name, path in paths.items():
+              item = report['inputs'][name]
+              assert item['path'] == str(path) and campaign.support.file_record(path) == {
+                  key: item[key] for key in ('bytes', 'sha256')}
+          after = campaign.seal()
+          campaign.save('seal-after.json', after)
+          assert after == json.loads((campaign.EVIDENCE/'seal-before.json').read_text())
+          assert not list((campaign.BUILD/'owned-test-temp').iterdir())
+          campaign.save('replay.json', dict(status='PASS', tested_source_revision=campaign.source_identity(),
+              host_checks=87, snapshot_observations=8, wrong_element_rejections=4,
+              byte_conversions=2, native_compile_rejections=6, commands=25, raw_streams=50,
+              source_std_tools_unchanged=True, process_cleanup_verified=True, owned_temp_empty=True,
+              report=campaign.support.file_record(root/'report.json')))
+          print('PASS: 87 host checks; 8 snapshot, 4 unbox, 2 conversion, 6 native rejection observations; 25 owned commands')
+          PY
+      - name: Preserve complete or partial evidence without product binaries
+        if: always()
+        timeout-minutes: 3
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, shutil, stat, sys
+          from pathlib import Path
+          sys.path.insert(0, 'build')
+          import rooted_native_campaign as campaign
+          destination = campaign.EVIDENCE/'contracts'
+          destination.mkdir(exist_ok=True)
+          for root in sorted((campaign.BUILD/'test-evidence').glob('rooted-file-snapshot-*')):
+              assert root.is_dir() and not root.is_symlink()
+              output = destination/root.name
+              output.mkdir()
+              paths = [root/'report.json', *sorted((root/'logs').glob('*'))]
+              for path in paths:
+                  if not path.exists():
+                      continue
+                  assert stat.S_ISREG(path.lstat().st_mode) and not path.is_symlink()
+                  assert path.stat().st_size <= 8 * 1024**2
+                  target = output/path.relative_to(root)
+                  target.parent.mkdir(exist_ok=True)
+                  shutil.copyfile(path, target)
+          files = {}
+          total = 0
+          for path in sorted(campaign.EVIDENCE.rglob('*')):
+              if path.is_dir():
+                  continue
+              assert stat.S_ISREG(path.lstat().st_mode) and not path.is_symlink()
+              assert path.stat().st_size <= 8 * 1024**2
+              total += path.stat().st_size
+              assert total <= 64 * 1024**2
+              files[str(path.relative_to(campaign.EVIDENCE))] = campaign.support.file_record(path, 8 * 1024**2)
+          campaign.save('evidence.json', dict(tested_source_revision=campaign.source_identity(),
+              workflow_revision=__import__('os').environ['GITHUB_WORKFLOW_SHA'],
+              scope='Evidence and bounded logs only; generated executables, objects, SDKs and fixture data excluded',
+              total_bytes=total, files=files))
+          PY
+      - name: Upload complete or partial results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rooted-file-native-${{ matrix.host.arch }}-source-93515c3-${{ github.sha }}-${{ github.run_attempt }}
+          path: build/rooted-native-evidence/
+          if-no-files-found: error
+          retention-days: 14

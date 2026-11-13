@@ -19,6 +19,7 @@
 #include "time_support.hpp"
 #include "file_time_support.hpp"
 #include "../../common/windows_environment.hpp"
+#include "../../common/content_digest.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -1678,6 +1679,13 @@ void VM::executeInstruction(const Instruction &instr) {
       const auto *handle = std::get_if<ArrayHandle>(&value);
       if (!handle) reject();
       const auto found = heap_.find(handle->address);
+      // File/random byte arrays use compact byte storage instead of scalar
+      // Value slots. They retain the same exact array<u8> language identity.
+      // Do not admit raw u8 pointer allocations or any other array element.
+      if (found != heap_.end() && expected == "array<u8>" &&
+          found->second.type_name == "bytes" && found->second.data.empty() &&
+          found->second.element_count == found->second.byte_data.size())
+        return;
       if (found == heap_.end() || found->second.type_name != "array" ||
           "array<" + canonical_array_type(found->second.element_type) + ">" != expected) reject();
       return;
@@ -4411,6 +4419,37 @@ void VM::executeInstruction(const Instruction &instr) {
       return;
     }
 
+    if (fn_name == "text.from_bytes") {
+      if (args.size() != 1 || !std::holds_alternative<ArrayHandle>(args[0]))
+        throw std::runtime_error("text.from_bytes: expected a live byte array");
+      const auto found = heap_.find(std::get<ArrayHandle>(args[0]).address);
+      if (found == heap_.end())
+        throw std::runtime_error("text.from_bytes: expected a live byte array");
+      const auto &block = found->second;
+      std::string result;
+      if (block.type_name == "bytes" && block.data.empty() &&
+          block.element_count == block.byte_data.size()) {
+        if (block.byte_data.size() > max_intrinsic_file_bytes)
+          throw std::runtime_error("text.from_bytes: input exceeds size limit");
+        result.assign(block.byte_data.begin(), block.byte_data.end());
+      } else if (block.type_name == "array" &&
+                 canonical_array_scalar(block.element_type) == "u8") {
+        if (block.data.size() > max_intrinsic_file_bytes)
+          throw std::runtime_error("text.from_bytes: input exceeds size limit");
+        result.reserve(block.data.size());
+        for (const auto &item : block.data) {
+          const auto *byte = std::get_if<std::int64_t>(&item);
+          if (!byte || *byte < 0 || *byte > 255)
+            throw std::runtime_error("text.from_bytes: invalid byte element");
+          result.push_back(static_cast<char>(static_cast<unsigned char>(*byte)));
+        }
+      } else {
+        throw std::runtime_error("text.from_bytes: expected a live byte array");
+      }
+      pushStack(std::move(result));
+      return;
+    }
+
     if (fn_name == "text.from_byte") {
       std::int64_t code = -1;
       if (!args.empty()) {
@@ -5077,6 +5116,57 @@ void VM::executeInstruction(const Instruction &instr) {
       result.variant_name = "Result::Ok";
       result.payloads.push_back(ArrayHandle{handle});
       pushStack(result);
+      return;
+    }
+    // Return bytes, timestamp and content identity from one anchored read.
+    if (fn_name == "file.read_rooted_snapshot") {
+      auto push_error = [&](const std::string &message) {
+        EnumValue result;
+        result.variant_name = "Result::Error";
+        result.payloads.push_back(message);
+        pushStack(result);
+      };
+      if (args.size() != 3 || !std::holds_alternative<std::string>(args[0]) ||
+          !std::holds_alternative<std::string>(args[1]) ||
+          !std::holds_alternative<std::int64_t>(args[2]) ||
+          std::get<std::int64_t>(args[2]) < 0 ||
+          static_cast<std::uint64_t>(std::get<std::int64_t>(args[2])) >
+              max_intrinsic_file_bytes) {
+        push_error("file.read_rooted_snapshot: invalid arguments");
+        return;
+      }
+      try {
+        auto loaded = detail::read_rooted_file_snapshot_utf8(
+            std::get<std::string>(args[0]), std::get<std::string>(args[1]),
+            static_cast<std::uint64_t>(std::get<std::int64_t>(args[2])));
+        if (!loaded.ok) {
+          push_error(loaded.error);
+          return;
+        }
+        nil::detail::sha256 hash;
+        hash.update(loaded.bytes.data(), loaded.bytes.size());
+        StructValue snapshot;
+        snapshot.type_name = "nil::std::io::FileSnapshot";
+        snapshot.fields()["modified_ms"] = loaded.modified_ms;
+        snapshot.string_fields()["sha256"] = hash.finish();
+        HeapBlock block;
+        block.type_name = "bytes";
+        block.element_count = loaded.bytes.size();
+        block.byte_data = std::move(loaded.bytes);
+        const std::int64_t handle = next_ptr_;
+        const std::size_t storage_bytes =
+            std::max<std::size_t>(block.byte_data.size(), 1U);
+        next_ptr_ += static_cast<std::int64_t>(
+            (storage_bytes + 7U) & ~std::size_t(7U));
+        storeHeapBlock(handle, std::move(block));
+        snapshot.array_fields()["content"] = ArrayHandle{handle};
+        EnumValue result;
+        result.variant_name = "Result::Ok";
+        result.payloads.push_back(std::move(snapshot));
+        pushStack(result);
+      } catch (...) {
+        push_error("file.read_rooted_snapshot: host operation failed");
+      }
       return;
     }
     // file.read_regular_bytes(path, maximum_bytes)
