@@ -270,6 +270,7 @@ jobs:
               for kind in ['failure','error','skipped']) for case in cases)
           PYTHON
       - name: Verify project, discovery, assembler, context, archive and packaging contracts
+        id: sdk_contracts
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         timeout-minutes: 30
         run: |
@@ -296,6 +297,19 @@ jobs:
           assert all(case.get('status') == 'run' and all(case.find(kind) is None
               for kind in ['failure','error','skipped']) for case in cases)
           PYTHON
+      - name: Preserve early project and packaging failure evidence
+        if: ${{ failure() && steps.sdk_contracts.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-sdk-contract-failure-${{ matrix.host.arch }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            build/application-evidence/sdk-contract-inventory.json
+            build/application-evidence/sdk-contracts.log
+            build/application-evidence/sdk-contract-results.xml
+            build/application-evidence/revision.txt
+            build/application-evidence/host.txt
+          if-no-files-found: error
+          retention-days: 14
       - name: Verify default native toolchain and real incremental reuse
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         timeout-minutes: 20
