@@ -127,6 +127,25 @@ end text
 The common indentation is removed, deeper indentation kept. The one limitation:
 a block cannot contain a line that is exactly `end text`.
 
+**Interpolation is `formatted`.** The word in front of a quoted literal opts
+that literal into holes. Each `{...}` is an ordinary Matrix expression,
+evaluated once, in written order:
+
+```matrix
+value summary is formatted "Count: {count plus 1}; who: {who}"
+say formatted "Result: {choose with first being "one", second being "two"}"
+say formatted "{{literal braces}} and {count}"
+```
+
+Scalars and text convert themselves; any other type needs an explicit
+conversion first. There is no format-specifier language inside the braces —
+precision and padding are library calls. `{{` and `}}` are literal braces in
+this form only: an ordinary literal and a `begin text` block stay raw, and a
+backslash stays a backslash in both. A formatted literal and its expressions
+must fit on one physical source line, so interpolate `newline` for a line
+break. `formatted` remains an ordinary name anywhere it is not followed by a
+quote.
+
 There are no character literals. A one-letter text value is `"a"`.
 
 ---
@@ -746,6 +765,10 @@ contract method bodies, supertraits, associated types, `i16`/`u16`/`u32`/`u64`/
 Reserved but unimplemented: `chapter` (a third namespace level), `forever` as a
 `static` modifier, and `requires` for declaring a book's authorities.
 
+A `formatted` literal is one physical source line: multi-line interpolated text
+is not available yet. Build it from `newline`, or concatenate a raw `begin text`
+block with `plus`.
+
 Matrix and Ny share the interpreter and native routes. Native aggregate-array
 and foreign-call limitations apply to both languages.
 
@@ -805,3 +828,86 @@ out-of-range tuple-array read fails because there is no default tuple value.
 Native arrays of records, choices and nested arrays remain unsupported.
 See the shared
 [tuple reference](../docs/language-reference/tuples.md) for the exact contract.
+
+---
+
+## 20. Queries
+
+`collect begin query` filters, orders, pages and reshapes an array in one
+expression, and collects the result into a new array:
+
+```matrix
+value top is collect begin query
+    from each score in scores
+    where score is greater than 10
+    order by score descending
+    take 2
+    give score times 2
+end query
+```
+
+Clauses appear at most once, in exactly this order: `from each`, `where`,
+`order by`, `skip`, `take`, `give`. Only `from each` and `give` are required.
+Out-of-order, duplicate and missing clauses are errors, and the clause words
+stay ordinary names everywhere else.
+
+`order by` takes one scalar or text key, with `ascending` (the default) or
+`descending`; equal keys keep their input order. The source expression is
+evaluated once and snapshotted, so mutating the original array mid-query
+cannot change which values are enumerated. The row name — `score` above —
+is visible only inside the query's own clauses.
+
+Execution is **eager**: this is a loop the compiler writes for you, not a lazy
+iterator chain and not a database query. The source must be an array of
+scalars, text or tuples of those; records, choices and nested arrays are
+outside this profile.
+
+`nil.std.collections` holds the terminals that inspect a collected result:
+`query-count`, `query-any`, `query-first` and `query-last` (an `Option`), and
+`query-single` (a `Result`, with distinct empty and multiple errors). They read
+an array that already exists — they do not re-run the query — so use `take 1`
+rather than collecting everything to look at the first row.
+
+---
+
+## 21. Text patterns
+
+A pattern declaration spells a regular expression in words, so no page has to
+carry escape-dense pattern source:
+
+```matrix
+dollar-amount begin pattern
+    capture amount matching one or more ascii digits
+    require next to match literal " USD"
+end pattern
+```
+
+The declaration is an immutable **text constant** holding the pattern source —
+not a new type — and `nil.std.text` compiles and runs it:
+
+```matrix
+read everything from nil.std.text
+
+value compiled is (compile_pattern with source being dollar-amount).unwrap with nothing
+value found is ((first_match with pattern being compiled,
+                 input being "price: 12 USD").unwrap with nothing).unwrap with nothing
+say (capture_named with found being found, name being "amount").unwrap with nothing
+```
+
+Atoms are `literal "..."` (also `literal newline`, `literal tab`,
+`literal quote`), `ascii digit`/`digits`/`letter`/`letters`/`whitespace`,
+`any character`, `character from "0" through "9"`, `start of input`,
+`end of input`, `capture <name> matching <atom>`,
+`require next [not] to match <atom>` for lookahead, `either <atom> or <atom>`
+with further `or` arms, and a nested `begin pattern` ... `end pattern` block
+that makes a whole sequence into one atom. Repetition goes in front of an atom:
+`one or more`, `zero or more`, `optional`, `exactly 3`, `between 2 and 4`, and
+`fewest` before any of those makes it lazy. Counts stop at 1000. Adjacent
+phrases are a sequence.
+
+`compile_pattern` also accepts conventional notation, so
+`"(?<amount>[0-9]+)(?= USD)"` is the same pattern. Matching is byte-oriented
+and case-sensitive. Backreferences, lookbehind, flags, word boundaries and
+Unicode properties are rejected rather than silently given another meaning.
+Matrix lowercases capture labels and turns hyphens into underscores; look them
+up by the resulting name.

@@ -79,6 +79,11 @@ end paragraph
 
 answer returns number begin paragraph give 42 end paragraph
 
+choose receives first as text, second as text returns text begin paragraph
+    when (the length of first) is greater than 0 then give first end when
+    give second
+end paragraph
+
 total-of receives more values as number returns number begin paragraph
     variable sum as number is 0
     variable i as number is 0
@@ -234,6 +239,12 @@ main returns number begin paragraph
     value pixels as array of override long is [1, 2, 3]
     value encoded is apply encode-sample across pixels
     say encoded at 0
+
+    value who as text is "Nathan"
+    value tally as number is 3
+    say formatted "Count: {tally plus 1}; who: {who}"
+    say formatted "Result: {choose with first being "one", second being "two"}"
+    say formatted "{{literal braces}} and {tally}"
 
     value started as override long is now in milliseconds
     sleep for 1 milliseconds
