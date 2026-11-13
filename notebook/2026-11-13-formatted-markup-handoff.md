@@ -70,11 +70,33 @@ its isolated server shut down and its evidence is retained. The hosted source
 workflow installs those dependencies and requires zero LLVM-enabled skips.
 The changed-source Gitleaks pass found no credential findings in 20 files.
 
-The existing four-host interpreter workflow now includes both language
-contracts and four positive fixtures through text NIL, binary NIL and both
-bundle forms. Both Mac native workflows additionally require ten exact
-language/route/toolchain CTests, with no skipped contracts accepted. Hosted
-results for this follow-up will be recorded after the push.
+Hosted source validation passed on the exact pushed commit
+`e38145cb1d543320df7e7cba8deca1d9584cbffc` and on PR merge revision
+`7e0af8613e5762bf51fa0080490149325ee13fa4`: all 595 LLVM-enabled CTests
+passed without failures or skips. The LLVM-disabled suite completed with its
+expected unavailable-native skips; extension tests and builds also passed.
+See the [push run](https://github.com/exec-software/exec-nil-framework/actions/runs/43462076837)
+and [PR run](https://github.com/exec-software/exec-nil-framework/actions/runs/43462083069).
+
+Linux x86-64, Windows x86-64, Intel macOS and Apple Silicon macOS each passed
+all eight focused runtime/language contracts, including 200 markup and 150
+formatted-text controls. Each also executed four Ny/Matrix fixtures through
+text NIL, binary NIL and both bundle forms: 16 positive route observations
+per host. All four downloaded artifacts passed manifest/hash and unchanged
+source checks. See the [four-host interpreter run](https://github.com/exec-software/exec-nil-framework/actions/runs/43462083117).
+
+Intel and Apple Silicon macOS each completed the full native applications/editor
+campaign. All ten language contracts passed without skips, including the 392
+markup and 216 formatted-text checks. Project, assembler, context, SDK
+packaging and incremental-build checks passed. Each actual VS Code host
+passed 88 checks across nine modules without skips. All 313 manifest entries
+and the unchanged source seal were verified in each architecture's artifact.
+See the [native/editor run](https://github.com/exec-software/exec-nil-framework/actions/runs/43462082930).
+
+The first ARM interpreter and native/editor attempts could not acquire hosted
+runners and never started any checks. Their failure evidence is retained.
+Both passed their single same-source retry. These allocation failures are
+distinct from source test failures; no requested handoff campaign is pending.
 
 ## Decision and follow-up
 
@@ -83,6 +105,11 @@ review gate. A consumer needs a compiler and matching `nilstd` source built
 from this branch; the old installed SDK is not sufficient for the new syntax.
 No accepted SDK, installer or Lich release is changed.
 
-After the language handoff, resume the WebView provider work: finish Windows
-owned-profile teardown, prove all four actual browser hosts, then publish the
-new repository with the same public-repository audit and review gates.
+The [Matrix WebView repository](https://github.com/exec-software/exec-nil-framework-webview)
+is now public, with source secret/path audits, four required platform checks
+and an independent review requirement matching the web server repository.
+Linux and both Mac architectures have passed real browser consumers through
+text/binary NIL, AOT and JIT. Windows has passed compilation, shared/framework
+contracts and synthetic routes; its real browser initialization correction is
+being qualified. The repository's platform notes record exact source evidence.
+This follows the language handoff without activating an accepted SDK.
