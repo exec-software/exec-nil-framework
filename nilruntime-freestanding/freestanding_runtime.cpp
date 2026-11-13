@@ -7,8 +7,8 @@
 // An object emitted by `nilassembler --freestanding` imports five symbols --
 // nyrt_abi_version, nyrt_context_begin, nyrt_context_end, nyrt_fail and
 // nyrt_profile_site -- plus, only if the program allocates, nyrt_alloc,
-// nyrt_mem_copy and nyrt_str_length. It imports nothing else, and no libc at
-// all. This translation unit supplies all of them without calling into libc
+// nyrt_mem_copy and nyrt_str_length, and nyrt_str_compare only if it compares
+// text. It imports nothing else, and no libc at all. This translation unit supplies all of them without calling into libc
 // or a kernel, so a freestanding host can link it instead of reimplementing
 // the boundary or satisfying it with stubs that fail if reached.
 //
@@ -170,6 +170,30 @@ std::uint64_t nyrt_str_length(const char *text) noexcept {
   std::uint64_t length = 0;
   while (text[length] != '\0') ++length;
   return length;
+}
+
+// Unsigned-byte lexicographic order, which is what a text comparison in
+// generated code means by it, and only the sign is defined -- the caller
+// compares the result against zero and nothing else. Supplied here for the
+// same reason as the two above: a freestanding object has no strcmp to call,
+// and until it had this it could not compare text at all.
+//
+// A null is not a text value, so rather than read through one this orders a
+// null before any non-null and calls two nulls equal, leaving the comparison
+// total for inputs generated code should never produce.
+std::int32_t nyrt_str_compare(const char *left, const char *right) noexcept {
+  const auto *first = reinterpret_cast<const unsigned char *>(left);
+  const auto *second = reinterpret_cast<const unsigned char *>(right);
+  if (!first || !second) {
+    if (first == second) return 0;
+    return first ? 1 : -1;
+  }
+  while (*first != '\0' && *first == *second) {
+    ++first;
+    ++second;
+  }
+  if (*first == *second) return 0;
+  return *first < *second ? -1 : 1;
 }
 
 // Reads what the entry recorded. Not part of the five imported symbols; a

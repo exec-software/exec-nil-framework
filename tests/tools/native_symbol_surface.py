@@ -40,6 +40,14 @@ concat_imports = {'strlen', 'memcpy', 'calloc'}
 # names allocation is allowed to add, and no libc name may appear beside them.
 freestanding_concat_imports = {'nyrt_str_length', 'nyrt_mem_copy', 'nyrt_alloc'}
 
+# Comparing text orders bytes, which libc spells strcmp. A freestanding object
+# has no strcmp, so until the comparison was routed through the runtime it
+# emitted a call its own import surface forbids -- a program that compared text
+# simply could not be linked freestanding. These prove which name each target
+# reaches for.
+compare_import = 'strcmp'
+freestanding_compare_import = 'nyrt_str_compare'
+
 
 def undefined_symbols(path: Path) -> set[str]:
     data = path.read_bytes()
@@ -226,6 +234,44 @@ def main() -> int:
             'freestanding concatenation must not widen the import surface '
             'further; unexpected: '
             f'{sorted(free_concat - runtime_abi - freestanding_concat_imports)}')
+        checks += 1
+
+        # Comparing text. The hosted object orders bytes through libc; the
+        # freestanding one through the runtime, and no libc name may survive
+        # it. This is the same division as the concatenation helper above, and
+        # it is checked here because the comparison is emitted at more than
+        # one site and a missed site would be a libc import nobody notices
+        # until a vessel refuses to link.
+        comparing = ('fn main() -> i64 {\n    let a: text = "left";\n'
+                     '    let b: text = "right";\n'
+                     '    if a == b then\n        return 1;\n    end if\n'
+                     '    return 0;\n}\n')
+        compare, _ = emit(args.compiler, args.assembler, root, 'compare',
+                          comparing)
+        assert compare_import in compare, (
+            'a hosted program that compares text must order bytes through '
+            f'libc; imports: {sorted(compare)}')
+        checks += 1
+        assert compare <= runtime_abi | {compare_import}, (
+            'comparison must not widen the hosted import surface further; '
+            f'unexpected: {sorted(compare - runtime_abi - {compare_import})}')
+        checks += 1
+
+        free_compare, _ = emit(args.compiler, args.assembler, root,
+                               'free_compare', comparing, freestanding=True)
+        assert freestanding_compare_import in free_compare, (
+            'a freestanding program that compares text must order bytes '
+            'through the runtime; imports: '
+            f'{sorted(free_compare)}')
+        checks += 1
+        assert compare_import not in free_compare, (
+            'a freestanding object must import no libc symbol at all, and '
+            f'strcmp is one; imports: {sorted(free_compare)}')
+        checks += 1
+        assert free_compare <= runtime_abi | {freestanding_compare_import}, (
+            'freestanding comparison must not widen the import surface '
+            'further; unexpected: '
+            f'{sorted(free_compare - runtime_abi - {freestanding_compare_import})}')
         checks += 1
 
         # A hosted object is entered through the C runtime's main; a

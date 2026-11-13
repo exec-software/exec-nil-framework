@@ -1043,6 +1043,20 @@ std::uint64_t nyrt_str_length(const char *text) noexcept {
   return static_cast<std::uint64_t>(std::strlen(text));
 }
 
+std::int32_t nyrt_str_compare(const char *left, const char *right) noexcept {
+  if (left == nullptr || right == nullptr) {
+    if (left == right)
+      return 0;
+    return left != nullptr ? 1 : -1;
+  }
+  const int ordering = std::strcmp(left, right);
+  // Only the sign is part of the contract, so it is normalized here rather
+  // than passing libc's magnitude through as if it meant something.
+  if (ordering == 0)
+    return 0;
+  return ordering < 0 ? -1 : 1;
+}
+
 std::int32_t nyrt_free(void *pointer) noexcept {
   if (pointer == nullptr)
     return 1;

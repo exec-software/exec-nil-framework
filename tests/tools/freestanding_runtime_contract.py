@@ -32,6 +32,12 @@ so the driver installs its own array and afterwards reads the concatenated
 bytes back out of it, which no amount of symbol inspection could show. The
 case with no region installed is checked too, because an allocator that
 cannot say no is worse than none.
+
+Comparison is checked by its answers rather than by its link. A freestanding
+object has no strcmp, so a text comparison reaches the runtime instead; a
+version of that which collapsed every comparison to "equal" would link and
+pass any symbol check, so the program here distinguishes unequal from equal
+and checks that "beta" orders after "alpha".
 """
 from __future__ import annotations
 
@@ -81,6 +87,28 @@ concat_program = (
     '    let a: text = "left";\n'
     '    let b: text = "right";\n'
     '    let joined: text = a + b;\n'
+    f'    return {expected_exit};\n'
+    '}\n'
+)
+
+# Distinct from every other exit, so a wrong ordering names itself.
+unequal_text_exit = 81
+equal_text_exit = 82
+reversed_order_exit = 83
+
+# Comparing text, which orders bytes. Before the comparison was routed through
+# the runtime this program could not be linked freestanding at all: it emitted
+# a call to strcmp, which a freestanding object has no libc to resolve and
+# whose presence its own import surface forbids. The answers are checked, not
+# just the link -- a comparison that always said "equal" would link too.
+compare_program = (
+    'fn main() -> i64 {\n'
+    '    let a: text = "alpha";\n'
+    '    let b: text = "beta";\n'
+    '    let same: text = "alpha";\n'
+    f'    if a == b then\n        return {unequal_text_exit};\n    end if\n'
+    f'    if a != same then\n        return {equal_text_exit};\n    end if\n'
+    f'    if b < a then\n        return {reversed_order_exit};\n    end if\n'
     f'    return {expected_exit};\n'
     '}\n'
 )
@@ -366,6 +394,27 @@ def main() -> int:
         assert result.returncode == reported_failure_exit, (
             'allocating with no region installed must report through nyrt_fail; '
             f'got {result.returncode}, stderr: {result.stderr!r}')
+        checks += 1
+
+        # Comparing text, with no libc to compare it with. The program has to
+        # link at all -- which it could not before -- and then has to get the
+        # answers right, because an ordering that collapsed everything to
+        # equal would link just as well.
+        comparing = build(args.compiler, args.assembler, args.archive, args.cxx,
+                          root, 'compare', driver_source,
+                          program_source=compare_program)
+        checks += 1
+        result = run([comparing], timeout=60)
+        assert result.returncode != unequal_text_exit, (
+            'two different texts must not compare equal')
+        assert result.returncode != equal_text_exit, (
+            'two identical texts must compare equal')
+        assert result.returncode != reversed_order_exit, (
+            'text must order by unsigned bytes, so "beta" follows "alpha"')
+        assert result.returncode == expected_exit, (
+            'a freestanding program that compares text must run and return '
+            f'what Ny returned; got {result.returncode}, stderr: '
+            f'{result.stderr!r}')
         checks += 1
 
         # A host symbol, linked and called. Ny returns what the host returned,

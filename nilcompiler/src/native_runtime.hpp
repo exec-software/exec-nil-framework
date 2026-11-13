@@ -121,6 +121,7 @@ std::int32_t nyrt_free(void *pointer) noexcept;
 void *nyrt_mem_copy(void *destination, const void *source,
                     std::uint64_t size) noexcept;
 std::uint64_t nyrt_str_length(const char *text) noexcept;
+std::int32_t nyrt_str_compare(const char *left, const char *right) noexcept;
 
 // Each address names an initialized, live eight-byte word. Frames are LIFO
 // and remain registered until the generated function returns. This internal

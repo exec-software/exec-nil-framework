@@ -404,6 +404,17 @@ static std::string compact_nil_type(std::string type) {
   return type;
 }
 
+// The symbol a text comparison must call on this target. Generated code
+// compares text by ordering bytes, which libc spells strcmp; a freestanding
+// object has no libc, so on that target the comparison reaches the native
+// runtime instead. This is the same division the concatenation helper already
+// makes for length and copy, and it is the whole reason an object emitted with
+// --freestanding could not compare text until now: it emitted a call to a
+// symbol its own import surface forbids.
+static const char *text_compare_symbol(bool freestanding) {
+  return freestanding ? "nyrt_str_compare" : "strcmp";
+}
+
 static std::string normalize_nil_type(std::string type) {
   type = compact_nil_type(std::move(type));
   std::transform(type.begin(), type.end(), type.begin(), [](unsigned char ch) {
@@ -6553,19 +6564,20 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         llvm::Value *actual_str = impl_->builder->CreateLoad(
             llvm::PointerType::getUnqual(ctx), tag_ptr);
 
-        // Compare strings (pointer comparison might work if constants are
-        // unique, but better use strcmp) For now, use strcmp
-        auto strcmp_type =
+        // Compared by bytes rather than by pointer: equal constants are not
+        // required to be the same object, and only the sign of the result is
+        // read below.
+        auto text_compare_type =
             llvm::FunctionType::get(llvm::Type::getInt32Ty(ctx),
                                     {llvm::PointerType::getUnqual(ctx),
                                      llvm::PointerType::getUnqual(ctx)},
                                     false);
-        auto strcmp_fn =
-            impl_->module->getOrInsertFunction("strcmp", strcmp_type);
+        auto text_compare_fn = impl_->module->getOrInsertFunction(
+            text_compare_symbol(impl_->freestanding_entry), text_compare_type);
 
-        std::vector<llvm::Value *> strcmp_args = {actual_str, expected_str};
+        std::vector<llvm::Value *> text_compare_args = {actual_str, expected_str};
         auto res = impl_->builder->CreateCall(
-            strcmp_type, strcmp_fn.getCallee(), strcmp_args);
+            text_compare_type, text_compare_fn.getCallee(), text_compare_args);
         auto is_eq = impl_->builder->CreateICmpEQ(
             res, llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0));
 
@@ -6689,15 +6701,15 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
             impl_->builder->CreateICmpEQ(
                 last_colon, llvm::ConstantPointerNull::get(pointer_type)),
             actual_tag, after_colon);
-        auto *strcmp_type = llvm::FunctionType::get(
+        auto *text_compare_type = llvm::FunctionType::get(
             llvm::Type::getInt32Ty(ctx), {pointer_type, pointer_type}, false);
-        auto strcmp_function =
-            impl_->module->getOrInsertFunction("strcmp", strcmp_type);
+        auto text_compare_fn = impl_->module->getOrInsertFunction(
+            text_compare_symbol(impl_->freestanding_entry), text_compare_type);
         llvm::Value *matching_tag =
             llvm::ConstantInt::getFalse(ctx);
         for (const auto &variant : allowed_variants) {
           auto *comparison = impl_->builder->CreateCall(
-              strcmp_type, strcmp_function.getCallee(),
+              text_compare_type, text_compare_fn.getCallee(),
               {variant_tag, impl_->builder->CreateGlobalString(variant)});
           matching_tag = impl_->builder->CreateOr(
               matching_tag, impl_->builder->CreateICmpEQ(
@@ -8074,17 +8086,20 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                       << fn.name << "'\n";
             return false;
           }
-          // Native text is NUL-free. strcmp therefore matches the VM's
-          // unsigned-byte lexicographic string order. Only its sign matters;
+          // Native text is NUL-free, so an unsigned-byte comparison matches
+          // the VM's lexicographic string order. Only its sign matters;
           // neither pointer addresses nor a presumed -1/+1 result define it.
-          auto *strcmp_type = llvm::FunctionType::get(
+          // The symbol differs by target: a freestanding object reaches the
+          // native runtime, because it has no libc and its import surface
+          // admits no libc name.
+          auto *text_compare_type = llvm::FunctionType::get(
               llvm::Type::getInt32Ty(ctx),
               {llvm::PointerType::getUnqual(ctx),
                llvm::PointerType::getUnqual(ctx)}, false);
-          auto strcmp_fn =
-              impl_->module->getOrInsertFunction("strcmp", strcmp_type);
+          auto text_compare_fn = impl_->module->getOrInsertFunction(
+              text_compare_symbol(impl_->freestanding_entry), text_compare_type);
           lhs = impl_->builder->CreateCall(
-              strcmp_type, strcmp_fn.getCallee(), {lhs, rhs});
+              text_compare_type, text_compare_fn.getCallee(), {lhs, rhs});
           rhs = llvm::ConstantInt::get(ctx, llvm::APInt(32, 0));
         } else {
           raw_pointer_comparison =
@@ -9356,6 +9371,7 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_free", &nyrt_free);
   expose_runtime_symbol("nyrt_mem_copy", &nyrt_mem_copy);
   expose_runtime_symbol("nyrt_str_length", &nyrt_str_length);
+  expose_runtime_symbol("nyrt_str_compare", &nyrt_str_compare);
   expose_runtime_symbol("nyrt_arg_count", &nyrt_arg_count);
   expose_runtime_symbol("nyrt_arg", &nyrt_arg);
   expose_runtime_symbol("nyrt_exit", &nyrt_exit);

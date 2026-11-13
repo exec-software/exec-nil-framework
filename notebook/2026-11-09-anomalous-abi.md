@@ -209,10 +209,73 @@ real drift.
    reason they needed a reverse-engineered shim, trap stubs for libc imports
    they never wanted, and an allocator they would have had to implement.
 
+## Text comparison had the same defect as concatenation (second pass)
+
+Found from the consumer side, which is the only place it could have been
+found: Anomalous wanted a vessel to recognise a word in a line the kernel
+delivered, and `==` on text turned out to be unusable in a freestanding
+object. The object emitted a call to `strcmp`.
+
+That is exactly the defect the concatenation helper had before this branch --
+it imported `strlen`, `memcpy` and `calloc` unconditionally -- in a different
+operation. The allocation path was routed through the runtime and the
+comparison path was not, so a freestanding object could allocate but could not
+compare, and the failure was not a diagnostic: it was a libc import that a
+consumer's own symbol check rejects at link time, which is a long way from
+where the mistake is.
+
+Three sites in `llvm_backend.cpp` emitted `strcmp` -- the text comparison
+operators, a variant tag against one expected string, and a variant tag
+against an allowed set. All three now go through one function that names the
+symbol per target, which is the same shape the concatenation helper already
+used for length and copy. A fourth site would have been missed by any fix that
+patched the operators alone, which is why the name is chosen in one place
+rather than at each call.
+
+The hook is `nyrt_str_compare`, and the contract is narrower than `strcmp`'s:
+only the sign is defined, because that is all generated code reads. Native
+text is NUL-free, so unsigned-byte order matches the interpreter's. A null is
+not a text value, and the shipped runtime orders a null before any non-null
+rather than reading through one -- total for inputs generated code should
+never produce. It is defined in the hosted runtime too, for the same reason
+the other two were: otherwise an object emitted with `--freestanding` could
+only ever link against the freestanding archive.
+
+Comparison allocates nothing, so this is a fourth *conditional* hook rather
+than a fourth allocation hook: five always, three if the program allocates,
+one if it compares text. Each is required only by the construct that uses it,
+so the import surface still states what a program does rather than what the
+language can do.
+
+Measured, not asserted. The same source, emitted both ways:
+
+    hosted:        nyrt_abi_version nyrt_context_begin nyrt_context_end
+                   nyrt_fail nyrt_profile_site probe_mode strcmp
+    freestanding:  nyrt_abi_version nyrt_context_begin nyrt_context_end
+                   nyrt_fail nyrt_profile_site nyrt_str_compare probe_mode
+
+And linked against the archive and run, because an import list cannot show
+that the answers are right -- a comparison that said "equal" to everything
+would link and pass any symbol check. A program comparing `"alpha"`,
+`"beta"` and a second `"alpha"` returns 7, so equality, inequality and
+ordering all hold.
+
+`nil.native-symbol-surface` is now 23 checks and `nil.freestanding-runtime`
+is 14. The new ones pin which symbol each target reaches for, that no libc
+name survives a freestanding comparison, and the three answers above.
+
+**What this does not do:** Anomalous cannot use it until a generation carrying
+it is built and that repository re-pins. Its vessel selects its failing run
+through a cell the host writes, which is a workaround for this defect, and it
+can be simplified once the pin moves. Re-pinning is a deliberate act there --
+the pin is the evidence for a qualification -- so it is not done here.
+
 ## Branch state
 
-All of the above is on `anomalous-abi-symbol-surface`, unmerged. It
-also carries `72c9547`, the macOS desktop acceptance record, because the
-branch was cut from `macos-ui-acceptance-record` before that merged. Merging
-this branch therefore brings the macOS documentation with it and makes
-`macos-ui-acceptance-record` redundant.
+The first pass was `anomalous-abi-symbol-surface`, merged as pull request #36.
+It also carried `72c9547`, the macOS desktop acceptance record, because the
+branch was cut from `macos-ui-acceptance-record` before that merged, which
+made `macos-ui-acceptance-record` redundant.
+
+The comparison fix above is on `freestanding-text-compare`, cut from `master`
+after that merge.
