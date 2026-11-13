@@ -10,6 +10,7 @@
 #include "nil_contract.hpp"
 #include "dynamic_type.hpp"
 #include "ui_intrinsic.hpp"
+#include "webview_intrinsic.hpp"
 #include "numeric_literal.hpp"
 #include "scalar_text.hpp"
 #include "integer_conversion.hpp"
@@ -738,6 +739,7 @@ bool VM::finishMemoryProfile(const char *status, bool completed) noexcept {
   // This hook runs at every invocation terminal, even without profiling.
   // Paused debugger steps retain their UI until completion/reset.
   ui_.clear();
+  webview_.clear();
   closeOpenSockets();
   if (!memory_profile_started_ || memory_profile_finished_)
     return true;
@@ -5548,6 +5550,57 @@ void VM::executeInstruction(const Instruction &instr) {
       return;
     }
 
+    if (lib_name == "intrinsic" && fn_name.rfind("webview.v1.", 0) == 0) {
+      const auto contract = webview::intrinsic(fn_name);
+      if (!contract) throw std::runtime_error("webview: unknown intrinsic '" + fn_name + "'");
+      const auto declared = call_stack_.empty() ? functions_.end()
+          : functions_.find(call_stack_.back().fn_name);
+      if (declared == functions_.end() ||
+          !webview::signature_matches(*contract, declared->second.parameter_types,
+                                 declared->second.return_type) ||
+          instr.args.size() != 4 || webview::abi_type(instr.args[3]) != contract->return_type() ||
+          args.size() != contract->parameters.size())
+        throw std::runtime_error(fn_name + " requires the exact WebView ABI " + webview::signature(*contract));
+      if (contract->output != webview::Output::capability) {
+        std::size_t schemas = 0;
+        if (class_metadata_)
+          for (const auto &definition : class_metadata_->enums)
+            if (webview::result_schema_matches(*contract, definition)) ++schemas;
+        if (schemas != 1)
+          throw std::runtime_error(fn_name + " requires the standard Result schema with exact Ok and Error payloads");
+      }
+      for (std::size_t index = 0; index < args.size(); ++index) {
+        const bool valid = contract->parameters[index] == "text"
+            ? std::holds_alternative<std::string>(args[index])
+            : std::holds_alternative<int64_t>(args[index]);
+        if (!valid) throw std::runtime_error(fn_name + " argument " +
+            std::to_string(index + 1) + " requires " + contract->parameters[index]);
+      }
+      auto text_arg = [&](std::size_t index) -> const std::string & {
+        return std::get<std::string>(args[index]);
+      };
+      auto word_arg = [&](std::size_t index) { return std::get<int64_t>(args[index]); };
+      webview::Result result;
+      const auto &op = contract->operation;
+      if (op == "configure") result = webview_.configure(text_arg(0));
+      else if (op == "window") result = webview_.window(text_arg(0), word_arg(1), word_arg(2));
+      else if (op == "show") result = webview_.show(word_arg(0));
+      else if (op == "navigate") result = webview_.navigate(word_arg(0), text_arg(1));
+      else if (op == "load_html") result = webview_.load_html(word_arg(0), text_arg(1));
+      else if (op == "evaluate_function") result = webview_.evaluate_function(word_arg(0), text_arg(1));
+      else if (op == "poll") result = webview_.poll(word_arg(0));
+      else if (op == "event_number") result = webview_.event_number(word_arg(0), text_arg(1));
+      else if (op == "event_text") result = webview_.event_text(word_arg(0), text_arg(1));
+      else if (op == "release_event") result = webview_.release_event(word_arg(0));
+      else if (op == "close") result = webview_.close(word_arg(0));
+      EnumValue value;
+      value.variant_name = result ? "Result::Ok" : "Result::Error";
+      if (!result) value.payloads.push_back(std::move(result.error));
+      else if (contract->output == webview::Output::text) value.payloads.push_back(std::move(result.text));
+      else value.payloads.push_back(result.number);
+      pushStack(std::move(value));
+      return;
+    }
     if (lib_name == "intrinsic" && fn_name.rfind("ui.v1.", 0) == 0) {
       const auto contract = ui::intrinsic(fn_name);
       if (!contract) throw std::runtime_error("ui: unknown intrinsic '" + fn_name + "'");

@@ -69,6 +69,7 @@ add_library(nilruntime_objects OBJECT
     src/owned_runtime.cpp
     src/secure_file_io.cpp
     src/database_runtime.cpp
+    src/webview_runtime.cpp
     ${NIL_UI_PROVIDER_SOURCE}
     src/pattern_engine.cpp
     src/nildata.cpp
