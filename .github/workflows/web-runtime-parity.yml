@@ -7,12 +7,15 @@ name: Web runtime platform checks
       - 'CMakeLists.txt'
       - 'nilcompiler/**'
       - 'nilstd/**'
+      - 'common/webview_*'
       - 'tests/net_*'
       - 'tests/file_time_support_tests.cpp'
       - 'tests/rooted_file_snapshot_tests.cpp'
+      - 'tests/webview_*'
       - 'tests/tools/net_socket_contract.py'
       - 'tests/tools/file_modified_at_contract.py'
       - 'tests/tools/rooted_file_snapshot_contract.py'
+      - 'tests/tools/webview_intrinsic_contract.py'
       - 'tests/language/rooted-file-snapshot.ny'
       - 'tests/language/text-from-bytes*.ny'
       - 'tests/tools/formatted_text_contract.py'
@@ -91,7 +94,7 @@ jobs:
           cmake --build build/web-parity --config Release --parallel 2 \
             --target nilcompiler nilinterpreter nil_net_support_tests \
                      nil_net_lifecycle_tests nil_file_time_support_tests \
-                     nil_rooted_file_snapshot_tests \
+                     nil_rooted_file_snapshot_tests nil_webview_runtime_tests \
             2>&1 | tee build/web-parity-evidence/build.log
       - name: Run real peer and language contracts
         timeout-minutes: 8
@@ -99,7 +102,7 @@ jobs:
           "$NIL_CI_PYTHON" - <<'PY'
           import json, subprocess
           from pathlib import Path
-          pattern = r'^(net[.](support-contract|lifecycle-contract|socket-contract)|nil[.](file-time-support|file-modified-at-contract|rooted-file-snapshot|rooted-file-snapshot-contract|formatted-text-contract|markup-contract)|matrix[.]execution)$'
+          pattern = r'^(net[.](support-contract|lifecycle-contract|socket-contract)|nil[.](file-time-support|file-modified-at-contract|rooted-file-snapshot|rooted-file-snapshot-contract|webview-runtime|webview-intrinsic-contract|formatted-text-contract|markup-contract)|matrix[.]execution)$'
           base = ['ctest', '--test-dir', 'build/web-parity', '-C', 'Release', '-R', pattern]
           root = Path('build/web-parity-evidence').resolve()
           inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
@@ -107,6 +110,7 @@ jobs:
           expected = {'net.support-contract', 'net.lifecycle-contract', 'net.socket-contract',
                       'nil.file-time-support', 'nil.file-modified-at-contract', 'matrix.execution',
                       'nil.rooted-file-snapshot', 'nil.rooted-file-snapshot-contract',
+                      'nil.webview-runtime', 'nil.webview-intrinsic-contract',
                       'nil.formatted-text-contract', 'nil.markup-contract'}
           assert {test['name'] for test in json.loads(inventory)['tests']} == expected
           with (root/'ctest.log').open('wb') as output:

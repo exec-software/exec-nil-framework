@@ -25,6 +25,11 @@ name: macOS application platform checks
       - 'tests/tools/native_owned_lifetime.py'
       - 'tests/tools/native_symbol_surface.py'
       - 'tests/tools/file_modified_at_contract.py'
+      - 'tests/rooted_file_snapshot_tests.cpp'
+      - 'tests/tools/rooted_file_snapshot_contract.py'
+      - 'tests/language/rooted-file-snapshot*.ny'
+      - 'tests/webview_*'
+      - 'tests/tools/webview_intrinsic_contract.py'
       - 'tests/tools/formatted_text_contract.py'
       - 'tests/tools/markup_contract.py'
       - 'tests/language/formatted-text*'
@@ -165,7 +170,8 @@ jobs:
           set -o pipefail
           cmake --build build/application --parallel 2 --target \
             nilcompiler nilinterpreter nilassembler nillinker nillsp nildebugger nilbuild niltest aperture nilruntime_shared \
-            nil_vscode_host_runner nil_file_time_support_tests nil_compiler_module_darwin_tests \
+            nil_vscode_host_runner nil_file_time_support_tests nil_rooted_file_snapshot_tests nil_webview_runtime_tests \
+            nil_compiler_module_darwin_tests \
             nil_darwin_toolchain_inputs_tests nil_freestanding_hook_default nil_freestanding_hook_override \
             nildebugger_core_tests nildebugger_source_metadata_tests nildebugger_dap_owner_tests \
             2>&1 | tee build/application-evidence/build.log
@@ -234,7 +240,7 @@ jobs:
         run: >-
           python3 -B scripts/ci/macos-toolchain-census.py --build build/application
           --output build/application-evidence/toolchain-census
-      - name: Verify actual native lifetime and timestamp contracts
+      - name: Verify native lifetime, timestamps, rooted files and WebView contracts
         if: ${{ !cancelled() && steps.tools.outcome == 'success' && steps.heap.outcome == 'success' }}
         timeout-minutes: 16
         run: |
@@ -243,8 +249,10 @@ jobs:
           from pathlib import Path
           expected = {'compiler.darwin-module-fingerprint', 'ny.native-managed-lifetime', 'ny.native-owned-lifetime',
                       'nil.file-time-support', 'nil.file-modified-at-contract',
+                      'nil.rooted-file-snapshot', 'nil.rooted-file-snapshot-contract',
+                      'nil.webview-runtime', 'nil.webview-intrinsic-contract',
                       'nil.freestanding-hook-default', 'nil.freestanding-hook-override', 'nil.native-symbol-surface'}
-          pattern = r'^(compiler[.]darwin-module-fingerprint|ny[.]native-(managed|owned)-lifetime|nil[.]file-(time-support|modified-at-contract)|nil[.]freestanding-hook-(default|override)|nil[.]native-symbol-surface)$'
+          pattern = r'^(compiler[.]darwin-module-fingerprint|ny[.]native-(managed|owned)-lifetime|nil[.]file-(time-support|modified-at-contract)|nil[.]rooted-file-snapshot(-contract)?|nil[.]webview-(runtime|intrinsic-contract)|nil[.]freestanding-hook-(default|override)|nil[.]native-symbol-surface)$'
           base = ['ctest', '--test-dir', 'build/application', '-R', pattern]
           root = Path('build/application-evidence').resolve()
           inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
