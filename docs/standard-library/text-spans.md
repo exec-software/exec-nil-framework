@@ -67,14 +67,20 @@ assembler/linker execution, and installed source/binary libraries.
 
 ## Byte values
 
-`nil.std.text` measures and slices by byte — `length` of `"café"` is 5 — but
-until these two existed there was no way to read a byte *as a number* or write
-one as text.
+`nil.std.text` measures and slices by byte — `length` of `"café"` is 5.
+Use explicit byte operations to inspect or construct raw content.
 
 | Function | Result |
 | --- | --- |
 | `byte_at(s: text, index: i64) -> i64` | The byte at an index, `0..255`, or minus one when the index is outside the text. |
 | `from_byte(code: i64) -> text` | One byte as text; empty text for a code outside `0..255`. |
+| `from_bytes(data: array<u8>) -> text` | An independent text copy of every array byte, including NUL and invalid UTF-8. |
+
+These raw-byte operations are interpreter-only. Native text currently requires
+NUL-free values; native compilation rejects the unsupported intrinsics rather
+than silently truncating or replacing bytes. `from_bytes` copies the array in
+one operation and does not change when the source array is later mutated.
+Use a byte array directly for binary data shared with native routes.
 
 The conversion that looks like it would do this is
 `nil.std.core`'s `convert.char_to_i32`, and it will not: it takes a whole
@@ -85,7 +91,7 @@ isolated in order to inspect it whole, because isolating it needed the same
 test. Percent-encoding anything outside ASCII was unreachable because of this,
 and so was reading arbitrary bytes off a socket.
 
-These two are about bytes and say so in their names. They know nothing about
+These operations are about bytes and say so in their names. They know nothing about
 UTF-8; assembling characters from bytes is the caller's job.
 
 `from_byte(195)` is the single byte `0xC3`, where `convert.i32_to_char(195)` is

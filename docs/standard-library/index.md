@@ -130,6 +130,9 @@ the runtime and included in Aperture's text allocation measurements.
 For untrusted file/container input, `nil.std.io.read_regular_bytes` accepts an
 explicit byte ceiling and rejects the final-component symlink, special file,
 short/growing read, and observed metadata change before returning bytes.
+For paths below a trusted directory, [`read_rooted_snapshot`](rooted-file-snapshots.md)
+also rejects links in descendant directories and returns the exact byte array,
+descriptor-observed modification time, and SHA-256 together.
 `write_bytes_atomic` stages and flushes bytes in the destination directory,
 then atomically publishes them; `replace=false` cannot clobber an existing
 entry (including a dangling symlink), while `replace=true` only replaces a
