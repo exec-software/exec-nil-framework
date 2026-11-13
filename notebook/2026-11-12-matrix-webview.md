@@ -86,8 +86,8 @@ now passes on Linux, Windows, Intel macOS and Apple Silicon macOS at
 behavior groups through text NIL, binary NIL, AOT and JIT, alongside four
 synthetic-provider routes, 209 shared controls and 36 JavaScript checks.
 The [platform notes](https://github.com/exec-software/exec-nil-framework-webview/blob/63d3e49d953179c81231402cf07dc7d6dbe17939/docs/platform-support.md)
-record the exact engine versions, request counts, cleanup checks, source seals
-and limits of the implemented profile. This qualifies the initial API profile;
+describe the engine-version evidence, request counts, cleanup checks, source
+seals and limits of the implemented profile. This qualifies the initial API profile;
 it does not claim that every archived WebView feature has been ported.
 
 No accepted SDK, installer or release deployment is changed by this work.
