@@ -4,10 +4,11 @@
 compiler. A `nil.project.nildata` manifest supplies the entrypoint, import
 roots, SDK selection and analyzer policy to the CLI and VS Code extension.
 Each project produces one executable; project references express the ordering
-between projects. Project execution has paired Linux/Windows development
-acceptance at the `5630388` SDK baseline; see the
-[platform support matrix](../platform-support.md) for current scope and macOS
-work. The native target requires an LLVM-enabled compiler and a host C++ linker.
+between projects. Project execution has development acceptance on Linux,
+Windows, Intel macOS and Apple Silicon macOS; see the
+[platform support matrix](../platform-support.md) for exact source/SDK revisions
+and remaining editor and deployment checks. The native target requires an
+LLVM-enabled compiler and a host C++ linker.
 
 ## Create a project
 
@@ -125,9 +126,10 @@ textual include and binary-library inputs, effective settings and toolchain,
 and the produced artifact. Native builds also account for the resolved runtime
 archive, linker driver, startup objects and system link-library files. Unknown
 native linker layouts or incomplete compiler loaded-file identity disable cache
-reuse. Darwin currently rebuilds both VM and native outputs because loaded-image
-identity is incomplete; native link-input discovery also remains open. Modifying
-a source while preserving its timestamp,
+reuse. Darwin includes actual loaded images and complete shared-cache backing
+files, plus the admitted native link inputs. Real VM/native reuse and
+invalidation pass on both Mac architectures; unknown profiles still rebuild.
+Modifying a source while preserving its timestamp,
 changing import resolution, replacing a tool, or changing the existing artifact
 invalidates reuse. A missing or malformed state file is a cache miss.
 

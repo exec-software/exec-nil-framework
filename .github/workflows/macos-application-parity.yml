@@ -1,0 +1,437 @@
+name: macOS application platform checks
+
+"on":
+  pull_request:
+    paths:
+      - '.github/workflows/macos-application-parity.yml'
+      - 'CMakeLists.txt'
+      - 'nilcompiler/**'
+      - 'nilruntime-freestanding/**'
+      - 'nilinterpreter/**'
+      - 'nilstd/**'
+      - 'nilbuild/**'
+      - 'niltest/**'
+      - 'nildebugger/**'
+      - 'nillsp/**'
+      - 'aperture/**'
+      - 'common/**'
+      - 'nillinker/**'
+      - 'validation/ny-3d/scripts/debugger_process.py'
+      - 'scripts/ci/macos-toolchain-census.py'
+      - 'tests/darwin*'
+      - 'tests/compiler_module_darwin_tests.cpp'
+      - 'tests/tools/darwin_native_heap_budget.py'
+      - 'tests/tools/native_managed_lifetime.py'
+      - 'tests/tools/native_owned_lifetime.py'
+      - 'tests/tools/native_symbol_surface.py'
+      - 'tests/tools/file_modified_at_contract.py'
+      - 'tests/tools/formatted_text_contract.py'
+      - 'tests/tools/markup_contract.py'
+      - 'tests/language/formatted-text*'
+      - 'tests/language/markup*'
+      - 'tests/routes/ny_route_matrix.py'
+      - 'tests/tools/native_toolchain_pipeline.py'
+      - 'tests/tools/project_build_contract.py'
+      - 'tests/tools/tool_discovery_contract.py'
+      - 'tests/tools/context_manifest.py'
+      - 'nilassembler/tests/nilassembler_cli_tests.py'
+      - 'scripts/sdk_freestanding_imports.py'
+      - 'scripts/package-sdk.py'
+      - 'scripts/validate-sdk.py'
+      - 'tests/sdk_freestanding_imports_tests.py'
+      - 'tests/sdk_matrix_sources_tests.py'
+      - 'tests/freestanding_hook_contract.cpp'
+      - 'vscode/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-application-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+# Real LLVM native consumers and an isolated VS Code development-extension host.
+# No installed SDK, signed release, personal profile or extension is replaced.
+jobs:
+  applications:
+    name: macOS ${{ matrix.host.arch }} native applications and editor
+    runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      matrix:
+        host:
+          - runner: macos-15-intel
+            arch: x86_64
+            archive: VSCode-darwin.zip
+            sha256: 74b1deef1e33cc144d913d60c0e98cef6b1e29c1f2993d905c3b58576fa12202
+          - runner: macos-15
+            arch: arm64
+            archive: VSCode-darwin-arm64.zip
+            sha256: 6e8d27ee0c5a8f2aa3c43e373407eecd11c270c3fe7f46100ef682aac14bb648
+    defaults:
+      run:
+        shell: bash
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      NIL_EDITOR_ARCHIVE: ${{ matrix.host.archive }}
+      NIL_EDITOR_SHA256: ${{ matrix.host.sha256 }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: vscode/package-lock.json
+      - name: Configure LLVM applications
+        id: configure
+        timeout-minutes: 8
+        run: |
+          mkdir -p build/application-evidence
+          git rev-parse HEAD > build/application-evidence/revision.txt
+          uname -a > build/application-evidence/host.txt
+          sw_vers >> build/application-evidence/host.txt
+          set -o pipefail
+          nil_llvm_prefix="$(brew --prefix llvm@18)"
+          test -x "$nil_llvm_prefix/bin/llvm-config"
+          cmake -S . -B build/application -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON -DNIL_ENABLE_LLVM=ON \
+            "-DLLVM_DIR=$nil_llvm_prefix/lib/cmake/llvm" \
+            -DNILCOMPILER_SQLITE_INCLUDE_DIR=OFF -DNILCOMPILER_POSTGRESQL_INCLUDE_DIR=OFF \
+            2>&1 | tee build/application-evidence/configure.log
+      - name: Build independent allocation controls
+        id: heap
+        timeout-minutes: 3
+        run: |
+          set -o pipefail
+          cmake --build build/application --parallel 2 --target \
+            nil_darwin_native_heap_budget nil_darwin_native_heap_budget_control \
+            2>&1 | tee build/application-evidence/heap-build.log
+      - name: Qualify allocator injection before building applications
+        if: ${{ !cancelled() && steps.heap.outcome == 'success' }}
+        timeout-minutes: 4
+        run: |
+          set -o pipefail
+          python3 -B tests/tools/darwin_native_heap_budget.py --controls-only \
+            --heap-budget-library build/application/lib/libnil_darwin_native_heap_budget.dylib \
+            --heap-budget-control build/application/bin/nil_darwin_native_heap_budget_control \
+            --output-parent build/application/test-evidence \
+            2>&1 | tee build/application-evidence/heap-controls.log
+      - name: Preserve early allocation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-heap-controls-${{ matrix.host.arch }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            build/application/test-evidence/darwin-heap-controls-*/
+            build/application-evidence/heap-*.log
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Build early native dependency probe
+        id: native_inputs
+        if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
+        timeout-minutes: 8
+        run: |
+          set -o pipefail
+          cmake --build build/application --parallel 2 --target nil_darwin_native_inputs_tests \
+            2>&1 | tee build/application-evidence/native-inputs-build.log
+      - name: Check the selected native dependency profile
+        if: ${{ !cancelled() && steps.native_inputs.outcome == 'success' }}
+        timeout-minutes: 4
+        run: |
+          set -o pipefail
+          ctest --test-dir build/application -R '^nil[.]darwin-native-inputs$' \
+            --no-tests=error --output-on-failure --output-junit native-inputs-results.xml \
+            2>&1 | tee build/application-evidence/native-inputs.log
+      - name: Preserve early native dependency evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-native-inputs-${{ matrix.host.arch }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            build/application-evidence/native-inputs*.log
+            build/application/native-inputs-results.xml
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Build application tools
+        id: tools
+        if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
+        timeout-minutes: 40
+        run: |
+          set -o pipefail
+          cmake --build build/application --parallel 2 --target \
+            nilcompiler nilinterpreter nilassembler nillinker nillsp nildebugger nilbuild niltest aperture nilruntime_shared \
+            nil_vscode_host_runner nil_file_time_support_tests nil_compiler_module_darwin_tests \
+            nil_darwin_toolchain_inputs_tests nil_freestanding_hook_default nil_freestanding_hook_override \
+            nildebugger_core_tests nildebugger_source_metadata_tests nildebugger_dap_owner_tests \
+            2>&1 | tee build/application-evidence/build.log
+      - name: Verify formatted text and markup through interpreter and native routes
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        timeout-minutes: 8
+        run: |
+          python3 - <<'PYTHON'
+          import json, subprocess, xml.etree.ElementTree as ET
+          from pathlib import Path
+          expected = {'nil.formatted-text-contract', 'nil.markup-contract'}
+          expected.update('ny.'+route+'.'+fixture for route in ['routes', 'tools']
+                          for fixture in ['formatted-text', 'formatted-text-matrix', 'markup', 'markup-matrix'])
+          pattern = r'^(nil[.](formatted-text-contract|markup-contract)|ny[.](routes|tools)[.](formatted-text|markup)(-matrix)?)$'
+          base = ['ctest', '--test-dir', 'build/application', '-R', pattern]
+          root = Path('build/application-evidence').resolve()
+          inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
+          (root/'markup-inventory.json').write_bytes(inventory)
+          assert {case['name'] for case in json.loads(inventory)['tests']} == expected
+          with (root/'markup.log').open('wb') as output:
+              run = subprocess.run(base+['--no-tests=error', '--output-on-failure',
+                  '--test-output-size-passed', '65536',
+                  '--output-junit', str(root/'markup-results.xml')], stdout=output,
+                  stderr=subprocess.STDOUT, timeout=450)
+          print((root/'markup.log').read_text(errors='replace'))
+          run.check_returncode()
+          cases = list(ET.parse(root/'markup-results.xml').getroot().iter('testcase'))
+          assert len(cases) == len(expected) and {case.get('name') for case in cases} == expected
+          assert all(case.get('status') == 'run' and all(case.find(kind) is None
+              for kind in ['failure', 'error', 'skipped']) for case in cases)
+          PYTHON
+      - name: Verify debugger protocols and owned desktop sessions
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        timeout-minutes: 12
+        run: |
+          set -o pipefail
+          python3 - <<'PYTHON'
+          import json, subprocess, xml.etree.ElementTree as ET
+          from pathlib import Path
+          expected = {'nildebugger.'+name for name in
+                      ('core', 'json-protocol', 'dap-protocol', 'source-metadata', 'dap-lifecycle', 'dap-owner')}
+          base = ['ctest', '--test-dir', 'build/application', '-R',
+                  r'^nildebugger[.](core|json-protocol|dap-protocol|source-metadata|dap-lifecycle|dap-owner)$']
+          root = Path('build/application-evidence').resolve()
+          inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
+          (root/'debugger-inventory.json').write_bytes(inventory)
+          assert {case['name'] for case in json.loads(inventory)['tests']} == expected
+          with (root/'debugger.log').open('wb') as output:
+              run = subprocess.run(base+['--no-tests=error', '--output-on-failure',
+                  '--output-junit', str(root/'debugger-results.xml')], stdout=output,
+                  stderr=subprocess.STDOUT, timeout=480)
+          print((root/'debugger.log').read_text(errors='replace'))
+          run.check_returncode()
+          cases = list(ET.parse(root/'debugger-results.xml').getroot().iter('testcase'))
+          assert len(cases) == len(expected) and {case.get('name') for case in cases} == expected
+          assert all(case.get('status') == 'run' and all(case.find(kind) is None
+              for kind in ['failure','error','skipped']) for case in cases)
+          PYTHON
+          python3 -B nildebugger/tests/dap_desktop.py \
+            --debugger build/application/bin/nildebugger --compiler build/application/bin/nilcompiler \
+            --nilstd nilstd/src --output-parent build/application/test-evidence \
+            2>&1 | tee build/application-evidence/debugger-desktop.log
+      - name: Record selected native SDK and linker inputs
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        timeout-minutes: 2
+        run: >-
+          python3 -B scripts/ci/macos-toolchain-census.py --build build/application
+          --output build/application-evidence/toolchain-census
+      - name: Verify actual native lifetime and timestamp contracts
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' && steps.heap.outcome == 'success' }}
+        timeout-minutes: 16
+        run: |
+          python3 - <<'PYTHON'
+          import json, subprocess, xml.etree.ElementTree as ET
+          from pathlib import Path
+          expected = {'compiler.darwin-module-fingerprint', 'ny.native-managed-lifetime', 'ny.native-owned-lifetime',
+                      'nil.file-time-support', 'nil.file-modified-at-contract',
+                      'nil.freestanding-hook-default', 'nil.freestanding-hook-override', 'nil.native-symbol-surface'}
+          pattern = r'^(compiler[.]darwin-module-fingerprint|ny[.]native-(managed|owned)-lifetime|nil[.]file-(time-support|modified-at-contract)|nil[.]freestanding-hook-(default|override)|nil[.]native-symbol-surface)$'
+          base = ['ctest', '--test-dir', 'build/application', '-R', pattern]
+          root = Path('build/application-evidence').resolve()
+          inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
+          (root/'inventory.json').write_bytes(inventory)
+          assert {case['name'] for case in json.loads(inventory)['tests']} == expected
+          with (root/'ctest.log').open('wb') as output:
+              run = subprocess.run(base+['--no-tests=error', '--output-on-failure',
+                  '--output-junit', str(root/'results.xml')], stdout=output,
+                  stderr=subprocess.STDOUT, timeout=910)
+          print((root/'ctest.log').read_text(errors='replace'))
+          run.check_returncode()
+          cases = list(ET.parse(root/'results.xml').getroot().iter('testcase'))
+          assert len(cases) == len(expected) and {case.get('name') for case in cases} == expected
+          assert all(case.get('status') == 'run' and all(case.find(kind) is None
+              for kind in ['failure','error','skipped']) for case in cases)
+          PYTHON
+      - name: Verify project, discovery, assembler, context, archive and packaging contracts
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        timeout-minutes: 30
+        run: |
+          python3 - <<'PYTHON'
+          import json, subprocess, xml.etree.ElementTree as ET
+          from pathlib import Path
+          expected = {'nilbuild.project-contract', 'nilbuild.tool-discovery-contract', 'nilassembler.cli',
+                      'ny.tools.context-manifest', 'nil.freestanding-archive-imports', 'ny.sdk-matrix-sources'}
+          pattern = r'^(nilbuild[.](project-contract|tool-discovery-contract)|nilassembler[.]cli|ny[.]tools[.]context-manifest|nil[.]freestanding-archive-imports|ny[.]sdk-matrix-sources)$'
+          base = ['ctest', '--test-dir', 'build/application', '-R', pattern]
+          root = Path('build/application-evidence').resolve()
+          inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
+          (root/'sdk-contract-inventory.json').write_bytes(inventory)
+          assert {case['name'] for case in json.loads(inventory)['tests']} == expected
+          with (root/'sdk-contracts.log').open('wb') as output:
+              run = subprocess.run(base+['--no-tests=error', '--output-on-failure',
+                  '--test-output-size-passed', '65536',
+                  '--output-junit', str(root/'sdk-contract-results.xml')], stdout=output,
+                  stderr=subprocess.STDOUT, timeout=1750)
+          print((root/'sdk-contracts.log').read_text(errors='replace'))
+          run.check_returncode()
+          cases = list(ET.parse(root/'sdk-contract-results.xml').getroot().iter('testcase'))
+          assert len(cases) == len(expected) and {case.get('name') for case in cases} == expected
+          assert all(case.get('status') == 'run' and all(case.find(kind) is None
+              for kind in ['failure','error','skipped']) for case in cases)
+          PYTHON
+      - name: Verify default native toolchain and real incremental reuse
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        timeout-minutes: 20
+        run: |
+          python3 - <<'PYTHON'
+          import json, subprocess, xml.etree.ElementTree as ET
+          from pathlib import Path
+          expected = {'nil.darwin-toolchain-inputs', 'nilbuild.incremental-contract'}
+          pattern = r'^(nil[.]darwin-toolchain-inputs|nilbuild[.]incremental-contract)$'
+          base = ['ctest', '--test-dir', 'build/application', '-R', pattern]
+          root = Path('build/application-evidence').resolve()
+          inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
+          (root/'incremental-inventory.json').write_bytes(inventory)
+          assert {case['name'] for case in json.loads(inventory)['tests']} == expected
+          with (root/'incremental.log').open('wb') as output:
+              run = subprocess.run(base+['--no-tests=error', '--output-on-failure',
+                  '--output-junit', str(root/'incremental-results.xml')], stdout=output,
+                  stderr=subprocess.STDOUT, timeout=1100)
+          print((root/'incremental.log').read_text(errors='replace'))
+          run.check_returncode()
+          cases = list(ET.parse(root/'incremental-results.xml').getroot().iter('testcase'))
+          assert len(cases) == len(expected) and {case.get('name') for case in cases} == expected
+          assert all(case.get('status') == 'run' and all(case.find(kind) is None
+              for kind in ['failure','error','skipped']) for case in cases)
+          PYTHON
+      - name: Prepare pinned VS Code in this runner's private build directory
+        id: editor
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        timeout-minutes: 6
+        run: |
+          # Version 1.146.0; architecture-specific SHA256 values from Microsoft's
+          # update API on 2026-11-11. No auto-update or system installation.
+          mkdir -p build/editor-download
+          curl --fail --location --max-time 120 --max-filesize 800000000 \
+            --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 180 \
+            "https://vscode.download.prss.microsoft.com/dbazure/download/stable/69047191fc427f2f92828279aae1d90d8eeda7ab/$NIL_EDITOR_ARCHIVE" \
+            -o build/editor-download/editor.zip
+          python3 - <<'PYTHON'
+          import hashlib, json, os
+          from pathlib import Path
+          path = Path('build/editor-download/editor.zip')
+          digest_state = hashlib.sha256()
+          with path.open('rb') as stream:
+              for chunk in iter(lambda: stream.read(1024*1024), b''): digest_state.update(chunk)
+          digest = digest_state.hexdigest()
+          assert digest == os.environ['NIL_EDITOR_SHA256']
+          Path('build/application-evidence/editor.json').write_text(json.dumps(dict(
+              version='1.146.0', revision='69047191fc427f2f92828279aae1d90d8eeda7ab',
+              archive=os.environ['NIL_EDITOR_ARCHIVE'], sha256=digest, bytes=path.stat().st_size), indent=2)+'\n')
+          PYTHON
+          ditto -x -k build/editor-download/editor.zip build/editor-download
+      - name: Build and check the extension
+        id: extension
+        if: ${{ !cancelled() && steps.editor.outcome == 'success' }}
+        timeout-minutes: 5
+        working-directory: vscode
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Exercise the real editor host
+        if: ${{ !cancelled() && steps.extension.outcome == 'success' }}
+        timeout-minutes: 17
+        env:
+          NIL_VSCODE_HOST_TIMEOUT_MS: '900000'
+        run: |
+          set -o pipefail
+          VSCODE_EXECUTABLE="$(python3 - <<'PYTHON'
+          import plistlib
+          from pathlib import Path
+          app = Path('build/editor-download/Visual Studio Code.app/Contents').resolve(strict=True)
+          with (app/'Info.plist').open('rb') as stream: name = plistlib.load(stream)['CFBundleExecutable']
+          assert name and Path(name).name == name
+          executable = app/'MacOS'/name
+          assert executable.is_file()
+          print(executable)
+          PYTHON
+          )"
+          export VSCODE_EXECUTABLE
+          export NIL_VSCODE_TOOL_DIRECTORY="$GITHUB_WORKSPACE/build/application/bin"
+          export NIL_VSCODE_HOST_RUNNER="$NIL_VSCODE_TOOL_DIRECTORY/nil_vscode_host_runner"
+          export NIL_VSCODE_SDK_PATH="$GITHUB_WORKSPACE"
+          for nil_subset in NIL_VSCODE_NILDATA_ONLY NIL_VSCODE_LANGUAGE_VALUES_ONLY \
+            NIL_VSCODE_MEMBER_SIGNATURE_ONLY NIL_VSCODE_COMPLETION_ONLY NIL_VSCODE_SEMANTIC_ONLY \
+            NIL_VSCODE_WORKSPACE_ONLY NIL_VSCODE_ANALYSIS_ONLY NIL_VSCODE_ANALYSIS_PROBE_ONLY; do
+            unset "$nil_subset"
+          done
+          node vscode/test/run-host.cjs 2>&1 | tee build/application-evidence/editor-host.log
+          python3 - <<'PYTHON'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('build/vscode-host-smoke/latest.json').read_text())
+          assert report['platform'] == 'darwin' and report['status'] == 'PASS'
+          assert report['vscode'] == '1.146.0' and not report['skippedChecks']
+          expected_modules = ['analyzer-checks', 'project-checks', 'workspace-checks', 'semantic-checks',
+                              'completion-checks', 'member-signature-checks', 'language-values-checks',
+                              'memory-profile-checks', 'niltest-checks']
+          assert report['fullSuiteCompleted'] is True and report['completedModules'] == expected_modules
+          checks = report['checks']
+          assert checks and all(row['status'] == 'PASS' and row['name'] for row in checks)
+          assert len({row['name'] for row in checks}) == len(checks)
+          PYTHON
+      - name: Preserve complete or partial evidence
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib, json, os, shutil, subprocess
+          from pathlib import Path
+          root = Path('build/application-evidence'); root.mkdir(parents=True, exist_ok=True)
+          for source, name in [('build/application/test-evidence','contracts'),
+                               ('build/vscode-host-smoke','editor-reports')]:
+              if Path(source).is_dir(): shutil.copytree(source, root/name)
+          for launch in Path('build/vscode-host-smoke').glob('*-launch.json'):
+              record = json.loads(launch.read_text())
+              temporary = Path(record['temporary'])
+              assert record['platform'] == 'darwin' and temporary.parent == Path('/tmp')
+              assert temporary.name.startswith('nil vscode host café 中文-')
+              profile = temporary/'profile'
+              assert str(profile) == record['profile'] and not profile.is_symlink()
+              logs = profile/'logs'
+              if logs.is_dir(): shutil.copytree(logs, root/'editor-logs'/record['runId'])
+          dirty = subprocess.check_output(['git','status','--porcelain','--untracked-files=no'], text=True, timeout=15)
+          revision = subprocess.check_output(['git','rev-parse','HEAD'], text=True, timeout=15).strip()
+          files = {}
+          for path in sorted(root.rglob('*')):
+              if path.is_file() and not path.is_symlink():
+                  digest_state = hashlib.sha256()
+                  with path.open('rb') as stream:
+                      for chunk in iter(lambda: stream.read(1024*1024), b''): digest_state.update(chunk)
+                  digest = digest_state.hexdigest()
+                  files[path.relative_to(root).as_posix()] = dict(bytes=path.stat().st_size,sha256=digest)
+          (root/'evidence.json').write_text(json.dumps(dict(revision=revision,
+              source_unchanged=not dirty,files=files),indent=2)+'\n')
+          assert not dirty and revision == os.environ['GITHUB_SHA']
+          PYTHON
+      - name: Upload application results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-applications-${{ matrix.host.arch }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            build/application-evidence/
+            build/application/Testing/Temporary/LastTest.log
+            build/application/CMakeCache.txt
+          if-no-files-found: error
+          retention-days: 14

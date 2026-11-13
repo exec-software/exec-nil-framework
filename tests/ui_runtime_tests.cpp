@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "ui_runtime.hpp"
+#include "ui_layout_provider_contract.hpp"
 #include "ui_registry_observer.hpp"
 
 #include <chrono>
@@ -468,7 +469,7 @@ int main(int argc, char **argv) {
     if (mode == "--darwin-mixed-provider") preload_mixed_provider();
 #endif
     basic_validation();
-    if (mode == "--display") display_tests();
+    if (mode == "--display") { display_tests(); ui_layout_provider_contract(require); }
     else if (mode == "--no-display") no_display();
     else if (mode == "--noninteractive-display") noninteractive_display();
     else if (mode == "--darwin-worker-first") {

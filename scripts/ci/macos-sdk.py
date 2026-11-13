@@ -120,12 +120,12 @@ def run(name, command, timeout, *, cwd=ROOT, clean=False, provider_library=None)
     variables = environment() if clean else os.environ.copy()
     if provider_library is not None:
         require(clean and Path(provider_library).is_dir(), "declared provider requires clean environment and library directory")
-        variables["DYLD_FALLBACK_LIBRARY_PATH"] = str(provider_library) + ":/usr/lib"
+        variables["NIL_TEST_DARWIN_RUNTIME_LIBRARY_PATH"] = str(provider_library) + ":/usr/lib"
     row = support.run_process(ownership, [str(x) for x in command], cwd,
                               variables, OUTPUT, name, timeout)
     row["environment_profile"] = "Apple toolchain; no inherited NIL/NY/DYLD/tool overrides" if clean else "recorded build/provider environment"
     if provider_library is not None:
-        row["environment_profile"] = "Apple toolchain; inherited overrides removed; one explicit PostgreSQL provider"
+        row["environment_profile"] = "Apple toolchain; inherited overrides removed; PostgreSQL loader path declared for runtime children only"
         row["declared_provider_library"] = str(provider_library)
     save(name + ".json", row)
     require(row["status"] == "PASS" and row["cleanup_verified"],

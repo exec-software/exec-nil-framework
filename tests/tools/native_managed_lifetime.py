@@ -11,6 +11,7 @@ import sys
 import tempfile
 
 from native_memory_support import memory_metric, run_memory_bounded, verify_memory_limit
+from darwin_native_heap_budget import DarwinHeapBudget, METRIC, add_arguments
 
 
 def main() -> int:
@@ -19,11 +20,15 @@ def main() -> int:
     parser.add_argument("--stdlib", type=Path, required=True)
     parser.add_argument("--llvm", choices=("ON", "OFF"), required=True)
     parser.add_argument("--memory-launcher", type=Path)
+    add_arguments(parser)
     args = parser.parse_args()
-    if sys.platform not in ("linux", "win32") or args.llvm == "OFF":
+    if sys.platform not in ("linux", "win32", "darwin") or args.llvm == "OFF":
         return 77
 
-    with tempfile.TemporaryDirectory(prefix="ny-managed-lifetime café ") as temporary:
+    darwin = (DarwinHeapBudget(args, 'managed-lifetime', seconds=210, fixtures=1)
+              if sys.platform == 'darwin' else None)
+    context = darwin if darwin else tempfile.TemporaryDirectory(prefix="ny-managed-lifetime café ")
+    with context as temporary:
         root = Path(temporary)
         source = root / "sustained.ny"
         output = root / ("sustained.exe" if os.name == "nt" else "sustained")
@@ -41,20 +46,28 @@ fn main() -> i32
 end fn
 ''', encoding="utf-8", newline='\n')
         environment = {key: value for key, value in os.environ.items() if not key.startswith("NY_")}
+        if darwin:
+            darwin.prepare()
         verify_memory_limit(args.memory_launcher, cwd=root, environment=environment)
-        compiled = subprocess.run([str(args.compiler.resolve()), "--quiet", "--no-stdlib",
-            "--sdk-path", str(args.stdlib.resolve()), "--native", "--output", str(output), str(source)],
-            cwd=root, env=environment, text=True, capture_output=True, timeout=90)
-        if compiled.returncode != 0 or compiled.stdout != "" or compiled.stderr != "":
-            raise AssertionError(compiled)
+        command = [str(args.compiler.resolve()), "--quiet", "--no-stdlib",
+            "--sdk-path", str(args.stdlib.resolve()), "--native", "--output", str(output), str(source)]
+        if darwin:
+            darwin.compile('compile-managed', command)
+        else:
+            compiled = subprocess.run(command, cwd=root, env=environment, text=True, capture_output=True, timeout=90)
+            if compiled.returncode != 0 or compiled.stdout != "" or compiled.stderr != "":
+                raise AssertionError(compiled)
 
         # Apply to the compiled consumer only, never compiler/JIT host.
         # The unchanged loop allocates >625 MiB cumulatively.
-        result = run_memory_bounded(output, cwd=root, environment=environment,
-                                    launcher=args.memory_launcher)
-        if result.returncode != 0 or result.stdout != "799980000\n" or result.stderr != "":
-            raise AssertionError(result)
-    print("native managed lifetime: sustained allocation fits " + memory_metric())
+        if darwin:
+            darwin.fixture('managed', source, output, "799980000\n", target=16384, count=40000)
+        else:
+            result = run_memory_bounded(output, cwd=root, environment=environment,
+                                        launcher=args.memory_launcher)
+            if result.returncode != 0 or result.stdout != "799980000\n" or result.stderr != "":
+                raise AssertionError(result)
+    print("native managed lifetime: sustained allocation fits " + (METRIC if darwin else memory_metric()))
     return 0
 
 

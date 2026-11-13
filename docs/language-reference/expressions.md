@@ -205,14 +205,35 @@ and the same conversion is used by the interpreter and native compiler.
 Native text retains its existing NUL-free restriction; formatted text does not
 change the text storage ABI or permit embedded NUL constants natively.
 
+Ny's multiline form opens with `$"""` at the end of its source line, apart
+from spaces or tabs; content starts on the following line. It closes with the
+first line whose non-indentation content begins with `"""`. Lexing resumes
+after that delimiter, so a block can sit inside a call:
+
+```ny
+println($"""
+    <p>Signed in as {who}</p>
+    <p>{count + 1} projects</p>
+""")
+```
+
+A block is **raw**: unlike the quoted form, its literal segments carry no
+backslash escapes, which is what makes a path, a regular expression or embedded
+JSON writable without doubling anything. The block's common leading indentation
+is removed and deeper indentation is kept, leading and trailing blank lines are
+dropped, and indentation removal touches literal segments only, so every hole
+keeps its original file coordinates.
+
 `{{` and `}}` insert literal braces. Ny's normal backslash escapes still apply
-to the literal portions, so `\n` inserts a newline in the result. Embedded
+to the literal portions of a **quoted** formatted string, so `\n` inserts a
+newline in the result. Embedded
 expressions keep their own string delimiters; no extra escaping is needed for
 `$"Result: {choose("first", "second")}"`.
 
-The entire explicit string, including its expressions, must fit on one source
-line. Empty holes, trailing tokens, unmatched braces and missing quotes are
-errors. Formatting flags and precision specifiers are not part of this syntax;
+A quoted explicit string, including its expressions, must fit on one source
+line. Both surfaces have a block form that spans lines, and a single hole still
+stays on one of them. Empty holes, trailing tokens, unmatched braces and missing quotes
+are errors. Formatting flags and precision specifiers are not part of this syntax;
 use an explicit formatting function inside a hole when needed.
 
 Legacy ordinary strings such as `"Hello {name}"` retain identifier-only
@@ -233,6 +254,92 @@ formatted Matrix text, backslashes remain ordinary characters; use the named
 `newline`, `tab` and `quote` values where needed, such as
 `formatted "First{newline}Second"`. Braces delimit ordinary Matrix expressions,
 including named calls such as `{choose with first being "one"}`.
+
+`formatted` in front of `begin text` opts a raw block into interpolation:
+
+```text
+value page is formatted begin text
+    <p>Signed in as {who}</p>
+    <p>{count plus 1} projects</p>
+end text
+```
+
+The block keeps every raw-block rule — a line-anchored `end text` terminator,
+removal of the common leading indentation, retained deeper indentation, dropped
+leading and trailing blank lines, and no escape sequences — and adds the holes.
+Indentation removal applies to literal segments only. Every hole retains its
+original file coordinates, so definition, completion, signature help and local
+rename behave inside a block exactly as they do inside a quoted formatted
+literal. A block and a quoted literal produce the same interpolation AST, the
+same shared conversion and the same lowering on both execution routes.
+
+## Markup literals
+
+A markup literal holds a document — elements, attributes, text and holes — and
+its own control flow, so a generated page is written as one unit instead of
+assembled from concatenated fragments. Matrix opens one with `begin markup`,
+Ny with `$markup`, and both close with the block's own terminator:
+
+```ny
+import nil.std.markup.escaping
+
+fn page(signed_in: bool, who: text, names: array<text>) -> document
+    return $markup
+        <nav>
+          {if signed_in}
+            <a href="/logout">Log out, {who}</a>
+          {else}
+            <a href="/login">Log in</a>
+          {end if}
+        </nav>
+        <ul>
+          {for name in names}
+            <li class="{name}">{name}</li>
+          {end for}
+        </ul>
+    end markup
+end fn
+```
+
+The directive words are each surface's own: Ny writes `{if}`, `{elseif}`,
+`{else}`, `{end if}`, `{for x in xs}` and `{end for}`, while Matrix writes
+`{when}`, `{otherwise when}`, `{otherwise}`, `{end when}`,
+`{repeat for each x in xs}` and `{end repeat}`. Everything else is shared,
+including the parsing of the document, the checks, the escaping and the value.
+
+The literal segments are parsed as markup at compile time. Unbalanced or
+unclosed elements, an unterminated directive, an arm that opens an element it
+does not close, and a hole that would name an element or an attribute are
+compile errors. Element and attribute names are fixed; that is what keeps the
+document checkable. Self-closing syntax is limited to HTML void elements such
+as `<br/>`; other elements need a closing tag. The initial profile uses HTML
+tables, without SVG or MathML namespace semantics.
+
+Ordinary holes accept `text`, `bool`, `i32`, `i64`, `u8` and `f64`, escaping
+them for their position. A `nil.std.markup.document` also composes into element
+content without being escaped again. Arrays and optional values need explicit
+loops or conversions; they do not splice or omit attributes automatically.
+
+A whole URL hole uses a limited executable-scheme filter, while a component
+hole needs a fixed safe URL prefix. Directives inside URL attribute values and
+ordinary holes in code-bearing or URL-list attributes are rejected. See the
+[`nil.std.markup` escaping contract](../standard-library/markup.md) for the
+exact policy. `{raw ...}` explicitly trusts its input and bypasses escaping;
+it is not a sanitizer.
+
+The block evaluates to a document record containing serialized text. `render`
+returns that text; it does not walk a runtime tree. XML serialization and a
+compact renderer are not implemented.
+
+Inside `<script>` and `<style>` a brace is an ordinary character, so CSS and
+JavaScript paste in unaltered; a body that is exactly one hole must be
+`{raw ...}`. Elsewhere `{{` and `}}` are literal braces, as in formatted text.
+
+`$markup` must be the last thing on its line apart from spaces or tabs. Ny's
+terminator begins a line after indentation, and lexing resumes after
+`end markup`, allowing the surrounding expression to continue. Matrix's
+`end markup` occupies its own line. Both surfaces keep `markup` and `raw`
+usable as ordinary names outside these constructs.
 
 ## Lambda / Anonymous Functions
 

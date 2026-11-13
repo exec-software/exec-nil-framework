@@ -32,7 +32,8 @@ inline std::optional<Contract> intrinsic(const std::string &name) {
     return Contract{{"text"}, "bool"};
   if (name == "file.read_text") return Contract{{"text"}, "text", Output::result};
   if (name == "file.read_bytes") return Contract{{"text"}, "array<u8>", Output::result};
-  if (name == "file.size") return Contract{{"text"}, "i64", Output::result};
+  if (name == "file.size" || name == "file.modified_at")
+    return Contract{{"text"}, "i64", Output::result};
   if (name == "file.delete" || name == "environment.unset" ||
       name == "environment.set_current_directory")
     return Contract{{"text"}, "bool", Output::result};

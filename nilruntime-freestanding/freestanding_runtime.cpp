@@ -72,7 +72,19 @@ extern "C" {
 // to zero -- which cannot be represented once the consumer links above 4 GiB,
 // and fails the link for a symbol nobody intended to use. A definition is
 // always reachable and needs no null check.
+#if defined(_MSC_VER)
+// COFF's link-time fallback preserves the host override without exporting a
+// competing strong definition. x86 C symbols have one extra leading underscore.
+void __ny_host_fail(const char *message) noexcept;
+#if defined(_M_IX86)
+#pragma comment(linker, "/alternatename:___ny_host_fail=___ny_default_host_fail")
+#else
+#pragma comment(linker, "/alternatename:__ny_host_fail=__ny_default_host_fail")
+#endif
+void __ny_default_host_fail(const char *message) noexcept {
+#else
 __attribute__((weak)) void __ny_host_fail(const char *message) noexcept {
+#endif
   (void)message;
 }
 
@@ -151,7 +163,14 @@ void *nyrt_alloc(std::uint64_t size) noexcept {
   heap_used = start + size;
   // Zeroed because the helper this serves replaced calloc, and generated code
   // is entitled to assume a fresh block holds no earlier vessel's bytes.
+#if defined(_MSC_VER)
+  // MSVC has no -ffreestanding equivalent: observable byte writes prevent
+  // its optimizer from replacing this loop with an unavailable memset.
+  volatile unsigned char *const zero = block;
+  for (std::uint64_t index = 0; index < size; ++index) zero[index] = 0;
+#else
   for (std::uint64_t index = 0; index < size; ++index) block[index] = 0;
+#endif
   return block;
 }
 
@@ -159,7 +178,11 @@ void *nyrt_alloc(std::uint64_t size) noexcept {
 // has no libc to call and these are not the host's decision to make.
 void *nyrt_mem_copy(void *destination, const void *source,
                     std::uint64_t size) noexcept {
+#if defined(_MSC_VER)
+  volatile unsigned char *out = static_cast<volatile unsigned char *>(destination);
+#else
   unsigned char *out = static_cast<unsigned char *>(destination);
+#endif
   const unsigned char *in = static_cast<const unsigned char *>(source);
   for (std::uint64_t index = 0; index < size; ++index) out[index] = in[index];
   return destination;

@@ -14,6 +14,7 @@
 
 #include "secure_file_io.hpp"
 #include "time_support.hpp"
+#include "file_time_support.hpp"
 #include "parallel_support.hpp"
 #include "owned_runtime.hpp"
 
@@ -1887,6 +1888,13 @@ std::int32_t nyrt_io_v1(const char *operation, std::uint64_t first,
         *value = static_cast<std::uint64_t>(target);
         return 1;
       }
+    }
+
+    if (name == "file.modified_at") {
+      const auto written = ny::file_time_support::modified_at(text(first));
+      if (!written) return fail("the file has no readable timestamp");
+      *value = static_cast<std::uint64_t>(*written);
+      return 1;
     }
 
     const auto path = host_path(first);

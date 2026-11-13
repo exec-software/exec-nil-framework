@@ -104,7 +104,9 @@ cmake \
     -DBUILD_TESTING="${run_tests}" \
     -DCMAKE_INSTALL_BINDIR=.
 
-cmake --build "${cmake_build_dir}" --parallel
+# Let CMake honor CMAKE_BUILD_PARALLEL_LEVEL. A bare --parallel overrides that
+# limit and asks Make for an unbounded -j build.
+cmake --build "${cmake_build_dir}"
 
 evidence_path="${cmake_build_dir}/sdk-build-evidence.json"
 ctest_report="${cmake_build_dir}/sdk-ctest.xml"

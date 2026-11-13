@@ -10,12 +10,23 @@ async function eventually(operation, description) {
   throw new Error(`Timed out: ${description}`);
 }
 const findings = uri => vscode.languages.getDiagnostics(uri).filter(item => item.source === "nil-analysis");
+// Imported files which are not open are reported by their compiler-resolved
+// path. A workspace may use a physical alias (notably /tmp on Darwin). Inspect
+// every matching URI without deduplication, so duplicate Problems still fail.
+async function importedFindings(uri) {
+  const results = [];
+  for (const [candidate, diagnostics] of vscode.languages.getDiagnostics()) {
+    if (candidate.scheme === "file" && await sameFile(candidate.fsPath, uri.fsPath))
+      results.push(...diagnostics.filter(item => item.source === "nil-analysis"));
+  }
+  return results;
+}
 async function replace(document, text) {
   const edit = new vscode.WorkspaceEdit();
   edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length)), text);
   assert.equal(await vscode.workspace.applyEdit(edit), true);
 }
-exports.run = async ({ check, workspace }) => {
+exports.run = async ({ check, workspace, taskEvidence }) => {
   for (const language of ["ny", "matrix"]) {
     const directory = path.join(workspace, `project ${language}`);
     await fs.mkdir(path.join(directory, "src"), { recursive: true });
@@ -59,13 +70,27 @@ exports.run = async ({ check, workspace }) => {
       ["native", "ny.checkNativeProject", "ny.buildNativeProject", "ny.runNativeProject"]
     ]) {
       await check(`${language}: ${target} project check, build and run tasks`, async () => {
-        assert.equal(await vscode.commands.executeCommand(checkCommand), 0);
-        assert.equal(await vscode.commands.executeCommand(buildCommand), 0);
-        assert.equal(await vscode.commands.executeCommand(runCommand), 0);
+        const phases = [];
+        for (const command of [checkCommand, buildCommand, runCommand]) {
+          const start = Date.now();
+          const dispatch = taskEvidence?.dispatch(command);
+          console.log(`Starting ${language} ${target} project command: ${command}`);
+          const exitCode = await vscode.commands.executeCommand(command);
+          if (dispatch) taskEvidence.complete(dispatch, exitCode);
+          assert.equal(exitCode, 0, command);
+          const milliseconds = Date.now() - start;
+          phases.push({ command, milliseconds });
+          console.log(`Completed ${language} ${target} project command: ${command} (${milliseconds} ms)`);
+        }
         const output = path.join(directory, "build", "hello" + (target === "vm" ? ".nil" : process.platform === "win32" ? ".exe" : ""));
         assert.ok((await fs.stat(output)).size > 0);
-        return { target, output };
-      });
+        return { target, output, phases };
+      // Darwin fingerprints the complete dyld backing files in independent
+      // preparation/verification phases. This group executes three real tools;
+      // retain those checks with a bounded aggregate budget and phase timings.
+      // Intel hosted native builds measured 144 seconds before the separate
+      // run command, which verifies the same dependency closure again.
+      }, process.platform === "darwin" ? (target === "native" ? 300_000 : 180_000) : 45_000);
     }
     await check(`${language}: semantic rules and project warning policy agree with project checks`, async () => {
       const warning = language === "ny" ? 'import nil.std.text\nfn main() -> i32\n try_char_at("abc", 0)\n return 0\n println("unreachable")\nend fn\n' :
@@ -105,7 +130,7 @@ exports.run = async ({ check, workspace }) => {
       await vscode.window.showTextDocument(document);
       await eventually(() => vscode.commands.executeCommand("ny.analyzeCurrentFile"), "current compiler check");
     }
-    const errors = findings(depUri).filter(item => item.severity === vscode.DiagnosticSeverity.Error);
+    const errors = (await importedFindings(depUri)).filter(item => item.severity === vscode.DiagnosticSeverity.Error);
     assert.equal(errors.length, 1, "Two entry reports should not duplicate a dependency finding.");
     assert.equal(errors[0].range.start.line, 3, "UTF-8 and CRLF offsets must map the imported source exactly.");
     const depDocument = await vscode.workspace.openTextDocument(depUri);
@@ -113,17 +138,17 @@ exports.run = async ({ check, workspace }) => {
     await replace(depDocument, broken.replace('"bad"', "1"));
     await vscode.window.showTextDocument(entries[0]);
     await eventually(() => vscode.commands.executeCommand("ny.analyzeCurrentFile"), "current compiler check");
-    await eventually(() => findings(depUri).length === 0, "dirty import diagnostic removal");
+    await eventually(async () => (await importedFindings(depUri)).length === 0, "dirty import diagnostic removal");
     assert.equal(await fs.readFile(dependency, "utf8"), broken, "Analysis must not save imported buffers.");
     assert.equal(await depDocument.save(), true);
-    await eventually(() => entries.every(document => findings(document.uri).length === 0) && findings(depUri).length === 0, "saved import diagnostics refreshed");
+    await eventually(async () => entries.every(document => findings(document.uri).length === 0) && (await importedFindings(depUri)).length === 0, "saved import diagnostics refreshed");
     // A disk-only edit must invalidate entries even when the import is closed.
     await vscode.window.showTextDocument(depDocument);
     await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
     await fs.writeFile(dependency, broken);
-    await eventually(() => findings(depUri).some(item => item.range.start.line === 3), "external import change refreshed Problems");
+    await eventually(async () => (await importedFindings(depUri)).some(item => item.range.start.line === 3), "external import change refreshed Problems");
     await fs.writeFile(dependency, broken.replace('"bad"', "1"));
-    await eventually(() => findings(depUri).length === 0, "external import repair cleared Problems");
+    await eventually(async () => (await importedFindings(depUri)).length === 0, "external import repair cleared Problems");
     return { importedLine: 4, duplicateCount: errors.length };
   });
 };

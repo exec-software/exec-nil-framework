@@ -2,7 +2,26 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const vscode = require("vscode");
-const { createFileAlias } = require("./compiler-fixture-support.cjs");
+const { createFileAlias, sameExistingFile } = require("./compiler-fixture-support.cjs");
+
+function hasTab(document) {
+  const expected = document.uri.toString();
+  return vscode.window.tabGroups.all.some(group => group.tabs.some(tab => {
+    if (tab.input instanceof vscode.TabInputText) return tab.input.uri.toString() === expected;
+    if (tab.input instanceof vscode.TabInputTextDiff) {
+      return tab.input.original.toString() === expected || tab.input.modified.toString() === expected;
+    }
+    return false;
+  }));
+}
+function targetUriMatches(uri, document) {
+  if (uri.toString() === document.uri.toString()) return true;
+  // Captured editor inputs must retain their authoritative URI, even when an
+  // open tab is clean. A clean cached model with no tab is only a disk source;
+  // the real compiler returns its canonical physical path (/private/tmp on Mac).
+  return uri.scheme === "file" && document.uri.scheme === "file" &&
+    !document.isDirty && !hasTab(document) && sameExistingFile(uri.fsPath, document.uri.fsPath);
+}
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function eventually(operation, description) {
@@ -53,7 +72,7 @@ async function expectDefinition(document, useContext, useToken, target, declarat
   const [result] = results;
   assert.ok(result.originSelectionRange && result.targetSelectionRange && result.targetRange,
     "Semantic navigation must return a LocationLink with exact original-source selections.");
-  assert.equal(result.targetUri.toString(), target.uri.toString());
+  assert.ok(targetUriMatches(result.targetUri, target), "Definition must retain an editor input URI or name the exact uncaptured disk file.");
   assert.ok(result.originSelectionRange.isEqual(origin), "Origin must select the actual source spelling.");
   assert.ok(result.targetSelectionRange.isEqual(selection), "Target must select the resolved declaration token.");
   assert.ok(result.targetRange.isEqual(selection), "Target range must not widen to an unrelated statement.");
@@ -89,9 +108,14 @@ async function expectReferences(document, context, token, occurrences) {
   }, `references of ${context}`);
   // A nonempty wrong result must fail immediately, including duplicate
   // lexical LSP guesses or a partial set presented as complete references.
-  assert.deepEqual(results.map(item => locationKey(item.uri, item.range)).sort(),
-    occurrences.map(([source, sourceContext, sourceToken = token]) =>
-      locationKey(source.uri, rangeIn(source, sourceContext, sourceToken))).sort());
+  const remaining = occurrences.map(([source, sourceContext, sourceToken = token]) =>
+    ({ source, range: rangeIn(source, sourceContext, sourceToken) }));
+  assert.equal(results.length, remaining.length, "References must include every certified occurrence exactly once.");
+  for (const result of results) {
+    const index = remaining.findIndex(expected => targetUriMatches(result.uri, expected.source) && result.range.isEqual(expected.range));
+    assert.notEqual(index, -1, `Unexpected or duplicate reference: ${locationKey(result.uri, result.range)}`);
+    remaining.splice(index, 1);
+  }
   return results;
 }
 async function rename(document, context, token, newName) {
@@ -191,6 +215,11 @@ exports.run = async ({ check, workspace }) => {
     const header = dependencyLanguage === "ny" ? `fn ${declared}(` : `public ${declared} receives`;
     await analyze(entry);
     await expectDefinition(entry, use, use, dependency, header, declared);
+    await vscode.window.showTextDocument(dependency, { preview: false });
+    await analyze(entry);
+    const cleanOpen = await expectDefinition(entry, use, use, dependency, header, declared);
+    assert.equal(dependency.isDirty, false);
+    assert.equal(cleanOpen.targetUri.toString(), dependency.uri.toString(), "Even a clean open import must retain its editor URI.");
     const comment = dependencyLanguage === "ny" ? "# é😀 dirty declaration\r\n\r\n" : "!!! é😀 dirty declaration\r\n\r\n";
     const dirtyText = comment + depText.replace(/\n/g, "\r\n");
     await replace(dependency, dirtyText);

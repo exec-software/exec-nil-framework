@@ -1,0 +1,52 @@
+!!! Byte access to text.
+!!!
+!!! nil.std.text slices and measures by byte, and until text.byte_at and
+!!! text.from_byte existed there was no way to read a byte as a number or
+!!! write one as text. The conversion that looked like it would do it,
+!!! convert.char_to_i32, takes a whole Unicode scalar and aborts the process
+!!! on a partial one, so a byte inside a multi-byte character was unreachable
+!!! and so was percent-encoding anything outside ASCII.
+!!!
+!!! What this page pins down is that these two are about bytes and not about
+!!! characters, which is the whole reason they were added.
+
+book matrix.byte-access
+
+read nil.std.core
+read nil.std.text.string_utils
+
+main returns number begin paragraph
+    !!! An ASCII byte reads as its code and writes back as itself.
+    say nil.std.text::byte_at with s being "A", index being 0
+    say nil.std.text::from_byte with code being 65
+
+    !!! Out of range answers rather than raising, so a scan can discover the
+    !!! end by reading past it.
+    say nil.std.text::byte_at with s being "A", index being 1
+    say nil.std.text::byte_at with s being "A", index being 0 minus 1
+
+    !!! Two bytes built one at a time make one character, because joining text
+    !!! joins bytes. This is the case convert.i32_to_char cannot express: it
+    !!! would give the two bytes that encode U+00C3 for a request for 195.
+    value one-character is (nil.std.text::from_byte with code being 195)
+        plus (nil.std.text::from_byte with code being 169)
+    say nil.std.text::length with s being one-character
+    say nil.std.text::byte_at with s being one-character, index being 0
+    say nil.std.text::byte_at with s being one-character, index being 1
+
+    !!! The same character written as a scalar is the same two bytes, which is
+    !!! what proves the byte route and the scalar route agree.
+    value as-scalar is nil.std.core::Convert.i32_to_char with code being 233
+    say nil.std.text::length with s being as-scalar
+    say (as-scalar equals one-character) becomes text
+
+    !!! Every byte value is reachable, including zero and the high half that
+    !!! is not valid UTF-8 on its own.
+    say nil.std.text::length with s being (nil.std.text::from_byte with code being 0)
+    say nil.std.text::byte_at with s being (nil.std.text::from_byte with code being 255), index being 0
+
+    !!! Outside the byte range there is nothing to give.
+    say nil.std.text::length with s being (nil.std.text::from_byte with code being 256)
+    say nil.std.text::length with s being (nil.std.text::from_byte with code being 0 minus 1)
+    give 0
+end paragraph

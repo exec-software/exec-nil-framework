@@ -199,10 +199,28 @@ not make embedded NUL bytes representable by the native text ABI.
 
 Backslashes remain ordinary characters. `{{` and `}}` represent literal braces
 only in this explicitly formatted form. Empty holes, extra tokens, unmatched
-braces and missing quotes are errors. The string and its expressions must stay
-on one physical source line; interpolate `newline` to create a multiline
-result. A raw `begin text` block inside a hole therefore is not supported.
-Ordinary quoted text and `begin text` keep their previous raw behavior.
+braces and missing quotes are errors. A quoted formatted literal and its
+expressions stay on one physical source line. A raw `begin text` block inside a
+hole therefore is not supported. Ordinary quoted text and `begin text` keep
+their previous raw behavior.
+
+### Multiline formatted blocks
+
+`formatted` in front of `begin text` opts a raw block into interpolation:
+
+```text
+value page as text is formatted begin text
+    <p>Signed in as {who}</p>
+    <p>{count plus 1} projects</p>
+end text
+```
+
+Every raw-block rule still holds: the terminator is a line whose only content
+is `end text`, the common leading indentation is removed and deeper indentation
+kept, leading and trailing blank lines are dropped, and nothing inside is
+escaped. A single hole stays on one physical line; the literal text around it
+does not. Indentation is removed from literal segments only, so a hole keeps
+its original source position and remains editable.
 
 `formatted` remains available as a name when it is not followed by a quote.
 Expression identifiers keep their original source ranges for editor checking,

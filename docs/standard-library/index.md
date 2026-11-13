@@ -16,10 +16,17 @@ bounded conventional regex, captures, byte spans, match iteration, whole-match
 collections, splitting and literal replacement.
 The [query reference](queries.md) defines eager filtering, stable ordering,
 pagination, projection and the Matrix-authored collection terminals.
+The [markup reference](markup.md) defines the document type a markup literal
+produces and the per-context escaping it lowers to.
 
 The [vector norm reference](math-vectors.md) describes stable two- and
 three-component lengths, finite-value checks, and checked normalization shared
 by Ny and Matrix.
+The [socket reference](sockets.md) defines TCP listening, accepting,
+connecting and transfer, with opaque handles the runtime closes for a program
+that does not, and the poll-based event loop that lets one process serve many
+connections at once.
+
 The [random-generator reference](random.md) defines independent mutable
 streams, reproducible seeds, cloning, and bounded integer/floating sampling.
 The [checked text-span reference](text-spans.md) defines exact byte ranges,
@@ -83,8 +90,8 @@ execution routes, and editor integration.
 `nil.std.ui` supplies checked windows, rows, columns, grids, labels, buttons,
 text entries, and checkboxes. Copied typed events and explicit text/flag models
 keep application logic in Matrix; the shared runtime owns native resources.
-The provider uses GTK 4 on Linux and the Windows development target, returning
-an explanatory error when the optional provider or a display is unavailable.
+The provider uses GTK4 on Linux, Win32 on Windows and AppKit on macOS, returning
+an explanatory error when the required provider or a display is unavailable.
 See the [UI reference](ui.md)
 and [NIL² counter application](../../examples/projects/nil2-counter).
 
@@ -160,13 +167,12 @@ native named-struct-array lowering; do not infer enumeration support from the
 scalar environment operations. New source-tree verification is recorded in the
 Windows-port notebook; an older installed SDK does not acquire these additions.
 
-The reviewed native release boundary is currently Linux. Windows has paired
-development acceptance; Intel and Apple Silicon macOS now have native build
-and selected VM/JIT/AOT execution evidence. Both macOS development SDKs
-also pass the full installed standard-library campaign and isolated PostgreSQL
-routes, plus installed debugger/checkpoint acceptance. AppKit window/event
-prerequisites pass on both hosts, but GTK desktop acceptance, incremental reuse
-and native memory-limit tests still prevent full macOS parity. See the
+The reviewed native release boundary is currently Linux. Development SDKs on
+Linux, Windows, Intel macOS and Apple Silicon macOS pass the full installed
+standard-library campaign, isolated PostgreSQL routes and installed
+debugger/checkpoint acceptance. AppKit desktop/input, native incremental reuse
+and allocation-retention checks also pass on both Macs. macOS uses AppKit;
+GTK is the Linux provider. See the
 [platform support matrix](../platform-support.md) for the recorded scope.
 Windows compiler AOT and standalone linking now launch argument vectors through
 `CreateProcessW` and embed UTF-8 process manifests in generated executables.
@@ -212,12 +218,18 @@ fixed-width encoding, and CRC, including detection of a one-bit change.
 Each active `nil.std` family has at least one exact-output fixture through
 textual and binary NIL, but those fixtures establish selected behavior rather
 than every declaration in a family. The aggregate `prelude` has strict
-compile/package coverage, not its own standalone behavior oracle. Network
-transports, JSON, broad concurrency/threading, compression,
-cryptographic hashing, encryption, and secure random generation remain experimental.
-`http.send` and all network transports remain quarantined because no runtime
-dispatcher is shipped, and active `nil.std.system` does not include subprocess
-execution or agent messaging.
+compile/package coverage, not its own standalone behavior oracle. JSON, broad
+concurrency/threading, compression, cryptographic hashing and encryption remain
+experimental, and active `nil.std.system` does not include subprocess execution
+or agent messaging.
+
+TCP stream sockets are active as of `nil.std.net.socket`, and secure random
+values as of `nil.std.security.random`; both are interpreter-backed and their
+contracts are checked by dedicated fixtures. See the
+[socket reference](sockets.md) and the secure-random section of the
+[random reference](random.md). `http.send` and the higher-level transports —
+HTTP client and server, WebSocket, IMAP, SMTP — remain quarantined, now for
+want of a built provider rather than for want of a transport to build one on.
 
 The [database and networking capability boundary](database-networking.md)
 records the audited split between active deterministic builders and quarantined

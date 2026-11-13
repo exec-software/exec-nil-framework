@@ -6,6 +6,7 @@ const { promisify } = require("node:util");
 const vscode = require("vscode");
 const executeFile = promisify(execFile);
 const { sameFile } = require("./host-support.cjs");
+const { createTaskEvidence } = require("./task-evidence.cjs");
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function bounded(promise, description, timeout = 25_000) {
@@ -41,15 +42,19 @@ exports.run = async function run() {
   const checks = [];
   const runId = process.env.NIL_VSCODE_TEST_RUN_ID;
   assert.ok(runId, "Isolated host run identity is required.");
-  const report = { status: "RUNNING", runId, vscode: vscode.version, platform: process.platform, workspace, checks, skippedChecks: [] };
-  const check = async (name, operation) => {
+  const report = { status: "RUNNING", runId, vscode: vscode.version, platform: process.platform, workspace, checks, skippedChecks: [],
+    fullSuiteCompleted: false, completedModules: [] };
+  const taskEvidence = createTaskEvidence();
+  report.taskLifecycle = taskEvidence.report;
+  const check = async (name, operation, timeout = 45_000) => {
     const start = Date.now();
-    const detail = await bounded(operation(), name, 45_000);
+    const detail = await bounded(operation(), name, timeout);
     checks.push({ name, status: "PASS", milliseconds: Date.now() - start, ...(detail || {}) });
     console.log(`PASS ${name}`);
   };
   const runModule = async name => {
-    await require(`./${name}.cjs`).run({ check, workspace });
+    await require(`./${name}.cjs`).run({ check, workspace, taskEvidence });
+    report.completedModules.push(name);
   };
   const events = [];
   report.tasks = events;
@@ -66,10 +71,16 @@ exports.run = async function run() {
     })().catch(error => { capture.error = String(error); });
   });
   const taskSubscription = vscode.tasks.onDidEndTaskProcess((event) => {
+    taskEvidence.event("process-end", event.execution, { exitCode: event.exitCode });
     const execution = event.execution.task.execution;
     events.push({ task: event.execution.task.definition.task, source: event.execution.task.definition.source, exitCode: event.exitCode,
       command: execution?.command || execution?.process, args: execution?.args });
   });
+  const lifecycleSubscriptions = [
+    vscode.tasks.onDidStartTask(event => taskEvidence.event("task-start", event.execution)),
+    vscode.tasks.onDidStartTaskProcess(event => taskEvidence.event("process-start", event.execution, { processId: event.processId })),
+    vscode.tasks.onDidEndTask(event => taskEvidence.event("task-end", event.execution))
+  ];
   try {
     assert.equal(vscode.workspace.isTrusted, true);
     const extension = vscode.extensions.getExtension("exec-software.ny-language-support");
@@ -275,8 +286,16 @@ exports.run = async function run() {
       await eventually(() => events.length > start, "rejected compiler task");
       assert.equal(events[start].task, "compile");
       assert.notEqual(events[start].exitCode, 0);
-      const diagnostics = await eventually(() => {
-        const items = vscode.languages.getDiagnostics(invalid.uri).filter((item) => item.source === "nilcompiler");
+      const diagnostics = await eventually(async () => {
+        // Compiler diagnostics use physical source paths. On macOS /tmp and
+        // /private/tmp identify the same file but have different URI spellings.
+        // Require the correct file identity and compiler source in Problems.
+        const items = [];
+        for (const [uri, entries] of vscode.languages.getDiagnostics()) {
+          if (uri.scheme === "file" && await sameFile(uri.fsPath, invalid.uri.fsPath)) {
+            items.push(...entries.filter((item) => item.source === "nilcompiler"));
+          }
+        }
         return items.length && items;
       }, "Matrix compiler problem matcher");
       assert.ok(diagnostics.some((item) => item.range.start.line === 2 && /Type mismatch/.test(item.message)));
@@ -370,15 +389,22 @@ exports.run = async function run() {
     for (const module of ["analyzer-checks", "project-checks", "workspace-checks", "semantic-checks", "completion-checks",
       "member-signature-checks", "language-values-checks", "memory-profile-checks", "niltest-checks"])
       await runModule(module);
+    report.fullSuiteCompleted = true;
     report.status = "PASS";
   } catch (error) {
     report.status = "FAIL";
     report.error = error.stack || String(error);
+    try {
+      const directory = path.join(path.dirname(reportFile), `${runId}-task-diagnostics`);
+      await fs.mkdir(directory, { recursive: true });
+      await taskEvidence.failure(report.error, vscode.tasks.taskExecutions, workspace, directory);
+    } catch (diagnosticError) { report.taskDiagnosticError = String(diagnosticError); }
     report.diagnostics = vscode.languages.getDiagnostics().map(([uri, items]) => ({ uri: uri.toString(),
       items: items.map(item => ({ source: item.source, message: item.message, line: item.range.start.line })) }));
     throw error;
   } finally {
     taskSubscription.dispose();
+    lifecycleSubscriptions.forEach(subscription => subscription.dispose());
     terminalSubscription?.dispose();
     await fs.writeFile(reportFile, JSON.stringify(report, null, 2) + "\n");
   }

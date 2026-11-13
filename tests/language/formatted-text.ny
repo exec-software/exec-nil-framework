@@ -28,5 +28,22 @@ fn main() -> i32
     println(render(1.25))
     println(render("text"))
     println("legacy={value}")
+
+    # A multiline formatted block: the common indentation is removed, deeper
+    # indentation is kept, nothing is escaped, and every hole is an ordinary
+    # expression evaluated once in written order.
+    let who = "world"
+    println($"""
+        hello {who} and {items[0]}
+          kept indentation, C:\raw\path and a "quote"
+        {{literal braces}} plus {next()}:{next()}
+    """)
+    println(tally)
+    let empty = $"""
+    """
+    println(empty.len())
+    println($"""
+        nested {$"inner {items[1]}"} done
+    """)
     return 0
 end fn

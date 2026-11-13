@@ -89,3 +89,68 @@ draws, and extreme floating ranges. The negative contract runner exercises
 inverted and nonfinite bounds for both frontends and both APIs. Route checks
 cover textual/binary NIL, bundles, LLVM JIT and AOT; installed consumers also
 exercise source and binary-library imports and both assembler/linker pipelines.
+
+---
+
+# Secure random values
+
+Import `nil.std.security.random`. These are a different thing from the
+generators above and the distinction is the whole point: MINSTD is
+deterministic and seeded at a known value, so it is the right generator for a
+simulation, a shuffle or a jittered retry, and the wrong one for anything a
+user holds.
+
+A session identifier, a CSRF token, a password-reset link and a nonce are all
+bearer credentials. One drawn from MINSTD is one anyone can compute: two draws
+reveal the stream.
+
+| Ny API | Behavior |
+| --- | --- |
+| `random_hex(byte_count: i64) -> Result<text, text>` | Random bytes as lower-case hex, two characters per byte. |
+| `random_bytes(byte_count: i64) -> Result<text, text>` | Random bytes as they are, carried as text. |
+| `random_below(bound: i64) -> Result<i64, text>` | A uniform whole number in `[0, bound)`. |
+
+Interpreter-backed. The native route does not carry these yet.
+
+`random_hex` is the one to reach for. A credential wants to be text anyway, and
+hex survives a cookie, a URL, a header and a log line with no further escaping;
+it is also the form Matrix can use, because a Matrix page cannot index an Ny
+byte array. Sixteen bytes — thirty-two characters — is a reasonable session
+identifier.
+
+`random_bytes` returns arbitrary bytes carried in a text value. It is not valid
+UTF-8 in general, so read it with `nil.std.text`'s `byte_at`, never with
+`substring` or a character count.
+
+`random_below` uses rejection sampling rather than a remainder. Taking a draw
+modulo the bound skews towards the low values whenever the bound does not
+divide the range evenly — a bias small enough never to be noticed and large
+enough to matter to anything that was counting on uniformity.
+
+These use the operating system: `getrandom(2)` on Linux with `/dev/urandom`
+fallback, `getentropy` on macOS, and `BCryptGenRandom` with the system-preferred
+generator on Windows. The Windows implementation resolves the OS copy of
+`bcrypt.dll` explicitly. There is no
+userspace pool, no seeding and no state. There is also no fallback to a weak
+source — if the kernel cannot provide entropy the answer is an error, because
+quietly returning something guessable is how this goes wrong in a way nobody
+notices until it matters.
+
+A single draw is limited to 1024 bytes. A key is 32 and a generous token is 64;
+asking for a megabyte is a program that wants a stream cipher seeded from here
+instead.
+
+```matrix
+read nil.std.core
+read nil.std.security.random
+
+new-session-id returns text begin paragraph
+    value drawn is nil.std.security::random_hex with byte_count being 16
+    consider drawn
+        when Result.Ok holding token then give token
+        !!! No fallback. A predictable identifier is worse than no session.
+        when Result.Error holding why then raise entropy-unavailable with reason being why
+        otherwise raise entropy-unavailable with reason being "no entropy"
+    end consider
+end paragraph
+```

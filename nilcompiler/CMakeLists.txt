@@ -45,8 +45,8 @@ set(NILCOMPILER_CORE_SOURCES
     src/executable_context.cpp
 )
 
-# One desktop provider per platform: GTK is the Linux (and macOS) provider,
-# Win32 is the Windows provider. Both implement the same ui.v1 contract and
+# One desktop provider per platform: GTK on Linux, Win32 on Windows, and
+# AppKit on macOS. All implement the same ui.v1 contract and
 # share its toolkit-independent half through src/ui_runtime_shared.hpp, so
 # exactly one of them is ever compiled into the runtime.
 if(WIN32)
@@ -210,6 +210,11 @@ if(NILCOMPILER_POSTGRESQL_INCLUDE_DIR)
 endif()
 
 add_executable(nilcompiler src/main.cpp)
+if(APPLE)
+    target_sources(nilcompiler PRIVATE src/compiler_module_fingerprint_darwin.cpp)
+    set_source_files_properties(src/compiler_module_fingerprint_darwin.cpp PROPERTIES
+        COMPILE_OPTIONS "-fblocks")
+endif()
 if(WIN32)
     target_sources(nilcompiler PRIVATE ../nillinker/process_runner.cpp)
     target_link_libraries(nilcompiler PRIVATE advapi32)

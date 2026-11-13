@@ -122,6 +122,8 @@ def link_and_run(
     if sys.platform.startswith("linux"):
         command.append("-no-pie")
     command.extend(["-o", str(executable), str(object_path), str(runtime)])
+    if sys.platform == "darwin":
+        command.extend(["-framework", "Cocoa", "-framework", "CoreGraphics"])
     linked = run(command, cwd)
     if linked.returncode != 0:
         raise AssertionError(

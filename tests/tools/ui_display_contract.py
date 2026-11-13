@@ -7,6 +7,7 @@ import argparse
 from contextlib import contextmanager
 import ctypes as c
 import ctypes.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -229,20 +230,153 @@ class X11Input:
         assert not unexpected, ('unexpected X11 protocol error', unexpected)
 
 
-def checked(command, env, timeout=180):
+def checked(command, env, timeout=180, capture_prefix=None):
     process = subprocess.Popen(list(map(str, command)), env=env, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True, start_new_session=True)
+    output, errors = '', ''
+    def partial(value):
+        return value.decode('utf-8', errors='replace') if isinstance(value, bytes) else value or ''
     try:
-        output, errors = process.communicate(timeout=timeout)
+        try:
+            output, errors = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as expired:
+            # communicate() can expose bytes even in text mode. Keep the raw
+            # partial streams before cancellation, then drain the owned child
+            # once more so its cancellation diagnostics are preserved as well.
+            output, errors = partial(expired.output), partial(expired.stderr)
+            terminate(process)
+            try:
+                output, errors = process.communicate(timeout=3)
+            except subprocess.TimeoutExpired as draining:
+                output = partial(draining.output) or output
+                errors = partial(draining.stderr) or errors
+            raise
         assert process.returncode == 0, (command, process.returncode, output, errors)
-        return subprocess.CompletedProcess(command, process.returncode, output, errors)
+        result = subprocess.CompletedProcess(command, process.returncode, output, errors)
+        result.pid = process.pid
+        return result
     finally:
-        # Give niltest time to forward cancellation to its separately grouped
-        # compiler/test children before killing the harness session.
-        terminate(process)
-        if process.stdout: process.stdout.close()
-        if process.stderr: process.stderr.close()
+        try:
+            if capture_prefix is not None:
+                Path(str(capture_prefix) + '.stdout').write_text(output, encoding='utf-8')
+                Path(str(capture_prefix) + '.stderr').write_text(errors, encoding='utf-8')
+        finally:
+            # Give niltest time to forward cancellation to its separately grouped
+            # compiler/test children before killing the harness session.
+            terminate(process)
+            if process.stdout: process.stdout.close()
+            if process.stderr: process.stderr.close()
+
+
+def validate_desktop_report(report, llvm):
+    names = {'widgets_layout_and_model_binding', 'window_ownership_and_size_errors',
+             'dynamic_subtrees_and_effective_state'}
+    routes = {'vm', 'native'} if llvm == 'ON' else {'vm'}
+    expected = {(name, 'nil.std.ui.gtk.desktop', route) for name in names for route in routes}
+    tests = report['tests']
+    assert report['schema'] == 'nil.test.results.v1' and not report['errors'], report
+    assert len(tests) == len(expected), report
+    assert {(test['name'], test['suite'], test['route']) for test in tests} == expected, report
+    assert all(test['status'] == 'passed' and test['exitCode'] == 77 and
+               not test['signal'] and not test['timedOut'] and not test['cancelled']
+               for test in tests), report
+
+
+def appkit_interaction_environment(environment, driver, directory, token, route, compiler):
+    """Explicit fixture injection; ordinary display/build commands keep their env."""
+    assert driver.is_absolute() and driver.is_file(), driver
+    assert compiler.is_absolute() and compiler.is_file(), compiler
+    assert directory.is_absolute() and directory.is_dir(), directory
+    assert len(token) == 32 and all(byte in '0123456789abcdef' for byte in token), token
+    assert route in ('vm', 'native'), route
+    assert not environment.get('DYLD_INSERT_LIBRARIES'), 'AppKit input fixture cannot compose ambient injection'
+    assert not any(key.startswith('NIL_TEST_APPKIT_INPUT_') for key in environment), 'AppKit fixture declaration already present'
+    # The same-architecture test compiler adapter validates this declaration,
+    # then removes it before exec'ing the real compiler. niltest and its actual
+    # application children keep the input driver; system tools never load it.
+    return dict(environment, DYLD_INSERT_LIBRARIES=str(driver),
+                NIL_TEST_APPKIT_INPUT_TOKEN=token, NIL_TEST_APPKIT_INPUT_DIRECTORY=str(directory),
+                NIL_TEST_APPKIT_INPUT_ROUTE=route, NIL_TEST_APPKIT_INPUT_DRIVER=str(driver),
+                NIL_TEST_APPKIT_INPUT_COMPILER=str(compiler))
+
+
+def validate_appkit_interaction(report, route, directory, token, parent_pid):
+    expected = {'keyboard_events': (3, 8), 'close_request': (1, 0)}
+    assert report['schema'] == 'nil.test.results.v1' and not report['errors'], report
+    tests = report['tests']
+    assert len(tests) == len(expected), report
+    assert {(test['name'], test['suite'], test['route']) for test in tests} == {
+        (name, 'nil.std.ui.gtk.interaction', route) for name in expected}, report
+    pids, paths, records = set(), set(), []
+    for test in tests:
+        assert test['status'] == 'passed' and test['exitCode'] == 77 and not (
+            test['signal'] or test['timedOut'] or test['cancelled']), test
+        markers = [line.removeprefix('NIL_APPKIT_INPUT ') for line in test['stderr'].splitlines()
+                   if line.startswith('NIL_APPKIT_INPUT ')]
+        assert len(markers) == 1 and len(markers[0]) <= 8192, test
+        record = json.loads(markers[0])
+        pid = record['pid']
+        assert type(pid) is int and 0 < pid <= 0x7fffffff and pid != parent_pid and pid not in pids, record
+        assert all(type(record[field]) is int for field in ('parentPid', 'stage', 'keys')), record
+        assert (record['schema'], record['token'], record['route'], record['test'], record['parentPid'],
+                record['status'], record['stage'], record['keys']) == (
+            'nil.appkit.input.v1', token, route, test['name'], parent_pid,
+            'passed', *expected[test['name']]), record
+        assert record['scope'] == 'owned-process AppKit responder input; no Accessibility or global input', record
+        path = directory / f'{token}-{pid}.json'
+        assert path.is_file() and not path.is_symlink() and path.stat().st_size <= 8192, path
+        assert json.loads(path.read_text(encoding='utf-8')) == record, (path, record)
+        pids.add(pid); paths.add(path); records.append(record)
+    assert set(directory.iterdir()) == paths, ('unexpected/missing input evidence', directory)
+    return records
+
+
+def run_appkit_interaction(args, base, environment):
+    assert args.interaction_source and args.appkit_input_driver and args.appkit_compile_driver, 'macOS interaction qualification requires its input and compiler fixtures'
+    driver = args.appkit_input_driver.resolve(strict=True)
+    compile_driver = args.appkit_compile_driver.resolve(strict=True)
+    compiler = args.compiler.resolve(strict=True)
+    assert compile_driver.is_file() and compiler.is_file(), (compile_driver, compiler)
+    command_base = list(base)
+    compiler_slot = command_base.index('--compiler') + 1
+    assert Path(command_base[compiler_slot]).resolve() == compiler, 'niltest real compiler must match the explicit fixture declaration'
+    command_base[compiler_slot] = compile_driver
+    source = args.interaction_source.resolve(strict=True)
+    parent = args.appkit_evidence_directory
+    if parent:
+        parent.mkdir(parents=True, exist_ok=True)
+    root = Path(tempfile.mkdtemp(prefix='nil-appkit-input-', dir=parent)).resolve()
+    summary = {'schema': 'nil.appkit.interaction.v1', 'status': 'running', 'routes': [],
+               'inputDriver': str(driver), 'inputDriverSha256': hashlib.sha256(driver.read_bytes()).hexdigest(),
+               'compileDriver': str(compile_driver), 'compileDriverSha256': hashlib.sha256(compile_driver.read_bytes()).hexdigest(),
+               'compiler': str(compiler),
+               'source': str(source), 'sourceSha256': hashlib.sha256(source.read_bytes()).hexdigest(),
+               'scope': 'in-process AppKit responder input; test compiler adapter removes fixture injection before compilation; not default-cache proof',
+               'crossProcessAccessibility': 'not exercised', 'evidenceDirectory': str(root)}
+    print(f'AppKit interaction evidence: {root}', flush=True)
+    try:
+        for route in (['vm', 'native'] if args.llvm == 'ON' else ['vm']):
+            directory = root / route
+            directory.mkdir(mode=0o700)
+            token = secrets.token_hex(16)
+            env = appkit_interaction_environment(environment, driver, directory, token, route, compiler)
+            command = [*command_base, '--target', route, '--filter', 'nil.std.ui.gtk.interaction', source]
+            result = checked(command, env, timeout=120, capture_prefix=root / route)
+            report = json.loads(result.stdout)
+            print(json.dumps(report, indent=2), flush=True)
+            records = validate_appkit_interaction(report, route, directory, token, result.pid)
+            summary['routes'].append({'route': route, 'parentPid': result.pid,
+                                      'naturalCompletion': True, 'languageCases': len(report['tests']),
+                                      'inputs': records})
+        summary['status'] = 'passed'
+        return sum(route['languageCases'] for route in summary['routes'])
+    except BaseException as error:
+        summary.update(status='failed', error=str(error))
+        raise
+    finally:
+        (root / 'report.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
+        print(json.dumps(summary, indent=2), flush=True)
 
 
 def darwin(args):
@@ -269,16 +403,14 @@ def darwin(args):
     desktop = checked([*base, '--target', 'all' if args.llvm == 'ON' else 'vm',
                        '--filter', 'nil.std.ui.gtk.desktop', args.source.resolve()], env)
     report = json.loads(desktop.stdout)
-    assert report['tests'] and not report['errors'], report
-    assert all(test['status'] == 'passed' for test in report['tests']), report
-    # The interaction suite is deliberately not run here. It needs keystrokes
-    # delivered to another process, and on macOS posting events to a different
-    # process requires accessibility trust that a hosted runner does not grant.
-    # Real input is covered in-process instead, by the provider fixture's own
-    # input probe, so this is a limit of cross-process injection rather than of
-    # the provider. Saying so beats quietly reporting a narrower contract.
-    print(f'macOS desktop contract passed: {len(report["tests"])} language cases, '
-          'interaction suite not covered (cross-process input needs accessibility trust)')
+    # Preserve each route's actual results in CTest's retained output, and reject
+    # missing, duplicated or skipped cases rather than accepting any green subset.
+    print(json.dumps(report, indent=2), flush=True)
+    validate_desktop_report(report, args.llvm)
+    interaction_cases = run_appkit_interaction(args, base, env)
+    print(f'macOS desktop contract passed: {len(report["tests"])} desktop + '
+          f'{interaction_cases} interaction language cases; in-process AppKit input, '
+          'cross-process Accessibility not exercised')
     return 0
 
 
@@ -294,6 +426,9 @@ def main():
     parser.add_argument('--interaction-source', type=Path)
     parser.add_argument('--provider-test', type=Path)
     parser.add_argument('--lifecycle-test', type=Path)
+    parser.add_argument('--appkit-input-driver', type=Path)
+    parser.add_argument('--appkit-compile-driver', type=Path)
+    parser.add_argument('--appkit-evidence-directory', type=Path)
     parser.add_argument('--llvm', choices=('ON', 'OFF'), default='OFF')
     args = parser.parse_args()
     if sys.platform == 'darwin':

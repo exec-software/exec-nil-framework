@@ -284,6 +284,7 @@ private:
   ny::ast_expr_ptr parse_postfix();
   ny::ast_expr_ptr parse_primary();
   ny::ast_expr_ptr parse_query_expression();
+  ny::ast_expr_ptr parse_markup_expression();
   ny::ast_expr_ptr parse_when_expression();
   ny::ast_expr_ptr parse_consider_expression();
   ny::ast_expr_ptr parse_build();

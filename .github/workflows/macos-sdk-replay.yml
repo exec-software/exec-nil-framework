@@ -1,4 +1,4 @@
-name: macOS installed debugger replay
+name: macOS installed SDK replay
 
 "on":
   workflow_dispatch:
@@ -16,6 +16,10 @@ name: macOS installed debugger replay
         type: choice
         options: [both, x86_64, arm64]
         default: both
+      desktop:
+        description: Also accept installed nilstd/nillib UI, desktop DAP and the complete pinned editor
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,9 +33,9 @@ concurrency:
 # This never rebuilds, activates, publishes or release-qualifies an SDK.
 jobs:
   replay:
-    name: macOS ${{ matrix.host.arch }} installed debugger
+    name: macOS ${{ matrix.host.arch }} installed SDK acceptance
     runs-on: ${{ matrix.host.runner }}
-    timeout-minutes: 60
+    timeout-minutes: ${{ inputs.desktop && 115 || 60 }}
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -58,6 +62,60 @@ jobs:
           set -o pipefail
           python3 -B scripts/ci/test_macos_sdk_replay.py -v 2>&1 | tee build/macos-replay-evidence/replay-controls.log
           python3 -B scripts/ci/test_macos_debugger.py -v 2>&1 | tee build/macos-replay-evidence/debugger-controls.log
+          python3 -B scripts/ci/test_macos_desktop.py -v 2>&1 | tee build/macos-replay-evidence/desktop-controls.log
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: inputs.desktop
+        with:
+          node-version: '22'
+      - name: Build only the three test-only desktop helpers
+        if: inputs.desktop
+        timeout-minutes: 5
+        run: |
+          set -o pipefail
+          cmake -S . -B build/desktop-helpers -DCMAKE_BUILD_TYPE=Release -DNIL_ENABLE_LLVM=OFF -DBUILD_TESTING=ON \
+            2>&1 | tee build/macos-replay-evidence/helpers-configure.log
+          cmake --build build/desktop-helpers --parallel 2 --target \
+            nil_ui_appkit_input_driver nil_ui_appkit_compile_driver nil_vscode_host_runner \
+            2>&1 | tee build/macos-replay-evidence/helpers-build.log
+          cp build/desktop-helpers/CMakeCache.txt build/macos-replay-evidence/helpers-CMakeCache.txt
+      - name: Prepare pinned VS Code for installed SDK acceptance
+        if: inputs.desktop
+        timeout-minutes: 5
+        run: |
+          mkdir -p build/editor-download
+          if [[ "$NIL_CI_ARCH" == arm64 ]]; then
+            export NIL_EDITOR_ARCHIVE=VSCode-darwin-arm64.zip
+            export NIL_EDITOR_SHA256=6e8d27ee0c5a8f2aa3c43e373407eecd11c270c3fe7f46100ef682aac14bb648
+          else
+            export NIL_EDITOR_ARCHIVE=VSCode-darwin.zip
+            export NIL_EDITOR_SHA256=74b1deef1e33cc144d913d60c0e98cef6b1e29c1f2993d905c3b58576fa12202
+          fi
+          curl --fail --location --max-time 120 --max-filesize 800000000 \
+            --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 180 \
+            "https://vscode.download.prss.microsoft.com/dbazure/download/stable/69047191fc427f2f92828279aae1d90d8eeda7ab/$NIL_EDITOR_ARCHIVE" \
+            -o build/editor-download/editor.zip
+          python3 -B - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          archive = Path('build/editor-download/editor.zip')
+          digest = hashlib.sha256()
+          with archive.open('rb') as stream:
+              while block := stream.read(1024**2): digest.update(block)
+          assert digest.hexdigest() == os.environ['NIL_EDITOR_SHA256']
+          Path('build/macos-replay-evidence/editor.json').write_text(json.dumps(dict(
+              version='1.146.0', revision='69047191fc427f2f92828279aae1d90d8eeda7ab',
+              archive=os.environ['NIL_EDITOR_ARCHIVE'], sha256=digest.hexdigest(), bytes=archive.stat().st_size), indent=2)+'\n')
+          PY
+          ditto -x -k build/editor-download/editor.zip build/editor-download
+      - name: Build and check current fixture extension
+        if: inputs.desktop
+        timeout-minutes: 5
+        working-directory: vscode
+        run: |
+          set -o pipefail
+          npm ci 2>&1 | tee ../build/macos-replay-evidence/extension-install.log
+          npm test 2>&1 | tee ../build/macos-replay-evidence/extension-controls.log
+          npm run build 2>&1 | tee ../build/macos-replay-evidence/extension-build.log
       - name: Retrieve exact SDK artifact and authenticated metadata
         timeout-minutes: 7
         env:
@@ -121,15 +179,33 @@ jobs:
           (evidence / 'transport.json').write_text(json.dumps({'bytes': archive.stat().st_size,
               'sha256': digest.hexdigest(), 'artifact_id': artifact['id'], 'source_run': int(source_run)}, indent=2) + '\n')
           PY
-      - name: Replay sealed installed debugger and execution checkpoints
-        timeout-minutes: 37
+      - name: Replay sealed installed SDK acceptance
+        timeout-minutes: ${{ inputs.desktop && 79 || 37 }}
+        env:
+          NIL_REPLAY_DESKTOP: ${{ inputs.desktop }}
         run: |
           set -o pipefail
+          desktop_args=()
+          if [[ "$NIL_REPLAY_DESKTOP" == true ]]; then
+            editor="$(python3 -B - <<'PY'
+          import plistlib
+          from pathlib import Path
+          app = Path('build/editor-download/Visual Studio Code.app/Contents').resolve(strict=True)
+          with (app / 'Info.plist').open('rb') as stream: name = plistlib.load(stream)['CFBundleExecutable']
+          assert name and Path(name).name == name
+          executable = app / 'MacOS' / name
+          assert executable.is_file()
+          print(executable)
+          PY
+            )"
+            desktop_args=(--desktop --desktop-helpers "$GITHUB_WORKSPACE/build/desktop-helpers"
+              --editor "$editor" --node "$(command -v node)")
+          fi
           python3 -B scripts/ci/macos-sdk-replay.py \
             --artifact-zip "$GITHUB_WORKSPACE/build/macos-replay-evidence/source-artifact.zip" \
             --artifact-metadata "$GITHUB_WORKSPACE/build/macos-replay-evidence/artifact-metadata.json" \
             --sdk-revision "$NIL_SDK_REVISION" --helper-revision "$GITHUB_SHA" --architecture "$NIL_CI_ARCH" \
-            --work-dir "$RUNNER_TEMP/nil-sdk-replay" \
+            --work-dir "$RUNNER_TEMP/nil-sdk-replay" "${desktop_args[@]}" \
             --output "$GITHUB_WORKSPACE/build/macos-replay-evidence/replay" \
             2>&1 | tee build/macos-replay-evidence/replay.log
       - name: Seal complete or partial replay evidence

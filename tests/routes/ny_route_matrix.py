@@ -26,6 +26,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from runtime_provider_environment import provider_environments
+
 
 EXECUTION_ROUTES: Tuple[str, ...] = (
     "text-interpreter",
@@ -1341,11 +1344,18 @@ def run_route(
     max_output_chars: int,
 ) -> Dict[str, Any]:
     route_dir.mkdir(parents=True, exist_ok=False)
+    env, runtime_env, declared_provider = provider_environments(env)
     result = new_route_result(route, route_dir)
     checks: List[Dict[str, Any]] = result["checks"]
 
     def record_command(name: str, process: CommandResult) -> None:
         result["commands"][name] = process.as_dict(max_output_chars)
+        if declared_provider is not None:
+            result["commands"][name]["runtime_loader"] = {
+                "dyld_fallback_library_path": None if name == "compile" else declared_provider,
+                "role": "build" if name == "compile" else
+                        "combined JIT compilation/execution" if name == "compile_and_run" else "execution",
+            }
 
     if route in ("text-interpreter", "binary-interpreter"):
         binary = route == "binary-interpreter"
@@ -1385,7 +1395,7 @@ def run_route(
                 ],
                 route_dir,
                 timeout_seconds,
-                env,
+                runtime_env,
             )
             record_command("run", run_process)
             check_process_contract(
@@ -1427,7 +1437,7 @@ def run_route(
         )
         if compile_process.exit_code == 0 and artifact["valid"]:
             run_process = run_command(
-                [str(output)], route_dir, timeout_seconds, env
+                [str(output)], route_dir, timeout_seconds, runtime_env
             )
             record_command("run", run_process)
             check_process_contract(
@@ -1455,7 +1465,7 @@ def run_route(
             jit_command,
             route_dir,
             timeout_seconds,
-            env,
+            runtime_env,
         )
         record_command("compile_and_run", jit_process)
         if llvm_is_unavailable(jit_process):
@@ -1544,7 +1554,7 @@ def run_route(
                 [str(expected_executable), *program_args],
                 route_dir,
                 timeout_seconds,
-                env,
+                runtime_env,
             )
             record_command("run", run_process)
             check_process_contract(
@@ -1592,7 +1602,7 @@ def run_route(
 
     elif route == "interpreter-reject":
         run_process = run_command(
-            [str(interpreter), str(source)], route_dir, timeout_seconds, env
+            [str(interpreter), str(source)], route_dir, timeout_seconds, runtime_env
         )
         record_command("run", run_process)
         check_process_contract(

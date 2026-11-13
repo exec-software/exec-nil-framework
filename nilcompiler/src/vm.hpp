@@ -312,6 +312,7 @@ class VM {
   struct CheckpointState;
 public:
   VM();
+  ~VM() noexcept;
   void loadProgram(const std::vector<Instruction> &program,
                    const std::unordered_map<std::string, Value> &constants);
   void execute(bool reset = true);
@@ -611,6 +612,47 @@ private:
   };
   std::unordered_map<int64_t, FileHandle> file_handles_;
   int64_t next_file_handle_ = 1;
+
+  // Sockets follow the same rule as streams: a NIL program is given a token,
+  // never a host descriptor, so it cannot read from or close something it was
+  // not handed -- including a descriptor the host opened for its own purposes.
+  // `listening` is kept so that accepting on a connection, or reading from a
+  // listener, is an error with a sentence in it rather than an EINVAL.
+  struct SocketHandle {
+#ifdef _WIN32
+    std::uintptr_t descriptor = ~std::uintptr_t{0};
+#else
+    int descriptor = -1;
+#endif
+    bool listening = false;
+  };
+  std::unordered_map<int64_t, SocketHandle> socket_handles_;
+  int64_t next_socket_handle_ = 1;
+
+  // The event loop's watch set and the result of its last wait.
+  //
+  // Held by the runtime rather than passed in per call, so no array has to
+  // cross the intrinsic boundary -- which matters because a Matrix page cannot
+  // index an Ny generic, and an event loop that could only be written in Ny
+  // would be an event loop half the language cannot use.
+  //
+  // `ready_cursor_` walks ready_ once. A program drains it with repeated calls
+  // and gets zero when it is empty, which is the same shape as reading a
+  // stream to its end and needs no second concept.
+  std::vector<int64_t> watch_order_;
+  std::unordered_map<int64_t, int64_t> watch_wanted_;
+  std::vector<std::pair<int64_t, int64_t>> ready_;
+  std::size_t ready_cursor_ = 0;
+
+  // The bytes from the last net.receive. Held here because a non-blocking
+  // read has three outcomes -- bytes, a closed peer, or nothing yet -- and a
+  // single Result<text, text> has room for two. net.receive reports which
+  // happened and net.received hands the bytes over.
+  std::string last_received_;
+
+  // Closes every socket a run still holds. A program that exits without
+  // closing its listener must not leave the port bound against the next one.
+  void closeOpenSockets() noexcept;
 
   // Type size helper (simplified - all types are 8 bytes for now)
   size_t get_type_size(const std::string &type_name) const {

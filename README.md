@@ -75,7 +75,10 @@ The framework includes:
   typed faults, and bounded parallel execution.
 - **Shared language features.** Structural tuples provide typed multiple
   results and local destructuring. Explicit string interpolation supports
-  expressions with consistent scalar formatting across execution routes.
+  expressions with consistent scalar formatting across execution routes, including
+  multiline blocks. [Structured markup](docs/standard-library/markup.md) keeps
+  generated HTML and its conditionals in one checked document, with context-specific
+  escaping and document composition in both Ny and Matrix.
   [Collected queries](docs/standard-library/queries.md) compose filtering, stable
   ordering and projection. [Text patterns](docs/standard-library/text-patterns.md)
   offer readable declarations, bounded regex matching with named captures,
@@ -108,10 +111,11 @@ The framework includes:
   [testing guide](docs/tools/testing.md).
 - **Desktop applications.** The Matrix-authored
   [`nil.std.ui`](docs/standard-library/ui.md) provides windows, layout containers,
-  standard controls, typed events, and explicit model synchronization. Its GTK 4
-  provider supports VM and native execution on Linux and Windows development
-  builds. GTK is an external runtime dependency; Windows requires an interactive,
-  visible desktop. This does not extend Windows release qualification.
+  standard controls, typed events, and explicit model synchronization. VM and
+  native desktop checks pass with GTK4 on Linux, Win32 on Windows and AppKit on
+  Intel and Apple Silicon macOS. Linux requires an external GTK4 runtime;
+  desktop tests require an interactive session. Installed SDK and release
+  qualification remain separate from these development checks.
 - **Aperture runtime diagnostics.** Memory profiles record runtime allocations,
   frees, retained storage, peaks and source locations for VM and native programs.
   Saved JSON reports support inspection and automated analysis. See
@@ -245,23 +249,30 @@ such as `say formatted "value={5}"`; it works on interpreted and native routes.
 
 ## Project status
 
-The current version is **1.0.0-rc.1**. Linux x86_64 is the reference development
-platform. The Windows x86_64 development SDK has
-[paired Linux acceptance and installed tooling coverage](notebook/2026-11-02-windows-port.md).
-Intel and Apple Silicon macOS have passing native build baselines with LLVM
-enabled and disabled, real interpreter/checkpoint execution, and representative
-LLVM JIT/AOT execution. Both macOS architectures also pass bounded native inline
-assembly and executable-context embedding, inspection and dead-strip retention
-checks. Both macOS development SDKs also pass the full installed
-standard-library campaign, isolated PostgreSQL application routes, installed
-debugger checks and execution checkpoints. Both hosts now pass the underlying
-AppKit window/event checks, including directed keyboard input and native closure
-of a verified child window. The GTK port and desktop acceptance remain in progress.
-Incremental reuse and native memory-limit tests also remain open, so full platform
-parity is not yet established.
-The [platform support matrix](docs/platform-support.md) separates verified
-development behavior from remaining SDK, provider and release work.
-Windows and macOS release qualification remains pending. The
+The current version is **1.0.0-rc.1**. Development coverage spans Linux x86_64,
+Windows x86_64, Intel macOS and Apple Silicon macOS. Relocated development SDKs
+on all four hosts pass 1,184 installed standard-library routes, twelve PostgreSQL
+source/binary routes, 146 debugger checks and same-process execution checkpoints.
+Linux's current SDK also passes all 590 source tests, twenty installed GTK
+desktop/input cases and all 88 real VS Code host groups without exclusions.
+
+Windows uses Win32 and macOS uses AppKit. Windows and both Mac architectures
+also pass twenty installed desktop/input cases, four desktop debugger sessions
+and all 88 editor groups. Both Macs pass the expanded application campaign and
+native incremental reuse. An earlier Intel installed-editor timeout passed a
+diagnostic rerun within the unchanged deadline; its cause remains unconfirmed
+and the failed report is retained. A separate Windows account exposed a
+packaged-library permission defect; the correction passes real cross-account
+access tests.
+
+The newer socket, entropy and text-byte APIs pass the same interpreter contracts
+on every host; these APIs currently require the interpreter on all platforms.
+File timestamps also pass textual/binary NIL, LLVM JIT and AOT checks everywhere.
+The [platform support matrix](docs/platform-support.md) records exact SDK/source
+revisions, retained failures and remaining deployment boundaries.
+
+These are development results. Windows and macOS release qualification remains
+pending. The
 [release profile](docs/release/v1-profile.md) defines supported configurations
 and release requirements. Known limitations and planned improvements are
 tracked in the [development findings](matrix/docs/next-version-findings.md).

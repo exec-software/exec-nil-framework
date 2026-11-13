@@ -17,9 +17,11 @@
 // and this file owns the layout pass, exactly as the Win32 provider does.
 #include "ui_runtime.hpp"
 #include "ui_runtime_shared.hpp"
+#include "ui_layout.hpp"
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <deque>
 #include <map>
 #include <mutex>
@@ -53,8 +55,15 @@ bool from_ns(NSString *value, std::string &out) {
   if (!value) { out.clear(); return true; }
   const char *bytes = [value UTF8String];
   if (!bytes) return false;
-  out.assign(bytes);
+  // NSString may contain U+0000. Preserve its bytes so valid_text rejects it
+  // instead of accepting the prefix before the first NUL.
+  out.assign(bytes, [value lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);
   return true;
+}
+
+bool valid_entry(NSString *value) {
+  std::string text;
+  return from_ns(value, text) && valid_text(text) && entry_text_fits(text);
 }
 
 // A window server session is required before any window is created, so the
@@ -81,12 +90,34 @@ Platform &platform() { static Platform *value = new Platform; return *value; }
 - (BOOL)isFlipped { return YES; }
 @end
 
+// Validate edits before the field editor commits them, including paste and
+// replacements in the middle of a string. NSString.length counts UTF-16 code
+// units; the common validator counts the contract's Unicode scalar values.
+@interface NyUiEntryFormatter : NSFormatter
+@end
+@implementation NyUiEntryFormatter
+- (NSString *)stringForObjectValue:(id)object {
+  return [object isKindOfClass:[NSString class]] ? object : nil;
+}
+- (BOOL)getObjectValue:(id *)object forString:(NSString *)string errorDescription:(NSString **)error {
+  if (!ny::ui::valid_entry(string)) return NO;
+  if (object) *object = string;
+  return YES;
+}
+- (BOOL)isPartialStringValid:(NSString **)string proposedSelectedRange:(NSRangePointer)selection
+              originalString:(NSString *)original originalSelectedRange:(NSRange)originalSelection
+            errorDescription:(NSString **)error {
+  return string && ny::ui::valid_entry(*string);
+}
+@end
+
 // The delivery block is built inside Context::Impl, which is private to
 // Context; a block carries that access, where naming the type here could not.
 typedef void (^NyUiDeliver)(id sender, long long kind);
 
 @interface NyUiTarget : NSObject <NSWindowDelegate, NSTextFieldDelegate>
 @property(nonatomic, copy) NyUiDeliver deliver;
+@property(nonatomic, copy) void (^relayout)(NSWindow *);
 - (void)buttonAction:(id)sender;
 - (void)checkAction:(id)sender;
 @end
@@ -101,6 +132,9 @@ typedef void (^NyUiDeliver)(id sender, long long kind);
   if (self.deliver) self.deliver(sender, 4);
   // Matrix decides when to close; AppKit must not destroy a live handle.
   return NO;
+}
+- (void)windowDidResize:(NSNotification *)notification {
+  if (self.relayout) self.relayout(notification.object);
 }
 @end
 
@@ -122,7 +156,6 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
   std::thread::id owner = std::this_thread::get_id();
   std::map<std::int64_t, Node> nodes;
   std::map<void *, std::int64_t> handles;      // view or window -> handle
-  std::map<std::int64_t, std::int64_t> focus_targets;
   std::deque<Event> events;
   std::map<std::int64_t, Event> snapshots;
   std::size_t event_bytes = 0, snapshot_bytes = 0, text_bytes = 0;
@@ -200,6 +233,34 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
     }
     return true;
   }
+  NSView *focused_view(std::int64_t window) {
+    const auto *top = find(window);
+    if (!top || !top->window_object) return nil;
+    NSResponder *responder = top->window_object.firstResponder;
+    if (!responder) return nil;
+    // AppKit temporarily focuses the shared field editor, not NSTextField.
+    for (const auto &[id, candidate] : nodes) {
+      (void)id;
+      if (candidate.window == window && candidate.kind == Kind::entry &&
+          [(NSTextField *)candidate.view currentEditor] == responder) return candidate.view;
+    }
+    return [responder isKindOfClass:[NSView class]] ? (NSView *)responder : nil;
+  }
+  bool focused(const Node &node) {
+    NSView *view = focused_view(node.window);
+    return view && (view == node.view || [view isDescendantOf:node.view]);
+  }
+  void sync_sensitivity(std::int64_t window) {
+    for (auto &[id, node] : nodes) {
+      (void)id;
+      if (node.window != window || container(node.kind)) continue;
+      const bool enabled = effective_sensitive(node);
+      if (!enabled && focused(node)) {
+        if (auto *top = find(window)) [top->window_object makeFirstResponder:nil];
+      }
+      ((NSControl *)node.view).enabled = enabled ? YES : NO;
+    }
+  }
   bool effective_visible(const Node &node) {
     for (const Node *current = &node;;) {
       const auto found = current->properties.find("visible");
@@ -223,6 +284,7 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
     try {
       auto *node = find(handle);
       if (!node || node->suppress || tearing_down) return;
+      if (kind != 4 && !effective_sensitive(*node)) return;
       Event event{kind, handle, node->window, 0, {}};
       if (kind == 2) {
         auto *field = ((NSTextField *)node->view);
@@ -247,6 +309,23 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
       if (node.parent == handle) result.push_back(id);
     return result;
   }
+  std::map<std::int64_t, std::vector<std::int64_t>> layout_children_cache;
+  std::map<std::int64_t, std::pair<bool, bool>> layout_expansion_cache;
+  std::map<std::int64_t, NSSize> layout_natural_cache;
+  bool layout_visible(const Node &node) const {
+    const auto value = node.properties.find("visible");
+    return value == node.properties.end() || value->second != 0;
+  }
+  const std::vector<std::int64_t> &layout_children(std::int64_t handle) const {
+    static const std::vector<std::int64_t> empty;
+    const auto found = layout_children_cache.find(handle);
+    return found == layout_children_cache.end() ? empty : found->second;
+  }
+  bool expands(const Node &node, const char *axis) const {
+    const auto id = handle_of((__bridge void *)node.view);
+    const auto found = layout_expansion_cache.find(id);
+    return found != layout_expansion_cache.end() && (axis[0] == 'h' ? found->second.first : found->second.second);
+  }
   std::int64_t property(const Node &node, const char *name, std::int64_t fallback = 0) {
     auto found = node.properties.find(name);
     if (found != node.properties.end()) return found->second;
@@ -255,6 +334,8 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
     return fallback;
   }
   NSSize natural(std::int64_t handle) {
+    const auto cached = layout_natural_cache.find(handle);
+    if (cached != layout_natural_cache.end()) return cached->second;
     auto *node = find(handle);
     if (!node) return NSMakeSize(0, 0);
     NSSize size = NSMakeSize(0, 0);
@@ -270,23 +351,20 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
       break;
     }
     default: {
-      const auto kids = children_of(handle);
+      const auto kids = layout_children(handle);
       const auto spacing = static_cast<CGFloat>(property(*node, "spacing"));
       if (node->kind == Kind::grid) {
-        std::map<std::int64_t, CGFloat> widths, heights;
+        std::vector<layout::Item> columns, rows;
         for (auto id : kids) {
-          auto *child = find(id);
-          if (!child) continue;
+          const auto &child = nodes.at(id);
           const auto wanted = natural(id);
-          auto &width = widths[child->placement.column];
-          auto &height = heights[child->placement.row];
-          width = std::max(width, wanted.width / std::max<CGFloat>(1, child->placement.columns));
-          height = std::max(height, wanted.height / std::max<CGFloat>(1, child->placement.rows));
+          columns.push_back({child.placement.column, child.placement.columns,
+                            static_cast<layout::Pixel>(std::ceil(wanted.width)), expands(child, "hexpand")});
+          rows.push_back({child.placement.row, child.placement.rows,
+                         static_cast<layout::Pixel>(std::ceil(wanted.height)), expands(child, "vexpand")});
         }
-        for (const auto &entry : widths) size.width += entry.second;
-        for (const auto &entry : heights) size.height += entry.second;
-        if (!widths.empty()) size.width += spacing * (widths.size() - 1);
-        if (!heights.empty()) size.height += spacing * (heights.size() - 1);
+        size.width = static_cast<CGFloat>(layout::arrange(columns, spacing).natural);
+        size.height = static_cast<CGFloat>(layout::arrange(rows, spacing).natural);
       } else {
         const bool vertical = node->kind != Kind::row;
         for (auto id : kids) {
@@ -306,16 +384,25 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
       size.width += property(*node, "margin_start") + property(*node, "margin_end");
       size.height += property(*node, "margin_top") + property(*node, "margin_bottom");
     }
+    size.width = layout::native_extent(static_cast<layout::Pixel>(std::ceil(size.width)));
+    size.height = layout::native_extent(static_cast<layout::Pixel>(std::ceil(size.height)));
+    layout_natural_cache.emplace(handle, size);
     return size;
   }
-  void place(std::int64_t handle, NSRect area) {
+  void place_one(std::int64_t handle, NSRect area, std::vector<std::pair<std::int64_t, NSRect>> &pending) {
     auto *node = find(handle);
     if (!node) return;
+    const auto right = layout::native_extent(static_cast<layout::Pixel>(area.origin.x + area.size.width));
+    const auto bottom = layout::native_extent(static_cast<layout::Pixel>(area.origin.y + area.size.height));
+    area.origin.x = layout::native_extent(static_cast<layout::Pixel>(area.origin.x));
+    area.origin.y = layout::native_extent(static_cast<layout::Pixel>(area.origin.y));
+    area.size.width = std::max<CGFloat>(0, right - area.origin.x);
+    area.size.height = std::max<CGFloat>(0, bottom - area.origin.y);
     if (node->kind != Kind::window) {
-      area.origin.x += property(*node, "margin_start");
-      area.origin.y += property(*node, "margin_top");
-      area.size.width -= property(*node, "margin_start") + property(*node, "margin_end");
-      area.size.height -= property(*node, "margin_top") + property(*node, "margin_bottom");
+      area.origin.x = layout::native_extent(static_cast<layout::Pixel>(area.origin.x) + property(*node, "margin_start"));
+      area.origin.y = layout::native_extent(static_cast<layout::Pixel>(area.origin.y) + property(*node, "margin_top"));
+      area.size.width = right - property(*node, "margin_end") - area.origin.x;
+      area.size.height = bottom - property(*node, "margin_bottom") - area.origin.y;
       if (area.size.width < 0) area.size.width = 0;
       if (area.size.height < 0) area.size.height = 0;
       node->allocation = area;
@@ -336,85 +423,89 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
     if (inner.size.width < 0) inner.size.width = 0;
     if (inner.size.height < 0) inner.size.height = 0;
 
-    const auto kids = children_of(handle);
+    const auto kids = layout_children(handle);
     if (kids.empty()) return;
     const auto spacing = static_cast<CGFloat>(property(*node, "spacing"));
 
     if (node->kind == Kind::grid) {
-      std::map<std::int64_t, CGFloat> widths, heights;
+      std::vector<layout::Item> columns, rows;
       for (auto id : kids) {
-        auto *child = find(id);
-        if (!child) continue;
+        const auto &child = nodes.at(id);
         const auto wanted = natural(id);
-        auto &width = widths[child->placement.column];
-        auto &height = heights[child->placement.row];
-        width = std::max(width, wanted.width / std::max<CGFloat>(1, child->placement.columns));
-        height = std::max(height, wanted.height / std::max<CGFloat>(1, child->placement.rows));
+        columns.push_back({child.placement.column, child.placement.columns,
+                          static_cast<layout::Pixel>(std::ceil(wanted.width)), expands(child, "hexpand")});
+        rows.push_back({child.placement.row, child.placement.rows,
+                       static_cast<layout::Pixel>(std::ceil(wanted.height)), expands(child, "vexpand")});
       }
-      std::map<std::int64_t, CGFloat> column_offset, row_offset;
-      CGFloat x = inner.origin.x;
-      for (auto &entry : widths) { column_offset[entry.first] = x; x += entry.second + spacing; }
-      CGFloat y = inner.origin.y;
-      for (auto &entry : heights) { row_offset[entry.first] = y; y += entry.second + spacing; }
+      const auto horizontal = layout::arrange(columns, static_cast<layout::Pixel>(spacing),
+          static_cast<layout::Pixel>(inner.size.width));
+      const auto vertical = layout::arrange(rows, static_cast<layout::Pixel>(spacing),
+          static_cast<layout::Pixel>(inner.size.height));
       for (auto id : kids) {
-        auto *child = find(id);
-        if (!child) continue;
-        CGFloat width = 0, height = 0;
-        for (std::int64_t span = 0; span < child->placement.columns; ++span) {
-          auto found = widths.find(child->placement.column + span);
-          if (found != widths.end()) width += found->second + (span ? spacing : 0);
-        }
-        for (std::int64_t span = 0; span < child->placement.rows; ++span) {
-          auto found = heights.find(child->placement.row + span);
-          if (found != heights.end()) height += found->second + (span ? spacing : 0);
-        }
-        const CGFloat left = column_offset.count(child->placement.column)
-            ? column_offset[child->placement.column] : inner.origin.x;
-        const CGFloat top = row_offset.count(child->placement.row)
-            ? row_offset[child->placement.row] : inner.origin.y;
-        place(id, NSMakeRect(left, top, width, height));
+        const auto &child = nodes.at(id);
+        const auto left = inner.origin.x + horizontal.positions.at(static_cast<std::size_t>(child.placement.column));
+        const auto top = inner.origin.y + vertical.positions.at(static_cast<std::size_t>(child.placement.row));
+        const auto width = horizontal.extent(child.placement.column, child.placement.columns);
+        const auto height = vertical.extent(child.placement.row, child.placement.rows);
+        pending.emplace_back(id, NSMakeRect(left, top, width, height));
       }
       return;
     }
 
     const bool vertical = node->kind != Kind::row;
-    CGFloat used = spacing * (kids.size() - 1);
-    std::size_t expanding = 0;
-    std::vector<NSSize> wanted;
-    wanted.reserve(kids.size());
+    std::vector<layout::Item> items;
     for (auto id : kids) {
-      wanted.push_back(natural(id));
-      used += vertical ? wanted.back().height : wanted.back().width;
-      auto *child = find(id);
-      if (child && property(*child, vertical ? "vexpand" : "hexpand")) ++expanding;
+      const auto &child = nodes.at(id);
+      const auto wanted = natural(id);
+      items.push_back({static_cast<std::int64_t>(items.size()), 1,
+          static_cast<layout::Pixel>(std::ceil(vertical ? wanted.height : wanted.width)),
+          expands(child, vertical ? "vexpand" : "hexpand")});
     }
-    const CGFloat span = vertical ? inner.size.height : inner.size.width;
-    const CGFloat extra = span > used ? span - used : 0;
-    const CGFloat share = expanding ? extra / expanding : 0;
-
-    CGFloat offset = vertical ? inner.origin.y : inner.origin.x;
+    const auto axis = layout::arrange(items, static_cast<layout::Pixel>(spacing),
+        static_cast<layout::Pixel>(vertical ? inner.size.height : inner.size.width));
     for (std::size_t index = 0; index < kids.size(); ++index) {
-      auto *child = find(kids[index]);
-      if (!child) continue;
-      const bool expand = property(*child, vertical ? "vexpand" : "hexpand") != 0;
-      const CGFloat length = (vertical ? wanted[index].height : wanted[index].width) + (expand ? share : 0);
-      NSRect target;
-      if (vertical) {
-        const CGFloat width = property(*child, "hexpand")
-            ? inner.size.width : std::min(wanted[index].width, inner.size.width);
-        target = NSMakeRect(inner.origin.x, offset, width, length);
-      } else {
-        const CGFloat height = property(*child, "vexpand")
-            ? inner.size.height : std::min(wanted[index].height, inner.size.height);
-        target = NSMakeRect(offset, inner.origin.y, length, height);
+      const auto offset = axis.positions[index], length = axis.sizes[index];
+      const NSRect target = vertical
+          ? NSMakeRect(inner.origin.x, inner.origin.y + offset, inner.size.width, length)
+          : NSMakeRect(inner.origin.x + offset, inner.origin.y, length, inner.size.height);
+      pending.emplace_back(kids[index], target);
+    }
+  }
+  void place(std::int64_t handle, NSRect area) {
+    std::vector<std::pair<std::int64_t, NSRect>> pending{{handle, area}};
+    while (!pending.empty()) {
+      const auto next = pending.back(); pending.pop_back();
+      place_one(next.first, next.second, pending);
+    }
+  }
+  void measure_layout(std::int64_t window) {
+    layout_children_cache.clear(); layout_expansion_cache.clear(); layout_natural_cache.clear();
+    for (const auto &[id, node] : nodes)
+      if (node.window == window && node.parent && layout_visible(node)) layout_children_cache[node.parent].push_back(id);
+    // Handles increase at creation and a parent must already exist. Reverse
+    // order therefore measures each descendant before its parent, without
+    // recursive expansion/measurement or stack growth for deeply nested UI.
+    for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
+      const auto &[id, node] = *it;
+      if (node.window != window) continue;
+      bool horizontal = false, vertical = false;
+      for (auto child : layout_children(id)) {
+        const auto &flags = layout_expansion_cache.at(child);
+        horizontal = horizontal || flags.first; vertical = vertical || flags.second;
       }
-      place(kids[index], target);
-      offset += length + spacing;
+      const auto flag = [&](const char *name, bool descendants) {
+        const auto local = node.properties.find(name);
+        return layout::expands(local == node.properties.end() ? std::nullopt : std::optional<bool>(local->second != 0),
+                               layout_visible(node), descendants);
+      };
+      layout_expansion_cache.emplace(id, std::make_pair(flag("hexpand", horizontal), flag("vexpand", vertical)));
+      (void)natural(id);
     }
   }
   void relayout(std::int64_t window) {
     auto *node = find(window);
     if (!node || node->kind != Kind::window) return;
+    measure_layout(window);
     NSRect content = [node->window_object contentRectForFrameRect:node->window_object.frame];
     if (content.size.width <= 0 || content.size.height <= 0)
       content = NSMakeRect(0, 0, static_cast<CGFloat>(property(*node, "width", 1)),
@@ -433,6 +524,12 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
       const auto handle = impl->handle_of((__bridge void *)sender);
       if (handle) impl->enqueue(handle, static_cast<std::int64_t>(kind));
     };
+    created.relayout = ^(NSWindow *window) {
+      auto impl = weak.lock();
+      if (!impl || !impl->active.load() || impl->tearing_down) return;
+      const auto handle = impl->handle_of((__bridge void *)window);
+      if (handle) impl->relayout(handle);
+    };
     return created;
   }
 
@@ -449,7 +546,7 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
       for (auto &entry : nodes) entry.second.view = nil;
     }
     if (target) { target.deliver = nil; target = nil; }
-    nodes.clear(); handles.clear(); focus_targets.clear();
+    nodes.clear(); handles.clear();
     events.clear(); snapshots.clear();
     event_bytes = snapshot_bytes = text_bytes = 0;
     tearing_down = false;
@@ -572,6 +669,7 @@ Result Context::widget(const std::string &kind, std::int64_t parent, const std::
       NSTextField *field = [[NSTextField alloc] initWithFrame:NSZeroRect];
       field.stringValue = text;
       field.editable = YES; field.selectable = YES; field.bezeled = YES;
+      field.formatter = [[NyUiEntryFormatter alloc] init];
       field.delegate = impl_->target;
       node.view = field;
     } else if (kind == "checkbox") {
@@ -602,6 +700,9 @@ Result Context::widget(const std::string &kind, std::int64_t parent, const std::
       [owner->view addSubview:view];
       impl_->nodes.emplace(handle, std::move(node));
       impl_->handles.emplace((__bridge void *)view, handle);
+      auto &inserted = impl_->nodes.at(handle);
+      if (!container(inserted.kind))
+        ((NSControl *)view).enabled = impl_->effective_sensitive(inserted) ? YES : NO;
       impl_->text_bytes += label.size();
       impl_->relayout(impl_->nodes.at(handle).window);
     } catch (...) {
@@ -693,8 +794,8 @@ Result Context::set_number(std::int64_t handle, const std::string &property, std
     if (!impl_->effective_sensitive(*node)) return failure("widget cannot receive keyboard focus");
     auto *window = impl_->find(node->window);
     if (!window || !window->window_object) return failure("widget cannot receive keyboard focus");
-    impl_->focus_targets[node->window] = handle;
-    [window->window_object makeFirstResponder:node->view];
+    if (![window->window_object makeFirstResponder:node->view])
+      return failure("widget could not receive keyboard focus");
     return success();
   }
   const bool flag = property == "visible" || property == "sensitive" || property == "hexpand" || property == "vexpand" || property == "checked";
@@ -721,7 +822,7 @@ Result Context::set_number(std::int64_t handle, const std::string &property, std
         impl_->relayout(node->window);
       }
     } else if (property == "sensitive") {
-      if (!container(node->kind)) ((NSControl *)node->view).enabled = value ? YES : NO;
+      impl_->sync_sensitivity(node->window);
     } else if (property == "checked") {
       ++node->suppress;
       ((NSButton *)node->view).state = value ? NSControlStateValueOn : NSControlStateValueOff;
@@ -754,20 +855,12 @@ Result Context::read_number(std::int64_t handle, const std::string &property) {
   }
   if (property == "effective_visible") return success(impl_->effective_visible(*node) ? 1 : 0);
   if (property == "sensitive") {
-    if (container(node->kind)) {
-      auto found = node->properties.find("sensitive");
-      return success(found == node->properties.end() || found->second ? 1 : 0);
-    }
-    return success(((NSControl *)node->view).enabled ? 1 : 0);
+    const auto found = node->properties.find("sensitive");
+    return success(found == node->properties.end() || found->second ? 1 : 0);
   }
   if (property == "effective_sensitive") return success(impl_->effective_sensitive(*node) ? 1 : 0);
   if (property == "focus") {
-    auto found = impl_->focus_targets.find(node->window);
-    if (found == impl_->focus_targets.end()) return success(0);
-    if (found->second == handle) return success(1);
-    auto *target = impl_->find(found->second);
-    // A compound widget's internal child counts as the widget's own focus.
-    return success(target && [target->view isDescendantOf:node->view] ? 1 : 0);
+    return success(impl_->focused(*node) ? 1 : 0);
   }
   if (property == "width" || property == "height") {
     if (node->kind == Kind::window) {
@@ -922,8 +1015,6 @@ Result Context::destroy_widget(std::int64_t handle) {
     if (!targeted(it->second.target)) { ++it; continue; }
     impl_->snapshot_bytes -= it->second.text.size(); it = impl_->snapshots.erase(it);
   }
-  auto focus = impl_->focus_targets.find(window);
-  if (focus != impl_->focus_targets.end() && targeted(focus->second)) impl_->focus_targets.erase(focus);
   impl_->relayout(window);
   return success();
 }
@@ -958,7 +1049,6 @@ Result Context::close(std::int64_t window) {
     if (it->second.window != window) { ++it; continue; }
     impl_->snapshot_bytes -= it->second.text.size(); it = impl_->snapshots.erase(it);
   }
-  impl_->focus_targets.erase(window);
   return success();
 }
 } // namespace ny::ui

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay installed debugger/checkpoints from a sealed SDK; never build or publish it."""
+"""Replay installed acceptance from a sealed SDK; never build or publish it."""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -323,18 +323,28 @@ def main():
     for name in ('sdk-revision', 'helper-revision'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--architecture', choices=('arm64', 'x86_64'), required=True)
+    parser.add_argument('--desktop', action='store_true', help='Also accept both installed UI roots, desktop DAP and full editor')
+    for name in ('desktop-helpers', 'editor', 'node'):
+        parser.add_argument('--' + name, type=Path)
     args = parser.parse_args()
+    require(all((args.desktop_helpers, args.editor, args.node)) == args.desktop and
+            (args.desktop or not any((args.desktop_helpers, args.editor, args.node))),
+            'Desktop replay requires all three explicit helper/editor/node inputs')
     require(sys.platform == 'darwin' and platform.machine() == args.architecture, 'Native matching macOS host required')
     for value in (args.sdk_revision, args.helper_revision):
         require(re.fullmatch('[0-9a-f]{40}', value), 'Exact source revision required')
     require(not args.artifact_zip.is_symlink() and not args.artifact_metadata.is_symlink(), 'Artifact inputs may not be links')
     archive, metadata_path = args.artifact_zip.resolve(strict=True), args.artifact_metadata.resolve(strict=True)
     output, work = fresh_directories(args.output, args.work_dir, (archive, metadata_path))
-    started = time.monotonic(); deadline = started + TOTAL_SECONDS
+    total_seconds = TOTAL_SECONDS + (2500 if args.desktop else 0)
+    started = time.monotonic(); deadline = started + total_seconds
     report = {'schema': 'nil.macos-sdk-debugger-replay.v1', 'status': 'FAIL', 'problems': [], 'phases': [],
               'sdk_revision': args.sdk_revision, 'helper_revision': args.helper_revision, 'architecture': args.architecture,
               'release_declaration': False, 'platform_parity': False,
-              'scope': 'Installed debugger and same-process execution checkpoints only; no SDK build, activation or provider qualification'}
+              'desktop_requested': args.desktop, 'whole_seconds': total_seconds,
+              'scope': ('Installed debugger and same-process execution checkpoints' +
+                        ('; installed nilstd/nillib UI, desktop DAP and full editor' if args.desktop else ' only') +
+                        '; no SDK build, activation, source provider/lifecycle-depth or release qualification')}
     before = payload = original = dependencies = None
     sdk, copied = work / 'SDK replay λ', work / 'artifact'
     sdk.mkdir(); copied.mkdir()
@@ -367,6 +377,19 @@ def main():
         require(acceptance['status'] == 'PASS' and acceptance['expected_revision'] == args.sdk_revision,
                 'Debugger result is not bound to the selected SDK')
         report['debugger_report'] = record(output / 'debugger/report.json', deadline)
+        if args.desktop:
+            row = support.run_process(support.load_ownership(ROOT), [sys.executable, '-B', str(ROOT / 'scripts/ci/macos-desktop.py'),
+                '--sdk', str(sdk), '--origin', str(anchor), '--expected-revision', args.sdk_revision,
+                '--helpers', str(args.desktop_helpers.resolve(strict=True)), '--editor', str(args.editor.resolve(strict=True)),
+                '--node', str(args.node.resolve(strict=True)), '--output', str(output / 'desktop')],
+                work, environment, output, 'installed-desktop', remaining(deadline - 20, 2450))
+            report['phases'].append(row)
+            require(row['status'] == 'PASS' and row['cleanup_verified'], 'Installed desktop/editor acceptance failed')
+            desktop = read_json(output / 'desktop/report.json', deadline)
+            require(desktop['status'] == 'PASS' and desktop['expected_revision'] == args.sdk_revision and
+                    desktop['sdk'] == str(sdk) and desktop['inputs_unchanged'] is True and desktop['cleanup_verified'] is True,
+                    'Desktop result is not bound to the unchanged selected SDK')
+            report['desktop_report'] = record(output / 'desktop/report.json', deadline)
         report['status'] = 'PASS'
     except Exception as error:
         report['problems'].append(type(error).__name__ + ': ' + str(error))
@@ -388,7 +411,7 @@ def main():
         report['after_checks'] = checks
         report['cleanup_verified'] = bool(report['phases']) and all(row['cleanup_verified'] for row in report['phases'])
         report['elapsed_seconds'] = time.monotonic() - started
-        if report['problems'] or not report['cleanup_verified'] or report['elapsed_seconds'] > TOTAL_SECONDS:
+        if report['problems'] or not report['cleanup_verified'] or report['elapsed_seconds'] > total_seconds:
             report['status'] = 'FAIL'
         save(output / 'report.json', report)
     print(json.dumps({key: report[key] for key in ('status', 'sdk_revision', 'helper_revision', 'problems')}))

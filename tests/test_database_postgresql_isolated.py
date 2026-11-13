@@ -1,5 +1,6 @@
 """Fixture isolation/cleanup regressions; no PostgreSQL installation required."""
 import io
+from functools import partial
 import json
 from pathlib import Path, PurePosixPath
 import shutil
@@ -44,6 +45,47 @@ class IsolatedFixtureTests(unittest.TestCase):
         self.assertEqual(fixture.clean_environment({'PGPASSWORD': 'secret', 'pgservice': 'external',
             'NY_HOME': 'other', 'nil_stdlib_path': 'other', 'PATH': 'tools', 'LIB': 'libs', 'INCLUDE': 'headers'}),
             {'PATH': 'tools', 'LIB': 'libs', 'INCLUDE': 'headers'})
+
+    def test_declared_provider_is_runtime_only_through_server_and_route_harness(self):
+        with tempfile.TemporaryDirectory(prefix='nil-pg-env-') as directory:
+            report_dir = Path(directory)
+            args = SimpleNamespace(stdlib=report_dir, report_dir=report_dir,
+                postgres_bin=report_dir, postgres_share=None, provider_test=report_dir / 'provider-test',
+                compiler=report_dir / 'compiler', interpreter=report_dir / 'interpreter', require_all_routes=True)
+            server = Mock(launcher=False, output=io.BytesIO(), error=io.BytesIO())
+            server.ready.return_value = True
+            server.owner.process.returncode = 0
+            report = {}
+            commands = []
+            declared = '/private/provider/lib:/usr/lib'
+
+            def run(command, env, cwd, timeout):
+                commands.append((list(map(str, command)), dict(env)))
+                if Path(command[0]).stem == 'initdb':
+                    (Path(cwd) / 'data').mkdir()
+                if Path(command[0]).stem == 'psql':
+                    return (1, b'') if env['PGPASSWORD'].endswith('-wrong') else (0, b'1\n')
+                if any(str(part).endswith('ny_route_matrix.py') for part in command):
+                    (report_dir / 'routes.json').write_text(json.dumps(self.route_report()))
+                return 0, b''
+
+            with patch.dict(fixture.os.environ, {fixture.DECLARATION: declared}, clear=True), \
+                 patch.object(fixture, 'provider_environments', partial(fixture.provider_environments, platform_name='darwin')), \
+                 patch.object(fixture, 'private_permissions'), \
+                 patch.object(fixture, 'run', side_effect=run), \
+                 patch.object(fixture, 'Server', return_value=server) as launch:
+                fixture.run_fixture(args, report)
+            self.assertEqual(len(commands), 5 if fixture.os.name == 'nt' else 3)
+            for command, env in commands[:-1]:
+                self.assertEqual(env['DYLD_FALLBACK_LIBRARY_PATH'], declared, command)
+                self.assertNotIn(fixture.DECLARATION, env)
+            route_parent = commands[-1][1]
+            self.assertNotIn('DYLD_FALLBACK_LIBRARY_PATH', route_parent)
+            self.assertEqual(route_parent[fixture.DECLARATION], declared)
+            self.assertEqual(launch.call_args.args[1]['DYLD_FALLBACK_LIBRARY_PATH'], declared)
+            self.assertEqual(server.graceful_stop.call_args.args[1]['DYLD_FALLBACK_LIBRARY_PATH'], declared)
+            self.assertTrue(report['all_routes_executed'])
+            self.assertTrue(report['owned_process_cleanup'])
 
     def test_windows_configuration_is_loopback_and_authenticated(self):
         config, hba = fixture.configuration(True, Path('unused'), 24567)

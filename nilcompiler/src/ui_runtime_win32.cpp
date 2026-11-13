@@ -14,6 +14,7 @@
 // sensitivity inherit, and clipping behave, the way the contract describes.
 #include "ui_runtime.hpp"
 #include "ui_runtime_shared.hpp"
+#include "ui_layout.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -268,6 +269,23 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
       if (node.parent == handle) result.push_back(id);
     return result;
   }
+  std::map<std::int64_t, std::vector<std::int64_t>> layout_children_cache;
+  std::map<std::int64_t, std::pair<bool, bool>> layout_expansion_cache;
+  std::map<std::int64_t, SIZE> layout_natural_cache;
+  bool layout_visible(const Node &node) const {
+    const auto value = node.properties.find("visible");
+    return value == node.properties.end() || value->second != 0;
+  }
+  const std::vector<std::int64_t> &layout_children(std::int64_t handle) const {
+    static const std::vector<std::int64_t> empty;
+    const auto found = layout_children_cache.find(handle);
+    return found == layout_children_cache.end() ? empty : found->second;
+  }
+  bool expands(const Node &node, const char *axis) const {
+    const auto id = handle_of(node.object);
+    const auto found = layout_expansion_cache.find(id);
+    return found != layout_expansion_cache.end() && (axis[0] == 'h' ? found->second.first : found->second.second);
+  }
   std::int64_t property(const Node &node, const char *name, std::int64_t fallback = 0) {
     auto found = node.properties.find(name);
     if (found != node.properties.end()) return found->second;
@@ -275,7 +293,10 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
     if (all != node.properties.end() && std::string(name).rfind("margin_", 0) == 0) return all->second;
     return fallback;
   }
+  static LONG native_pixel(layout::Pixel value) { return static_cast<LONG>(layout::native_extent(value)); }
   SIZE natural(std::int64_t handle) {
+    const auto cached = layout_natural_cache.find(handle);
+    if (cached != layout_natural_cache.end()) return cached->second;
     auto *node = find(handle);
     if (!node) return SIZE{0, 0};
     SIZE size{0, 0};
@@ -302,51 +323,49 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
       break;
     }
     default: {
-      const auto kids = children_of(handle);
+      const auto kids = layout_children(handle);
       const auto spacing = static_cast<LONG>(property(*node, "spacing"));
       if (node->kind == Kind::grid) {
-        std::map<std::int64_t, LONG> widths, heights;
+        std::vector<layout::Item> columns, rows;
         for (auto id : kids) {
-          auto *child = find(id);
-          if (!child) continue;
+          const auto &child = nodes.at(id);
           const auto wanted = natural(id);
-          auto &width = widths[child->placement.column];
-          auto &height = heights[child->placement.row];
-          width = (std::max)(width, static_cast<LONG>(wanted.cx / (std::max)(std::int64_t(1), child->placement.columns)));
-          height = (std::max)(height, static_cast<LONG>(wanted.cy / (std::max)(std::int64_t(1), child->placement.rows)));
+          columns.push_back({child.placement.column, child.placement.columns,
+                            static_cast<layout::Pixel>(wanted.cx), expands(child, "hexpand")});
+          rows.push_back({child.placement.row, child.placement.rows,
+                         static_cast<layout::Pixel>(wanted.cy), expands(child, "vexpand")});
         }
-        for (const auto &[column, width] : widths) { (void)column; size.cx += width; }
-        for (const auto &[row, height] : heights) { (void)row; size.cy += height; }
-        if (!widths.empty()) size.cx += spacing * static_cast<LONG>(widths.size() - 1);
-        if (!heights.empty()) size.cy += spacing * static_cast<LONG>(heights.size() - 1);
+        size.cx = native_pixel(layout::arrange(columns, spacing).natural);
+        size.cy = native_pixel(layout::arrange(rows, spacing).natural);
       } else {
         const bool vertical = node->kind != Kind::row;
         for (auto id : kids) {
           const auto wanted = natural(id);
-          if (vertical) { size.cx = (std::max)(size.cx, wanted.cx); size.cy += wanted.cy; }
-          else { size.cy = (std::max)(size.cy, wanted.cy); size.cx += wanted.cx; }
+          if (vertical) { size.cx = (std::max)(size.cx, wanted.cx); size.cy = native_pixel(layout::Pixel(size.cy) + wanted.cy); }
+          else { size.cy = (std::max)(size.cy, wanted.cy); size.cx = native_pixel(layout::Pixel(size.cx) + wanted.cx); }
         }
         if (!kids.empty()) {
           const auto gaps = spacing * static_cast<LONG>(kids.size() - 1);
-          if (vertical) size.cy += gaps; else size.cx += gaps;
+          if (vertical) size.cy = native_pixel(layout::Pixel(size.cy) + gaps); else size.cx = native_pixel(layout::Pixel(size.cx) + gaps);
         }
       }
       break;
     }
     }
     if (node->kind != Kind::window) {
-      size.cx += static_cast<LONG>(property(*node, "margin_start") + property(*node, "margin_end"));
-      size.cy += static_cast<LONG>(property(*node, "margin_top") + property(*node, "margin_bottom"));
+      size.cx = native_pixel(layout::Pixel(size.cx) + property(*node, "margin_start") + property(*node, "margin_end"));
+      size.cy = native_pixel(layout::Pixel(size.cy) + property(*node, "margin_top") + property(*node, "margin_bottom"));
     }
+    layout_natural_cache.emplace(handle, size);
     return size;
   }
-  void place(std::int64_t handle, RECT area) {
+  void place_one(std::int64_t handle, RECT area, std::vector<std::pair<std::int64_t, RECT>> &pending) {
     auto *node = find(handle);
     if (!node) return;
     if (node->kind != Kind::window) {
-      area.left += static_cast<LONG>(property(*node, "margin_start"));
+      area.left = native_pixel(layout::Pixel(area.left) + property(*node, "margin_start"));
       area.right -= static_cast<LONG>(property(*node, "margin_end"));
-      area.top += static_cast<LONG>(property(*node, "margin_top"));
+      area.top = native_pixel(layout::Pixel(area.top) + property(*node, "margin_top"));
       area.bottom -= static_cast<LONG>(property(*node, "margin_bottom"));
       if (area.right < area.left) area.right = area.left;
       if (area.bottom < area.top) area.bottom = area.top;
@@ -372,83 +391,90 @@ struct Context::Impl : std::enable_shared_from_this<Impl> {
     if (inner.right < inner.left) inner.right = inner.left;
     if (inner.bottom < inner.top) inner.bottom = inner.top;
 
-    const auto kids = children_of(handle);
+    const auto kids = layout_children(handle);
     if (kids.empty()) return;
     const auto spacing = static_cast<LONG>(property(*node, "spacing"));
 
     if (node->kind == Kind::grid) {
-      std::map<std::int64_t, LONG> widths, heights;
+      std::vector<layout::Item> columns, rows;
       for (auto id : kids) {
-        auto *child = find(id);
-        if (!child) continue;
+        const auto &child = nodes.at(id);
         const auto wanted = natural(id);
-        auto &width = widths[child->placement.column];
-        auto &height = heights[child->placement.row];
-        width = (std::max)(width, static_cast<LONG>(wanted.cx / (std::max)(std::int64_t(1), child->placement.columns)));
-        height = (std::max)(height, static_cast<LONG>(wanted.cy / (std::max)(std::int64_t(1), child->placement.rows)));
+        columns.push_back({child.placement.column, child.placement.columns,
+                          static_cast<layout::Pixel>(wanted.cx), expands(child, "hexpand")});
+        rows.push_back({child.placement.row, child.placement.rows,
+                       static_cast<layout::Pixel>(wanted.cy), expands(child, "vexpand")});
       }
-      std::map<std::int64_t, LONG> column_offset, row_offset;
-      LONG x = inner.left;
-      for (auto &[column, width] : widths) { column_offset[column] = x; x += width + spacing; }
-      LONG y = inner.top;
-      for (auto &[row, height] : heights) { row_offset[row] = y; y += height + spacing; }
+      const auto horizontal = layout::arrange(columns, static_cast<layout::Pixel>(spacing),
+          static_cast<layout::Pixel>(inner.right - inner.left));
+      const auto vertical = layout::arrange(rows, static_cast<layout::Pixel>(spacing),
+          static_cast<layout::Pixel>(inner.bottom - inner.top));
       for (auto id : kids) {
-        auto *child = find(id);
-        if (!child) continue;
-        LONG width = 0, height = 0;
-        for (std::int64_t span = 0; span < child->placement.columns; ++span) {
-          auto found = widths.find(child->placement.column + span);
-          if (found != widths.end()) width += found->second + (span ? spacing : 0);
-        }
-        for (std::int64_t span = 0; span < child->placement.rows; ++span) {
-          auto found = heights.find(child->placement.row + span);
-          if (found != heights.end()) height += found->second + (span ? spacing : 0);
-        }
-        const LONG left = column_offset.count(child->placement.column) ? column_offset[child->placement.column] : inner.left;
-        const LONG top = row_offset.count(child->placement.row) ? row_offset[child->placement.row] : inner.top;
-        place(id, RECT{left, top, left + width, top + height});
+        const auto &child = nodes.at(id);
+        const auto left = inner.left + horizontal.positions.at(static_cast<std::size_t>(child.placement.column));
+        const auto top = inner.top + vertical.positions.at(static_cast<std::size_t>(child.placement.row));
+        const auto width = horizontal.extent(child.placement.column, child.placement.columns);
+        const auto height = vertical.extent(child.placement.row, child.placement.rows);
+        pending.emplace_back(id, RECT{native_pixel(left), native_pixel(top),
+                       native_pixel(left + width), native_pixel(top + height)});
       }
       return;
     }
 
     const bool vertical = node->kind != Kind::row;
-    LONG used = spacing * static_cast<LONG>(kids.size() - 1);
-    std::size_t expanding = 0;
-    std::vector<SIZE> wanted;
-    wanted.reserve(kids.size());
+    std::vector<layout::Item> items;
     for (auto id : kids) {
-      wanted.push_back(natural(id));
-      used += vertical ? wanted.back().cy : wanted.back().cx;
-      auto *child = find(id);
-      if (child && property(*child, vertical ? "vexpand" : "hexpand")) ++expanding;
+      const auto &child = nodes.at(id);
+      const auto wanted = natural(id);
+      items.push_back({static_cast<std::int64_t>(items.size()), 1,
+          static_cast<layout::Pixel>(vertical ? wanted.cy : wanted.cx),
+          expands(child, vertical ? "vexpand" : "hexpand")});
     }
-    const LONG span = vertical ? inner.bottom - inner.top : inner.right - inner.left;
-    const LONG extra = span > used ? span - used : 0;
-    const LONG share = expanding ? extra / static_cast<LONG>(expanding) : 0;
-
-    LONG offset = vertical ? inner.top : inner.left;
+    const auto axis = layout::arrange(items, static_cast<layout::Pixel>(spacing),
+        static_cast<layout::Pixel>(vertical ? inner.bottom - inner.top : inner.right - inner.left));
     for (std::size_t index = 0; index < kids.size(); ++index) {
-      auto *child = find(kids[index]);
-      if (!child) continue;
-      const bool expand = property(*child, vertical ? "vexpand" : "hexpand") != 0;
-      LONG length = (vertical ? wanted[index].cy : wanted[index].cx) + (expand ? share : 0);
-      RECT target;
-      if (vertical) {
-        const LONG width = property(*child, "hexpand") ? inner.right - inner.left
-                                                       : (std::min)(wanted[index].cx, inner.right - inner.left);
-        target = RECT{inner.left, offset, inner.left + width, offset + length};
-      } else {
-        const LONG height = property(*child, "vexpand") ? inner.bottom - inner.top
-                                                        : (std::min)(wanted[index].cy, inner.bottom - inner.top);
-        target = RECT{offset, inner.top, offset + length, inner.top + height};
+      const auto offset = axis.positions[index], length = axis.sizes[index];
+      const RECT target = vertical
+          ? RECT{inner.left, native_pixel(inner.top + offset), inner.right, native_pixel(inner.top + offset + length)}
+          : RECT{native_pixel(inner.left + offset), inner.top, native_pixel(inner.left + offset + length), inner.bottom};
+      pending.emplace_back(kids[index], target);
+    }
+  }
+  void place(std::int64_t handle, RECT area) {
+    std::vector<std::pair<std::int64_t, RECT>> pending{{handle, area}};
+    while (!pending.empty()) {
+      const auto next = pending.back(); pending.pop_back();
+      place_one(next.first, next.second, pending);
+    }
+  }
+  void measure_layout(std::int64_t window) {
+    layout_children_cache.clear(); layout_expansion_cache.clear(); layout_natural_cache.clear();
+    for (const auto &[id, node] : nodes)
+      if (node.window == window && node.parent && layout_visible(node)) layout_children_cache[node.parent].push_back(id);
+    // Handles increase at creation and a parent must already exist. Reverse
+    // order therefore measures each descendant before its parent, without
+    // recursive expansion/measurement or stack growth for deeply nested UI.
+    for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
+      const auto &[id, node] = *it;
+      if (node.window != window) continue;
+      bool horizontal = false, vertical = false;
+      for (auto child : layout_children(id)) {
+        const auto &flags = layout_expansion_cache.at(child);
+        horizontal = horizontal || flags.first; vertical = vertical || flags.second;
       }
-      place(kids[index], target);
-      offset += length + spacing;
+      const auto flag = [&](const char *name, bool descendants) {
+        const auto local = node.properties.find(name);
+        return layout::expands(local == node.properties.end() ? std::nullopt : std::optional<bool>(local->second != 0),
+                               layout_visible(node), descendants);
+      };
+      layout_expansion_cache.emplace(id, std::make_pair(flag("hexpand", horizontal), flag("vexpand", vertical)));
+      (void)natural(id);
     }
   }
   void relayout(std::int64_t window) {
     auto *node = find(window);
     if (!node || node->kind != Kind::window) return;
+    measure_layout(window);
     RECT client{};
     if (!GetClientRect(node->object, &client) || (client.right == 0 && client.bottom == 0))
       client = RECT{0, 0, static_cast<LONG>(property(*node, "width", 1)),

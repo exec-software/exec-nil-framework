@@ -1208,7 +1208,7 @@ struct NativeCodegen::Impl {
   bool embed_context = false;
   bool freestanding_entry = false;
   bool disable_red_zone = false;
-  NativeCodegen::CodeModel code_model = NativeCodegen::CodeModel::host;
+  NativeCodegen::CodeModel code_model = NativeCodegen::CodeModel::Host;
   llvm::Function *current_function = nullptr;
 
   // State matching generateModule usage
@@ -1440,13 +1440,13 @@ bool NativeCodegen::initialize() {
   // whose kernel places user code high asks for `large` instead.
   std::optional<llvm::CodeModel::Model> code_model;
   switch (impl_->code_model) {
-  case CodeModel::small:
+  case CodeModel::Small:
     code_model = llvm::CodeModel::Small;
     break;
-  case CodeModel::large:
+  case CodeModel::Large:
     code_model = llvm::CodeModel::Large;
     break;
-  case CodeModel::host:
+  case CodeModel::Host:
     break;
   }
   auto target_machine = std::unique_ptr<llvm::TargetMachine>(

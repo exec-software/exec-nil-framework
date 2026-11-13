@@ -17,6 +17,22 @@ SPEC.loader.exec_module(sdk)
 
 
 class CandidateTests(unittest.TestCase):
+    def test_declared_provider_parent_does_not_export_loader_override(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            seen = {}
+
+            def run_process(owner, argv, cwd, environment, output, name, timeout):
+                seen.update(environment)
+                return {'status': 'PASS', 'cleanup_verified': True}
+
+            support = mock.Mock(run_process=run_process)
+            with mock.patch.object(sdk, 'load', return_value=support), \
+                 mock.patch.object(sdk, 'environment', return_value={'PATH': '/usr/bin:/bin'}), \
+                 mock.patch.object(sdk, 'save'):
+                sdk.run('postgresql-test', ['/owned/test'], 5, clean=True, provider_library=temporary)
+            self.assertNotIn('DYLD_FALLBACK_LIBRARY_PATH', seen)
+            self.assertEqual(seen['NIL_TEST_DARWIN_RUNTIME_LIBRARY_PATH'], temporary + ':/usr/lib')
+
     def test_payload_seal_covers_bytes_modes_and_namespace(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

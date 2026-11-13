@@ -101,6 +101,33 @@ install(
 install(FILES LICENSE DESTINATION ".")
 
 if(BUILD_TESTING)
+    foreach(nil_hook_profile IN ITEMS default override)
+        add_executable(nil_freestanding_hook_${nil_hook_profile} tests/freestanding_hook_contract.cpp)
+        target_compile_features(nil_freestanding_hook_${nil_hook_profile} PRIVATE cxx_std_17)
+        target_link_libraries(nil_freestanding_hook_${nil_hook_profile} PRIVATE nilruntime_freestanding)
+        if(nil_hook_profile STREQUAL "override")
+            target_compile_definitions(nil_freestanding_hook_${nil_hook_profile} PRIVATE NIL_TEST_HOST_OVERRIDE=1)
+        endif()
+        if(UNIX AND NOT APPLE)
+            target_link_options(nil_freestanding_hook_${nil_hook_profile} PRIVATE -no-pie)
+        endif()
+        add_test(NAME nil.freestanding-hook-${nil_hook_profile} COMMAND $<TARGET_FILE:nil_freestanding_hook_${nil_hook_profile}>)
+        set_tests_properties(nil.freestanding-hook-${nil_hook_profile} PROPERTIES LABELS "runtime;rc" TIMEOUT 15)
+    endforeach()
+    if(WIN32)
+        add_executable(nil_atomic_file_replace_tests tests/atomic_file_replace_tests.cpp)
+        target_compile_features(nil_atomic_file_replace_tests PRIVATE cxx_std_17)
+        target_link_libraries(nil_atomic_file_replace_tests PRIVATE advapi32)
+        add_test(NAME nil.atomic-file-replace COMMAND $<TARGET_FILE:nil_atomic_file_replace_tests>)
+        set_tests_properties(nil.atomic-file-replace PROPERTIES LABELS "tools;windows;publication;rc" TIMEOUT 15)
+        # Keep the public backend declarations usable after real Windows RPC
+        # headers, even in an LLVM-OFF build that normally hides this interface.
+        add_library(nil_native_windows_header_contract OBJECT tests/native_windows_header_contract.cpp)
+        target_compile_features(nil_native_windows_header_contract PRIVATE cxx_std_17)
+        target_compile_definitions(nil_native_windows_header_contract PRIVATE NY_HAS_LLVM=1)
+        target_include_directories(nil_native_windows_header_contract PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+        add_dependencies(nilcompiler nil_native_windows_header_contract)
+    endif()
     add_executable(nil_compiler_module_fingerprint_tests tests/compiler_module_fingerprint_tests.cpp)
     target_compile_features(nil_compiler_module_fingerprint_tests PRIVATE cxx_std_17)
     if(WIN32)
@@ -108,6 +135,32 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME nilbuild.compiler-module-fingerprints COMMAND $<TARGET_FILE:nil_compiler_module_fingerprint_tests>)
     set_tests_properties(nilbuild.compiler-module-fingerprints PROPERTIES LABELS "tools;project;rc" TIMEOUT 30)
+    add_executable(nil_compiler_module_darwin_tests tests/compiler_module_darwin_tests.cpp)
+    target_compile_features(nil_compiler_module_darwin_tests PRIVATE cxx_std_17)
+    if(APPLE)
+        target_sources(nil_compiler_module_darwin_tests PRIVATE nilcompiler/src/compiler_module_fingerprint_darwin.cpp)
+        target_compile_options(nil_compiler_module_darwin_tests PRIVATE -fblocks)
+    endif()
+    add_test(NAME compiler.darwin-module-fingerprint COMMAND $<TARGET_FILE:nil_compiler_module_darwin_tests>)
+    set_tests_properties(compiler.darwin-module-fingerprint PROPERTIES LABELS "tools;project;rc" TIMEOUT 60)
+    if(WIN32)
+        target_link_libraries(nil_compiler_module_darwin_tests PRIVATE advapi32)
+    endif()
+    add_executable(nil_darwin_toolchain_inputs_tests tests/darwin_toolchain_inputs_tests.cpp)
+    target_compile_features(nil_darwin_toolchain_inputs_tests PRIVATE cxx_std_17)
+    if(WIN32)
+        target_link_libraries(nil_darwin_toolchain_inputs_tests PRIVATE advapi32)
+    endif()
+    add_test(NAME nil.darwin-toolchain-inputs COMMAND $<TARGET_FILE:nil_darwin_toolchain_inputs_tests>)
+    set_tests_properties(nil.darwin-toolchain-inputs PROPERTIES LABELS "tools;project;rc" TIMEOUT 60)
+    if(APPLE)
+        add_executable(nil_darwin_native_inputs_tests tests/darwin_native_inputs_tests.cpp)
+        target_compile_features(nil_darwin_native_inputs_tests PRIVATE cxx_std_17)
+        add_dependencies(nil_darwin_native_inputs_tests nilruntime)
+        add_test(NAME nil.darwin-native-inputs COMMAND $<TARGET_FILE:nil_darwin_native_inputs_tests>
+            "${NIL_NATIVE_LINKER_DRIVER}" "$<TARGET_FILE:nilruntime>")
+        set_tests_properties(nil.darwin-native-inputs PROPERTIES LABELS "tools;project;rc" TIMEOUT 180)
+    endif()
 
     # Test-only launcher for isolated editor integration runs. Reuse the
     # toolchain's bounded process/Job cleanup; never ship it in the SDK.
@@ -237,6 +290,29 @@ if(BUILD_TESTING)
     set_tests_properties(nil.owned-contract PROPERTIES LABELS "nil;ownership;rc" TIMEOUT 30)
 
     find_package(Threads REQUIRED)
+    add_executable(nil_net_support_tests tests/net_support_tests.cpp)
+    target_compile_features(nil_net_support_tests PRIVATE cxx_std_17)
+    target_include_directories(nil_net_support_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    target_link_libraries(nil_net_support_tests PRIVATE Threads::Threads)
+    if(WIN32)
+        target_link_libraries(nil_net_support_tests PRIVATE ws2_32)
+    endif()
+    add_test(NAME net.support-contract COMMAND $<TARGET_FILE:nil_net_support_tests>)
+    set_tests_properties(net.support-contract PROPERTIES LABELS "net;runtime;rc" TIMEOUT 60)
+
+    add_executable(nil_net_lifecycle_tests tests/net_lifecycle_tests.cpp)
+    target_compile_features(nil_net_lifecycle_tests PRIVATE cxx_std_17)
+    target_include_directories(nil_net_lifecycle_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    target_link_libraries(nil_net_lifecycle_tests PRIVATE nilcompiler_core)
+    add_test(NAME net.lifecycle-contract COMMAND $<TARGET_FILE:nil_net_lifecycle_tests>)
+    set_tests_properties(net.lifecycle-contract PROPERTIES LABELS "net;runtime;vm;rc" TIMEOUT 60)
+
+    add_executable(nil_file_time_support_tests tests/file_time_support_tests.cpp)
+    target_compile_features(nil_file_time_support_tests PRIVATE cxx_std_17)
+    target_include_directories(nil_file_time_support_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    add_test(NAME nil.file-time-support COMMAND $<TARGET_FILE:nil_file_time_support_tests>)
+    set_tests_properties(nil.file-time-support PROPERTIES LABELS "io;runtime;rc" TIMEOUT 30)
+
     add_executable(ny_database_runtime_tests tests/database_runtime_tests.cpp)
     target_link_libraries(ny_database_runtime_tests PRIVATE nilruntime)
     target_include_directories(ny_database_runtime_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
@@ -250,6 +326,12 @@ if(BUILD_TESTING)
     target_compile_features(nil_database_postgresql_tests PRIVATE cxx_std_17)
     add_test(NAME nil.database-postgresql-client COMMAND $<TARGET_FILE:nil_database_postgresql_tests>)
     set_tests_properties(nil.database-postgresql-client PROPERTIES LABELS "database;runtime" SKIP_RETURN_CODE 77 TIMEOUT 30)
+    if(APPLE AND NOT "$ENV{NIL_TEST_DARWIN_RUNTIME_LIBRARY_PATH}" STREQUAL "")
+        # The optional provider path belongs to this executing runtime only.
+        # Keep compiler/build processes free of test-only dyld selection inputs.
+        set_tests_properties(nil.database-postgresql-client PROPERTIES
+            ENVIRONMENT "DYLD_FALLBACK_LIBRARY_PATH=$ENV{NIL_TEST_DARWIN_RUNTIME_LIBRARY_PATH}")
+    endif()
 
     add_executable(nilagent_ipc_tests tests/nilagent_ipc_tests.cpp)
     target_link_libraries(nilagent_ipc_tests PRIVATE Threads::Threads)
@@ -290,6 +372,17 @@ if(BUILD_TESTING)
     add_test(NAME nil.etp-codec COMMAND $<TARGET_FILE:nil_etp_codec_tests>)
     set_tests_properties(nil.etp-codec PROPERTIES LABELS "tools;ipc;etp" TIMEOUT 30)
 
+    add_executable(nil_ui_layout_tests tests/ui_layout_tests.cpp)
+    target_compile_features(nil_ui_layout_tests PRIVATE cxx_std_17)
+    add_test(NAME nil.ui-layout COMMAND $<TARGET_FILE:nil_ui_layout_tests>)
+    set_tests_properties(nil.ui-layout PROPERTIES LABELS "ui;layout;parity" TIMEOUT 30)
+    if(UNIX)
+        # Also built on Linux for portable executable-adapter controls.
+        # This fixture has no install/export rule.
+        add_executable(nil_ui_appkit_compile_driver tests/ui_appkit_compile_driver.cpp)
+        target_compile_features(nil_ui_appkit_compile_driver PRIVATE cxx_std_17)
+    endif()
+
     # The provider fixture follows the provider: tests/ui_runtime_tests.cpp
     # inspects loaded GTK modules and symbol origins, so it describes the GTK
     # provider and cannot speak for Win32.
@@ -305,6 +398,12 @@ if(BUILD_TESTING)
         target_include_directories(nil_ui_runtime_appkit_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
         target_compile_features(nil_ui_runtime_appkit_tests PRIVATE cxx_std_17)
         set(NIL_UI_PROVIDER_TEST nil_ui_runtime_appkit_tests)
+        # Test-only input into the owning process's AppKit responder chain.
+        # No install/export rule: SDKs never carry or load this fixture.
+        add_library(nil_ui_appkit_input_driver SHARED tests/ui_appkit_input_driver.mm)
+        target_compile_features(nil_ui_appkit_input_driver PRIVATE cxx_std_17)
+        target_compile_options(nil_ui_appkit_input_driver PRIVATE -fobjc-arc)
+        target_link_libraries(nil_ui_appkit_input_driver PRIVATE "-framework Cocoa")
     else()
         add_executable(nil_ui_runtime_tests tests/ui_runtime_tests.cpp)
         target_link_libraries(nil_ui_runtime_tests PRIVATE nilruntime Threads::Threads)
@@ -626,6 +725,12 @@ if(BUILD_TESTING)
     # test suite when testing was explicitly enabled.
     find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            add_test(NAME nil.darwin-heap-accounting
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/darwin_heap_accounting_contract.py"
+                    --cc "${CMAKE_C_COMPILER}" --output-parent "${CMAKE_BINARY_DIR}/test-evidence")
+            set_tests_properties(nil.darwin-heap-accounting PROPERTIES LABELS "runtime;native;rc" TIMEOUT 120)
+        endif()
         add_test(NAME nilbuild.llvm-dia-configuration
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/llvm_dia_cmake_contract.py"
                 --helper "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NilLlvmDia.cmake"
@@ -691,8 +796,26 @@ if(BUILD_TESTING)
         add_test(NAME nil.ui-windows-display-harness
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_windows_ui_display_contract.py")
         set_tests_properties(nil.ui-windows-display-harness PROPERTIES LABELS "ui;tools;windows" TIMEOUT 45)
+        set(NIL_UI_APPKIT_COMPILE_TEST_ARGS)
+        if(TARGET nil_ui_appkit_compile_driver)
+            set(NIL_UI_APPKIT_COMPILE_TEST_ARGS --compile-driver $<TARGET_FILE:nil_ui_appkit_compile_driver>)
+            if(TARGET nil_ui_appkit_input_driver)
+                list(APPEND NIL_UI_APPKIT_COMPILE_TEST_ARGS --input-driver $<TARGET_FILE:nil_ui_appkit_input_driver>)
+            endif()
+        endif()
+        add_test(NAME nil.ui-appkit-display-harness
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/test_ui_appkit_display_contract.py"
+                ${NIL_UI_APPKIT_COMPILE_TEST_ARGS})
+        set_tests_properties(nil.ui-appkit-display-harness PROPERTIES LABELS "ui;tools;apple" TIMEOUT 30)
         set(NIL_UI_DISPLAY_CONTRACT "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/ui_display_contract.py")
         set(NIL_UI_DISPLAY_TIMEOUT 240)
+        set(NIL_UI_DISPLAY_APPKIT_ARGS)
+        if(APPLE)
+            set(NIL_UI_DISPLAY_TIMEOUT 420)
+            set(NIL_UI_DISPLAY_APPKIT_ARGS --appkit-input-driver $<TARGET_FILE:nil_ui_appkit_input_driver>
+                --appkit-compile-driver $<TARGET_FILE:nil_ui_appkit_compile_driver>
+                --appkit-evidence-directory "${CMAKE_CURRENT_BINARY_DIR}/appkit-input-evidence")
+        endif()
         if(WIN32)
             set(NIL_UI_DISPLAY_CONTRACT "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/windows_ui_display_contract.py")
             set(NIL_UI_DISPLAY_TIMEOUT 660)
@@ -707,7 +830,7 @@ if(BUILD_TESTING)
                 --interaction-source "${CMAKE_CURRENT_SOURCE_DIR}/tests/ui/gtk_interaction.matrix"
                 --provider-test $<TARGET_FILE:${NIL_UI_PROVIDER_TEST}>
                 --lifecycle-test $<TARGET_FILE:nil_ui_lifecycle_tests>
-                --llvm "${NIL_ENABLE_LLVM}")
+                --llvm "${NIL_ENABLE_LLVM}" ${NIL_UI_DISPLAY_APPKIT_ARGS})
         set_tests_properties(nil.ui-display PROPERTIES LABELS "ui;routes" SKIP_RETURN_CODE 77 TIMEOUT "${NIL_UI_DISPLAY_TIMEOUT}")
         add_test(NAME nil.ui-intrinsic-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/ui_intrinsic_contract.py"
@@ -727,9 +850,16 @@ if(BUILD_TESTING)
         # consumer has to supply every undefined symbol deliberately, so this
         # boundary widens only on purpose.
         if(NIL_ENABLE_LLVM)
+            find_program(NIL_TEST_LLVM_NM NAMES llvm-nm llvm-nm-18
+                HINTS "${LLVM_DIR}/../../../bin" "${LLVM_DIR}/../bin")
+            set(NIL_SYMBOL_TOOL_ARGUMENTS)
+            if(NIL_TEST_LLVM_NM)
+                list(APPEND NIL_SYMBOL_TOOL_ARGUMENTS --llvm-nm "${NIL_TEST_LLVM_NM}")
+            endif()
             add_test(NAME nil.native-symbol-surface
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_symbol_surface.py"
-                    --compiler $<TARGET_FILE:nilcompiler> --assembler $<TARGET_FILE:nilassembler>)
+                    --compiler $<TARGET_FILE:nilcompiler> --assembler $<TARGET_FILE:nilassembler>
+                    ${NIL_SYMBOL_TOOL_ARGUMENTS})
             set_tests_properties(nil.native-symbol-surface PROPERTIES
                 LABELS "native;abi;rc" SKIP_RETURN_CODE 77 TIMEOUT 180)
         endif()
@@ -777,8 +907,14 @@ if(BUILD_TESTING)
                     --llvm "${NIL_ENABLE_LLVM}"
                     --cxx "${CMAKE_C_COMPILER}"
         )
+        set(NIL_PROJECT_CONTRACT_TIMEOUT 180)
+        if(APPLE)
+            # The mixed-language contract performs multiple independently
+            # fingerprinted VM/native builds; each retains its own deadline.
+            set(NIL_PROJECT_CONTRACT_TIMEOUT 900)
+        endif()
         set_tests_properties(nilbuild.project-contract PROPERTIES
-            LABELS "tools;project;analysis;rc" TIMEOUT 180)
+            LABELS "tools;project;analysis;rc" TIMEOUT "${NIL_PROJECT_CONTRACT_TIMEOUT}")
         if(UNIX)
             # exec identity, POSIX controlling terminals and FIFOs do not
             # exist on Windows. The common contract tests Windows' resident
@@ -800,6 +936,11 @@ if(BUILD_TESTING)
                 --cxx "${CMAKE_C_COMPILER}"
                 --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(nilbuild.incremental-contract PROPERTIES LABELS "tools;project;rc" TIMEOUT 240)
+        if(APPLE)
+            # Three real builds read complete dyld cache contents. The measured
+            # first Intel hash took 104 s; fake/mutation cases keep their limits.
+            set_tests_properties(nilbuild.incremental-contract PROPERTIES TIMEOUT 900)
+        endif()
         add_test(NAME nilbuild.compiler-identity-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/incremental_build_contract.py"
                 --builder $<TARGET_FILE:nilbuild> --compiler $<TARGET_FILE:nilcompiler>
@@ -816,6 +957,9 @@ if(BUILD_TESTING)
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
                 --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src")
         set_tests_properties(nilbuild.tool-discovery-contract PROPERTIES LABELS "tools;project;rc" TIMEOUT 180)
+        if(APPLE)
+            set_tests_properties(nilbuild.tool-discovery-contract PROPERTIES TIMEOUT 600)
+        endif()
         add_test(NAME nil.platform.raw-byte-routes
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/raw_byte_routes_contract.py"
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
@@ -881,6 +1025,12 @@ if(BUILD_TESTING)
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/sdk_qualification_tests.py"
         )
         set_tests_properties(ny.sdk-qualification PROPERTIES LABELS "sdk;rc" TIMEOUT 30)
+        # Inspect the actual runtime archive on every host, independently of
+        # LLVM availability. Unknown/malformed object members fail closed.
+        add_test(NAME nil.freestanding-archive-imports
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/sdk_freestanding_imports_tests.py"
+                --archive $<TARGET_FILE:nilruntime_freestanding>)
+        set_tests_properties(nil.freestanding-archive-imports PROPERTIES LABELS "sdk;native;abi;rc" TIMEOUT 120)
         add_test(
             NAME ny.release-artifacts
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/release_artifact_tests.py"
@@ -943,6 +1093,20 @@ if(BUILD_TESTING)
             set(NIL_MEMORY_LIMIT_ARGUMENTS --memory-launcher $<TARGET_FILE:nil_native_memory_limiter>)
             add_test(NAME nil.native-memory-limit-contract COMMAND nil_native_memory_limiter --self-test)
             set_tests_properties(nil.native-memory-limit-contract PROPERTIES LABELS "native;memory;rc" TIMEOUT 60)
+        elseif(APPLE)
+            # A requested-allocation retention oracle for these exact native
+            # fixtures. This is distinct from Linux AS and Windows commit caps.
+            add_library(nil_darwin_native_heap_budget SHARED tests/darwin_native_heap_budget.c)
+            add_executable(nil_darwin_native_heap_budget_control tests/darwin_native_heap_budget_control.c)
+            foreach(nil_heap_target IN ITEMS nil_darwin_native_heap_budget nil_darwin_native_heap_budget_control)
+                target_compile_features(${nil_heap_target} PRIVATE c_std_11)
+                target_compile_options(${nil_heap_target} PRIVATE -fno-builtin -Wall -Wextra -Werror -mmacosx-version-min=14.0)
+                target_link_options(${nil_heap_target} PRIVATE -mmacosx-version-min=14.0)
+            endforeach()
+            set(NIL_MEMORY_LIMIT_ARGUMENTS
+                --heap-budget-library $<TARGET_FILE:nil_darwin_native_heap_budget>
+                --heap-budget-control $<TARGET_FILE:nil_darwin_native_heap_budget_control>
+                --output-parent "${CMAKE_BINARY_DIR}/test-evidence")
         endif()
         add_test(
             NAME ny.native-managed-lifetime
@@ -962,6 +1126,12 @@ if(BUILD_TESTING)
                 --compiler $<TARGET_FILE:nilcompiler> --llvm "${NIL_ENABLE_LLVM}"
                 ${NIL_MEMORY_LIMIT_ARGUMENTS})
         set_tests_properties(ny.native-owned-lifetime PROPERTIES LABELS "native;ownership;rc" SKIP_RETURN_CODE 77 TIMEOUT 240)
+        if(APPLE)
+            # Includes independent allocator controls and a second execution of
+            # each unchanged native fixture with real frees deliberately withheld.
+            set_tests_properties(ny.native-managed-lifetime PROPERTIES TIMEOUT 240)
+            set_tests_properties(ny.native-owned-lifetime PROPERTIES TIMEOUT 360)
+        endif()
         # Matrix lexer conformance: the sample corpus must tokenise clean, and
         # each negative fixture must be rejected for the stated reason.
         add_executable(matrix_lex_dump tests/matrix/lex_dump.cpp)
@@ -1023,6 +1193,29 @@ if(BUILD_TESTING)
                     --interpreter $<TARGET_FILE:nilinterpreter>
                     --root "${CMAKE_CURRENT_SOURCE_DIR}")
         set_tests_properties(matrix.samples PROPERTIES LABELS "matrix;routes" TIMEOUT 180)
+        # The network intrinsics, against a real peer. A socket cannot be
+        # checked by comparing stdout, because the interesting behaviour is
+        # what the other end of the connection sees: the test runs a Matrix
+        # page as a process and plays the other side from Python. It covers
+        # the cases a simpler fixture passes without exercising -- an opaque
+        # handle refusing a number it never issued, a leaked listener whose
+        # port the runtime still has to release, a read deadline expiring, and
+        # a peer that vanishes mid-write being reported rather than killing
+        # the process.
+        add_test(NAME net.socket-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/net_socket_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --root "${CMAKE_CURRENT_SOURCE_DIR}")
+        set_tests_properties(net.socket-contract PROPERTIES LABELS "net;routes;rc" TIMEOUT 300)
+        add_test(NAME nil.file-modified-at-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/file_modified_at_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --nilstd "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                    --llvm "${NIL_ENABLE_LLVM}"
+                    --output-parent "${CMAKE_BINARY_DIR}/test-evidence")
+        set_tests_properties(nil.file-modified-at-contract PROPERTIES LABELS "io;routes;rc" TIMEOUT 180)
         add_test(NAME nillsp.semantic-protocol
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lsp_semantic_protocol.py"
                     --lsp $<TARGET_FILE:nillsp>)
@@ -1587,6 +1780,9 @@ if(BUILD_TESTING)
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
                 --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src" --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(nil.reflection-consumer PROPERTIES LABELS "analysis;reflection;routes" TIMEOUT 120)
+        add_test(NAME nil.runtime-provider-environment
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_runtime_provider_environment.py")
+        set_tests_properties(nil.runtime-provider-environment PROPERTIES LABELS "database;tools;routes" TIMEOUT 30)
         add_test(NAME nil.database-postgresql-fixture
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_database_postgresql_isolated.py")
         set_tests_properties(nil.database-postgresql-fixture PROPERTIES LABELS "database;tools" TIMEOUT 30)
@@ -2954,6 +3150,7 @@ if(BUILD_TESTING)
                                         bugpass-constructor-context
                                         bugpass-call-context
                                         collected-queries collected-queries-matrix
+                                        markup markup-matrix
                                         signed-numbers-matrix
                                         integer-literal-widths integer-literal-widths-matrix
                                         checked-text-spans checked-text-spans-matrix
@@ -3050,6 +3247,12 @@ if(BUILD_TESTING)
                 --compiler $<TARGET_FILE:nilcompiler> --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(nil.formatted-text-contract PROPERTIES
             LABELS "ny;matrix;analysis;interpolation" TIMEOUT 120)
+        add_test(NAME nil.markup-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/markup_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src" --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.markup-contract PROPERTIES
+            LABELS "matrix;markup;analysis;native;interpreter;rc" TIMEOUT 300)
         if(TARGET nilassembler AND TARGET nillinker)
             add_test(NAME nil.formatted-nil-contract
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/formatted_nil_contract.py"

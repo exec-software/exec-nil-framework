@@ -53,6 +53,7 @@ jobs:
         run: |
           set -o pipefail
           python3 -B scripts/ci/test_macos_evidence.py -v 2>&1 | tee build/macos-evidence/collector-controls.log
+          python3 -B tests/test_runtime_provider_environment.py -v 2>&1 | tee build/macos-evidence/provider-environment-controls.log
       - name: Observe image toolchain and optional providers
         timeout-minutes: 3
         run: |
@@ -66,9 +67,12 @@ jobs:
           test -f "$nil_macos_sdk/usr/include/sqlite3.h"
           {
             echo "NIL_CI_SQLITE_INCLUDE=$nil_macos_sdk/usr/include"
-            echo "DYLD_FALLBACK_LIBRARY_PATH=/usr/local/lib:/usr/lib"
+            # Inert declaration: provider harnesses apply it only to runtime
+            # children. Never export a DYLD override to compiler/build steps.
+            echo "NIL_TEST_DARWIN_RUNTIME_LIBRARY_PATH=/usr/local/lib:/usr/lib"
           } >> "$GITHUB_ENV"
           printf 'SQLite: Apple SDK headers at %s; system dylib provider\n' "$nil_macos_sdk/usr/include" > build/macos-evidence/providers.txt
+          echo 'SQL loader paths are runtime-only declarations; JIT combines compilation/execution in one process' >> build/macos-evidence/providers.txt
           # Use one installed PostgreSQL distribution for headers, client
           # library, binaries and shared data; never mix independent versions.
           if nil_pg_prefix="$(brew --prefix postgresql@16 2>/dev/null)" &&
@@ -84,7 +88,7 @@ jobs:
               echo "NIL_TEST_POSTGRES_BIN=$nil_pg_prefix/bin"
               echo "NIL_TEST_POSTGRES_SHARE=$nil_pg_share"
               echo "NIL_CI_PQ_INCLUDE=$nil_pg_include"
-              echo "DYLD_FALLBACK_LIBRARY_PATH=$nil_pg_library:/usr/local/lib:/usr/lib"
+              echo "NIL_TEST_DARWIN_RUNTIME_LIBRARY_PATH=$nil_pg_library:/usr/local/lib:/usr/lib"
             } >> "$GITHUB_ENV"
             "$nil_pg_prefix/bin/pg_config" --version --includedir --libdir --sharedir >> build/macos-evidence/providers.txt
           else
@@ -94,7 +98,7 @@ jobs:
             echo "NIL_CI_PQ_INCLUDE=OFF" >> "$GITHUB_ENV"
             echo "PostgreSQL: coherent postgresql@16 distribution absent; provider unavailable in this image profile" >> build/macos-evidence/providers.txt
           fi
-          echo "GTK: macOS backend not implemented; complete CTest inventory retains unsupported results" >> build/macos-evidence/providers.txt
+          echo "Desktop: native AppKit provider; display tests require a window server session" >> build/macos-evidence/providers.txt
           if command -v pandoc > /dev/null; then
             pandoc --version >> build/macos-evidence/providers.txt
           else
@@ -167,7 +171,7 @@ jobs:
         # Even a partial build supplies useful NOT_RUN/failed test inventory.
         # An earlier build failure continues to fail the job.
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
-        timeout-minutes: 20
+        timeout-minutes: 35
         run: |
           set -o pipefail
           ctest --test-dir build/ci --output-on-failure --parallel 2 \

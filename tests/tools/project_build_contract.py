@@ -140,8 +140,15 @@ def main():
             file.write_text(json.dumps(value), encoding='utf8', newline='\n')
 
         def invoke(command, *flags, status=0, cwd=root, explicit_tools=True, sdk=True,
-                   project_flag=True, environment=None, timeout=45):
+                   project_flag=True, environment=None, timeout=None):
             nonlocal count
+            measured_build = sys.platform == 'darwin' and command in ('build', 'run') and explicit_tools
+            if timeout is None:
+                # Darwin independently hashes full loaded-image/shared-cache
+                # inputs before and after real builds. Hosted VM builds have
+                # exceeded 45 seconds; native builds measured 144 seconds before execution.
+                native = any(left == '--target' and right == 'native' for left, right in zip(flags, flags[1:]))
+                timeout = (300 if native else 180) if measured_build else 45
             call = [args.builder, command]
             if project_flag:
                 call += ['--project', str(project)]
@@ -150,8 +157,15 @@ def main():
             if sdk:
                 call += ['--sdk', args.stdlib]
             call += list(map(str, flags))
-            result = subprocess.run(call, cwd=cwd, text=True, capture_output=True,
-                                    encoding='utf-8', timeout=timeout, env=environment)
+            if measured_build:
+                print(f'nilbuild contract: starting {command} ({timeout}s bound)', flush=True)
+            started = time.monotonic()
+            try:
+                result = subprocess.run(call, cwd=cwd, text=True, capture_output=True,
+                                        encoding='utf-8', timeout=timeout, env=environment)
+            finally:
+                if measured_build:
+                    print(f'nilbuild contract: {command} elapsed {time.monotonic() - started:.3f}s', flush=True)
             assert result.returncode == status, (call, result.returncode, result.stdout, result.stderr)
             count += 1
             return result

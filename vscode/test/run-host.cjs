@@ -9,13 +9,19 @@ const { resolveEditor, hostTimeout, writeIsolatedProfileSettings, validateReport
 
 const extensionRoot = path.resolve(__dirname, "..");
 const repository = path.resolve(extensionRoot, "..");
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nil vscode host café 中文-"));
+// macOS stores its editor IPC socket below the profile. Its ordinary temporary
+// directory (or a deep CI TMPDIR) can exceed the Unix socket path limit before
+// the editor starts. Keep this owned fixture short, retaining Unicode paths.
+const temporary = fs.mkdtempSync(path.join(process.platform === "darwin" ? "/tmp" : os.tmpdir(), "nil vscode host café 中文-"));
 const workspace = path.join(temporary, "workspace");
 const profile = path.join(temporary, "profile");
 const reportDirectory = path.join(repository, "build", "vscode-host-smoke");
 fs.mkdirSync(path.join(workspace, ".vscode"), { recursive: true });
 fs.mkdirSync(reportDirectory, { recursive: true });
 const runId = randomUUID();
+fs.writeFileSync(path.join(reportDirectory, `${runId}-launch.json`), JSON.stringify({
+  runId, temporary, workspace, profile, platform: process.platform
+}, null, 2));
 const report = path.join(reportDirectory, `${runId}.json`);
 const tools = path.resolve(process.env.NIL_VSCODE_TOOL_DIRECTORY || process.env.NY_VSCODE_TOOL_DIRECTORY || path.join(repository, "build", "cmake", "bin"));
 const executable = resolveEditor(process.env.VSCODE_EXECUTABLE);

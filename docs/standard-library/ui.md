@@ -5,10 +5,11 @@ events and explicit model bindings. Ny programs can import the same module.
 The VM and native compiler use one desktop provider per platform, each behind
 the same checked boundary: a GTK4 provider on Linux and a Win32 provider on
 Windows. Windows remains a development target, not a qualified release platform.
-The macOS provider is being integrated; AppKit replaces the earlier GTK-on-macOS
-work, because a GTK process on macOS never runs the AppKit event loop and is
-therefore invisible to the accessibility APIs that assistive technology and
-directed input depend on. See [platform support](../platform-support.md).
+The macOS provider is AppKit. Its provider, lifecycle and interpreter/native
+language-level desktop contracts pass on Intel and Apple Silicon, including
+twenty installed source/binary-library desktop/input cases on each architecture.
+Editor and release qualification are recorded separately. AppKit replaces the
+earlier private GTK-on-macOS experiments. See [platform support](../platform-support.md).
 Examples display the framework generation as **NIL²**, with **NIL^2** as the
 plain-text spelling. This presentation does not change numeric release or
 artifact identities in `VERSION`.
@@ -65,20 +66,28 @@ Because the provider calls Cocoa and CoreGraphics directly, every linked
 program carries those frameworks, which is why they appear in the Darwin link
 lines alongside the runtime.
 
-GTK is no longer a macOS provider. A GTK process on macOS never runs
-`-[NSApplication run]`, and AppKit answers accessibility requests from the main
-run loop, so such a process has no accessibility hierarchy at all: every
-accessibility query against it fails, including the application element's own
-role, which makes it invisible to assistive technology and to directed input.
+GTK is no longer a macOS provider. The earlier private GTK profile failed its
+cross-process accessibility probes; those observations do not qualify every
+possible GTK configuration. AppKit is the supported source implementation.
 
 On macOS, creation and polling must run on the process main thread, which is
 where AppKit requires its windows to be used. Ordinary interpreter, JIT and
-native entry routes use the main thread; UI behaviour through these routes
-still needs the desktop acceptance campaign. DAP currently executes the
-debuggee on a worker, so DAP with macOS UI is outside this port, and pausing a
-text or JSON debug session does not automatically pump window events. AppKit
+native entry routes use the main thread. The LLVM-ON display campaign verifies
+the interpreter and native application cases on both architectures. DAP now
+keeps the VM and its UI resources on the process main thread across source
+stops. Its real GTK, Win32 and AppKit ownership/event tests pass, including
+retained handles and queued events across source steps and disconnect cleanup.
+Paused debug sessions do not automatically pump window events. AppKit
 supplies no box or grid container, so, as on Win32, the provider owns the
 layout pass and sizes come from each control's fitting size.
+
+Hidden children reserve no layout space. A grid span preserves the child's
+full requested size, and expanding tracks share available space. Containers
+inherit visible descendants' expansion requests unless explicitly overridden;
+cross-axis fill is independent of requesting extra major-axis space. Win32 and
+AppKit share bounded integer allocation, cached measurement and iterative
+placement. Native geometry assertions compare these behaviors against GTK
+without requiring identical fonts or pixel measurements.
 
 ## Windows and widgets
 
@@ -205,6 +214,14 @@ global input injection, change focus or switch desktops. Desktop interaction cas
 run sequentially with `niltest --jobs 1`; see [compiler-backed testing](../tools/testing.md)
 for filtering, reports and timeouts.
 
+The macOS harness uses a test-only library inside each owning process to send
+input through its verified AppKit responder chain. It exercises the same Matrix
+interaction source and records process-bound evidence without Accessibility
+permissions or global input. A test compiler adapter removes that injection
+before invoking the real compiler and host linker. Neither fixture is installed
+in the SDK. At `5a98403`, both hosted Mac architectures pass all ten desktop and
+interaction cases across the interpreter and native routes.
+
 The same display harness checks real GTK window counts during VM pauses and
 after completion, faults, resets, reloads and destruction. Native context
 completion/restart releases windows, while copied text remains valid across
@@ -212,7 +229,6 @@ managed collection. CI installs the optional GTK/Xvfb dependencies so desktop
 coverage is required there; local builds without them report a test skip.
 The Windows harness's `--require-display` mode turns a missing desktop into a
 qualification failure. Optional headless mode checks an explicitly configured
-or executable-adjacent GTK deployment before allowing a skip; a broken selected
-runtime or any failure after starting a display fixture is never a skip. A
-headless skip is not desktop qualification. Separate loader and noninteractive
-provider probes cover DLL selection and rejection before GTK initialization.
+desktop before allowing a skip; any failure after starting a display fixture
+remains a failure. A headless skip is not desktop qualification. Linux loader
+probes separately cover GTK library selection and rejection before initialization.

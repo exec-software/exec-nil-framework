@@ -1,0 +1,68 @@
+!!! Verbatim constructs from MATRIX-GUIDE.md sections 20, 21 and 22, which need
+!!! the standard library: queries read nil.std.collections terminals, patterns
+!!! are compiled by nil.std.text, and a markup document is nil.std.markup's.
+book tour.guide-queries
+
+read everything from nil.std.text
+read everything from nil.std.collections
+read everything from nil.std.markup
+
+dollar-amount begin pattern
+    capture amount matching one or more ascii digits
+    require next to match literal " USD"
+end pattern
+
+page-shell receives title as text, signed-in as boolean, who as text
+           returns nil.std.markup.document begin paragraph
+    give begin markup
+        <html>
+          <head><title>{title}</title></head>
+          <body>
+            <nav>
+              {when signed-in}
+                <a href="/logout">Log out, {who}</a>
+              {otherwise}
+                <a href="/login">Log in</a>
+              {end when}
+            </nav>
+          </body>
+        </html>
+    end markup
+end paragraph
+
+main returns number begin paragraph
+    value scores as array of number is [41, 7, 19, 55]
+    value top is collect begin query
+        from each score in scores
+        where score is greater than 10
+        order by score descending
+        take 2
+        give score times 2
+    end query
+    say the length of top
+    say top at 0
+    say top at 1
+
+    value plain is collect begin query
+        from each score in scores
+        give score
+    end query
+    say query-count with items being plain
+    say query-any with items being top
+    say (query-first with items being top).unwrap with nothing
+    say (query-last with items being top).unwrap with nothing
+    say (query-single with items being top).is-error with nothing
+
+    value compiled is (compile_pattern with source being dollar-amount).unwrap with nothing
+    value found is ((first_match with pattern being compiled,
+                     input being "price: 12 USD").unwrap with nothing).unwrap with nothing
+    say (capture_named with found being found, name being "amount").unwrap with nothing
+
+    value conventional is (compile_pattern with source being "(?<amount>[0-9]+)(?= USD)").unwrap with nothing
+    value same is ((first_match with pattern being conventional,
+                    input being "price: 12 USD").unwrap with nothing).unwrap with nothing
+    say (capture_named with found being same, name being "amount").unwrap with nothing
+    value page is page-shell with title being "Home & Away", signed-in being true, who being "<Nathan>"
+    say nil.std.markup::render with doc being page
+    give 0
+end paragraph

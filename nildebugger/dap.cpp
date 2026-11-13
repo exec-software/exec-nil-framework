@@ -5,6 +5,9 @@
 #include <atomic>
 #include <charconv>
 #include <cmath>
+#include <condition_variable>
+#include <exception>
+#include <optional>
 #include <filesystem>
 #include <functional>
 #include <iostream>
@@ -130,12 +133,11 @@ public:
         debugger_.get_vm().setOutputStream(program_output_);
         debugger_.get_vm().setInputStream(program_input_);
     }
-    ~Adapter() {
-        debugger_.request_pause();
-        if (worker_.joinable()) worker_.join();
-    }
+    enum class Dispatch { handled, main_thread, disconnect };
 
-    bool dispatch(const Json& request) {
+    // Only the framing/control thread passes control_only. Every operation
+    // below that flag's return point touches the stopped VM on process main.
+    Dispatch dispatch(const Json& request, bool control_only) {
         std::lock_guard<std::mutex> lock(session_mutex_);
         int seq = -1;
         std::string command;
@@ -158,7 +160,7 @@ public:
                     {"supportsConditionalBreakpoints", true},
                     {"supportsEvaluateForHovers", true},
                     {"supportsTerminateRequest", true}}));
-                return true;
+                return Dispatch::handled;
             }
             if (!initialized_) throw std::runtime_error("initialize is required");
             if (command == "disconnect" || command == "terminate") {
@@ -166,16 +168,18 @@ public:
                 debugger_.request_pause();
                 response(seq, command);
                 if (!running_.load()) event("terminated");
-                return command != "disconnect";
+                return command == "disconnect" ? Dispatch::disconnect : Dispatch::handled;
             }
             if (command == "pause") {
                 require_thread(args);
                 if (!running_.load()) throw std::runtime_error("the program is not running");
                 debugger_.request_pause();
                 response(seq, command);
-                return true;
+                return Dispatch::handled;
             }
+            if (terminate_requested_.load()) throw std::runtime_error("the debug session has terminated");
             if (running_.load()) throw std::runtime_error("pause the program before inspection or mutation");
+            if (control_only) return Dispatch::main_thread;
             if (command == "launch") {
                 if (launched_) throw std::runtime_error("one launch is supported per adapter process");
                 const auto program = string_arg(args, "program");
@@ -303,7 +307,7 @@ public:
                 const int depth = frame_depth(args);
                 if (!frame_is_mapped(depth)) {
                     response(seq, command, json::object({{"scopes", Json::Array{}}}));
-                    return true;
+                    return Dispatch::handled;
                 }
                 Json::Object values;
                 for (const auto& local : debugger_.get_source_locals(depth)) {
@@ -349,7 +353,7 @@ public:
         } catch (const std::exception& error) {
             response(seq, command, json::object({}), false, error.what());
         }
-        return true;
+        return Dispatch::handled;
     }
 
 private:
@@ -413,48 +417,77 @@ private:
     void start(const std::string& action, const std::function<void()>& acknowledge) {
         if (next_frame_ == std::numeric_limits<int>::max())
             throw std::runtime_error("frame identifier space exhausted; start a new debug session");
-        if (worker_.joinable()) worker_.join();
         variables_.clear();
         frame_depths_.clear();
         depth_frames_.clear();
         debugger_.clear_pause_request();
+        pending_action_ = action;
         running_.store(true);
         try {
-          worker_ = std::thread([this, action] {
-            // dispatch holds this lock until the worker is created and its
-            // successful response is sent. No debuggee output precedes that
-            // response, and thread-start failure yields only one failure reply.
-            { std::lock_guard<std::mutex> starting(session_mutex_); }
-            if (action == "entry") debugger_.stop_at_entry();
-            else if (action == "next") debugger_.step_over();
-            else if (action == "stepIn") debugger_.step_into();
-            else if (action == "stepOut") debugger_.step_out();
-            else debugger_.continue_cooperatively();
-            std::lock_guard<std::mutex> lock(session_mutex_);
-            running_.store(false);
-            if (terminate_requested_.load()) {
-                debugger_.detach();
-                event("terminated");
-            } else if (debugger_.get_state() == ExecutionState::Terminated) {
-                const auto requested = debugger_.get_vm().getRequestedExitCode();
-                event("exited", json::object({{"exitCode", int64_t(requested ? *requested : debugger_.get_vm().getProgramExitCode())}}));
-                event("terminated");
-            } else {
-                auto body = json::object({{"reason", debugger_.last_stop_reason()},
-                    {"threadId", int64_t(1)}, {"allThreadsStopped", true}});
-                if (!debugger_.last_error().empty()) body.mut_object()["text"] = safe_text(debugger_.last_error());
-                if (debugger_.last_breakpoint_id() > 0 && debugger_.last_stop_reason() == "breakpoint")
-                    body.mut_object()["hitBreakpointIds"] = json::array({Json(int64_t(debugger_.last_breakpoint_id()))});
-                event("stopped", std::move(body));
-            }
-          });
+            acknowledge();
+            event("continued", json::object({{"threadId", int64_t(1)}, {"allThreadsContinued", true}}));
         } catch (...) {
+            pending_action_.clear();
             running_.store(false);
             throw;
         }
-        acknowledge();
-        event("continued", json::object({{"threadId", int64_t(1)}, {"allThreadsContinued", true}}));
     }
+
+public:
+    // The reader may request only this atomic instruction-boundary stop.
+    // Debugger construction, execution, inspection and destruction stay on the
+    // calling process main thread, as required by AppKit and UI handle owners.
+    void request_stop() { debugger_.request_pause(); }
+
+    void execute_pending() {
+        if (pending_action_.empty()) return;
+        const auto action = std::move(pending_action_);
+        pending_action_.clear();
+        if (action == "entry") debugger_.stop_at_entry();
+        else if (action == "next") debugger_.step_over();
+        else if (action == "stepIn") debugger_.step_into();
+        else if (action == "stepOut") debugger_.step_out();
+        else debugger_.continue_cooperatively();
+        std::lock_guard<std::mutex> lock(session_mutex_);
+        running_.store(false);
+        if (terminate_requested_.load()) {
+            debugger_.detach();
+            event("terminated");
+        } else if (debugger_.get_state() == ExecutionState::Terminated) {
+            const auto requested = debugger_.get_vm().getRequestedExitCode();
+            event("exited", json::object({{"exitCode", int64_t(requested ? *requested : debugger_.get_vm().getProgramExitCode())}}));
+            event("terminated");
+        } else {
+            auto body = json::object({{"reason", debugger_.last_stop_reason()},
+                {"threadId", int64_t(1)}, {"allThreadsStopped", true}});
+            if (!debugger_.last_error().empty()) body.mut_object()["text"] = safe_text(debugger_.last_error());
+            if (debugger_.last_breakpoint_id() > 0 && debugger_.last_stop_reason() == "breakpoint")
+                body.mut_object()["hitBreakpointIds"] = json::array({Json(int64_t(debugger_.last_breakpoint_id()))});
+            event("stopped", std::move(body));
+        }
+    }
+
+    void fail_execution() {
+        std::lock_guard<std::mutex> lock(session_mutex_);
+        pending_action_.clear();
+        running_.store(false);
+        terminate_requested_.store(true);
+        debugger_.detach();
+        if (!failure_reported_) {
+            failure_reported_ = true;
+            // Ordinary VM faults are stopped events handled above. This path
+            // covers adapter/transport failures. Make a best-effort terminal
+            // notice, but a broken output stream must not prevent the reader
+            // from accepting disconnect or observing EOF on its own thread.
+            try {
+                event("output", json::object({{"category", "stderr"},
+                    {"output", "Debug adapter failed; disconnect and restart this session.\n"}}));
+            } catch (...) {}
+            try { event("terminated"); } catch (...) {}
+        }
+    }
+
+private:
 
     std::ostream& output_;
     std::mutex output_mutex_;
@@ -464,13 +497,14 @@ private:
     OutputBuffer output_buffer_;
     std::ostream program_output_;
     std::istringstream program_input_; // explicit EOF; control stdin is never debuggee input
-    std::thread worker_;
+    std::string pending_action_; // process-main-thread only
     std::atomic<bool> running_{false};
     std::atomic<bool> terminate_requested_{false};
     bool initialized_ = false;
     bool launched_ = false;
     bool configured_ = false;
     bool stop_on_entry_ = true;
+    bool failure_reported_ = false;
     int next_frame_ = 1;
     int next_variable_ = 1;
     std::map<int, int> frame_depths_;
@@ -483,8 +517,70 @@ private:
 int run_dap(std::istream& input, std::ostream& output) {
     try {
         Adapter adapter(output);
-        Json request;
-        while (read_request(input, request)) if (!adapter.dispatch(request)) break;
+        std::mutex mailbox_mutex;
+        std::condition_variable mailbox_changed;
+        std::optional<Json> pending;
+        bool reader_done = false;
+        std::exception_ptr reader_error, execution_error;
+        // The reader owns normal transport shutdown. It never waits for more
+        // input after disconnect, and EOF/malformed framing always requests a
+        // stop before main joins it. There is at most one bounded request in
+        // flight, so a pipelined client cannot build an unbounded work queue.
+        std::thread reader([&] {
+            try {
+                Json request;
+                while (read_request(input, request)) {
+                    const auto result = adapter.dispatch(request, true);
+                    if (result == Adapter::Dispatch::disconnect) break;
+                    if (result != Adapter::Dispatch::main_thread) continue;
+                    std::unique_lock<std::mutex> lock(mailbox_mutex);
+                    pending = std::move(request);
+                    mailbox_changed.notify_one();
+                    mailbox_changed.wait(lock, [&] { return !pending; });
+                }
+            } catch (...) {
+                reader_error = std::current_exception();
+            }
+            adapter.request_stop();
+            {
+                std::lock_guard<std::mutex> lock(mailbox_mutex);
+                reader_done = true;
+            }
+            mailbox_changed.notify_one();
+        });
+        for (;;) {
+            Json request;
+            {
+                std::unique_lock<std::mutex> lock(mailbox_mutex);
+                mailbox_changed.wait(lock, [&] { return pending || reader_done; });
+                if (!pending) break;
+                request = std::move(*pending);
+            }
+            try {
+                adapter.dispatch(request, false);
+            } catch (...) {
+                if (!execution_error) execution_error = std::current_exception();
+                adapter.fail_execution();
+            }
+            {
+                std::lock_guard<std::mutex> lock(mailbox_mutex);
+                pending.reset();
+            }
+            // Release the reader before executing a continue/step. It can now
+            // accept pause/terminate while main runs real VM instructions.
+            mailbox_changed.notify_one();
+            try {
+                adapter.execute_pending();
+            } catch (...) {
+                if (!execution_error) execution_error = std::current_exception();
+                adapter.fail_execution();
+                // Keep servicing the transport until its reader owns shutdown;
+                // never unwind and join a thread blocked on an open stdin.
+            }
+        }
+        reader.join();
+        if (reader_error) std::rethrow_exception(reader_error);
+        if (execution_error) std::rethrow_exception(execution_error);
         return 0;
     } catch (const std::exception& error) {
         // stdout is reserved for valid DAP frames even for malformed input.

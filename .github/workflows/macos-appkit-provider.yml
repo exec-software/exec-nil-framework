@@ -13,6 +13,11 @@ name: macOS AppKit provider checks
         type: choice
         options: [provider, display]
         default: provider
+      llvm:
+        description: Enable native application routes in the display campaign
+        type: choice
+        options: ["OFF", "ON"]
+        default: "OFF"
 
 permissions:
   contents: read
@@ -21,9 +26,8 @@ concurrency:
   group: macos-appkit-provider-${{ github.ref }}-${{ inputs.architecture }}
   cancel-in-progress: false
 
-# Build and exercise the AppKit desktop provider only. LLVM is off and no SDK
-# is configured, qualified or published, so a cycle here costs minutes rather
-# than a full source campaign.
+# Provider-only checks keep LLVM off. The display campaign can enable native
+# application routes. Neither scope qualifies or publishes an SDK.
 jobs:
   provider:
     if: ${{ inputs.scope == 'provider' }}
@@ -80,7 +84,7 @@ jobs:
 
   display:
     if: ${{ inputs.scope == 'display' }}
-    name: macOS ${{ matrix.host.arch }} AppKit display contract
+    name: macOS ${{ matrix.host.arch }} AppKit display / LLVM ${{ inputs.llvm }}
     runs-on: ${{ matrix.host.runner }}
     timeout-minutes: 60
     strategy:
@@ -91,6 +95,9 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      NIL_CI_LLVM: ${{ inputs.llvm }}
+      HOMEBREW_NO_AUTO_UPDATE: '1'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -105,18 +112,50 @@ jobs:
           print('CGMainDisplayID:', core.CGMainDisplayID())
           "
       # The language-level contract needs the compiler, interpreter and test
-      # runner as well as the provider, so this is a whole build; LLVM stays
-      # off to keep it to one route rather than a full source campaign.
-      - name: Configure without LLVM
+      # runner as well as the provider. LLVM ON adds actual native cases.
+      - name: Configure the selected application routes
         timeout-minutes: 8
         run: |
+          nil_llvm_args=()
+          if [ "$NIL_CI_LLVM" = ON ]; then
+            nil_llvm_prefix="$(brew --prefix llvm@18)"
+            test -x "$nil_llvm_prefix/bin/llvm-config"
+            nil_llvm_args+=("-DLLVM_DIR=$nil_llvm_prefix/lib/cmake/llvm")
+          fi
           cmake -S . -B build/ci \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=ON \
-            -DNIL_ENABLE_LLVM=OFF
+            -DNIL_ENABLE_LLVM="$NIL_CI_LLVM" "${nil_llvm_args[@]}"
       - name: Build
         timeout-minutes: 40
-        run: cmake --build build/ci --parallel 3
+        run: >-
+          cmake --build build/ci --parallel 2 --target nilcompiler nilinterpreter
+          niltest nil_ui_runtime_appkit_tests nil_ui_lifecycle_tests nil_ui_appkit_input_driver
+          nil_ui_appkit_compile_driver nil_ui_layout_tests
       - name: Language-level desktop contract
         timeout-minutes: 15
-        run: ctest --test-dir build/ci -R 'nil.ui' --output-on-failure
+        run: |
+          # Anchor the product namespace: 'nil.ui' also matches nilbuild.*.
+          ctest --test-dir build/ci -R '^nil[.]ui([.-]|$)' \
+            --no-tests=error --output-on-failure --output-junit appkit-display-results.xml
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          cases = list(ET.parse('build/ci/appkit-display-results.xml').getroot().iter('testcase'))
+          expected = {'nil.ui-runtime', 'nil.ui-layout', 'nil.ui-windows-display-harness', 'nil.ui-appkit-display-harness', 'nil.ui-display',
+                      'nil.ui-intrinsic-contract', 'nil.ui-models'}
+          assert len(cases) == len(expected) and {case.get('name') for case in cases} == expected
+          assert all(case.get('status') == 'run' and case.find('skipped') is None and
+                     case.find('failure') is None and case.find('error') is None for case in cases)
+          PY
+      - name: Preserve complete or partial application evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: appkit-display-${{ matrix.host.arch }}-llvm-${{ inputs.llvm }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            build/ci/appkit-display-results.xml
+            build/ci/Testing/Temporary/LastTest.log
+            build/ci/CMakeCache.txt
+            build/ci/appkit-input-evidence/
+          if-no-files-found: error
+          retention-days: 14

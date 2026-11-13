@@ -5,6 +5,7 @@
 #include "../common/tool_discovery.hpp"
 #include "process.hpp"
 #include "toolchain_inputs.hpp"
+#include "digest_phase.hpp"
 #include "nil_version.hpp"
 
 #include <algorithm>
@@ -658,14 +659,19 @@ void check_cancelled() {
   if (nilbuild::pending_signal) throw build_cancelled{128 + nilbuild::pending_signal};
 }
 using input_map = std::map<std::string, std::string>;
-void add_input(input_map &inputs, const fs::path &path) {
-  inputs[fs::absolute(path).lexically_normal().string()] = nil::detail::file_digest(path);
+std::string checked_digest(const fs::path &path) {
+  return nil::detail::file_digest(path, check_cancelled);
+}
+void add_input(input_map &inputs, const fs::path &path, nilbuild::digest_phase *phase = nullptr) {
+  inputs[fs::absolute(path).lexically_normal().string()] = phase ? phase->read(path, checked_digest) : checked_digest(path);
   check_cancelled();
 }
-void verify_inputs(const input_map &inputs) {
+void verify_inputs(const input_map &inputs, nilbuild::digest_phase *phase = nullptr,
+                    const nilbuild::digest_phase *shared = nullptr) {
   for (const auto &[path, digest] : inputs) {
     check_cancelled();
-    if (nil::detail::file_digest(path) != digest)
+    const auto current = phase && shared && shared->contains(path) ? phase->read(path, checked_digest) : checked_digest(path);
+    if (current != digest)
       throw std::runtime_error("build input changed during the build; retry: " + path);
   }
 }
@@ -694,10 +700,11 @@ bool compiler_files_complete(const json &report) {
 // The compiler tells us which runtime and linker it would select. Query that
 // driver for startup objects, libraries and its linker rather than guessing a
 // host installation layout. Missing identities disable reuse, not compilation.
-bool native_inputs(input_map &inputs, const json &report, const project &value) {
+bool native_inputs(input_map &inputs, const json &report, const project &value,
+                    nilbuild::digest_phase *phase = nullptr, std::string *reason = nullptr) {
   const auto runtime = report.object.find("nativeRuntime"), linker = report.object.find("nativeLinker");
   if (runtime == report.object.end() || runtime->second.type != json::kind::string) return false;
-  add_input(inputs, runtime->second.text);
+  add_input(inputs, runtime->second.text, phase);
   if (linker == report.object.end() || linker->second.type != json::kind::string) return false;
   std::vector<fs::path> library_paths;
   const auto reported_paths = report.object.find("nativeLibraryPaths");
@@ -709,9 +716,9 @@ bool native_inputs(input_map &inputs, const json &report, const project &value) 
     }
   }
   const auto files = nilbuild::native_toolchain_files(linker->second.text, value.directory,
-                                                      runtime->second.text, library_paths);
+                                                      runtime->second.text, library_paths, reason);
   if (!files) return false;
-  for (const auto &file : *files) add_input(inputs, file);
+  for (const auto &file : *files) add_input(inputs, file, phase);
   return true;
 }
 struct build_task {
@@ -729,6 +736,13 @@ std::string build_key(const project &value, const build_task &task, const std::v
   auto description = describe(value);
   description.object["schema"] = json::str("nil.build.inputs.v1");
   description.object["target"] = json::str(task.native ? "native" : "vm");
+#if defined(__APPLE__)
+#if defined(__aarch64__) || defined(__arm64__)
+  description.object["hostArchitecture"] = json::str("arm64");
+#else
+  description.object["hostArchitecture"] = json::str("x86_64");
+#endif
+#endif
   description.object["inputs"] = json::map();
   for (const auto &[path, digest] : *task.inputs) description.object["inputs"].object[path] = json::str(digest);
   auto environment = json::map();
@@ -737,6 +751,12 @@ std::string build_key(const project &value, const build_task &task, const std::v
     environment.object[name] = value ? json::str(value) : json{};
   }
   description.object["environment"] = std::move(environment);
+#if defined(__APPLE__)
+  for (const auto *name : {"DEVELOPER_DIR", "TOOLCHAINS"}) {
+    const char *value = std::getenv(name);
+    description.object["environment"].object[name] = value ? json::str(value) : json{};
+  }
+#endif
   if (task.native && report.object.count("nativeLibraryPaths"))
     description.object["nativeLibraryPaths"] = report.at("nativeLibraryPaths");
   description.object["references"] = json::list();
@@ -798,6 +818,27 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
       if (!status) status = analyzed;
     }
     if (status) return status;
+    // Darwin's shared cache is several GiB. Hash its complete contents once
+    // for this preparation phase, shared across ready projects and targets.
+    // Other hosts retain their existing read behavior. Sources/manifests never
+    // use this memo, and verification below always starts with an empty one.
+    nilbuild::digest_phase prepared_shared;
+    nilbuild::digest_phase *preparation = nullptr;
+#if defined(__APPLE__)
+    // Exclude every source/manifest before any shared input is memoized. A
+    // compiler report can legitimately overlap inventories; even a symlinked
+    // source advertised as a module must keep independent fresh checks.
+    for (const auto &value : graph.projects) {
+      prepared_shared.exclude(value.file); prepared_shared.exclude(value.entry);
+    }
+    for (const auto &report : reports) {
+      const auto dependencies = report.object.find("dependencies");
+      if (dependencies == report.object.end() || dependencies->second.type != json::kind::array) continue;
+      for (const auto &dependency : dependencies->second.array)
+        prepared_shared.exclude(string_value(dependency.at("path"), "dependency path"));
+    }
+    preparation = &prepared_shared;
+#endif
     std::vector<build_task> tasks;
     std::vector<nilbuild::process_command> commands;
     for (std::size_t i = 0; i < ready.size(); ++i) {
@@ -823,14 +864,19 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
       for (const bool native : {false, true}) {
         if ((native && opts.target == "vm") || (!native && opts.target == "native")) continue;
         build_task task{index, native, native ? value.native_output() : value.vm_output(), sources.value_or(input_map{}), {}, {},
-                        sources.has_value() && compiler_files_complete(reports[i])};
+                        sources.has_value() && compiler_files_complete(reports[i]), {}};
         if (task.inputs) {
-          add_input(*task.inputs, value.file); add_input(*task.inputs, value.entry); add_input(*task.inputs, compiler); add_input(*task.inputs, self);
+          add_input(*task.inputs, value.file); add_input(*task.inputs, value.entry);
+          add_input(*task.inputs, compiler, preparation); add_input(*task.inputs, self, preparation);
           if (reports[i].object.count("compilerFiles")) {
-            for (const auto &file : string_list(reports[i].at("compilerFiles"), "compilerFiles")) add_input(*task.inputs, file);
+            for (const auto &file : string_list(reports[i].at("compilerFiles"), "compilerFiles")) add_input(*task.inputs, file, preparation);
           }
           if (native) {
-            if (!native_inputs(task.native_files, reports[i], value)) task.cacheable = false;
+            std::string reason;
+            if (!native_inputs(task.native_files, reports[i], value, preparation, &reason)) {
+              task.cacheable = false;
+              if (!reason.empty()) std::cerr << "nilbuild: native reuse unavailable: " << reason << '\n';
+            }
             task.inputs->insert(task.native_files.begin(), task.native_files.end());
           }
         }
@@ -864,6 +910,12 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
       const auto compiled = nilbuild::execute_many(commands, opts.jobs);
       for (const auto &result : compiled) std::cerr << result.output << result.error;
       if (const auto failed = failed_batch(compiled)) return failed;
+      nilbuild::digest_phase verified_shared;
+      nilbuild::digest_phase *verification = nullptr;
+#if defined(__APPLE__)
+      verified_shared.inherit_exclusions(prepared_shared);
+      verification = &verified_shared;
+#endif
       // Re-resolve the graph after a compilation before publishing cacheable
       // artifacts. This catches new shadowing files as well as modified inputs.
       for (std::size_t i = 0; i < ready.size(); ++i) {
@@ -885,7 +937,7 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
                                    compiler_module_difference(reports[i], current));
         for (const auto &task : tasks) if (task.project_index == index && task.native && task.cacheable) {
           input_map current_native;
-          if (!native_inputs(current_native, current, value) || current_native != task.native_files ||
+          if (!native_inputs(current_native, current, value, verification) || current_native != task.native_files ||
               (current.object.count("nativeLibraryPaths") &&
                (!reports[i].object.count("nativeLibraryPaths") ||
                 nilbuild::dump(current.at("nativeLibraryPaths")) !=
@@ -897,7 +949,7 @@ int build(const project &root, const options &opts, const fs::path &compiler, co
         const auto temporary = task.staging->path / task.output.filename();
         if (!fs::is_regular_file(fs::symlink_status(temporary))) throw std::runtime_error("compiler succeeded without creating a regular output artifact");
         if (task.native && !executable(temporary)) throw std::runtime_error("compiler native artifact is not executable");
-        if (task.inputs) verify_inputs(*task.inputs);
+        if (task.inputs) verify_inputs(*task.inputs, verification, preparation);
         protect_inputs(graph.projects[task.project_index]);
       }
       check_cancelled();

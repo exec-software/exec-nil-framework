@@ -28,18 +28,20 @@ dependency ordering, and bounded parallel jobs build independent projects and
 VM/native targets. SHA-256 input and artifact identities avoid redundant
 compilation only when the compiler certifies its source and loaded-code input
 graphs; native reuse also requires a complete linker/toolchain graph. Every
-invocation still performs fresh analysis. Darwin currently rebuilds both VM
-and native outputs while loaded-image/shared-cache identity is incomplete,
-preserving source protection checks. See the
+invocation still performs fresh analysis. Darwin now hashes admitted loaded
+images, shared-cache backing files and native linker inputs; actual VM/native
+reuse and invalidation pass on both Mac architectures. Unsupported profiles
+rebuild, preserving source protection checks. See the
 [incremental build contract](tools/projects.md#incremental-and-parallel-builds).
 A single executable remains one compiler job over its complete import graph.
 
 Source debugging is implemented through `nildebugger --dap` and VS Code launch
 configurations for Ny, Matrix and debug-enabled NIL. Source breakpoints,
 stepping, frames, locals and streamed output use the interpreter's actual
-execution state. The paired Windows/Linux `5630388` development baseline
-includes installed debugger acceptance, with VS Code acceptance recorded for
-Windows. See [platform support](platform-support.md) and the
+execution state. Development SDKs on Linux, Windows and both Mac architectures
+pass installed debugger and same-process execution-checkpoint acceptance.
+See [platform support](platform-support.md) for separate installed editor
+results and remaining checks, and the
 [source-debugging guide](tools/index.md#source-debugging-and-vs-code).
 
 Workspace source requests now let the compiler analyze open unsaved dependencies

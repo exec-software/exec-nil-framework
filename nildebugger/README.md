@@ -36,12 +36,18 @@ Only one launch is accepted per adapter process. It exposes the main VM as one
 thread; isolated parallel workers finish before their parent instruction
 returns and are not separately step-debugged.
 
-DAP execution runs on one worker; the control thread never inspects a running
-VM. `pause` and `terminate` request a cooperative stop between instructions, so
+DAP keeps VM creation, execution, inspection and disposal on the process main
+thread. A separate protocol reader accepts control requests while the VM runs;
+it never inspects running VM state. Source stops preserve the UI provider's
+owning thread. `pause` and `terminate` request a cooperative stop between instructions, so
 blocking foreign calls, sleeps, and a running parallel-map instruction must
 return before they take effect. Program stdout is streamed incrementally as
 bounded output events, including while execution is running. The adapter
 rejects oversized or malformed framing (8 KiB headers, 1 MiB requests).
+Disconnect, EOF and complete malformed frames stop the owned session without
+requiring a client to close stdin after disconnect. An adapter transport failure
+gets a best-effort terminal notice; an open input stream still belongs to the
+client until disconnect or EOF. Paused sessions do not pump desktop events.
 
 Native-executable attach/DWARF, data breakpoints, hit counts, logpoints, variable
 mutation, reverse execution, arbitrary expression execution, and interactive

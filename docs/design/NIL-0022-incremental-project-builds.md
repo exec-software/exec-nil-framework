@@ -38,9 +38,11 @@ driver are identified separately for native toolchain fingerprints.
 `compilerFilesComplete` separately certifies the observed compiler loaded-file
 inventory. Missing or false certification disables reuse without discarding valid
 source dependency hashes or their output-collision and change protection.
-Darwin currently leaves this flag false until loaded-image/shared-cache identity
-is implemented. Its native link-input discovery is also incomplete. Successful
-uncached builds do not establish incremental parity.
+Darwin certifies supported loaded-image/shared-cache profiles, including full
+backing-file content hashes. Its native link-input collector also covers the
+admitted host toolchain and SDK dependencies. Real VM/native reuse and
+invalidation pass on both Mac architectures; unsupported or unstable profiles
+remain uncached. See [platform support](../platform-support.md) for evidence.
 
 The driver uses those inputs, effective project settings, tool identity and
 artifact content to decide whether compilation and linking can be skipped.
