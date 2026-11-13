@@ -1,13 +1,10 @@
-name: Rooted file native macOS checks
+name: Historical rooted file native macOS replay
 
 "on":
   workflow_dispatch:
-  # A new workflow cannot be dispatched until it exists on the default branch.
-  # This scoped PR trigger qualifies it before review/merge without changing
-  # the fixed source revision under test.
-  pull_request:
-    paths:
-      - .github/workflows/rooted-file-native-parity.yml
+  # Replay the original fixed-source campaign only when explicitly dispatched.
+  # Current-source PR qualification is in macos-application-parity.yml, which
+  # includes the rooted-file and WebView contracts in its exact test inventory.
 
 permissions:
   contents: read
