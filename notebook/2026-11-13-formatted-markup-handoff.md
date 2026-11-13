@@ -108,8 +108,55 @@ No accepted SDK, installer or Lich release is changed.
 The [Matrix WebView repository](https://github.com/exec-software/exec-nil-framework-webview)
 is now public, with source secret/path audits, four required platform checks
 and an independent review requirement matching the web server repository.
-Linux and both Mac architectures have passed real browser consumers through
-text/binary NIL, AOT and JIT. Windows has passed compilation, shared/framework
-contracts and synthetic routes; its real browser initialization correction is
-being qualified. The repository's platform notes record exact source evidence.
+Its [qualification PR](https://github.com/exec-software/exec-nil-framework-webview/pull/1)
+tracks provider startup, navigation and teardown across textual/binary NIL,
+AOT and JIT, with exact source evidence in the repository's platform notes.
 This follows the language handoff without activating an accepted SDK.
+
+## Current framework integration
+
+The language handoff was merged in
+[PR 38](https://github.com/exec-software/exec-nil-framework/pull/38).
+[PR 41](https://github.com/exec-software/exec-nil-framework/pull/41) now combines
+the reviewed rooted-file snapshot and WebView runtime/Matrix bridge branches
+with current master, preserving its freestanding text-comparison correction.
+Ordinary merges retain the existing review history.
+
+The combined checks select twelve interpreter contracts on all four hosts,
+twelve native and ten language contracts on both Macs, plus debugger, project,
+packaging, incremental-build and actual editor-host checks. These are
+current-source CI checks; they do not replace an accepted SDK or promote a
+release. The PR records the final tested revision and campaign results.
+
+Integration exposed a Mach-O test call that omitted its selected symbol reader;
+both direct calls now pass through the existing configured helper. Two Intel
+first-project builds later exceeded their unchanged 180-second limit. The next
+diagnostic revision passed that stage; the cause of those earlier timeouts is
+not established. Timeout reporting now retains bounded child output and uploads
+project failure evidence before the remaining application checks.
+
+An Apple Silicon run separately returned child-setup status 126 during the
+incremental fixture. The launcher now identifies the failed setup syscall and
+saved errno, preserving the original status and cancellation behavior; fixture
+failures retain bounded event counts without source contents. The earlier
+failure did not identify a syscall, so it cannot yet be assigned a cause.
+The editor tuple-definition fixture also now waits for an absent asynchronous
+result, while rejecting provider errors, document changes and incorrect
+destinations immediately. Neither change increases a deadline or relaxes a
+result assertion. Retained failures remain part of the qualification record.
+
+## Separate editor dependency follow-up
+
+GitHub's existing [Dependabot alert 9](https://github.com/exec-software/exec-nil-framework/security/dependabot/9)
+reports minimatch 10.2.6 in the editor lockfile. The
+[upstream advisory](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249)
+describes a moderate glob-pattern denial of service, fixed in 11.0.1.
+Both `vscode-languageclient` and `@vscode/vsce` currently require the older
+major. Minimatch 11 replaces the matcher and removes APIs; an override is a
+compatibility change, not a routine lockfile refresh.
+
+Keep that update separate from this completed language qualification. Before
+changing it, audit both consumers' API use, exercise adversarial and ordinary
+glob patterns, and rerun extension compilation, packaging and actual editor
+host checks on the supported platforms. No dependency override or alert
+dismissal was made in this handoff.

@@ -7,6 +7,7 @@
 #include "diagnostics.hpp"
 #include "dynamic_type.hpp"
 #include "ui_intrinsic.hpp"
+#include "webview_intrinsic.hpp"
 #include "nil_contract.hpp"
 #include "numeric_literal.hpp"
 #include "scalar_text.hpp"
@@ -3309,10 +3310,12 @@ void type_checker::visit(ast_function_decl &p) {
     const auto &arguments = annotation.typed_arguments ? *annotation.typed_arguments : parsed.arguments;
     if (arguments.size() != 1 || arguments.front().name || arguments.front().kind != "text") continue;
     const auto &provider = arguments.front().value;
-    if (provider.rfind("ui.v1.", 0) != 0) continue;
-    const auto contract = ui::intrinsic(provider);
+    const bool is_webview = provider.rfind("webview.v1.", 0) == 0;
+    if (!is_webview && provider.rfind("ui.v1.", 0) != 0) continue;
+    const auto contract = is_webview ? webview::intrinsic(provider) : ui::intrinsic(provider);
+    const std::string family = is_webview ? "WebView" : "UI";
     if (!contract) {
-      add_error(p.line, "Unknown UI intrinsic '" + provider + "'");
+      add_error(p.line, "Unknown " + family + " intrinsic '" + provider + "'");
       continue;
     }
     // Core Result may remain a short built-in name after ordinary import
@@ -3334,7 +3337,7 @@ void type_checker::visit(ast_function_decl &p) {
       ordinary = ordinary && !parameter.is_ref && !parameter.is_variadic && !parameter.default_value;
     }
     if (!ordinary || !ui::signature_matches(*contract, parameters, p.return_type.value_or("void")))
-      add_error(p.line, provider + " requires the exact UI ABI " + ui::signature(*contract) +
+      add_error(p.line, provider + " requires the exact " + family + " ABI " + ui::signature(*contract) +
           "; use a module-level, non-generic function without reference, variadic, or default parameters and import nil.std.core.result");
   }
 

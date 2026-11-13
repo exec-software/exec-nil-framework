@@ -7,6 +7,7 @@
 #include "diagnostics.hpp"
 #include "dynamic_type.hpp"
 #include "ui_intrinsic.hpp"
+#include "webview_intrinsic.hpp"
 #include "executable_context.hpp"
 #include "native_runtime.hpp"
 #include "ordinary_io_intrinsic.hpp"
@@ -2955,10 +2956,13 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           impl_->builder->CreateRet(value);
         }
         annotation_handled = true;
-      } else if (dispatch_name == "@intrinsic" && dispatch_provider.rfind("ui.v1.", 0) == 0) {
-        const auto contract = ui::intrinsic(dispatch_provider);
+      } else if (dispatch_name == "@intrinsic" &&
+                 (dispatch_provider.rfind("ui.v1.", 0) == 0 || dispatch_provider.rfind("webview.v1.", 0) == 0)) {
+        const bool is_webview = dispatch_provider.rfind("webview.v1.", 0) == 0;
+        const auto contract = is_webview ? webview::intrinsic(dispatch_provider) : ui::intrinsic(dispatch_provider);
+        const std::string family = is_webview ? "WebView" : "UI";
         if (!contract) {
-          std::cerr << "[NativeCodegen] unknown UI intrinsic '" << dispatch_provider << "'\n";
+          std::cerr << "[NativeCodegen] unknown " << family << " intrinsic '" << dispatch_provider << "'\n";
           return false;
         }
         std::vector<std::string> parameter_types;
@@ -2980,7 +2984,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           valid = valid && schemas == 1;
         }
         if (!valid) {
-          std::cerr << "[NativeCodegen] " << dispatch_provider << " requires the exact UI ABI "
+          std::cerr << "[NativeCodegen] " << dispatch_provider << " requires the exact " << family << " ABI "
                     << ui::signature(*contract) << " and the standard Result schema\n";
           return false;
         }
@@ -3000,7 +3004,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         std::vector<llvm::Type *> types;
         for (auto *argument : arguments) types.push_back(argument->getType());
         auto *runtime_type = llvm::FunctionType::get(capability ? word_type : llvm::Type::getInt32Ty(ctx), types, false);
-        auto runtime = impl_->module->getOrInsertFunction("nyrt_ui_v1_" + contract->operation, runtime_type);
+        auto runtime = impl_->module->getOrInsertFunction(std::string(is_webview ? "nyrt_webview_v1_" : "nyrt_ui_v1_") + contract->operation, runtime_type);
         auto *status = impl_->builder->CreateCall(runtime_type, runtime.getCallee(), arguments);
         if (capability) {
           impl_->builder->CreateRet(impl_->builder->CreateIntCast(status, impl_->current_function->getReturnType(), false));
@@ -3398,6 +3402,111 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         if (!error_variant)
           return false;
         impl_->builder->CreateRet(error_variant);
+        annotation_handled = true;
+      } else if (dispatch_name == "@intrinsic" &&
+                 dispatch_provider == "file.read_rooted_snapshot") {
+        const auto result_arguments =
+            native_generic_arguments(fn.return_type, "result");
+        const auto *definition = result_arguments && result_arguments->size() == 2
+            ? find_native_aggregate_definition(mod, (*result_arguments)[0])
+            : nullptr;
+        const auto layout_it = definition ? native_struct_layouts.find(definition)
+                                          : native_struct_layouts.end();
+        bool valid_schema = definition && definition->fields.size() == 3 &&
+            compact_nil_type(definition->name) == "nil::std::io::FileSnapshot" &&
+            layout_it != native_struct_layouts.end() &&
+            layout_it->second.hidden_fields == 0;
+        const std::pair<const char *, const char *> required_fields[] = {
+            {"content", "array<u8>"}, {"modified_ms", "i64"}, {"sha256", "text"}};
+        if (valid_schema) {
+          for (const auto &[name, type] : required_fields) {
+            const auto field = layout_it->second.field_indices.find(name);
+            if (field == layout_it->second.field_indices.end()) {
+              valid_schema = false;
+              break;
+            }
+            const auto &actual_type = layout_it->second.field_nil_types[field->second];
+            valid_schema = valid_schema &&
+                (std::string(type) == "text"
+                     ? native_handle_kind_for_nil_type(actual_type) == native_handle_kind::text
+                     : normalize_nil_type(actual_type) == type);
+          }
+        }
+        if (!valid_schema || fn.params.size() != 3 ||
+            native_handle_kind_for_nil_type(nil_parameter_type(fn.params[0])) !=
+                native_handle_kind::text ||
+            native_handle_kind_for_nil_type(nil_parameter_type(fn.params[1])) !=
+                native_handle_kind::text ||
+            normalize_nil_type(nil_parameter_type(fn.params[2])) != "i64" ||
+            native_handle_kind_for_nil_type((*result_arguments)[1]) !=
+                native_handle_kind::text ||
+            impl_->current_function->arg_size() != 3 ||
+            !impl_->current_function->getReturnType()->isIntegerTy(64)) {
+          std::cerr << "[NativeCodegen] file.read_rooted_snapshot requires "
+                       "(text,text,i64) -> Result<FileSnapshot,text> with the "
+                       "exact content/modified_ms/sha256 field schema\n";
+          return false;
+        }
+        auto *pointer_type = llvm::PointerType::getUnqual(ctx);
+        auto *word_type = llvm::Type::getInt64Ty(ctx);
+        auto *bytes_out = impl_->builder->CreateAlloca(pointer_type);
+        auto *modified_out = impl_->builder->CreateAlloca(word_type);
+        auto *digest_out = impl_->builder->CreateAlloca(pointer_type);
+        auto *error_out = impl_->builder->CreateAlloca(pointer_type);
+        auto *runtime_type = llvm::FunctionType::get(
+            llvm::Type::getInt32Ty(ctx),
+            {pointer_type, pointer_type, word_type, pointer_type, pointer_type,
+             pointer_type, pointer_type}, false);
+        auto runtime = impl_->module->getOrInsertFunction(
+            "nyrt_read_rooted_snapshot", runtime_type);
+        auto *status = impl_->builder->CreateCall(runtime_type, runtime.getCallee(),
+            {impl_->current_function->getArg(0), impl_->current_function->getArg(1),
+             impl_->current_function->getArg(2), bytes_out, modified_out,
+             digest_out, error_out});
+        auto *success = llvm::BasicBlock::Create(ctx, "snapshot.success",
+                                               impl_->current_function);
+        auto *failure = llvm::BasicBlock::Create(ctx, "snapshot.failure",
+                                               impl_->current_function);
+        impl_->builder->CreateCondBr(impl_->builder->CreateICmpNE(
+            status, llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0)),
+            success, failure);
+        impl_->builder->SetInsertPoint(success);
+        const auto allocation_size = impl_->module->getDataLayout()
+            .getTypeAllocSize(layout_it->second.llvm_type).getFixedValue();
+        llvm::Value *record = nullptr;
+        if (impl_->memory_mode == MemoryMode::SAFE_GC) {
+          auto *allocate_type = llvm::FunctionType::get(pointer_type, {word_type}, false);
+          auto allocate = impl_->module->getOrInsertFunction("nyrt_alloc", allocate_type);
+          record = impl_->builder->CreateCall(allocate_type, allocate.getCallee(),
+              {llvm::ConstantInt::get(word_type, allocation_size)});
+        } else {
+          auto *allocate_type = llvm::FunctionType::get(pointer_type, {native_size_type}, false);
+          auto allocate = impl_->module->getOrInsertFunction("malloc", allocate_type);
+          record = impl_->builder->CreateCall(allocate_type, allocate.getCallee(),
+              {native_size_constant(allocation_size)});
+        }
+        emit_allocation_null_check(record, "FileSnapshot");
+        impl_->setNilType(record, definition->name);
+        llvm::Value *values[] = {
+            impl_->builder->CreateLoad(pointer_type, bytes_out),
+            impl_->builder->CreateLoad(word_type, modified_out),
+            impl_->builder->CreateLoad(pointer_type, digest_out)};
+        for (std::size_t index = 0; index < 3; ++index) {
+          const auto field_index = layout_it->second.field_indices.at(required_fields[index].first);
+          auto *field_pointer = impl_->builder->CreateStructGEP(
+              layout_it->second.llvm_type, record, field_index);
+          impl_->builder->CreateStore(values[index], field_pointer);
+        }
+        auto *ok = emit_single_payload_variant("Result::Ok", record,
+                                               fn.return_type, definition->name);
+        if (!ok) return false;
+        impl_->builder->CreateRet(ok);
+        impl_->builder->SetInsertPoint(failure);
+        auto *error = impl_->builder->CreateLoad(pointer_type, error_out);
+        auto *failed = emit_single_payload_variant("Result::Error", error,
+                                                   fn.return_type, "text");
+        if (!failed) return false;
+        impl_->builder->CreateRet(failed);
         annotation_handled = true;
       } else if (ann.find("@intrinsic(\"file.read_regular_bytes\")") !=
                      std::string::npos ||
@@ -9305,6 +9414,17 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
         llvm::orc::ExecutorSymbolDef(llvm::orc::ExecutorAddr::fromPtr(address),
                                      llvm::JITSymbolFlags::Exported);
   };
+  expose_runtime_symbol("nyrt_webview_v1_configure", &nyrt_webview_v1_configure);
+  expose_runtime_symbol("nyrt_webview_v1_window", &nyrt_webview_v1_window);
+  expose_runtime_symbol("nyrt_webview_v1_show", &nyrt_webview_v1_show);
+  expose_runtime_symbol("nyrt_webview_v1_poll", &nyrt_webview_v1_poll);
+  expose_runtime_symbol("nyrt_webview_v1_release_event", &nyrt_webview_v1_release_event);
+  expose_runtime_symbol("nyrt_webview_v1_close", &nyrt_webview_v1_close);
+  expose_runtime_symbol("nyrt_webview_v1_navigate", &nyrt_webview_v1_navigate);
+  expose_runtime_symbol("nyrt_webview_v1_load_html", &nyrt_webview_v1_load_html);
+  expose_runtime_symbol("nyrt_webview_v1_evaluate_function", &nyrt_webview_v1_evaluate_function);
+  expose_runtime_symbol("nyrt_webview_v1_event_number", &nyrt_webview_v1_event_number);
+  expose_runtime_symbol("nyrt_webview_v1_event_text", &nyrt_webview_v1_event_text);
   expose_runtime_symbol("nyrt_ui_v1_available", &nyrt_ui_v1_available);
   expose_runtime_symbol("nyrt_ui_v1_window", &nyrt_ui_v1_window);
   expose_runtime_symbol("nyrt_ui_v1_widget", &nyrt_ui_v1_widget);
@@ -9396,6 +9516,7 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_buffer_get", &nyrt_buffer_get);
   expose_runtime_symbol("nyrt_buffer_set", &nyrt_buffer_set);
   expose_runtime_symbol("nyrt_read_regular_bytes", &nyrt_read_regular_bytes);
+  expose_runtime_symbol("nyrt_read_rooted_snapshot", &nyrt_read_rooted_snapshot);
   expose_runtime_symbol("nyrt_write_bytes_atomic", &nyrt_write_bytes_atomic);
   expose_runtime_symbol("nyrt_io_v1", &nyrt_io_v1);
   expose_runtime_symbol("nyrt_try_i32", &nyrt_try_i32);

@@ -180,6 +180,28 @@ if(BUILD_TESTING)
             LABELS "tools;windows;rc" TIMEOUT 30)
     endif()
 
+    # Synthetic checked provider peers exercise loading and ownership without
+    # a browser engine or signed-in desktop. Never packaged into the SDK.
+    add_library(nil_webview_fixture_good SHARED tests/webview_provider_fixture.cpp)
+    add_library(nil_webview_fixture_bad SHARED tests/webview_provider_fixture.cpp)
+    target_compile_definitions(nil_webview_fixture_bad PRIVATE NILWV_FIXTURE_BAD_ABI=1)
+    foreach(fixture IN ITEMS nil_webview_fixture_good nil_webview_fixture_bad)
+        target_compile_features(${fixture} PRIVATE cxx_std_17)
+    endforeach()
+    add_executable(nil_webview_runtime_tests tests/webview_runtime_tests.cpp)
+    target_link_libraries(nil_webview_runtime_tests PRIVATE nilruntime nil_webview_fixture_good Threads::Threads)
+    target_include_directories(nil_webview_runtime_tests PRIVATE nilcompiler/src)
+    add_dependencies(nil_webview_runtime_tests nil_webview_fixture_bad)
+    add_test(NAME nil.webview-runtime COMMAND $<TARGET_FILE:nil_webview_runtime_tests>
+        $<TARGET_FILE:nil_webview_fixture_good> $<TARGET_FILE:nil_webview_fixture_bad>)
+    set_tests_properties(nil.webview-runtime PROPERTIES TIMEOUT 20)
+
+    add_executable(nil_rooted_file_snapshot_tests tests/rooted_file_snapshot_tests.cpp)
+    target_link_libraries(nil_rooted_file_snapshot_tests PRIVATE nilruntime)
+    target_include_directories(nil_rooted_file_snapshot_tests PRIVATE nilcompiler/src)
+    add_test(NAME nil.rooted-file-snapshot COMMAND $<TARGET_FILE:nil_rooted_file_snapshot_tests>)
+    set_tests_properties(nil.rooted-file-snapshot PROPERTIES LABELS "storage;runtime;rc" TIMEOUT 60)
+
     add_executable(nil_utf8_file_paths_tests tests/utf8_file_paths_tests.cpp)
     target_link_libraries(nil_utf8_file_paths_tests PRIVATE nilruntime)
     target_include_directories(nil_utf8_file_paths_tests PRIVATE nilcompiler/src)
@@ -832,6 +854,11 @@ if(BUILD_TESTING)
                 --lifecycle-test $<TARGET_FILE:nil_ui_lifecycle_tests>
                 --llvm "${NIL_ENABLE_LLVM}" ${NIL_UI_DISPLAY_APPKIT_ARGS})
         set_tests_properties(nil.ui-display PROPERTIES LABELS "ui;routes" SKIP_RETURN_CODE 77 TIMEOUT "${NIL_UI_DISPLAY_TIMEOUT}")
+        add_test(NAME nil.webview-intrinsic-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/webview_intrinsic_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.webview-intrinsic-contract PROPERTIES LABELS "webview;routes" TIMEOUT 180)
         add_test(NAME nil.ui-intrinsic-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/ui_intrinsic_contract.py"
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
@@ -1216,6 +1243,14 @@ if(BUILD_TESTING)
                     --llvm "${NIL_ENABLE_LLVM}"
                     --output-parent "${CMAKE_BINARY_DIR}/test-evidence")
         set_tests_properties(nil.file-modified-at-contract PROPERTIES LABELS "io;routes;rc" TIMEOUT 180)
+        add_test(NAME nil.rooted-file-snapshot-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/rooted_file_snapshot_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --nilstd "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                    --llvm "${NIL_ENABLE_LLVM}"
+                    --output-parent "${CMAKE_BINARY_DIR}/test-evidence")
+        set_tests_properties(nil.rooted-file-snapshot-contract PROPERTIES LABELS "io;routes;rc" TIMEOUT 360)
         add_test(NAME nillsp.semantic-protocol
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lsp_semantic_protocol.py"
                     --lsp $<TARGET_FILE:nillsp>)

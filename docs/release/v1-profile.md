@@ -94,9 +94,9 @@ not extend the v1 language or debugger guarantees. The LSP has a deliberately
 limited capability set. `nilbuild` supports the [local-project profile](../tools/projects.md),
 with process execution qualified on Linux. `nypm` and `nilaix` are not part of this release.
 
-Current development SDKs strictly compile and package eighteen logical
-standard-library modules, including `prelude`. Public imports use `nil.std.*`,
-with `ny.lang.*` retained as aliases. Both frontends share the flat module-family
+Current development SDKs strictly compile and package nineteen logical
+standard-library modules, including `prelude` and `nil.std.markup`. Public imports
+use `nil.std.*`, with `ny.lang.*` retained as aliases. Both frontends share the flat module-family
 layout. Runtime support
 is API-specific, as described in the [library status](../standard-library/index.md).
 `nil.std.reflection` provides declaration/annotation snapshots, and `nil.std.db`

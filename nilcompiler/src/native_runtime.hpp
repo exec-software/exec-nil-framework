@@ -53,6 +53,19 @@ std::int32_t nyrt_ui_v1_destroy_widget(std::int64_t handle,
 std::int32_t nyrt_ui_v1_close(std::int64_t window,
     std::int64_t *value, const char **error) noexcept;
 
+// Checked WebView provider bridge. All text is copied into managed storage.
+std::int32_t nyrt_webview_v1_configure(const char *path, std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_webview_v1_window(const char *title, std::int64_t width, std::int64_t height, std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_webview_v1_show(std::int64_t handle, std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_webview_v1_poll(std::int64_t handle, std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_webview_v1_release_event(std::int64_t handle, std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_webview_v1_close(std::int64_t handle, std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_webview_v1_navigate(std::int64_t handle, const char *text, std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_webview_v1_load_html(std::int64_t handle, const char *text, std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_webview_v1_evaluate_function(std::int64_t handle, const char *text, std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_webview_v1_event_number(std::int64_t handle, const char *text, std::int64_t *value, const char **error) noexcept;
+std::int32_t nyrt_webview_v1_event_text(std::int64_t handle, const char *text, const char **value, const char **error) noexcept;
+
 // Additive database ABI. Success is 1, failure 0; outputs are context-owned.
 std::int64_t nyrt_db2_available(const char *driver) noexcept;
 std::int32_t nyrt_db2_open(const char *driver, const char *address,
@@ -211,6 +224,12 @@ std::int32_t nyrt_read_regular_bytes(const char *path,
                                      std::int64_t maximum_bytes,
                                      void **bytes_out,
                                      const char **error_out) noexcept;
+// All outputs describe the same bounded, rooted file read. The compiler owns
+// the language record layout; this ABI only returns its independent fields.
+std::int32_t nyrt_read_rooted_snapshot(
+    const char *root, const char *relative, std::int64_t maximum_bytes,
+    void **bytes_out, std::int64_t *modified_ms_out, const char **sha256_out,
+    const char **error_out) noexcept;
 std::int32_t nyrt_write_bytes_atomic(const char *path, const void *bytes,
                                      std::int32_t replace,
                                      const char **error_out) noexcept;
