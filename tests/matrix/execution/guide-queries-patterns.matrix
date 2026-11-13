@@ -1,15 +1,34 @@
-!!! Verbatim constructs from MATRIX-GUIDE.md sections 20 and 21, which need the
-!!! standard library: queries read nil.std.collections terminals and patterns
-!!! are compiled by nil.std.text.
+!!! Verbatim constructs from MATRIX-GUIDE.md sections 20, 21 and 22, which need
+!!! the standard library: queries read nil.std.collections terminals, patterns
+!!! are compiled by nil.std.text, and a markup document is nil.std.markup's.
 book tour.guide-queries
 
 read everything from nil.std.text
 read everything from nil.std.collections
+read everything from nil.std.markup
 
 dollar-amount begin pattern
     capture amount matching one or more ascii digits
     require next to match literal " USD"
 end pattern
+
+page-shell receives title as text, signed-in as boolean, who as text
+           returns nil.std.markup.document begin paragraph
+    give begin markup
+        <html>
+          <head><title>{title}</title></head>
+          <body>
+            <nav>
+              {when signed-in}
+                <a href="/logout">Log out, {who}</a>
+              {otherwise}
+                <a href="/login">Log in</a>
+              {end when}
+            </nav>
+          </body>
+        </html>
+    end markup
+end paragraph
 
 main returns number begin paragraph
     value scores as array of number is [41, 7, 19, 55]
@@ -43,5 +62,7 @@ main returns number begin paragraph
     value same is ((first_match with pattern being conventional,
                     input being "price: 12 USD").unwrap with nothing).unwrap with nothing
     say (capture_named with found being same, name being "amount").unwrap with nothing
+    value page is page-shell with title being "Home & Away", signed-in being true, who being "<Nathan>"
+    say nil.std.markup::render with doc being page
     give 0
 end paragraph

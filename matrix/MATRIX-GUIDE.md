@@ -923,3 +923,102 @@ and case-sensitive. Backreferences, lookbehind, flags, word boundaries and
 Unicode properties are rejected rather than silently given another meaning.
 Matrix lowercases capture labels and turns hyphens into underscores; look them
 up by the resulting name.
+
+---
+
+## 22. Markup documents
+
+`begin markup` writes a document as a document, with its conditionals and
+loops inside it, instead of assembling one from concatenated fragments:
+
+```matrix
+read everything from nil.std.markup
+
+page-shell receives title as text, signed-in as boolean, who as text
+           returns nil.std.markup.document begin paragraph
+    give begin markup
+        <html>
+          <head><title>{title}</title></head>
+          <body>
+            <nav>
+              {when signed-in}
+                <a href="/logout">Log out, {who}</a>
+              {otherwise}
+                <a href="/login">Log in</a>
+              {end when}
+            </nav>
+          </body>
+        </html>
+    end markup
+end paragraph
+```
+
+The block's value is a **document**, not text. `nil.std.markup::render with
+doc being page` serializes one, and a markup block needs
+`read nil.std.markup` because that is where the document type and its escaping
+live.
+
+**Escaping is the position's, not yours.** A hole is escaped for the context it
+landed in, decided while the block is parsed:
+
+| Where the hole is | What happens |
+| --- | --- |
+| element content | `&`, `<`, `>` escaped |
+| attribute value | `&`, `<`, `>`, `"`, `'` escaped |
+| a whole URL attribute | an executable scheme is neutralised, then escaped |
+| inside a longer URL value | percent-encoded as one component |
+| `{raw expression}` | nothing; the caller owns the proof |
+
+A hole takes `text`, a scalar, or a document. `{raw ...}` is the only way to
+put unescaped text into a page, which is what makes it the word to look for in
+review.
+
+**Documents compose as documents.** A paragraph returning a document
+interpolates into another block as markup, so it is spliced rather than escaped
+a second time:
+
+```matrix
+<main>{card with title being title, count being total}</main>
+```
+
+A document may only go where markup belongs. Interpolating one into an
+attribute value is an error.
+
+**Control flow uses the language's own words.** `{when ...}`,
+`{otherwise when ...}`, `{otherwise}`, `{end when}`,
+`{repeat for each <name> in <expression>}` and `{end repeat}` are the whole
+set. A directive may sit between elements, between attributes, or inside text:
+
+```matrix
+<ul class="list">
+  {repeat for each name in names}
+    <li class="{name}">{name}</li>
+  {end repeat}
+</ul>
+<a {when active}class="on"{otherwise}class="off"{end when} href="/x">link</a>
+```
+
+Every arm must be a complete fragment. An arm that opens an element it does not
+close is an error — which is the rule that stops a document from going back to
+being assembled out of pieces.
+
+**What the compiler checks:** every element is closed, in order; every
+directive is closed; and every hole has a type the renderer can use. An
+unclosed `<div>` is a compile error, not something a browser discovers.
+
+**Braces inside `<script>` and `<style>` are ordinary characters,** so CSS and
+JavaScript paste in unaltered. The exception is a body that is exactly one
+hole, which must be `{raw ...}`:
+
+```matrix
+<style>body { margin: 0 }</style>
+<script>{raw bundle-source}</script>
+```
+
+Elsewhere, `{{` and `}}` are literal braces, as in formatted text.
+
+**Known limits.** Element and attribute names are fixed: a hole cannot name
+either, because that is what keeps the document checkable. An attribute value
+must be quoted. Text is emitted as written, so a spliced document keeps the
+indentation it was written with. The dialect is HTML; XML serialization and a
+compact renderer are not available yet.

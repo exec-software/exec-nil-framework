@@ -2513,3 +2513,41 @@ shipped constructs are now documented in the guide and asserted by
 larger problem F88 only dents — control flow living inside the document, with
 context-correct escaping and a checkable tree — is
 [NIL-0027](../../docs/design/NIL-0027-structured-markup.md) §3.
+
+### F89 — A document assembled from fragments cannot be checked or escaped
+
+**Observed:** F88 gave a generator readable interpolation, and left the real
+problem untouched: the control flow still lived outside the document. A page
+shell was still four bindings and a conditional that produced two different
+strings of tags, nothing checked that the result was balanced, and every
+interpolated value carried whatever escaping its author remembered. The
+escaping is the part that cannot be fixed by discipline — the correct escape
+differs between element content, an attribute value and a URL attribute, and a
+string does not know which one it landed in.
+
+**Fixed:** `begin markup` (NIL-0027 §3). The literal segments are parsed as
+markup at compile time, so unbalanced elements and unterminated directives are
+compile errors, and each hole is escaped for the position it occupies. The
+block's value is a `nil.std.markup.document`, a distinct type whose whole job
+is that an already-escaped fragment composed into another document is spliced
+rather than escaped twice. `{raw ...}` is the single, greppable way to bypass
+escaping. Control flow is written with the language's own words inside the
+document, and every arm must leave the element stack as it found it.
+
+Three things fell out of building it, each recorded where it belongs:
+
+- The node tree the design record specified cannot execute natively, and would
+  have bought only the capability that was already deferred. The value is
+  serialized at compile time instead; NIL-0027 §3.6 records the reversal.
+- `nil.std.text::to_lower` reaches `_char_code`, which has no native ABI, so a
+  page that used it compiled for the VM and failed natively. The URL scheme
+  check folds case with `replace`. Making `to_lower` native is open work.
+- The checker spells `text` as `String` internally while the diagnostic
+  renderer prints `text`, so a comparison against `"text"` alone fails while
+  reporting that it got `text`. Any new check over text types must accept both
+  spellings.
+
+**Remaining:** Ny has no markup spelling. Whitespace is emitted as written, so
+a composed document keeps its own indentation; a compact renderer and the XML
+dialect are future work. Element and attribute names are fixed, so dynamic
+attribute sets (`data-*` generation) still need a design.

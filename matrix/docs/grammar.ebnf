@@ -400,6 +400,7 @@ variadic_tail   = 'more' expression { ',' expression } ;
 
 primary         = literal
                 | query_expr
+                | markup_block
                 | identifier
                 | 'my' identifier
                 | nominal_type          (* also carries explicit type arguments:
@@ -469,6 +470,24 @@ formatted_text  = 'formatted' '"' { formatted_segment | '{{' | '}}'
 formatted_block = 'begin' 'text' newline
                   { any_line_with { '{{' | '}}' | '{' expression '}' } }
                   'end' 'text' ;
+
+(* NIL-0027. A markup literal is the same block machinery reading markup: the
+ * literal segments are parsed as elements, attributes, comments and text so
+ * that balance is checked and each hole learns its context, then emitted
+ * verbatim. Holes carry the context's escaping, which the author never spells.
+ * Directives reuse the language's own control words and must each leave the
+ * element stack as they found it. Element and attribute names are fixed: a
+ * hole may not name either. Inside a raw-text element ('script', 'style') a
+ * brace is an ordinary character unless the body is exactly one hole. The
+ * value is a nil.std.markup document, not text. *)
+markup_block    = 'begin' 'markup' newline
+                  { markup_content } 'end' 'markup' ;
+markup_content  = markup_literal | '{{' | '}}'
+                | '{' [ 'raw' ] expression '}'
+                | '{' 'when' expression '}' | '{' 'otherwise' [ 'when' expression ] '}'
+                | '{' 'end' 'when' '}'
+                | '{' 'repeat' 'for' 'each' identifier 'in' expression '}'
+                | '{' 'end' 'repeat' '}' ;
 
 (* A raw block, following the universal 'begin <kind>' / 'end <kind>' shape.
  * It is terminated by a line whose only content is 'end text' -- a

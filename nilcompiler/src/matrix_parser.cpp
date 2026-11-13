@@ -2998,6 +2998,8 @@ ny::ast_expr_ptr parser::parse_primary() {
     return number;
   }
 
+  if (check(matrix::token_kind::markup_begin)) return parse_markup_expression();
+
   if (match(matrix::token_kind::formatted_string_begin)) {
     std::vector<ny::interpolated_part> parts;
     while (!check(matrix::token_kind::formatted_string_end) && !at_end()) {
@@ -3227,6 +3229,384 @@ ny::ast_expr_ptr parser::parse_primary() {
   error(start, "expected a value, found '" + start.lexeme + "'");
   advance();
   return std::make_shared<ny::ast_number_literal>("0", line);
+}
+
+namespace {
+
+// HTML's closed sets. They sit beside the parser rather than inside its
+// grammar on purpose (NIL-0027 section 3.4): the block parses generic
+// elements, attributes and text, and only these tables know anything about
+// HTML. A second dialect is another table, not another grammar.
+bool markup_void_element(const std::string &name) {
+  static const char *const names[] = {
+      "area", "base", "br", "col", "embed", "hr", "img", "input",
+      "link", "meta", "param", "source", "track", "wbr"};
+  for (const auto *candidate : names)
+    if (name == candidate) return true;
+  return false;
+}
+
+bool markup_raw_text_element(const std::string &name) {
+  return name == "script" || name == "style";
+}
+
+// Attributes whose value is a URL. A hole that is the whole value is scheme
+// filtered; a hole inside a longer value is percent encoded, because it is a
+// component of someone else's URL rather than the URL itself.
+bool markup_url_attribute(const std::string &name) {
+  static const char *const names[] = {
+      "href", "src", "action", "formaction", "cite", "poster",
+      "data", "srcset", "background", "ping", "manifest"};
+  for (const auto *candidate : names)
+    if (name == candidate) return true;
+  return false;
+}
+
+std::string markup_lower(std::string value) {
+  for (auto &letter : value)
+    if (letter >= 'A' && letter <= 'Z') letter += 'a' - 'A';
+  return value;
+}
+
+bool markup_name_byte(unsigned char c) {
+  return std::isalnum(c) || c == '-' || c == '_' || c == ':' || c >= 128;
+}
+
+} // namespace
+
+// A markup literal (NIL-0027). The block's literal segments are parsed as
+// markup so that the document's structure is checked and every hole learns the
+// context it landed in; the segments are then emitted verbatim, because the
+// author already wrote valid markup and this form does not reformat it.
+ny::ast_expr_ptr parser::parse_markup_expression() {
+  const token start = advance(); // markup_begin
+  auto markup = std::make_shared<ny::ast_markup_expr>(start.line);
+  using item_kind = ny::ast_markup_item::item_kind;
+
+  enum class ctx { text, tag, attribute_value, raw_text, comment };
+  ctx state = ctx::text;
+  std::vector<std::string> open;
+  std::vector<std::size_t> arm_base;
+  std::vector<int> directive; // 1 when, 2 repeat
+  std::string attribute, raw_name;
+  char quote = 0;
+  bool value_started = false;
+  // A void element is never pushed, so '<br/>' must not pop whatever is.
+  bool current_pushed = false;
+  std::size_t pending_url = std::string::npos;
+  bool reported_structure = false;
+
+  const auto structure = [&](const token &at, const std::string &message,
+                             const std::string &hint = {}) {
+    if (reported_structure) return;
+    reported_structure = true;
+    error(at, message, hint);
+  };
+  const auto add = [&](item_kind kind, int line) -> ny::ast_markup_item & {
+    ny::ast_markup_item entry;
+    entry.kind = kind;
+    entry.line = line;
+    markup->items.push_back(std::move(entry));
+    return markup->items.back();
+  };
+  const auto emit_literal = [&](const std::string &text, int line) {
+    if (text.empty()) return;
+    if (!markup->items.empty() &&
+        markup->items.back().kind == item_kind::literal) {
+      markup->items.back().text += text;
+      return;
+    }
+    add(item_kind::literal, line).text = text;
+  };
+
+  // One literal segment, scanned as markup. Context carries across segments,
+  // because a hole may sit anywhere in a document, including inside a tag.
+  const auto scan_segment = [&](const token &piece) {
+    const std::string &text = piece.lexeme;
+    std::size_t cursor = 0;
+    // A hole in a URL attribute is only the whole value when the value ends
+    // immediately after it.
+    if (pending_url != std::string::npos) {
+      const bool whole = !text.empty() && text[0] == quote;
+      markup->items[pending_url].escape = whole ? "url" : "url_component";
+      pending_url = std::string::npos;
+    }
+    while (cursor < text.size()) {
+      const char c = text[cursor];
+      if (state == ctx::comment) {
+        const auto close = text.find("-->", cursor);
+        const auto stop = close == std::string::npos ? text.size() : close + 3;
+        emit_literal(text.substr(cursor, stop - cursor), piece.line);
+        if (close != std::string::npos) state = ctx::text;
+        cursor = stop;
+        continue;
+      }
+      if (state == ctx::raw_text) {
+        const auto close = markup_lower(text).find("</" + raw_name, cursor);
+        const auto stop = close == std::string::npos ? text.size() : close;
+        emit_literal(text.substr(cursor, stop - cursor), piece.line);
+        cursor = stop;
+        if (close == std::string::npos) continue;
+        state = ctx::text;
+        continue; // the close tag itself is handled by the text state
+      }
+      if (state == ctx::attribute_value) {
+        const auto close = text.find(quote, cursor);
+        const auto stop = close == std::string::npos ? text.size() : close + 1;
+        emit_literal(text.substr(cursor, stop - cursor), piece.line);
+        if (close != std::string::npos) {
+          state = ctx::tag;
+          attribute.clear();
+        } else {
+          value_started = true;
+        }
+        cursor = stop;
+        continue;
+      }
+      if (state == ctx::tag) {
+        if (c == '>') {
+          emit_literal(">", piece.line);
+          ++cursor;
+          if (!open.empty() && markup_raw_text_element(open.back())) {
+            raw_name = open.back();
+            state = ctx::raw_text;
+          } else {
+            state = ctx::text;
+          }
+          continue;
+        }
+        if (c == '/' && cursor + 1 < text.size() && text[cursor + 1] == '>') {
+          emit_literal("/>", piece.line);
+          cursor += 2;
+          if (current_pushed && !open.empty()) open.pop_back();
+          current_pushed = false;
+          state = ctx::text;
+          continue;
+        }
+        if (c == '=') {
+          emit_literal("=", piece.line);
+          ++cursor;
+          while (cursor < text.size() && (text[cursor] == ' ' || text[cursor] == '\t'))
+            emit_literal(std::string(1, text[cursor++]), piece.line);
+          if (cursor < text.size() && (text[cursor] == '"' || text[cursor] == '\'')) {
+            quote = text[cursor];
+            value_started = false;
+            state = ctx::attribute_value;
+            emit_literal(std::string(1, text[cursor++]), piece.line);
+          } else {
+            structure(piece, "an attribute value must be quoted",
+                      "write name=\"value\"; the renderer never adds quotes for you");
+          }
+          continue;
+        }
+        if (markup_name_byte(static_cast<unsigned char>(c))) {
+          const auto begin = cursor;
+          while (cursor < text.size() &&
+                 markup_name_byte(static_cast<unsigned char>(text[cursor])))
+            ++cursor;
+          attribute = markup_lower(text.substr(begin, cursor - begin));
+          emit_literal(text.substr(begin, cursor - begin), piece.line);
+          continue;
+        }
+        emit_literal(std::string(1, c), piece.line);
+        ++cursor;
+        continue;
+      }
+      // ctx::text
+      if (c != '<') {
+        const auto stop = text.find('<', cursor);
+        const auto end = stop == std::string::npos ? text.size() : stop;
+        emit_literal(text.substr(cursor, end - cursor), piece.line);
+        cursor = end;
+        continue;
+      }
+      if (text.compare(cursor, 4, "<!--") == 0) {
+        state = ctx::comment;
+        emit_literal("<!--", piece.line);
+        cursor += 4;
+        continue;
+      }
+      if (cursor + 1 < text.size() && text[cursor + 1] == '!') {
+        const auto close = text.find('>', cursor);
+        const auto stop = close == std::string::npos ? text.size() : close + 1;
+        emit_literal(text.substr(cursor, stop - cursor), piece.line);
+        cursor = stop;
+        continue;
+      }
+      if (cursor + 1 < text.size() && text[cursor + 1] == '/') {
+        auto name_begin = cursor + 2;
+        auto name_end = name_begin;
+        while (name_end < text.size() &&
+               markup_name_byte(static_cast<unsigned char>(text[name_end])))
+          ++name_end;
+        const auto name = markup_lower(text.substr(name_begin, name_end - name_begin));
+        const auto close = text.find('>', name_end);
+        const auto stop = close == std::string::npos ? text.size() : close + 1;
+        emit_literal(text.substr(cursor, stop - cursor), piece.line);
+        cursor = stop;
+        if (!arm_base.empty() && open.size() <= arm_base.back())
+          structure(piece, "'</" + name + ">' closes an element this arm did not open",
+                    "each arm of a conditional or a repeat must be a complete fragment");
+        else if (open.empty())
+          structure(piece, "'</" + name + ">' closes an element that is not open");
+        else if (open.back() != name)
+          structure(piece, "expected '</" + open.back() + ">', found '</" + name + ">'");
+        else
+          open.pop_back();
+        continue;
+      }
+      auto name_begin = cursor + 1;
+      auto name_end = name_begin;
+      while (name_end < text.size() &&
+             markup_name_byte(static_cast<unsigned char>(text[name_end])))
+        ++name_end;
+      if (name_end == name_begin) {
+        structure(piece, "'<' must open an element",
+                  "write '&lt;' for a literal less-than sign");
+        emit_literal("<", piece.line);
+        ++cursor;
+        continue;
+      }
+      const auto name = markup_lower(text.substr(name_begin, name_end - name_begin));
+      emit_literal(text.substr(cursor, name_end - cursor), piece.line);
+      cursor = name_end;
+      current_pushed = !markup_void_element(name);
+      if (current_pushed) open.push_back(name);
+      attribute.clear();
+      state = ctx::tag;
+    }
+  };
+
+  while (!check(matrix::token_kind::markup_end) && !at_end()) {
+    if (match(matrix::token_kind::formatted_text)) {
+      scan_segment(previous());
+      continue;
+    }
+    if (!match(matrix::token_kind::interpolation_begin)) {
+      error(peek(), "expected markup or an interpolation");
+      advance();
+      continue;
+    }
+    const token opening = previous();
+    if (pending_url != std::string::npos) {
+      markup->items[pending_url].escape = "url_component";
+      pending_url = std::string::npos;
+    }
+    // Directives carry the language's own control words, so a document needs
+    // no second vocabulary. Everything else in a hole is an expression.
+    const bool is_when = check(kw::when);
+    const bool is_otherwise = check(kw::otherwise);
+    const bool is_repeat = check(kw::repeat);
+    const bool is_end = check(kw::end);
+    if (is_when || is_otherwise || is_repeat || is_end) {
+      if (is_when) {
+        advance();
+        add(item_kind::when_begin, opening.line).expr = parse_expression();
+        directive.push_back(1);
+        arm_base.push_back(open.size());
+      } else if (is_otherwise) {
+        advance();
+        if (directive.empty() || directive.back() != 1)
+          structure(opening, "'{otherwise}' without an open '{when ...}'");
+        else if (open.size() != arm_base.back())
+          structure(opening, "this arm leaves an element open",
+                    "close every element the arm opens before '{otherwise}'");
+        if (match(kw::when))
+          add(item_kind::else_when, opening.line).expr = parse_expression();
+        else
+          add(item_kind::else_arm, opening.line);
+      } else if (is_repeat) {
+        advance();
+        if (!match(kw::for_)) error(peek(), "expected 'for each' after '{repeat'");
+        if (!exact_phrase_word(peek(), "each"))
+          error(peek(), "expected 'each' after '{repeat for'");
+        else
+          advance();
+        auto &entry = add(item_kind::repeat_begin, opening.line);
+        if (!peek().is_name()) {
+          error(peek(), "expected a row name after '{repeat for each'");
+        } else {
+          const token binder = advance();
+          entry.binding = resolve_name(binder.lexeme);
+        }
+        if (!match(kw::in_)) error(peek(), "expected 'in' after the row name");
+        entry.expr = parse_expression();
+        directive.push_back(2);
+        arm_base.push_back(open.size());
+      } else {
+        advance(); // end
+        const bool closing_when = match(kw::when);
+        const bool closing_repeat = !closing_when && match(kw::repeat);
+        if (!closing_when && !closing_repeat)
+          error(peek(), "expected '{end when}' or '{end repeat}'");
+        if (directive.empty())
+          structure(opening, "'{end ...}' without an open directive");
+        else {
+          if (open.size() != arm_base.back())
+            structure(opening, "this arm leaves an element open",
+                      "each arm of a conditional or a repeat must be a complete fragment");
+          const bool matched = (directive.back() == 1 && closing_when) ||
+                               (directive.back() == 2 && closing_repeat);
+          if (!matched)
+            structure(opening, directive.back() == 1
+                                   ? "expected '{end when}'"
+                                   : "expected '{end repeat}'");
+          add(closing_repeat ? item_kind::end_repeat : item_kind::end_when,
+              opening.line);
+          directive.pop_back();
+          arm_base.pop_back();
+        }
+      }
+      if (!check(matrix::token_kind::interpolation_end))
+        error(peek(), "expected '}' after the directive");
+      expect(matrix::token_kind::interpolation_end, "'}'", "after a markup directive");
+      continue;
+    }
+    // A value hole. Its escaping is the context's, never the author's.
+    const bool raw = exact_phrase_word(peek(), "raw") &&
+                     !check(matrix::token_kind::interpolation_end) &&
+                     peek(1).kind != matrix::token_kind::interpolation_end;
+    if (raw) advance();
+    auto &entry = add(item_kind::hole, opening.line);
+    entry.expr = parse_expression();
+    if (raw) {
+      entry.escape = "raw";
+    } else if (state == ctx::attribute_value) {
+      if (markup_url_attribute(attribute)) {
+        entry.escape = value_started ? "url_component" : "url";
+        if (!value_started) pending_url = markup->items.size() - 1;
+      } else {
+        entry.escape = "attribute";
+      }
+      value_started = true;
+    } else if (state == ctx::text) {
+      entry.escape = "text";
+    } else if (state == ctx::raw_text) {
+      entry.escape = "raw";
+      structure(opening, "a script or style body interpolates only through '{raw ...}'",
+                "braces are ordinary characters there, so the body must be exactly one '{raw ...}' hole");
+    } else if (state == ctx::comment) {
+      entry.escape = "text";
+      structure(opening, "a hole cannot appear inside a comment");
+    } else {
+      entry.escape = "attribute";
+      structure(opening, "a hole cannot name an element or an attribute",
+                "element and attribute names are fixed so the document stays checkable");
+    }
+    if (!check(matrix::token_kind::interpolation_end))
+      error(peek(), "expected '}' after the interpolation expression");
+    expect(matrix::token_kind::interpolation_end, "'}'", "after interpolation");
+  }
+  if (pending_url != std::string::npos)
+    markup->items[pending_url].escape = "url_component";
+  expect(matrix::token_kind::markup_end, "'end markup'", "after a markup block");
+  if (!open.empty())
+    structure(start, "'<" + open.back() + ">' is never closed",
+              "every element a markup block opens must close inside it");
+  if (!directive.empty())
+    structure(start, directive.back() == 1 ? "'{when ...}' is never closed"
+                                           : "'{repeat ...}' is never closed");
+  return markup;
 }
 
 ny::ast_expr_ptr parser::parse_query_expression() {

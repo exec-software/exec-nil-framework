@@ -433,16 +433,19 @@ void lexer::scan_formatted_string(std::vector<token> &tokens,
   col_ = positions.column(pos_);
 }
 
-// A multi-line formatted block is the raw 'begin text' block with holes. The
+// A multi-line formatted block is the raw 'begin text' block with holes, and
+// a markup block is the same machinery reading markup instead of text. The
 // literal text is dedented exactly as a raw block's is, while every hole keeps
 // its ORIGINAL source coordinates: indentation removal applies to literal
 // segments only, never to an expression, so definition, completion, signature
 // help and rename behave inside a block exactly as they do inside a
 // single-line formatted literal.
-void lexer::scan_formatted_text_block(std::vector<token> &tokens,
-                                      const token &word) {
+void lexer::scan_block_literal(std::vector<token> &tokens, const token &word,
+                               bool markup) {
   const int line = word.line, col = word.column;
-  while (!at_end() && peek() != '\n') advance(); // 'begin text' and its line
+  const std::string closing = markup ? "end markup" : "end text";
+  const std::string opening = markup ? "begin markup" : "formatted begin text";
+  while (!at_end() && peek() != '\n') advance(); // the opening line
   if (!at_end()) advance();                      // the newline itself
   const std::size_t header_end = pos_;
 
@@ -459,7 +462,7 @@ void lexer::scan_formatted_text_block(std::vector<token> &tokens,
     while (!at_end() && peek() != '\n') raw.push_back(advance());
     if (!at_end()) advance();
     if (!raw.empty() && raw.back() == '\r') raw.pop_back();
-    if (normalise_line(raw) == "end text") {
+    if (normalise_line(raw) == closing) {
       terminated = true;
       terminator = start;
       break;
@@ -467,8 +470,8 @@ void lexer::scan_formatted_text_block(std::vector<token> &tokens,
     lines.push_back({start, raw});
   }
   if (!terminated) {
-    error(line, col, "unterminated 'formatted begin text' block",
-          "close it with a line whose only content is 'end text'");
+    error(line, col, "unterminated '" + opening + "' block",
+          "close it with a line whose only content is '" + closing + "'");
     tokens.push_back(make(token_kind::invalid, "", line, col));
     return;
   }
@@ -507,7 +510,8 @@ void lexer::scan_formatted_text_block(std::vector<token> &tokens,
   };
 
   const auto scanned =
-      ny::scan_formatted_block(content, true, interpolation_depth_);
+      markup ? ny::scan_markup_content(content, interpolation_depth_)
+             : ny::scan_formatted_block(content, true, interpolation_depth_);
   const ny::formatted_source_positions positions(src_, word.start, pos_,
                                                  word.line, word.column);
   const auto emit = [&](token_kind kind, std::string value, std::size_t offset,
@@ -530,8 +534,8 @@ void lexer::scan_formatted_text_block(std::vector<token> &tokens,
     return;
   }
 
-  emit(token_kind::formatted_string_begin, "formatted begin text", word.start,
-       header_end - word.start);
+  emit(markup ? token_kind::markup_begin : token_kind::formatted_string_begin,
+       opening, word.start, header_end - word.start);
   for (const auto &piece : scanned.pieces) {
     const auto start = source_offset(piece.start);
     const auto end = source_offset(piece.start + piece.length);
@@ -557,19 +561,19 @@ void lexer::scan_formatted_text_block(std::vector<token> &tokens,
     }
     emit(token_kind::interpolation_end, "}", end, 1);
   }
-  emit(token_kind::formatted_string_end, "end text", terminator, 8);
+  emit(markup ? token_kind::markup_end : token_kind::formatted_string_end,
+       closing, terminator, closing.size());
 }
 
-// The tail both block probes share: 'text' at 'probe', not running on into a
+// The tail the block probes share: 'word' at 'probe', not running on into a
 // longer identifier, and nothing but spacing left on the line.
-bool lexer::text_word_ends_line(std::size_t probe) const {
-  const char *word = "text";
-  for (size_t i = 0; i < 4; ++i) {
+bool lexer::word_ends_line(std::size_t probe, const char *word) const {
+  for (size_t i = 0; word[i]; ++i) {
     if (probe + i >= src_.size()) return false;
     if (ascii_lower(static_cast<unsigned char>(src_[probe + i])) != word[i])
       return false;
   }
-  probe += 4;
+  probe += std::char_traits<char>::length(word);
   // The word must not run on into a longer identifier.
   if (probe < src_.size() &&
       name_part(static_cast<unsigned char>(src_[probe])))
@@ -585,7 +589,15 @@ bool lexer::text_block_follows() const {
   size_t probe = pos_;
   while (probe < src_.size() && (src_[probe] == ' ' || src_[probe] == '\t'))
     ++probe;
-  return text_word_ends_line(probe);
+  return word_ends_line(probe, "text");
+}
+
+// 'begin markup' at end of line opens a markup document literal.
+bool lexer::markup_block_follows() const {
+  size_t probe = pos_;
+  while (probe < src_.size() && (src_[probe] == ' ' || src_[probe] == '\t'))
+    ++probe;
+  return word_ends_line(probe, "markup");
 }
 
 // 'formatted begin text' at end of line opens an interpolated block literal.
@@ -605,7 +617,7 @@ bool lexer::formatted_block_follows() const {
     return false;
   while (probe < src_.size() && (src_[probe] == ' ' || src_[probe] == '\t'))
     ++probe;
-  return text_word_ends_line(probe);
+  return word_ends_line(probe, "text");
 }
 
 // Consume a raw block: every line after 'begin text' up to a line whose only
@@ -707,7 +719,7 @@ std::vector<token> lexer::scan() {
         }
         // 'formatted begin text' opens the same raw block with holes in it.
         if (formatted_block_follows()) {
-          scan_formatted_text_block(tokens, word);
+          scan_block_literal(tokens, word, false);
           continue;
         }
       }
@@ -715,6 +727,11 @@ std::vector<token> lexer::scan() {
       // block of declarations.
       if (word.is(kw::begin) && text_block_follows()) {
         tokens.push_back(scan_text_block(word.line, word.column));
+        continue;
+      }
+      // 'begin markup' opens a document literal: markup with holes in it.
+      if (word.is(kw::begin) && markup_block_follows()) {
+        scan_block_literal(tokens, word, true);
         continue;
       }
       tokens.push_back(word);

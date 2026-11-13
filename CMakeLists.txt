@@ -3150,6 +3150,7 @@ if(BUILD_TESTING)
                                         bugpass-constructor-context
                                         bugpass-call-context
                                         collected-queries collected-queries-matrix
+                                        markup-matrix
                                         signed-numbers-matrix
                                         integer-literal-widths integer-literal-widths-matrix
                                         checked-text-spans checked-text-spans-matrix
@@ -3246,6 +3247,12 @@ if(BUILD_TESTING)
                 --compiler $<TARGET_FILE:nilcompiler> --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(nil.formatted-text-contract PROPERTIES
             LABELS "ny;matrix;analysis;interpolation" TIMEOUT 120)
+        add_test(NAME nil.markup-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/markup_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src" --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.markup-contract PROPERTIES
+            LABELS "matrix;markup;analysis;native;interpreter;rc" TIMEOUT 300)
         if(TARGET nilassembler AND TARGET nillinker)
             add_test(NAME nil.formatted-nil-contract
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/formatted_nil_contract.py"

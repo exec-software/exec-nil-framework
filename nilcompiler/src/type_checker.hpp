@@ -124,6 +124,7 @@ public:
   void visit(ast_cast_expr &e) override;
   void visit(ast_if_expr &e) override;
   void visit(ast_query_expr &e) override;
+  void visit(ast_markup_expr &e) override;
 
   // Helper to check if a type satisfies a trait bound
   bool check_trait_bound(const std::string &type_name,

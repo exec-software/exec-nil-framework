@@ -8,3 +8,13 @@
 1
 12
 12
+<html>
+  <head><title>Home &amp; Away</title></head>
+  <body>
+    <nav>
+      
+        <a href="/logout">Log out, &lt;Nathan&gt;</a>
+      
+    </nav>
+  </body>
+</html>

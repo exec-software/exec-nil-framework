@@ -1,0 +1,57 @@
+<html>
+  <head><title>Report &amp; Review</title></head>
+  <body>
+    <section class="card">
+  <h2>Pro &amp; Con</h2>
+  <p>3 items</p>
+</section>
+    <nav>
+      
+        <a href="/logout">Log out, Na&lt;me&gt;</a>
+      
+    </nav>
+    <ul class="names">
+      
+        <li class="alpha" data-total="3">alpha</li>
+      
+        <li class="b&lt;ad&gt;" data-total="3">b&lt;ad&gt;</li>
+      
+        <li class="gamma" data-total="3">gamma</li>
+      
+    </ul>
+    <a href="/dashboard">target</a>
+    <a href="/search?q=a%20b%26c">search</a>
+    <br/>
+    <img src="/logo.png">
+    <!-- comments survive -->
+    <style>body { margin: 0 }</style>
+    <script>var ready = 1 < 2;</script>
+    <p>{literal braces} and <em>trusted</em></p>
+  </body>
+</html>
+<html>
+  <head><title>Report &amp; Review</title></head>
+  <body>
+    <section class="card">
+  <h2>Pro &amp; Con</h2>
+  <p>0 items</p>
+</section>
+    <nav>
+      
+        <a href="/register">Register</a>
+      
+    </nav>
+    <ul class="names">
+      
+    </ul>
+    <a href="javascript%3aalert(1)">target</a>
+    <a href="/search?q=x">search</a>
+    <br/>
+    <img src="/logo.png">
+    <!-- comments survive -->
+    <style>body { margin: 0 }</style>
+    <script>var ready = 1 < 2;</script>
+    <p>{literal braces} and <em>trusted</em></p>
+  </body>
+</html>
+

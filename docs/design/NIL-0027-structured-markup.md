@@ -1,7 +1,8 @@
 # NIL-0027: Multiline formatted text and structured markup literals
 
-- **Status:** §2 implemented for Matrix on 2026-11-13. §3 proposed; the Ny
-  spelling of §2 remains open.
+- **Status:** §2 and §3 implemented for Matrix on 2026-11-13, with the
+  representation revised as recorded in §3.6. The Ny spellings of both remain
+  open.
 - **Scope:** Ny and Matrix syntax, shared hole lexing and AST, checking,
   lowering, `nil.std.markup`, text builder
 - **Date:** 2026-11-13
@@ -51,7 +52,7 @@ member of that family.
 | --- | --- | --- | --- |
 | `formatted "..."` | yes | none, one line | NIL-0014, implemented |
 | `formatted begin text ... end text` | yes | none, multiline | §2, implemented (Matrix) |
-| `begin markup ... end markup` | yes | elements, attributes, control flow | §3 of this record |
+| `begin markup ... end markup` | yes | elements, attributes, control flow | §3, implemented (Matrix) |
 
 All three use the hole lexer NIL-0014 already built, which emits an expression's
 tokens with their original byte offsets rather than re-lexing decoded text.
@@ -224,35 +225,58 @@ doing this at all:
    what a future webview host wants, and it is unavailable from a string
    forever after.
 
-### 3.6 Representation: an arena, not a record graph
+### 3.6 Representation: revised — serialized at compile time
 
-The obvious implementation — a `node` record holding `array of node` children —
-does not execute. Native arrays of records, choices and nested arrays are
-unsupported (MATRIX-GUIDE §17), and an array of class handles compiles and then
-fails at run time (§16). A tree of record handles would therefore be
-interpreter-only, which is not acceptable for the one construct whose whole
-purpose is to be used everywhere.
+**This section replaced its original proposal on 2026-11-13, during
+implementation.** It first specified a runtime arena: parallel scalar arrays
+holding a node tree, because §3.5 argued for a tree over text. Building it
+turned up two things.
 
-A `markup` value is instead an **arena**: parallel arrays of scalars
-(`kind`, `name-id`, `parent`, `first-child`, `next-sibling`, `text-id`) beside
-a text pool `array of text`. Arrays of scalars and arrays of text are supported
-on both routes today. Composition is an append of one arena into another with
-an index offset. Rendering is one pre-order walk.
+The first is that the obvious implementation does not execute. A `node` record
+holding `array of node` children fails: native arrays of records, choices and
+nested arrays are unsupported (MATRIX-GUIDE §17) and an array of class handles
+compiles and then fails at run time (§16). An arena of parallel scalar and text
+arrays does work on both routes, so the plan was sound.
 
-This also gives the compile-time optimisation for free: a literal's static
-subtrees have known shape, so the compiler emits their serialized bytes as
-constant segments and the render becomes a sequence of appends with the holes
-patched in. A page with twelve holes costs about twelve appends, not a tree
-traversal.
+The second is that it buys almost nothing here. Of §3.5's four reasons for a
+tree, three do not need one at run time:
 
-### 3.7 Decision: the text builder is a prerequisite
+- **Context-correct escaping** is decided while the block is parsed, so it
+  costs nothing at run time and is *more* reliable than a tree walk.
+- **Balance checking** happens at parse time, whatever the value becomes.
+- **Composition without seams** needs only that a document be a distinct
+  *type*, not a distinct *shape*: an already-escaped fragment spliced into
+  another document is correct whether it is a node list or serialized bytes.
 
-The 2026-10-15 standard-library audit (item 7) records that the experimental
-text builder concatenates on every append, so appending *n* segments is
-quadratic. Rendering is the one workload that makes this visible on every
-request. An amortized-growth builder in `nil.std.text` lands before the
-renderer, and the renderer preflights its output size the way
-`nil.std.text`'s pattern replacement already does.
+Only the fourth — rendering one document to several dialects, or diffing two —
+needs a runtime tree, and that was already deferred to §5.
+
+So a `markup` value is `nil.std.markup.document`, a record holding the
+serialized, already-escaped text. The literal's static segments are compile-
+time constants; only holes and control flow cost anything. The type is what
+carries the guarantee, and the shape behind it stays an implementation detail:
+moving to an arena later changes no source.
+
+What this costs, stated plainly: the dialect is fixed when the block is
+compiled rather than when it is rendered, so `begin markup as xml` becomes a
+second lowering rather than a second renderer, and diffing two documents will
+need the arena after all. Both were out of scope for this version, and neither
+is reachable from a program written against this one.
+
+### 3.7 Decision: the text builder — not yet needed
+
+The original plan made an amortized text builder a prerequisite, because the
+2026-10-15 audit (item 7) records that the experimental builder concatenates on
+every append. With §3.6's revision the renderer is not a tree walk at all: a
+page is a sequence of `STR_CONCAT` appends the compiler emits directly, and the
+builder never enters the path. The audit item stands on its own merits and is
+still worth fixing; it is no longer blocking.
+
+What rendering does depend on is `nil.std.text`, and one gap surfaced there:
+`to_lower` reaches the `_char_code` interop, which has no native ABI, so a page
+using it would compile for the VM and fail natively. The URL scheme check folds
+case with `replace` instead. Making `to_lower` native is separate follow-up
+work.
 
 ## 4. What this is not
 
@@ -265,14 +289,21 @@ file access from a document.
 
 ## 5. Staging
 
-1. §2 multiline formatted text. Self-contained, and useful the day it lands.
-2. Amortized text builder (§3.7).
+1. §2 multiline formatted text. **Done 2026-11-13.**
+2. ~~Amortized text builder~~ — not a prerequisite after §3.6; see §3.7.
 3. `begin markup` with the HTML table: parse, check balance, holes, `{when}`,
-   `{repeat}`, `{raw}`, render to text.
-4. `nil.std.markup` constructors, so a document can also be assembled from
-   values rather than written literally, and the XML table.
-5. Diffing two arenas. Out of scope here; named so that §3.6 is not mistaken
-   for speculation.
+   `{repeat}`, `{raw}`, render to text. **Done 2026-11-13.** The literal is
+   lexed by the block scanner from §2, parsed as markup by
+   `parser::parse_markup_expression`, checked in `type_checker::visit`
+   (escape versus splice) and emitted by `emit_markup` as ordinary NIL, so both
+   execution routes are covered by one emitter. Coverage: the `markup-matrix`
+   parity fixture across the VM, binary, native and native-toolchain routes;
+   `tests/tools/markup_contract.py` rejecting sixteen malformed documents on
+   every route and proving hostile input is escaped in each context exactly
+   once.
+4. `nil.std.markup` constructors beyond `raw` and `empty`, so a document can be
+   assembled from values rather than written literally, and the XML table.
+5. Diffing two documents, which is what would bring §3.6's arena back.
 
 ## 6. Open questions
 
