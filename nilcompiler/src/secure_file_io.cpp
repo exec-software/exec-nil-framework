@@ -690,6 +690,64 @@ bool private_lock_file(const struct stat &status) {
 } // namespace
 #endif
 
+AtomicFileWrite create_private_directory_utf8(const std::string &path) {
+#ifdef _WIN32
+  (void)path;
+  return {false, "file.create_private_directory: unsupported platform"};
+#else
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path)
+    return {false, "file.create_private_directory: invalid directory path"};
+  // The requested mode is applied by creation. A default-permission mkdir
+  // followed by chmod would expose a writable directory in between. An
+  // existing entry is reported, never adopted, so a caller cannot be handed
+  // someone else's directory as if it had just created it.
+  if (::mkdir(native_path->c_str(), 0700) != 0) {
+    if (errno == EEXIST)
+      return {false, "file.create_private_directory: entry already exists"};
+    return {false, "file.create_private_directory: cannot create directory"};
+  }
+  return {true, {}};
+#endif
+}
+
+FileCheck private_regular_file_utf8(const std::string &path) {
+#ifdef _WIN32
+  (void)path;
+  return {false, false,
+          "file.is_private_regular_file: unsupported platform"};
+#else
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path)
+    return {false, false, "file.is_private_regular_file: invalid file path"};
+  struct stat status {};
+  // lstat, so a symlink is judged as itself and reports false rather than
+  // silently describing its target.
+  if (::lstat(native_path->c_str(), &status) != 0)
+    return {false, false,
+            "file.is_private_regular_file: cannot inspect entry"};
+  return {true, private_lock_file(status), {}};
+#endif
+}
+
+FileCheck private_directory_utf8(const std::string &path) {
+#ifdef _WIN32
+  (void)path;
+  return {false, false, "file.is_private_directory: unsupported platform"};
+#else
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path)
+    return {false, false, "file.is_private_directory: invalid directory path"};
+  struct stat status {};
+  if (::lstat(native_path->c_str(), &status) != 0)
+    return {false, false, "file.is_private_directory: cannot inspect entry"};
+  const bool owner_only = S_ISDIR(status.st_mode) &&
+                          status.st_uid == ::geteuid() &&
+                          (status.st_mode & 07777) == 0700;
+  return {true, owner_only, {}};
+#endif
+}
+
 FileLockRegistry::~FileLockRegistry() noexcept { clear(); }
 
 FileLockResult FileLockRegistry::acquire(const std::string &path, bool create) {

@@ -93,6 +93,32 @@ pub fn acquire_file_lock(path: text, create: bool) -> Result<i64, text>
 @intrinsic("file.release_file_lock")
 pub fn release_file_lock(token: i64) -> Result<bool, text>
 
+# Create a new owner-only directory: POSIX mode 0700, applied by creation
+# rather than a later chmod, which would leave a writable window. An existing
+# entry is an error and is never adopted, so success means this call created
+# the directory. Parents are not created and are trusted; creation does not
+# durably publish the new name, so call sync_directory when that is needed.
+# POSIX-only, fails closed elsewhere.
+@intrinsic("file.create_private_directory")
+pub fn create_private_directory(path: text) -> Result<bool, text>
+
+# Is this entry a private regular file: regular, owned by the effective user,
+# exactly one hard link, and exactly mode 0600? A symlink is judged as itself
+# and answers false rather than describing its target.
+#
+# Error means the entry could not be inspected, which is distinct from an
+# answer of false. Both are distinct from being safe to use: this inspects a
+# path, so the entry can change before it is opened. Treat it as preflight and
+# diagnosis, not as a guarantee; durable writes and lock acquisition perform
+# their own checked no-follow opens.
+@intrinsic("file.is_private_regular_file")
+pub fn is_private_regular_file(path: text) -> Result<bool, text>
+
+# Is this entry a directory owned by the effective user with exactly mode
+# 0700? The same inspection limits as is_private_regular_file apply.
+@intrinsic("file.is_private_directory")
+pub fn is_private_directory(path: text) -> Result<bool, text>
+
 # Append text to a file
 @intrinsic("file.append_text")
 pub fn append_text(path: text, content: text) -> Result<bool, text>

@@ -10,6 +10,10 @@ the same runtime provider and checked results.
 | `sync_directory(path)` | `Result<bool, text>` |
 | `acquire_file_lock(path, create)` | `Result<i64, text>` |
 | `release_file_lock(token)` | `Result<bool, text>` |
+| `create_private_directory(path)` | `Result<bool, text>` |
+| `is_private_regular_file(path)` | `Result<bool, text>` |
+| `is_private_directory(path)` | `Result<bool, text>` |
+| `sha256_hex(data)` | `Result<text, text>` |
 
 Matrix uses the same names with underscores or hyphens. Machine-width lock
 tokens appear as `number`/`override long`; they are runtime handles, not host
@@ -86,6 +90,38 @@ unsupported-platform error before filesystem mutation. Other POSIX platforms
 need their own execution evidence; this addition does not qualify an installed
 or release SDK.
 
-Private-directory creation, owner/mode inspection, standalone SHA-256, and a
-complete storage host are separate APIs. A consuming application should migrate
-only the parts it has qualified. See [NIL-0028](../design/NIL-0028-durable-files-and-locks.md).
+## Private entries and digests
+
+`create_private_directory` exclusively creates one owner-only directory: POSIX
+mode `0700`, applied by creation rather than a later chmod, which would leave a
+writable window. An existing entry is reported, never adopted, so success means
+this call created it. Parents are not created and remain trusted. Creation does
+not durably publish the new name; call `sync_directory` when that matters.
+
+`is_private_regular_file` asks whether an entry is regular, owned by the
+effective user, singly linked, and exactly mode `0600`. `is_private_directory`
+asks whether it is a directory owned by the effective user with exactly mode
+`0700`. Neither follows a final symlink, so a link is judged as itself and does
+not inherit its target's verdict.
+
+An `Error` means the entry could not be inspected, which is distinct from a
+verdict of `false`. Both are distinct from being safe to use: these inspect a
+path, so the entry can change between inspection and use. Treat them as
+preflight and diagnosis. A caller needing a guarantee must act on an open
+descriptor; durable publication and lock acquisition keep their own checked
+no-follow opens. The verdicts describe POSIX owner and permission bits only,
+not ACLs, extended attributes, capabilities, or mandatory access control.
+
+`sha256_hex` returns 64 lowercase hexadecimal characters over every supplied
+byte, embedded NULs included, bounded like the other byte-array operations. It
+detects accidental corruption and identifies content. It is **not** a
+signature, a message authentication code, encryption, or rollback protection:
+anyone able to replace the bytes can replace the digest stored beside them.
+Authenticating a digest needs a secret this function does not take. For
+accidental-corruption checks over a window of a byte array, `crc32` remains
+cheaper and is equally unauthenticated.
+
+A complete storage host remains the application's own. A consuming application
+should migrate only the parts it has qualified. See
+[NIL-0028](../design/NIL-0028-durable-files-and-locks.md) and
+[NIL-0029](../design/NIL-0029-private-entries-and-digests.md).

@@ -149,7 +149,9 @@ visibility-atomic but does not promise parent-directory durability after a
 sudden power loss.
 
 The additive [durable-files reference](durable-files.md) covers
-`write_bytes_durable`, `sync_directory`, and context-owned advisory file locks.
+`write_bytes_durable`, `sync_directory`, context-owned advisory file locks,
+owner-only directory creation, private-entry metadata verdicts, and
+`sha256_hex`.
 Those POSIX primitives supply explicit filesystem barriers and nonblocking
 single-writer coordination. They preserve existing atomic-write/stream-flush
 semantics and do not expand an older installed SDK's guarantees.

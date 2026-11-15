@@ -54,4 +54,6 @@ The [public API reference](../standard-library/durable-files.md) defines exact
 limits. Existing SDKs do not gain the new provider from source declarations
 alone. A development build must ship matching compiler, runtime, and library
 sources; release/installed-SDK qualification and the remaining application-host
-APIs are independent work.
+APIs are independent work. The private-directory, owner/mode, and standalone
+SHA-256 surfaces reserved here are decided in
+[NIL-0029](NIL-0029-private-entries-and-digests.md).

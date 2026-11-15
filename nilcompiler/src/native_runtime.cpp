@@ -13,6 +13,7 @@
 #include "scalar_text.hpp"
 
 #include "secure_file_io.hpp"
+#include "../../common/content_digest.hpp"
 #include "time_support.hpp"
 #include "file_time_support.hpp"
 #include "parallel_support.hpp"
@@ -1711,6 +1712,31 @@ std::int32_t nyrt_io_v1(const char *operation, std::uint64_t first,
       if (!written.ok) { set_error(error, written.error); return 0; }
       *value = 1;
       return 1;
+    }
+    if (name == "file.create_private_directory") {
+      const auto created = ny::detail::create_private_directory_utf8(text(first));
+      if (!created.ok) { set_error(error, created.error); return 0; }
+      *value = 1;
+      return 1;
+    }
+    if (name == "file.is_private_regular_file" ||
+        name == "file.is_private_directory") {
+      // An uninspectable entry is an error; a false verdict is a successful
+      // inspection, so the two never collapse into one answer.
+      const auto checked = name == "file.is_private_regular_file"
+                               ? ny::detail::private_regular_file_utf8(text(first))
+                               : ny::detail::private_directory_utf8(text(first));
+      if (!checked.ok) { set_error(error, checked.error); return 0; }
+      *value = checked.value ? 1 : 0;
+      return 1;
+    }
+    if (name == "checksum.sha256_hex") {
+      const auto *array = checked_array(reinterpret_cast<const void *>(static_cast<std::uintptr_t>(first)), NYRT_ARRAY_U8);
+      if (!array || array->length > maximum_file_bytes) return fail("invalid or oversized byte array");
+      nil::detail::sha256 hash;
+      if (array->length) hash.update(static_cast<const char *>(array->data), array->length);
+      const std::string digest = hash.finish();
+      return output_text(std::string_view(digest));
     }
 
     if (name.rfind("path.", 0) == 0) {

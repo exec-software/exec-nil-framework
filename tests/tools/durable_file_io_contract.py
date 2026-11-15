@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
 from native_output_staging import native_output_path
 
-EXPECTED_STDOUT = b"durable-write-ok\nlocks-ok\n"
+EXPECTED_STDOUT = b"durable-write-ok\nlocks-ok\nmetadata-ok\n"
 EXPECTED_BYTES = bytes((255, 0, 1))
 
 
@@ -29,9 +29,17 @@ def host_oracle(directory: Path) -> dict:
     import fcntl
 
     expected = {"checkpoint.bin": EXPECTED_BYTES, "empty.bin": b"", "writer.lock": b""}
+    # The fixture also creates one owner-only subdirectory through the public
+    # surface, so the namespace is checked as files plus that single directory.
+    expected_directories = {"private"}
     observed = {item.name for item in directory.iterdir()}
-    if observed != set(expected):
+    if observed != set(expected) | expected_directories:
         raise AssertionError("unexpected durable-file namespace: " + repr(sorted(observed)))
+    for name in expected_directories:
+        info = (directory / name).lstat()
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) != 0o700):
+            raise AssertionError("directory is not owner-only: " + name)
     for name, content in expected.items():
         path = directory / name
         info = path.lstat()
@@ -47,7 +55,8 @@ def host_oracle(directory: Path) -> dict:
     finally:
         os.close(descriptor)
     return {"bytes": "exact", "modes": "0600", "remaining_staging_files": 0,
-            "lock_after_process_completion": "released"}
+            "lock_after_process_completion": "released",
+            "private_directories": sorted(expected_directories), "directory_modes": "0700"}
 
 
 def main() -> int:

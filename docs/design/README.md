@@ -55,6 +55,7 @@ not assigned architecture identifiers.
 | NIL-0026 | [Evolving the language without breaking what is written](NIL-0026-language-evolution.md) | Editions implemented in the project manifest |
 | NIL-0027 | [Multiline formatted text and structured markup literals](NIL-0027-structured-markup.md) | Proposed; staged, nothing shipped |
 | NIL-0028 | [Durable publication and context-owned file locks](NIL-0028-durable-files-and-locks.md) | Implemented additive POSIX source-runtime profile; installed/release SDK qualification separate |
+| NIL-0029 | [Private directory creation, metadata verdicts, and content digests](NIL-0029-private-entries-and-digests.md) | Implemented additive POSIX source-runtime profile with a portable digest; installed/release SDK qualification separate |
 | NIL-0093 | [Executable context is artifact self-description](NIL-0093-executable-context.md) | Implemented within the documented inspection profile |
 
 ## Retained Ny feature references

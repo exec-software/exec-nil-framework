@@ -1,4 +1,5 @@
 #include "../nilcompiler/src/secure_file_io.hpp"
+#include "../common/content_digest.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -419,6 +420,78 @@ void check_process_death_cleanup(const fs::path &root) {
   require(acquired.ok, "process death did not release the operating-system lock");
   require(parent_registry.release(acquired.token).ok, "cannot release post-crash lock");
 }
+void check_private_metadata(const fs::path &root) {
+  const auto created = root / "owner-only";
+  require(ny::detail::create_private_directory_utf8(created.u8string()).ok,
+          "cannot create an owner-only directory");
+  struct stat status {};
+  require(::lstat(created.c_str(), &status) == 0 && S_ISDIR(status.st_mode) &&
+              (status.st_mode & 07777) == 0700,
+          "created directory is not owner-only");
+  // An existing entry is never adopted, so a caller cannot be handed a
+  // directory it did not create.
+  require_error(ny::detail::create_private_directory_utf8(created.u8string()), "owner-only");
+  require_error(ny::detail::create_private_directory_utf8(std::string("bad\0path", 8)), "bad");
+
+  auto verdict = [](const ny::detail::FileCheck &check, bool expected,
+                    const std::string &message) {
+    require(check.ok, "metadata inspection failed: " + message);
+    require(check.value == expected, message);
+  };
+
+  const auto secret = root / "secret";
+  write_bytes(secret, "payload");
+  verdict(ny::detail::private_regular_file_utf8(secret.u8string()), true,
+          "a 0600 owned regular file is private");
+  verdict(ny::detail::private_directory_utf8(created.u8string()), true,
+          "a 0700 owned directory is private");
+  // Cross-kind answers are verdicts, not errors.
+  verdict(ny::detail::private_regular_file_utf8(created.u8string()), false,
+          "a directory is not a private regular file");
+  verdict(ny::detail::private_directory_utf8(secret.u8string()), false,
+          "a regular file is not a private directory");
+
+  const auto loose = root / "loose";
+  write_bytes(loose, "payload");
+  require(::chmod(loose.c_str(), 0644) == 0, "cannot loosen fixture mode");
+  verdict(ny::detail::private_regular_file_utf8(loose.u8string()), false,
+          "a 0644 file is not private");
+  const auto loose_directory = root / "loose-directory";
+  require(::mkdir(loose_directory.c_str(), 0755) == 0, "cannot create loose directory");
+  verdict(ny::detail::private_directory_utf8(loose_directory.u8string()), false,
+          "a 0755 directory is not private");
+
+  // A symlink is judged as itself: it never inherits its target's verdict.
+  const auto link = root / "link";
+  require(::symlink(secret.c_str(), link.c_str()) == 0, "cannot create fixture symlink");
+  verdict(ny::detail::private_regular_file_utf8(link.u8string()), false,
+          "a symlink to a private file is not a private regular file");
+  const auto directory_link = root / "directory-link";
+  require(::symlink(created.c_str(), directory_link.c_str()) == 0,
+          "cannot create fixture directory symlink");
+  verdict(ny::detail::private_directory_utf8(directory_link.u8string()), false,
+          "a symlink to a private directory is not a private directory");
+
+  // A second hard link means another name can reach the same inode.
+  const auto shared = root / "shared";
+  require(::link(secret.c_str(), shared.c_str()) == 0, "cannot create fixture hard link");
+  verdict(ny::detail::private_regular_file_utf8(shared.u8string()), false,
+          "a multiply-linked file is not private");
+  require(::unlink(shared.c_str()) == 0, "cannot remove fixture hard link");
+
+  const auto pipe = root / "pipe";
+  require(::mkfifo(pipe.c_str(), 0600) == 0, "cannot create fixture FIFO");
+  verdict(ny::detail::private_regular_file_utf8(pipe.u8string()), false,
+          "a FIFO is not a private regular file");
+
+  // Absence cannot be inspected; it is an error, not a false verdict.
+  const auto absent = root / "absent-metadata-marker";
+  require_error(ny::detail::private_regular_file_utf8(absent.u8string()),
+                "absent-metadata-marker");
+  require_error(ny::detail::private_directory_utf8(absent.u8string()),
+                "absent-metadata-marker");
+}
+
 #else
 void check_unsupported_host(const fs::path &root) {
   const auto target = root / "private-unsupported-marker";
@@ -426,9 +499,35 @@ void check_unsupported_host(const fs::path &root) {
   require_error(ny::detail::write_file_durable_utf8(target.u8string(), {'x'}, false), "private-unsupported-marker");
   FileLockRegistry registry;
   require_error(registry.acquire(target.u8string(), true), "private-unsupported-marker");
+  require_error(ny::detail::create_private_directory_utf8(target.u8string()),
+                "private-unsupported-marker");
+  require_error(ny::detail::private_regular_file_utf8(target.u8string()),
+                "private-unsupported-marker");
+  require_error(ny::detail::private_directory_utf8(target.u8string()),
+                "private-unsupported-marker");
   require(registry.empty() && !fs::exists(target), "unsupported host mutated its namespace");
 }
 #endif
+
+void check_content_digest() {
+  // RFC 6234 vectors, so a wrong digest fails rather than merely staying stable.
+  nil::detail::sha256 empty;
+  require(empty.finish() ==
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "SHA-256 of no bytes is wrong");
+  nil::detail::sha256 abc;
+  abc.update("abc", 3);
+  require(abc.finish() ==
+              "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+          "SHA-256 of \"abc\" is wrong");
+  // An embedded NUL must be digested, not treated as a terminator.
+  nil::detail::sha256 embedded;
+  const char zeroed[] = {'a', '\0', 'b'};
+  embedded.update(zeroed, sizeof(zeroed));
+  require(embedded.finish() ==
+              "59b271ae1bbcb1d31d41929817f4b16fb439eb4f31520b5ad1d5ce98920a7138",
+          "a digest over embedded NUL bytes must cover every byte");
+}
 } // namespace
 
 int main() {
@@ -443,9 +542,11 @@ int main() {
     check_lock_lifecycle(owned.root);
     check_unsafe_locks(owned.root);
     check_process_death_cleanup(owned.root);
+    check_private_metadata(owned.root);
 #else
     check_unsupported_host(owned.root);
 #endif
+    check_content_digest();
     std::cout << "durable-file-io-ok\n";
     return 0;
   } catch (const std::exception &error) {

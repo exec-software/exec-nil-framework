@@ -17,6 +17,7 @@
 #include "entropy_support.hpp"
 #include "net_support.hpp"
 #include "secure_file_io.hpp"
+#include "../../common/content_digest.hpp"
 #include "time_support.hpp"
 #include "file_time_support.hpp"
 #include "../../common/windows_environment.hpp"
@@ -2758,7 +2759,11 @@ void VM::executeInstruction(const Instruction &instr) {
     const bool returns_void = instr.args.size() > 3 && instr.args[3] == "void";
     if (lib_name == "intrinsic" &&
         (fn_name == "file.write_bytes_durable" || fn_name == "file.sync_directory" ||
-         fn_name == "file.acquire_file_lock" || fn_name == "file.release_file_lock")) {
+         fn_name == "file.acquire_file_lock" || fn_name == "file.release_file_lock" ||
+         fn_name == "file.create_private_directory" ||
+         fn_name == "file.is_private_regular_file" ||
+         fn_name == "file.is_private_directory" ||
+         fn_name == "checksum.sha256_hex")) {
       const auto contract = ordinary_io::intrinsic(fn_name);
       const auto expected = "nil::std::core::Result<" + contract->payload + ",text>";
       bool valid = arg_count == static_cast<int>(contract->parameters.size()) &&
@@ -5314,6 +5319,95 @@ void VM::executeInstruction(const Instruction &instr) {
         }
       } catch (...) {
         result(false, 0, fn_name + ": host operation failed");
+      }
+      return;
+    }
+    if (fn_name == "file.create_private_directory" ||
+        fn_name == "file.is_private_regular_file" ||
+        fn_name == "file.is_private_directory") {
+      auto reply = [&](bool ok, bool value, const std::string &error) {
+        EnumValue result;
+        result.variant_name = ok ? "Result::Ok" : "Result::Error";
+        if (ok) result.payloads.push_back(static_cast<int64_t>(value ? 1 : 0));
+        else result.payloads.push_back(error);
+        pushStack(result);
+      };
+      if (args.size() != 1 || !std::holds_alternative<std::string>(args[0])) {
+        reply(false, false, fn_name + ": expected a text path");
+        return;
+      }
+      const std::string &path = std::get<std::string>(args[0]);
+      try {
+        if (fn_name == "file.create_private_directory") {
+          const auto created = detail::create_private_directory_utf8(path);
+          reply(created.ok, true, created.error);
+        } else if (fn_name == "file.is_private_regular_file") {
+          const auto checked = detail::private_regular_file_utf8(path);
+          reply(checked.ok, checked.value, checked.error);
+        } else {
+          const auto checked = detail::private_directory_utf8(path);
+          reply(checked.ok, checked.value, checked.error);
+        }
+      } catch (...) {
+        reply(false, false, fn_name + ": host operation failed");
+      }
+      return;
+    }
+    if (fn_name == "checksum.sha256_hex") {
+      auto push_digest = [&](const std::string &digest) {
+        EnumValue result;
+        result.variant_name = "Result::Ok";
+        result.payloads.push_back(digest);
+        pushStack(result);
+      };
+      auto push_error = [&](const std::string &message) {
+        EnumValue result;
+        result.variant_name = "Result::Error";
+        result.payloads.push_back(message);
+        pushStack(result);
+      };
+      if (args.size() != 1 || !std::holds_alternative<ArrayHandle>(args[0])) {
+        push_error(fn_name + ": expected a byte array");
+        return;
+      }
+      const auto block = heap_.find(std::get<ArrayHandle>(args[0]).address);
+      if (block == heap_.end()) {
+        push_error(fn_name + ": invalid byte array");
+        return;
+      }
+      std::vector<char> bytes;
+      try {
+        if (is_byte_heap_type(block->second.type_name)) {
+          if (block->second.byte_data.size() > max_intrinsic_file_bytes) {
+            push_error(fn_name + ": byte array exceeds the 512 MiB safety limit");
+            return;
+          }
+          bytes = block->second.byte_data;
+        } else if (block->second.type_name == "array") {
+          if (block->second.data.size() > max_intrinsic_file_bytes) {
+            push_error(fn_name + ": array exceeds the 512 MiB safety limit");
+            return;
+          }
+          bytes.reserve(block->second.data.size());
+          for (const Value &value : block->second.data) {
+            const auto *integer = std::get_if<int64_t>(&value);
+            if (integer == nullptr || *integer < 0 || *integer > 255) {
+              push_error(fn_name + ": array contains a value outside u8");
+              return;
+            }
+            bytes.push_back(static_cast<char>(static_cast<unsigned char>(*integer)));
+          }
+        } else {
+          push_error(fn_name + ": value is not a byte array");
+          return;
+        }
+        nil::detail::sha256 hash;
+        if (!bytes.empty()) hash.update(bytes.data(), bytes.size());
+        push_digest(hash.finish());
+      } catch (const std::bad_alloc &) {
+        push_error(fn_name + ": allocation failed");
+      } catch (...) {
+        push_error(fn_name + ": host operation failed");
       }
       return;
     }

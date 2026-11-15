@@ -52,6 +52,12 @@ inline std::optional<Contract> intrinsic(const std::string &name) {
     return Contract{{"text", "bool"}, "i64", Output::result};
   if (name == "file.release_file_lock")
     return Contract{{"i64"}, "bool", Output::result};
+  if (name == "file.create_private_directory" ||
+      name == "file.is_private_regular_file" ||
+      name == "file.is_private_directory")
+    return Contract{{"text"}, "bool", Output::result};
+  if (name == "checksum.sha256_hex")
+    return Contract{{"array<u8>"}, "text", Output::result};
   if (name == "environment.get") return Contract{{"text"}, "text", Output::option};
   if (name == "file.handle_open") return Contract{{"text", "i32"}, "i64"};
   if (name == "file.handle_read" || name == "file.handle_write")

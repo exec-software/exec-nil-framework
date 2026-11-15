@@ -47,5 +47,47 @@ fn main() -> i32
     # independently acquires the backing file after every execution route.
     if not nil::std::io::sync_directory(root).is_ok() then return 18 end if
     println("locks-ok")
+
+    # RFC 6234 vectors, so a wrong digest fails rather than merely staying stable.
+    match nil::std::io::sha256_hex(empty)
+        Result.Error(_) -> return 20
+        Result.Ok(digest) ->
+            if digest != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" then return 21 end if
+    end match
+    let abc: array<u8> = [97 as u8, 98 as u8, 99 as u8]
+    match nil::std::io::sha256_hex(abc)
+        Result.Error(_) -> return 22
+        Result.Ok(digest) ->
+            if digest != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" then return 23 end if
+    end match
+
+    # The harness creates the working directory owner-only.
+    match nil::std::io::is_private_directory(root)
+        Result.Error(_) -> return 24
+        Result.Ok(private) -> if not private then return 25 end if
+    end match
+    let nested = root + "/private"
+    if not nil::std::io::create_private_directory(nested).is_ok() then return 26 end if
+    # An existing entry is reported, never adopted.
+    if nil::std::io::create_private_directory(nested).is_ok() then return 27 end if
+    match nil::std::io::is_private_directory(nested)
+        Result.Error(_) -> return 28
+        Result.Ok(private) -> if not private then return 29 end if
+    end match
+    # A 0600 published file is a private regular file; a directory is not, and
+    # that is a false verdict rather than an error.
+    match nil::std::io::is_private_regular_file(output)
+        Result.Error(_) -> return 30
+        Result.Ok(private) -> if not private then return 31 end if
+    end match
+    match nil::std::io::is_private_regular_file(nested)
+        Result.Error(_) -> return 32
+        Result.Ok(private) -> if private then return 33 end if
+    end match
+    # An absent entry cannot be inspected, which is distinct from either verdict.
+    if nil::std::io::is_private_regular_file(nested + "/absent").is_ok() then return 34 end if
+    if nil::std::io::is_private_directory(nested + "/absent").is_ok() then return 35 end if
+    if not nil::std::io::sync_directory(nested).is_ok() then return 36 end if
+    println("metadata-ok")
     return 0
 end fn

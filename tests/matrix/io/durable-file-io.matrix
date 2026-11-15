@@ -2,7 +2,8 @@
 book nil.tests.durable_file_io
 
 read everything from nil.std.core
-read write_bytes_durable, read_bytes, sync_directory, acquire_file_lock, release_file_lock from nil.std.io
+read write_bytes_durable, read_bytes, sync_directory, acquire_file_lock, release_file_lock,
+    create_private_directory, is_private_regular_file, is_private_directory, sha256_hex from nil.std.io
 read arg_count, arg from nil.std.system
 read byte_at, from_byte from nil.std.text
 
@@ -95,5 +96,73 @@ main returns override integer begin paragraph
         give 18
     end when
     say "locks-ok"
+
+    !!! RFC 6234 vectors, so a wrong digest fails rather than merely staying stable.
+    value empty_digest is sha256_hex with data being empty
+    when empty_digest.is_error with nothing then
+        give 20
+    end when
+    when (empty_digest.unwrap with nothing) does not equal "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" then
+        give 21
+    end when
+    value abc as array of override byte is [97 becomes override byte, 98 becomes override byte, 99 becomes override byte]
+    value abc_digest is sha256_hex with data being abc
+    when abc_digest.is_error with nothing then
+        give 22
+    end when
+    when (abc_digest.unwrap with nothing) does not equal "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" then
+        give 23
+    end when
+
+    !!! The harness creates the working directory owner-only.
+    value root_private is is_private_directory with path being root
+    when root_private.is_error with nothing then
+        give 24
+    end when
+    when not (root_private.unwrap with nothing) then
+        give 25
+    end when
+    value nested is root plus "/private"
+    when not ((create_private_directory with path being nested).is_ok with nothing) then
+        give 26
+    end when
+    !!! An existing entry is reported, never adopted.
+    when (create_private_directory with path being nested).is_ok with nothing then
+        give 27
+    end when
+    value nested_private is is_private_directory with path being nested
+    when nested_private.is_error with nothing then
+        give 28
+    end when
+    when not (nested_private.unwrap with nothing) then
+        give 29
+    end when
+    !!! A 0600 published file is a private regular file; a directory is not, and
+    !!! that is a false verdict rather than an error.
+    value file_private is is_private_regular_file with path being output
+    when file_private.is_error with nothing then
+        give 30
+    end when
+    when not (file_private.unwrap with nothing) then
+        give 31
+    end when
+    value directory_as_file is is_private_regular_file with path being nested
+    when directory_as_file.is_error with nothing then
+        give 32
+    end when
+    when directory_as_file.unwrap with nothing then
+        give 33
+    end when
+    !!! An absent entry cannot be inspected, which is distinct from either verdict.
+    when (is_private_regular_file with path being nested plus "/absent").is_ok with nothing then
+        give 34
+    end when
+    when (is_private_directory with path being nested plus "/absent").is_ok with nothing then
+        give 35
+    end when
+    when not ((sync_directory with path being nested).is_ok with nothing) then
+        give 36
+    end when
+    say "metadata-ok"
     give 0
 end paragraph
