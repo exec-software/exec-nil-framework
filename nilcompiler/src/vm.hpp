@@ -18,6 +18,7 @@
 #include "database_runtime.hpp"
 #include "ui_runtime.hpp"
 #include "memory_profile.hpp"
+#include "secure_file_io.hpp"
 
 namespace ny {
 
@@ -612,6 +613,7 @@ private:
   };
   std::unordered_map<int64_t, FileHandle> file_handles_;
   int64_t next_file_handle_ = 1;
+  detail::FileLockRegistry file_locks_;
 
   // Sockets follow the same rule as streams: a NIL program is given a token,
   // never a host descriptor, so it cannot read from or close something it was

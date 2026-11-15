@@ -101,6 +101,23 @@ install(
 install(FILES LICENSE DESTINATION ".")
 
 if(BUILD_TESTING)
+    add_executable(nil_durable_file_io_tests
+        tests/durable_file_io_tests.cpp
+        nilcompiler/src/secure_file_io.cpp)
+    target_compile_features(nil_durable_file_io_tests PRIVATE cxx_std_17)
+    target_include_directories(nil_durable_file_io_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_compile_definitions(nil_durable_file_io_tests PRIVATE NIL_TEST_WRAP_FSYNC=1)
+        target_link_options(nil_durable_file_io_tests PRIVATE "-Wl,--wrap=fsync")
+    endif()
+    add_test(NAME nil.durable-file-io COMMAND $<TARGET_FILE:nil_durable_file_io_tests>)
+    set_tests_properties(nil.durable-file-io PROPERTIES LABELS "stdlib;io;security;rc" TIMEOUT 30)
+    add_executable(nil_durable_vm_lifecycle_tests tests/durable_vm_lifecycle_tests.cpp)
+    target_compile_features(nil_durable_vm_lifecycle_tests PRIVATE cxx_std_17)
+    target_include_directories(nil_durable_vm_lifecycle_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    target_link_libraries(nil_durable_vm_lifecycle_tests PRIVATE nilcompiler_core)
+    add_test(NAME nil.durable-vm-lifecycle COMMAND $<TARGET_FILE:nil_durable_vm_lifecycle_tests>)
+    set_tests_properties(nil.durable-vm-lifecycle PROPERTIES LABELS "stdlib;io;security;vm;rc" TIMEOUT 30)
     foreach(nil_hook_profile IN ITEMS default override)
         add_executable(nil_freestanding_hook_${nil_hook_profile} tests/freestanding_hook_contract.cpp)
         target_compile_features(nil_freestanding_hook_${nil_hook_profile} PRIVATE cxx_std_17)
@@ -725,6 +742,12 @@ if(BUILD_TESTING)
     # test suite when testing was explicitly enabled.
     find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
+        add_test(NAME nil.durable-file-io-routes
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/durable_file_io_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --nilstd "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src" --runtime $<TARGET_FILE:nilruntime>
+                --llvm "${NIL_ENABLE_LLVM}" --output "${CMAKE_BINARY_DIR}/durable-io-evidence")
+        set_tests_properties(nil.durable-file-io-routes PROPERTIES LABELS "storage;stl;routes;rc" TIMEOUT 300)
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             add_test(NAME nil.darwin-heap-accounting
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/darwin_heap_accounting_contract.py"

@@ -64,6 +64,35 @@ pub fn write_bytes(path: text, content: array<u8>) -> Result<bool, text>
 @intrinsic("file.write_bytes_atomic")
 pub fn write_bytes_atomic(path: text, content: array<u8>, replace: bool) -> Result<bool, text>
 
+# POSIX durability: atomic byte publication plus synchronization of the same
+# parent-directory handle used for publication. Existing atomic-write semantics
+# remain unchanged. A failure after publication is an uncertain outcome: the
+# destination may already contain the new bytes. Stop and recover before retry.
+# Unsupported platforms return Error before filesystem mutation. Parent ancestry
+# must be trusted; this is not encryption or a filesystem/device guarantee.
+@intrinsic("file.write_bytes_durable")
+pub fn write_bytes_durable(path: text, content: array<u8>, replace: bool) -> Result<bool, text>
+
+# Synchronize an existing directory. POSIX-only, no-follow final component;
+# ancestors are trusted. Errors do not include the supplied path.
+@intrinsic("file.sync_directory")
+pub fn sync_directory(path: text) -> Result<bool, text>
+
+# Acquire a nonblocking exclusive advisory lock. create=true exclusively creates
+# a new 0600 backing file; false opens an existing private, singly-linked regular
+# file owned by the effective user. The runtime returns a context-owned token,
+# never a descriptor. Invocation completion closes remaining locks. The backing
+# file remains present after release; do not unlink or replace it while used.
+# Lock creation does not synchronize its parent; call sync_directory as needed.
+# POSIX-only, fails closed elsewhere. All writers must follow the same protocol.
+@intrinsic("file.acquire_file_lock")
+pub fn acquire_file_lock(path: text, create: bool) -> Result<i64, text>
+
+# Release only a live token owned by this execution context. Stale, foreign, and
+# repeated-release tokens fail. Tokens are not reused during runtime lifetime.
+@intrinsic("file.release_file_lock")
+pub fn release_file_lock(token: i64) -> Result<bool, text>
+
 # Append text to a file
 @intrinsic("file.append_text")
 pub fn append_text(path: text, content: text) -> Result<bool, text>

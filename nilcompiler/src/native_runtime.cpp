@@ -96,6 +96,7 @@ struct runtime_context {
   ny::memory_profile::Session profile;
   ny::database::Context databases;
   ny::ui::Context ui;
+  ny::detail::FileLockRegistry file_locks;
   struct file {
     std::unique_ptr<std::fstream> stream;
     bool readable = false;
@@ -869,6 +870,7 @@ void nyrt_context_end() noexcept {
   context.databases.clear();
   context.ui.clear();
   context.files.clear();
+  context.file_locks.clear();
   nyrt_owned_v1_unwind(0);
   context.pending_fault.reset();
   std::vector<runtime_context::fault_frame>().swap(context.fault_frames);
@@ -1658,6 +1660,58 @@ std::int32_t nyrt_io_v1(const char *operation, std::uint64_t first,
       if (fold_separators) std::replace(path.begin(), path.end(), '\\', '/');
       return std::filesystem::u8path(path);
     };
+
+    if (name == "text.byte_at") {
+      const auto *input = text(first);
+      const auto index = static_cast<std::int64_t>(second);
+      const auto size = std::strlen(input);
+      *value = index < 0 || static_cast<std::uint64_t>(index) >= size
+                   ? static_cast<std::uint64_t>(-1)
+                   : static_cast<unsigned char>(input[index]);
+      return 1;
+    }
+    if (name == "text.from_byte") {
+      if (first > 255) return output_text("");
+      if (first == 0) return fail("native text cannot contain NUL");
+      const char octet = static_cast<char>(static_cast<unsigned char>(first));
+      return output_text(std::string_view(&octet, 1));
+    }
+
+    if (name == "file.release_file_lock") {
+      if (first > static_cast<std::uint64_t>(INT64_MAX))
+        return fail("invalid lock token");
+      const auto released = context.file_locks.release(static_cast<std::int64_t>(first));
+      if (!released.ok) { set_error(error, released.error); return 0; }
+      *value = 1;
+      return 1;
+    }
+    if (name == "file.acquire_file_lock") {
+      if (second > 1) return fail("create must be a bool");
+      const auto acquired = context.file_locks.acquire(text(first), second != 0);
+      if (!acquired.ok) { set_error(error, acquired.error); return 0; }
+      *value = static_cast<std::uint64_t>(acquired.token);
+      return 1;
+    }
+    if (name == "file.sync_directory") {
+      const auto synced = ny::detail::sync_directory_utf8(text(first));
+      if (!synced.ok) { set_error(error, synced.error); return 0; }
+      *value = 1;
+      return 1;
+    }
+    if (name == "file.write_bytes_durable") {
+      if (third > 1) return fail("replace must be a bool");
+      const auto *array = checked_array(reinterpret_cast<const void *>(static_cast<std::uintptr_t>(second)), NYRT_ARRAY_U8);
+      if (!array || array->length > maximum_file_bytes) return fail("invalid or oversized byte array");
+      std::vector<char> bytes;
+      if (array->length) {
+        const auto *data = static_cast<const char *>(array->data);
+        bytes.assign(data, data + array->length);
+      }
+      const auto written = ny::detail::write_file_durable_utf8(text(first), bytes, third != 0);
+      if (!written.ok) { set_error(error, written.error); return 0; }
+      *value = 1;
+      return 1;
+    }
 
     if (name.rfind("path.", 0) == 0) {
       if (name == "path.separator") return output_text("/");

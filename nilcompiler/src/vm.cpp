@@ -10,6 +10,7 @@
 #include "nil_contract.hpp"
 #include "dynamic_type.hpp"
 #include "ui_intrinsic.hpp"
+#include "ordinary_io_intrinsic.hpp"
 #include "numeric_literal.hpp"
 #include "scalar_text.hpp"
 #include "integer_conversion.hpp"
@@ -723,7 +724,10 @@ int64_t invoke_native(void *fn_ptr, const std::vector<int64_t> &args) {
 
 VM::VM() : pc_(0) {}
 
-VM::~VM() noexcept { closeOpenSockets(); }
+VM::~VM() noexcept {
+  file_locks_.clear();
+  closeOpenSockets();
+}
 
 void VM::beginMemoryProfile() {
   if (memory_profile_started_ || !memory_profile_allowed_)
@@ -737,6 +741,7 @@ bool VM::finishMemoryProfile(const char *status, bool completed) noexcept {
   // This hook runs at every invocation terminal, even without profiling.
   // Paused debugger steps retain their UI until completion/reset.
   ui_.clear();
+  file_locks_.clear();
   closeOpenSockets();
   if (!memory_profile_started_ || memory_profile_finished_)
     return true;
@@ -1122,6 +1127,8 @@ void VM::validateCheckpointAdmission() const {
     throw std::runtime_error("VM checkpoints do not support memory profiling");
   if (!file_handles_.empty())
     throw std::runtime_error("VM checkpoints do not support open file handles");
+  if (!file_locks_.empty())
+    throw std::runtime_error("VM checkpoints do not support open file locks");
   if (!socket_handles_.empty())
     throw std::runtime_error("VM checkpoints do not support open sockets");
   for (const auto &instruction : program_) {
@@ -2749,6 +2756,31 @@ void VM::executeInstruction(const Instruction &instr) {
                        "INTEROP_CALL " + lib_name + "::" + fn_name);
     const size_t result_base = stack_.size() - static_cast<size_t>(arg_count);
     const bool returns_void = instr.args.size() > 3 && instr.args[3] == "void";
+    if (lib_name == "intrinsic" &&
+        (fn_name == "file.write_bytes_durable" || fn_name == "file.sync_directory" ||
+         fn_name == "file.acquire_file_lock" || fn_name == "file.release_file_lock")) {
+      const auto contract = ordinary_io::intrinsic(fn_name);
+      const auto expected = "nil::std::core::Result<" + contract->payload + ",text>";
+      bool valid = arg_count == static_cast<int>(contract->parameters.size()) &&
+                   instr.args.size() == 4 && ui::abi_type(instr.args[3]) == expected;
+      std::size_t schemas = 0;
+      if (valid && class_metadata_) {
+        for (const auto &definition : class_metadata_->enums) {
+          if (ui::abi_type(definition.name) != expected) continue;
+          bool ok = false, error = false;
+          if (definition.variants.size() == 2) {
+            for (const auto &variant : definition.variants) {
+              if (variant.name == "Ok") ok = ui::abi_type(variant.associated_type) == contract->payload;
+              else if (variant.name == "Error") error = ui::abi_type(variant.associated_type) == "text";
+            }
+          }
+          if (ok && error) ++schemas;
+          else valid = false;
+        }
+      }
+      if (!valid || schemas != 1)
+        throw std::runtime_error(fn_name + ": requires its checked result type and enum schema");
+    }
 
     // Existing intrinsic handlers use both return and break. Funnel their
     // successful exits through one boundary so host status values cannot leak
@@ -5247,8 +5279,46 @@ void VM::executeInstruction(const Instruction &instr) {
       push_ok();
       return;
     }
+    if (fn_name == "file.sync_directory" || fn_name == "file.acquire_file_lock" ||
+        fn_name == "file.release_file_lock") {
+      auto result = [&](bool ok, int64_t value, const std::string &error) {
+        EnumValue reply;
+        reply.variant_name = ok ? "Result::Ok" : "Result::Error";
+        if (ok) reply.payloads.push_back(value);
+        else reply.payloads.push_back(error);
+        pushStack(reply);
+      };
+      try {
+        if (fn_name == "file.release_file_lock") {
+          if (args.size() != 1 || !std::holds_alternative<int64_t>(args[0])) {
+            result(false, 0, fn_name + ": expected an i64 token");
+            return;
+          }
+          const auto released = file_locks_.release(std::get<int64_t>(args[0]));
+          result(released.ok, 1, released.error);
+          return;
+        }
+        const bool acquire = fn_name == "file.acquire_file_lock";
+        if (args.size() != (acquire ? 2 : 1) || !std::holds_alternative<std::string>(args[0]) ||
+            (acquire && (!std::holds_alternative<int64_t>(args[1]) ||
+                         (std::get<int64_t>(args[1]) != 0 && std::get<int64_t>(args[1]) != 1)))) {
+          result(false, 0, fn_name + ": invalid arguments");
+          return;
+        }
+        if (acquire) {
+          const auto locked = file_locks_.acquire(std::get<std::string>(args[0]), std::get<int64_t>(args[1]) != 0);
+          result(locked.ok, locked.token, locked.error);
+        } else {
+          const auto synced = detail::sync_directory_utf8(std::get<std::string>(args[0]));
+          result(synced.ok, 1, synced.error);
+        }
+      } catch (...) {
+        result(false, 0, fn_name + ": host operation failed");
+      }
+      return;
+    }
     // file.write_bytes_atomic(path, content, replace) -> result<bool, text>
-    if (fn_name == "file.write_bytes_atomic") {
+    if (fn_name == "file.write_bytes_atomic" || fn_name == "file.write_bytes_durable") {
       auto push_ok = [&]() {
         EnumValue result;
         result.variant_name = "Result::Ok";
@@ -5265,25 +5335,25 @@ void VM::executeInstruction(const Instruction &instr) {
           !std::holds_alternative<ArrayHandle>(args[1]) ||
           !std::holds_alternative<int64_t>(args[2])) {
         push_error(
-            "file.write_bytes_atomic: expected a text path, byte array, and bool replace");
+            fn_name + ": expected a text path, byte array, and bool replace");
         return;
       }
       const std::string &path = std::get<std::string>(args[0]);
       if (!detail::valid_file_path(path)) {
         push_error(
-            "file.write_bytes_atomic: path must be non-empty and contain no NUL byte");
+            fn_name + ": path must be non-empty and contain no NUL byte");
         return;
       }
       const int64_t replace_value = std::get<int64_t>(args[2]);
       if (replace_value != 0 && replace_value != 1) {
-        push_error("file.write_bytes_atomic: replace must be a bool");
+        push_error(fn_name + ": replace must be a bool");
         return;
       }
 
       const int64_t handle = std::get<ArrayHandle>(args[1]).address;
       const auto block = heap_.find(handle);
       if (block == heap_.end()) {
-        push_error("file.write_bytes_atomic: invalid byte array");
+        push_error(fn_name + ": invalid byte array");
         return;
       }
       std::vector<char> bytes;
@@ -5291,14 +5361,14 @@ void VM::executeInstruction(const Instruction &instr) {
         if (is_byte_heap_type(block->second.type_name)) {
           if (block->second.byte_data.size() > max_intrinsic_file_bytes) {
             push_error(
-                "file.write_bytes_atomic: byte array exceeds the 512 MiB safety limit");
+                fn_name + ": byte array exceeds the 512 MiB safety limit");
             return;
           }
           bytes = block->second.byte_data;
         } else if (block->second.type_name == "array") {
           if (block->second.data.size() > max_intrinsic_file_bytes) {
             push_error(
-                "file.write_bytes_atomic: array exceeds the 512 MiB safety limit");
+                fn_name + ": array exceeds the 512 MiB safety limit");
             return;
           }
           bytes.reserve(block->second.data.size());
@@ -5306,26 +5376,28 @@ void VM::executeInstruction(const Instruction &instr) {
             const auto *integer = std::get_if<int64_t>(&value);
             if (integer == nullptr || *integer < 0 || *integer > 255) {
               push_error(
-                  "file.write_bytes_atomic: array contains a value outside u8");
+                  fn_name + ": array contains a value outside u8");
               return;
             }
             bytes.push_back(
                 static_cast<char>(static_cast<unsigned char>(*integer)));
           }
         } else {
-          push_error("file.write_bytes_atomic: value is not a byte array");
+          push_error(fn_name + ": value is not a byte array");
           return;
         }
       } catch (const std::bad_alloc &) {
-        push_error("file.write_bytes_atomic: allocation failed");
+        push_error(fn_name + ": allocation failed");
         return;
       }
 
       detail::AtomicFileWrite written;
       try {
-        written = detail::write_file_atomic_utf8(path, bytes, replace_value != 0);
+        written = fn_name == "file.write_bytes_durable"
+                      ? detail::write_file_durable_utf8(path, bytes, replace_value != 0)
+                      : detail::write_file_atomic_utf8(path, bytes, replace_value != 0);
       } catch (...) {
-        push_error("file.write_bytes_atomic: host operation failed");
+        push_error(fn_name + ": host operation failed");
         return;
       }
       if (!written.ok) {
