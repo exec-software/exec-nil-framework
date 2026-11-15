@@ -110,7 +110,15 @@ reveal the stream.
 | `random_bytes(byte_count: i64) -> Result<text, text>` | Random bytes as they are, carried as text. |
 | `random_below(bound: i64) -> Result<i64, text>` | A uniform whole number in `[0, bound)`. |
 
-Interpreter-backed. The native route does not carry these yet.
+`random_hex` has a native provider and reaches the interpreter, AOT and JIT
+routes, drawing from the same kernel source and hex encoding on each, so a
+draw does not depend on which route asked for it. An application that needs a
+fresh identifier per session or per recovery can therefore be built natively.
+
+`random_bytes` and `random_below` remain interpreter-only. `random_bytes`
+returns arbitrary bytes, which can include NUL, and native text is a
+NUL-terminated ABI, so that form cannot cross it; use `random_hex` and decode
+if raw bytes are wanted on a native route.
 
 `random_hex` is the one to reach for. A credential wants to be text anyway, and
 hex survives a cookie, a URL, a header and a log line with no further escaping;

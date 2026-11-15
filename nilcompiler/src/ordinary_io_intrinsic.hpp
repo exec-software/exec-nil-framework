@@ -61,6 +61,10 @@ inline std::optional<Contract> intrinsic(const std::string &name) {
   if (name == "environment.get") return Contract{{"text"}, "text", Output::option};
   if (name == "console.read_line_option")
     return Contract{{}, "text", Output::option};
+  // Hex only. random.bytes yields arbitrary bytes, which can include NUL, and
+  // native text is a NUL-terminated ABI, so that form stays interpreter-only.
+  if (name == "random.hex")
+    return Contract{{"i64"}, "text", Output::result};
   if (name == "file.handle_open") return Contract{{"text", "i32"}, "i64"};
   if (name == "file.handle_read" || name == "file.handle_write")
     return Contract{{"i64", "ptr<u8>", "i32"}, "i32"};

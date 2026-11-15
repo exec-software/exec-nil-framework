@@ -3407,6 +3407,22 @@ if(BUILD_TESTING)
                 --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
             )
         endforeach()
+        foreach(nil_entropy_fixture IN ITEMS secure-hex secure-hex-matrix)
+            if(nil_entropy_fixture MATCHES "-matrix$")
+                set(nil_entropy_suffix matrix)
+            else()
+                set(nil_entropy_suffix ny)
+            endif()
+            add_ny_route_test(
+                ny.routes.${nil_entropy_fixture}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_entropy_fixture}.${nil_entropy_suffix}"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_entropy_fixture}.stdout"
+                --expected-exit 0
+                --routes all
+                --compiler-arg=--sdk-path
+                --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+            )
+        endforeach()
         add_ny_route_test(
             ny.routes.math-runtime
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/math-runtime.ny"

@@ -237,8 +237,12 @@ experimental, and active `nil.std.system` does not include subprocess execution
 or agent messaging.
 
 TCP stream sockets are active as of `nil.std.net.socket`, and secure random
-values as of `nil.std.security.random`; both are interpreter-backed and their
-contracts are checked by dedicated fixtures. See the
+values as of `nil.std.security.random`; their contracts are checked by
+dedicated fixtures. Sockets are interpreter-backed. Of the secure-random
+surface only `random_hex` has a native provider, because an application that
+draws an identifier per recovery has to be buildable natively; `random_bytes`
+returns arbitrary bytes, which can include NUL, and native text is a
+NUL-terminated ABI, so it stays interpreter-only. See the
 [socket reference](sockets.md) and the secure-random section of the
 [random reference](random.md). `http.send` and the higher-level transports —
 HTTP client and server, WebSocket, IMAP, SMTP — remain quarantined, now for

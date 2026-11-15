@@ -12,6 +12,7 @@
 #include "nildata.hpp"
 #include "scalar_text.hpp"
 
+#include "entropy_support.hpp"
 #include "secure_file_io.hpp"
 #include "../../common/content_digest.hpp"
 #include "time_support.hpp"
@@ -1712,6 +1713,15 @@ std::int32_t nyrt_io_v1(const char *operation, std::uint64_t first,
       if (!written.ok) { set_error(error, written.error); return 0; }
       *value = 1;
       return 1;
+    }
+    if (name == "random.hex") {
+      if (first > static_cast<std::uint64_t>(INT64_MAX))
+        return fail("ask for at least one byte");
+      // The same kernel entropy source and hex encoding the interpreter uses,
+      // so a draw does not depend on which route asked for it.
+      const auto drawn = ny::entropy_support::random_hex(static_cast<std::int64_t>(first));
+      if (!drawn.ok()) { set_error(error, drawn.error); return 0; }
+      return output_text(std::string_view(drawn.bytes));
     }
     if (name == "console.read_line_option") {
       std::fflush(stdout);
