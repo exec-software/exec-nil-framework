@@ -1,0 +1,20 @@
+!!! Clean end of input, paired with the Ny fixture. read_line faults at EOF;
+!!! read_line_option answers None, so a reader can stop without failing.
+book nil.tests.console_input_option
+
+read everything from nil.std.core
+read read_line_option, writeln from nil.std.io
+
+main returns override integer begin paragraph
+    variable count as number is 0
+    repeat forever
+        value received is read_line_option with nothing
+        when received.is_none with nothing then
+            stop repeating
+        end when
+        set count to count plus 1
+        say "line:" plus (received.unwrap with nothing)
+    end repeat
+    say "eof:" plus (formatted "{count}")
+    give 0
+end paragraph

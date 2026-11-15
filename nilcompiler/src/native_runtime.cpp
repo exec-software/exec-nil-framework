@@ -1713,6 +1713,24 @@ std::int32_t nyrt_io_v1(const char *operation, std::uint64_t first,
       *value = 1;
       return 1;
     }
+    if (name == "console.read_line_option") {
+      std::fflush(stdout);
+      std::string line;
+      // eofbit and failbit are set both at a genuine end of input and on a
+      // host read error, with badbit clear in each case, so the stream state
+      // cannot tell them apart. errno can: clear it immediately before the
+      // read and inspect it only when nothing was extracted. The ambiguous
+      // case is a failure, never a clean end of input.
+      errno = 0;
+      if (!std::getline(std::cin, line)) {
+        if (errno != 0) return fail("input is unavailable");
+        return 1;
+      }
+      if (line.find('\0') != std::string::npos)
+        return fail("embedded NUL is unsupported by native text");
+      if (!output_text(std::string_view(line))) return 0;
+      return 2;
+    }
     if (name == "file.create_private_directory") {
       const auto created = ny::detail::create_private_directory_utf8(text(first));
       if (!created.ok) { set_error(error, created.error); return 0; }

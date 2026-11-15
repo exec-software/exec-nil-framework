@@ -121,7 +121,12 @@ The active tree includes these deliberately scoped families:
 Console output, `nil.std.io.read_line`, and `flush` support the interpreter,
 native executables, and LLVM JIT. Line input preserves bytes except for the
 trailing LF; an empty line and a final nonempty line without LF are valid.
-EOF and input errors fault explicitly. On POSIX, CR is preserved. Native text
+EOF and input errors fault explicitly.
+`read_line_option` reads the same way but answers `None` at end of input, so a
+reader whose caller closes the stream can stop cleanly; an input error still
+faults, because something that must fail closed cannot be handed "no more
+input" when the truth is "cannot read". See
+[NIL-0030](../design/NIL-0030-end-of-input.md). On POSIX, CR is preserved. Native text
 uses a NUL-terminated ABI and rejects embedded NUL input; the interpreter can
 retain that byte. Input publishes pending console output before reading, and
 `flush` publishes standard output explicitly. Native input text is managed by

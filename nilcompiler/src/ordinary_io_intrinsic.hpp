@@ -59,6 +59,8 @@ inline std::optional<Contract> intrinsic(const std::string &name) {
   if (name == "checksum.sha256_hex")
     return Contract{{"array<u8>"}, "text", Output::result};
   if (name == "environment.get") return Contract{{"text"}, "text", Output::option};
+  if (name == "console.read_line_option")
+    return Contract{{}, "text", Output::option};
   if (name == "file.handle_open") return Contract{{"text", "i32"}, "i64"};
   if (name == "file.handle_read" || name == "file.handle_write")
     return Contract{{"i64", "ptr<u8>", "i32"}, "i32"};

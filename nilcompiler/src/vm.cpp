@@ -3749,6 +3749,28 @@ void VM::executeInstruction(const Instruction &instr) {
       pushStack(line);
       return;
     }
+    if (lib_name == "intrinsic" && fn_name == "console.read_line_option") {
+      std::string line;
+      EnumValue result;
+      // A C++ stream reports a genuine end of input and a host read error with
+      // the same state: eofbit and failbit set, badbit clear. Only errno tells
+      // them apart, so it is cleared immediately before the read and inspected
+      // only when no characters were extracted. Something that must fail
+      // closed cannot be handed "no more input" when the truth is "cannot
+      // read", so the ambiguous case is treated as a failure.
+      errno = 0;
+      if (std::getline(inputStream(), line)) {
+        result.variant_name = "Option::Some";
+        result.payloads.push_back(line);
+      } else if (errno != 0) {
+        throw std::runtime_error("console.read_line_option: input is unavailable");
+      } else {
+        // End of input is an answer, not a failure: a reader can stop cleanly.
+        result.variant_name = "Option::None";
+      }
+      pushStack(result);
+      return;
+    }
     if (lib_name == "intrinsic" && fn_name == "console.flush") {
       outputStream() << std::flush;
       return;
