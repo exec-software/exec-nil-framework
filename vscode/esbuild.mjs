@@ -1,4 +1,5 @@
 import * as esbuild from "esbuild";
+import { languageClientGlobCompatibility } from "./tools/minimatch-client-compat.mjs";
 
 const watching = process.argv.includes("--watch");
 const production = process.argv.includes("--production");
@@ -13,6 +14,7 @@ const context = await esbuild.context({
   target: "node20",
   sourcemap: production ? false : "inline",
   minify: false,
+  plugins: [languageClientGlobCompatibility()],
   logLevel: "info"
 });
 
