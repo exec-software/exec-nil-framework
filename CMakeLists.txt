@@ -2401,6 +2401,23 @@ if(BUILD_TESTING)
             --expected-exit 0
             --routes all
         )
+        foreach(nil_choice_fixture IN ITEMS choice-text-fields choice-text-fields-matrix)
+            if(nil_choice_fixture MATCHES "-matrix$")
+                set(nil_choice_suffix matrix)
+            else()
+                set(nil_choice_suffix ny)
+            endif()
+            add_ny_route_test(
+                ny.routes.${nil_choice_fixture}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_choice_fixture}.${nil_choice_suffix}"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_choice_fixture}.stdout"
+                --expected-exit 0
+                --routes all
+                --with-stdlib
+                --compiler-arg=--sdk-path
+                --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+            )
+        endforeach()
         add_ny_route_test(
             ny.routes.native-exhaustive-result-return
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/native-exhaustive-result-return.ny"

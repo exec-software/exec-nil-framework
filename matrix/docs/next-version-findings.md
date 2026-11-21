@@ -2594,3 +2594,24 @@ platforms fail closed for the POSIX filesystem additions. These checks do not
 qualify a release SDK, hardware power loss, hostile storage ancestry, or a
 database rollback defense. Existing atomic-write and stream-flush semantics
 remain unchanged.
+
+### F91 — Text choice fields need the same aliases as their enum schemas
+
+**Observed:** Enigma's typed discovery pattern stores `Option of text` in a
+record. VM execution worked, but native compilation refused the field as
+opaque: the field metadata said `Option<String>` while its concrete enum
+schema said `Option<text>`. Qualification did not change the failure. The same
+shape with a numeric payload worked. Both Ny and Matrix reproduced the mismatch
+in records and classes, including `Result<text,text>`.
+
+**Implemented:** Record and class field emission now uses the same recursive
+primitive-alias canonicalization as concrete enum schemas and function types.
+Nominal owners remain intact, and native lookup keeps its exact schema checks.
+Paired `choice-text-fields` fixtures exercise construction, field reads,
+mutation, and methods across the standard execution routes.
+
+**Open limitation:** An independent discovery probe also confirmed that native
+arrays of nominal records are outside the current scalar-array profile, both
+as locals and aggregate fields. This patch does not extend their layout or GC
+contract. Enigma uses a bounded typed report batch with primitive columns and
+checked element access; its durable interchange still returns report objects.

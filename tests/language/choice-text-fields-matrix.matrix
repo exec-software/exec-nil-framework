@@ -1,0 +1,59 @@
+book validation.choice_text_fields
+
+read nil.std.core.option
+read nil.std.core.result
+
+!!! Record and class fields share the concrete enum's canonical text spelling,
+!!! even when payload expressions are checked using the internal String alias.
+Slot begin record
+    field optional_text as Option of text
+    field result_text as Result of text, text
+end record
+
+Holder begin class
+    field optional_text as Option of text
+    field result_text as Result of text, text
+
+    public read_optional returns text begin paragraph
+        give option_text with input being my optional_text
+    end paragraph
+
+    public read_result returns text begin paragraph
+        give result_payload with input being my result_text
+    end paragraph
+end class
+
+option_text receives input as Option of text returns text begin paragraph
+    consider input
+        when Option.Some holding found then give found
+        when Option.None then give "none"
+    end consider
+end paragraph
+
+result_payload receives input as Result of text, text returns text begin paragraph
+    consider input
+        when Result.Ok holding found then give found
+        when Result.Error holding failure then give failure
+    end consider
+end paragraph
+
+main returns number begin paragraph
+    value slot_value is build Slot with optional_text being (Option.Some holding "record:alpha"),
+        result_text being (Result.Ok holding "record:ok")
+    say option_text with input being slot_value.optional_text
+    say result_payload with input being slot_value.result_text
+    set slot_value.optional_text to Option.None
+    set slot_value.result_text to (Result.Error holding "record:error")
+    say option_text with input being slot_value.optional_text
+    say result_payload with input being slot_value.result_text
+
+    value holder_value is build Holder with optional_text being (Option.Some holding "class:alpha"),
+        result_text being (Result.Ok holding "class:ok")
+    say holder_value.read_optional with nothing
+    say holder_value.read_result with nothing
+    set holder_value.optional_text to Option.None
+    set holder_value.result_text to (Result.Error holding "class:error")
+    say holder_value.read_optional with nothing
+    say holder_value.read_result with nothing
+    give 0
+end paragraph
