@@ -10,6 +10,7 @@ the same runtime provider and checked results.
 | `sync_directory(path)` | `Result<bool, text>` |
 | `acquire_file_lock(path, create)` | `Result<i64, text>` |
 | `release_file_lock(token)` | `Result<bool, text>` |
+| `file_lock_is_held(token)` | `Result<bool, text>` |
 | `create_private_directory(path)` | `Result<bool, text>` |
 | `is_private_regular_file(path)` | `Result<bool, text>` |
 | `is_private_directory(path)` | `Result<bool, text>` |
@@ -69,6 +70,15 @@ The limit is 4,096 held locks per execution context.
 Returned tokens are positive, monotonically allocated, and never recycled
 within a runtime instance. `release_file_lock` checks ownership in the current
 execution context; wrong, foreign, stale, and repeated-release tokens fail.
+`file_lock_is_held` returns `Ok(true)` only while that context's registry retains
+the token. Unknown, stale, foreign, zero, and negative tokens return `Ok(false)`.
+It is a query without pathname access or release/reacquisition; it does not
+change the lock or verify a new path identity. Unsupported platforms return
+an explicit `Error`, including when the token would otherwise be absent.
+
+An embedded application can retain an object after its execution invocation
+has finished. Its saved positive token must be checked again before guarded
+state is used; the object does not extend the runtime lock's lifetime.
 Runtime teardown closes remaining locks on VM completion, failure, reset,
 replacement, destruction, or native context end. VM execution checkpoints reject
 open locks. Normal POSIX descriptor inheritance still applies across `fork`:

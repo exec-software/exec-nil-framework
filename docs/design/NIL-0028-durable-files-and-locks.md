@@ -15,8 +15,8 @@ semantics, permission policy, and recovery decisions stay in the application.
 
 ## Decision
 
-Add `write_bytes_durable`, `sync_directory`, `acquire_file_lock`, and
-`release_file_lock`. Preserve the existing `write_bytes_atomic` and `File.flush`
+Add `write_bytes_durable`, `sync_directory`, `acquire_file_lock`,
+`release_file_lock`, and `file_lock_is_held`. Preserve the existing `write_bytes_atomic` and `File.flush`
 contracts. Durable writes reuse the atomic publication helper and synchronize
 the exact publication directory descriptor. A post-publication sync failure
 returns an explicitly uncertain outcome.
@@ -26,6 +26,14 @@ files. Runtime-owned registries hold the descriptors. Tokens are never recycled,
 are checked against their owning execution context, and are closed at invocation
 termination and context teardown. An execution checkpoint cannot clone one.
 Unsupported platforms fail closed before mutation.
+
+`file_lock_is_held` asks whether the current execution context still retains
+the token. Missing, stale, foreign, zero, and negative tokens return `Ok(false)`;
+unsupported platforms return `Error`. The query does not inspect a pathname,
+release or reacquire a descriptor, or change ownership. An application object
+can survive an embedded VM invocation while that invocation's locks have been
+retired, so retaining a positive token in an object is not evidence of a live
+lock. Applications check current ownership before using that object's state.
 
 Use the existing checked ordinary-I/O bridge for native execution, with exact
 parameter/result and enum ownership validation. The VM checks the new result
@@ -45,7 +53,8 @@ ancestry. Fork-inherited descriptors retain ordinary POSIX lifetime semantics.
 An uncertain publication requires caller recovery rather than transparent retry.
 
 Tests cover shared OS helpers, embedded VM invocation/reset/destructor cleanup,
-static/shared native context lifetimes, Ny/Matrix VM text/binary and AOT/JIT
+static/shared native context lifetimes, ownership queries before and after
+retirement, Ny/Matrix VM text/binary and AOT/JIT
 routes, malformed ABI declarations, private file modes, contention, and Linux
 file/directory-sync fault injection. Existing secure-byte and ordinary-I/O
 regressions remain part of focused validation.

@@ -86,7 +86,11 @@ Program fixture(const fs::path &path, bool binary, bool fault) {
       {"PUSH_CONST_STR", {"lock_path"}}, {"PUSH_CONST", {"0"}}, {"CAST", {"bool"}},
       {"INTEROP_CALL", {"intrinsic", "file.acquire_file_lock", "2", token_result}},
       {"UNWRAP_VARIANT", {"1", token_result, "i64"}},
-      {"STORE_GLOBAL", {"opened", "i64"}}};
+      {"STORE_GLOBAL", {"opened", "i64"}},
+      {"LOAD_GLOBAL", {"opened", "i64"}},
+      {"INTEROP_CALL", {"intrinsic", "file.file_lock_is_held", "1", bool_result}},
+      {"UNWRAP_VARIANT", {"1", bool_result, "bool"}},
+      {"STORE_GLOBAL", {"held_during", "bool"}}};
   if (fault) {
     body.push_back({"PUSH_CONST", {"1"}});
     body.push_back({"PUSH_CONST", {"0"}});
@@ -99,6 +103,10 @@ Program fixture(const fs::path &path, bool binary, bool fault) {
   module.functions.push_back(function("release", {"token:i64"}, bool_result,
       {{"STORE_LOCAL", {"token"}}, {"LOAD_LOCAL", {"token"}},
        {"INTEROP_CALL", {"intrinsic", "file.release_file_lock", "1", bool_result}},
+       {"RET", {}}}));
+  module.functions.push_back(function("held", {"token:i64"}, bool_result,
+      {{"STORE_LOCAL", {"token"}}, {"LOAD_LOCAL", {"token"}},
+       {"INTEROP_CALL", {"intrinsic", "file.file_lock_is_held", "1", bool_result}},
        {"RET", {}}}));
   std::ostringstream serialized(std::ios::out | std::ios::binary);
   if (binary) {
@@ -129,16 +137,26 @@ void endpoint(const fs::path &path, bool held, const std::string &phase) {
 std::int64_t pause(ny::VM &vm, const Program &program, const fs::path &path) {
   vm.loadProgram(program.code, program.constants);
   vm.resetExecution("main");
-  for (int step = 0; step < 50 && !vm.hasGlobal("opened"); ++step)
+  for (int step = 0; step < 50 && !vm.hasGlobal("held_during"); ++step)
     require(vm.stepInstruction(), "invocation did not reach its lock");
   require(vm.hasGlobal("opened"), "fixture did not retain its lock token");
   const auto token = std::get<std::int64_t>(vm.getGlobal("opened"));
   require(token > 0, "lock token must be positive");
+  require(vm.hasGlobal("held_during") &&
+              std::get<std::int64_t>(vm.getGlobal("held_during")) == 1,
+          "active invocation did not report ownership of its lock");
   endpoint(path, true, "paused invocation");
   return token;
 }
 
 void stale(ny::VM &vm, std::int64_t token) {
+  vm.pushValue(token);
+  vm.callFunction("held", 1);
+  require(!vm.getStack().empty(), "ownership query did not return a checked result");
+  const auto &held = std::get<ny::EnumValue>(vm.getStack().back());
+  require(held.variant_name == "Result::Ok" && held.payloads.size() == 1 &&
+              std::get<std::int64_t>(held.payloads.front()) == 0,
+          "foreign or terminal token was reported as held");
   vm.pushValue(token);
   vm.callFunction("release", 1);
   require(!vm.getStack().empty(), "release did not return a checked result");

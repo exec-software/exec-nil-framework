@@ -36,13 +36,19 @@ fn main() -> i32
     if acquired.is_error() then return 10 end if
     let token = acquired.unwrap()
     if token <= 0 then return 11 end if
+    if not nil::std::io::file_lock_is_held(token).unwrap() then return 31 end if
+    if nil::std::io::file_lock_is_held(0).unwrap() or
+       nil::std::io::file_lock_is_held(-1).unwrap() then return 32 end if
     if nil::std::io::acquire_file_lock(lock, false).is_ok() then return 12 end if
     if nil::std::io::release_file_lock(0).is_ok() then return 13 end if
     if not nil::std::io::release_file_lock(token).is_ok() then return 14 end if
     if nil::std::io::release_file_lock(token).is_ok() then return 15 end if
+    if nil::std::io::file_lock_is_held(token).unwrap() then return 33 end if
     let again = nil::std::io::acquire_file_lock(lock, false)
     if again.is_error() then return 16 end if
     if again.unwrap() <= token then return 17 end if
+    if not nil::std::io::file_lock_is_held(again.unwrap()).unwrap() then return 34 end if
+    if nil::std::io::file_lock_is_held(token).unwrap() then return 35 end if
     # Deliberately retain this lock until invocation completion. The host oracle
     # independently acquires the backing file after every execution route.
     if not nil::std::io::sync_directory(root).is_ok() then return 18 end if

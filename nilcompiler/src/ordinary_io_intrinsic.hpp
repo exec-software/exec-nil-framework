@@ -50,7 +50,7 @@ inline std::optional<Contract> intrinsic(const std::string &name) {
     return Contract{{"text"}, "bool", Output::result};
   if (name == "file.acquire_file_lock")
     return Contract{{"text", "bool"}, "i64", Output::result};
-  if (name == "file.release_file_lock")
+  if (name == "file.release_file_lock" || name == "file.file_lock_is_held")
     return Contract{{"i64"}, "bool", Output::result};
   if (name == "file.create_private_directory" ||
       name == "file.is_private_regular_file" ||

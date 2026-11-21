@@ -2615,3 +2615,23 @@ arrays of nominal records are outside the current scalar-array profile, both
 as locals and aggregate fields. This patch does not extend their layout or GC
 contract. Enigma uses a bounded typed report batch with primitive columns and
 checked element access; its durable interchange still returns report objects.
+
+### F92 — A retained application object can outlive its file lock
+
+**Observed:** Enigma's importable durable session retains a positive lock token
+in a Matrix object. Embedded VM invocation completion retires all file locks,
+even when application objects remain reachable. The token alone therefore
+cannot establish that a later call still owns the writer lock. Releasing and
+reacquiring to test it would introduce a writer race and could admit stale
+application state.
+
+**Implemented:** `nil.std.io.file_lock_is_held(token)` returns a checked current
+execution-context ownership verdict without path access or lock mutation.
+Missing, stale, foreign, zero, and negative tokens answer false; unsupported
+platforms return an error. It does not extend lock lifetime or turn the token
+into an authentication credential.
+
+Paired Ny/Matrix routes check live and released verdicts. Embedded VM lifecycle
+and native context tests check foreign contexts and retirement after completion,
+reset, replacement, faults, and teardown; malformed result schemas remain
+rejected by the ordinary-I/O ABI checks.

@@ -835,6 +835,15 @@ FileLockResult FileLockRegistry::acquire(const std::string &path, bool create) {
 #endif
 }
 
+FileCheck FileLockRegistry::is_held(std::int64_t token) const {
+#ifdef _WIN32
+  (void)token;
+  return {false, false, "file.file_lock_is_held: unsupported platform"};
+#else
+  return {true, token > 0 && descriptors_.find(token) != descriptors_.end(), {}};
+#endif
+}
+
 AtomicFileWrite FileLockRegistry::release(std::int64_t token) {
 #ifdef _WIN32
   (void)token;

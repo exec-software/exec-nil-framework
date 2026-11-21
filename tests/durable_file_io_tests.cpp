@@ -309,9 +309,16 @@ void check_lock_lifecycle(const fs::path &root) {
   FileLockRegistry first;
   FileLockRegistry second;
   require(first.empty() && second.empty(), "new lock registry is not empty");
+  require(first.is_held(1).ok && !first.is_held(1).value,
+          "empty registry reported an unknown token as held");
   const auto held = first.acquire(path.u8string(), true);
   require(held.ok && held.token > 0 && held.error.empty(), "cannot create and acquire a private lock");
   require(!first.empty(), "held lock was not retained by its registry");
+  require(first.is_held(held.token).ok && first.is_held(held.token).value,
+          "registry did not report its held token");
+  require(second.is_held(held.token).ok && !second.is_held(held.token).value &&
+              !first.is_held(0).value && !first.is_held(-1).value,
+          "registry query accepted a foreign or nonpositive token");
   struct stat metadata {};
   require(::stat(path.c_str(), &metadata) == 0 && (metadata.st_mode & 0777) == 0600 && metadata.st_nlink == 1,
           "lock creation did not retain a private regular file");
@@ -326,6 +333,8 @@ void check_lock_lifecycle(const fs::path &root) {
   });
   require(first.release(held.token).ok, "lock release failed");
   require(first.empty(), "released lock remains in registry");
+  require(first.is_held(held.token).ok && !first.is_held(held.token).value,
+          "registry query retained a released token");
   require_error(first.release(held.token), "writer.lock");
   require_error(first.release(0), "writer.lock");
   require_error(first.release(-1), "writer.lock");
@@ -333,6 +342,8 @@ void check_lock_lifecycle(const fs::path &root) {
   require(next.ok && next.token != held.token, "lock token was recycled after release");
   second.clear();
   require(second.empty(), "clear did not release registry locks");
+  require(second.is_held(next.token).ok && !second.is_held(next.token).value,
+          "registry query retained a cleared token");
   require_error(second.release(next.token), "writer.lock");
   const auto after_clear = first.acquire(path.u8string(), false);
   require(after_clear.ok && after_clear.token != next.token && after_clear.token != held.token,
@@ -524,6 +535,7 @@ void check_unsupported_host(const fs::path &root) {
   require_error(ny::detail::write_file_durable_utf8(target.u8string(), {'x'}, false), "private-unsupported-marker");
   FileLockRegistry registry;
   require_error(registry.acquire(target.u8string(), true), "private-unsupported-marker");
+  require_error(registry.is_held(0), "private-unsupported-marker");
   require_error(ny::detail::create_private_directory_utf8(target.u8string()),
                 "private-unsupported-marker");
   require_error(ny::detail::private_regular_file_utf8(target.u8string()),

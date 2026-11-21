@@ -93,6 +93,13 @@ pub fn acquire_file_lock(path: text, create: bool) -> Result<i64, text>
 @intrinsic("file.release_file_lock")
 pub fn release_file_lock(token: i64) -> Result<bool, text>
 
+# Ask whether this execution context still owns a live lock token. This does
+# not release/reacquire the lock or inspect its pathname. Stale, foreign,
+# unknown, zero and negative tokens return Ok(false); POSIX-only.
+# Invocation termination can retire a token while application objects remain.
+@intrinsic("file.file_lock_is_held")
+pub fn file_lock_is_held(token: i64) -> Result<bool, text>
+
 # Create a new owner-only directory: POSIX mode 0700, applied by creation
 # rather than a later chmod, which would leave a writable window. An existing
 # entry is an error and is never adopted, so success means this call created

@@ -97,6 +97,8 @@ def main() -> int:
     invalid = {
         "width": (ROOT / "tests/language/durable-file-io-invalid-width.ny", "file.acquire_file_lock"),
         "owner": (ROOT / "tests/language/durable-file-io-invalid-owner.ny", "file.sync_directory"),
+        "query-width": (ROOT / "tests/language/durable-file-io-query-invalid-width.ny", "file.file_lock_is_held"),
+        "query-owner": (ROOT / "tests/language/durable-file-io-query-invalid-owner.ny", "file.file_lock_is_held"),
     }
     inputs = {"compiler": compiler, "interpreter": interpreter, "runner": Path(__file__).resolve(),
               **sources, **{name: row[0] for name, row in invalid.items()}}

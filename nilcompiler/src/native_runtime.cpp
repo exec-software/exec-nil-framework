@@ -1679,6 +1679,16 @@ std::int32_t nyrt_io_v1(const char *operation, std::uint64_t first,
       return output_text(std::string_view(&octet, 1));
     }
 
+    if (name == "file.file_lock_is_held") {
+      // Negative i64 tokens arrive in the unsigned ABI word's high half.
+      // They are a false ownership verdict, not a filesystem operation.
+      const auto held = context.file_locks.is_held(
+          first <= static_cast<std::uint64_t>(INT64_MAX)
+              ? static_cast<std::int64_t>(first) : 0);
+      if (!held.ok) { set_error(error, held.error); return 0; }
+      *value = held.value ? 1 : 0;
+      return 1;
+    }
     if (name == "file.release_file_lock") {
       if (first > static_cast<std::uint64_t>(INT64_MAX))
         return fail("invalid lock token");

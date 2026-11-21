@@ -2,7 +2,7 @@
 book nil.tests.durable_file_io
 
 read everything from nil.std.core
-read write_bytes_durable, read_bytes, sync_directory, acquire_file_lock, release_file_lock,
+read write_bytes_durable, read_bytes, sync_directory, acquire_file_lock, release_file_lock, file_lock_is_held,
     create_private_directory, is_private_regular_file, is_private_directory, sha256_hex from nil.std.io
 read arg_count, arg from nil.std.system
 read byte_at, from_byte from nil.std.text
@@ -72,6 +72,13 @@ main returns override integer begin paragraph
     when token is at most 0 then
         give 11
     end when
+    when not ((file_lock_is_held with token being token).unwrap with nothing) then
+        give 31
+    end when
+    when ((file_lock_is_held with token being 0).unwrap with nothing) or
+        ((file_lock_is_held with token being minus 1).unwrap with nothing) then
+        give 32
+    end when
     when (acquire_file_lock with path being lock, create being no).is_ok with nothing then
         give 12
     end when
@@ -84,12 +91,21 @@ main returns override integer begin paragraph
     when (release_file_lock with token being token).is_ok with nothing then
         give 15
     end when
+    when (file_lock_is_held with token being token).unwrap with nothing then
+        give 33
+    end when
     value reacquired is acquire_file_lock with path being lock, create being no
     when reacquired.is_error with nothing then
         give 16
     end when
     when (reacquired.unwrap with nothing) is at most token then
         give 17
+    end when
+    when not ((file_lock_is_held with token being (reacquired.unwrap with nothing)).unwrap with nothing) then
+        give 34
+    end when
+    when (file_lock_is_held with token being token).unwrap with nothing then
+        give 35
     end when
     !!! Intentionally retained until invocation completion; the host then checks it.
     when not ((sync_directory with path being root).is_ok with nothing) then

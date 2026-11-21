@@ -49,6 +49,9 @@ public:
   // create=true exclusively creates a fresh private backing file; false
   // requires an existing private regular file. Acquisition never blocks.
   FileLockResult acquire(const std::string &path, bool create);
+  // Query only this registry; never releases, reacquires, or inspects a path.
+  // Missing, stale, foreign and nonpositive tokens have a false verdict.
+  FileCheck is_held(std::int64_t token) const;
   AtomicFileWrite release(std::int64_t token);
   void clear() noexcept;
   bool empty() const noexcept { return descriptors_.empty(); }

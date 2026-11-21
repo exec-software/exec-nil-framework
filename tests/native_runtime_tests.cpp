@@ -890,7 +890,12 @@ void check_durable_io_contract(bool &ok) {
     ok &= expect(call("file.acquire_file_lock", word(lock_path.c_str()), 1) == 0 && error &&
                      !std::filesystem::exists(std::filesystem::u8path(lock_path)),
                  "unsupported locking mutated the namespace");
+    ok &= expect(call("file.file_lock_is_held", 0) == 0 && error &&
+                     std::string(error) == "file.file_lock_is_held: unsupported platform",
+                 "unsupported lock ownership query reported a verdict");
 #else
+    ok &= expect(call("file.file_lock_is_held", 1) == 1 && value == 0 && !error,
+                 "new native context reported an unknown token as held");
     ok &= expect(call("file.sync_directory", word(directory.c_str())) == 1 && value == 1 && !error,
                  "native directory synchronization failed");
     auto *bytes = make_bytes({0, 10, 255});
@@ -911,6 +916,11 @@ void check_durable_io_contract(bool &ok) {
     ok &= expect(call("file.acquire_file_lock", word(lock_path.c_str()), 1) == 1 && value > 0 && !error,
                  "native lock acquisition failed");
     const auto token = value;
+    ok &= expect(call("file.file_lock_is_held", token) == 1 && value == 1 && !error,
+                 "native owner did not report its live lock");
+    ok &= expect(call("file.file_lock_is_held", 0) == 1 && value == 0 && !error &&
+                     call("file.file_lock_is_held", UINT64_MAX) == 1 && value == 0 && !error,
+                 "nonpositive native tokens did not have a false ownership verdict");
     bool isolated = false;
     std::thread foreign([&]() {
       nyrt_context_begin(0, nullptr);
@@ -918,7 +928,10 @@ void check_durable_io_contract(bool &ok) {
       const char *foreign_error = nullptr;
       const bool rejects_release = nyrt_io_v1("file.release_file_lock", token, 0, 0, &foreign_value, &foreign_error) == 0;
       const bool rejects_lock = nyrt_io_v1("file.acquire_file_lock", word(lock_path.c_str()), 0, 0, &foreign_value, &foreign_error) == 0;
-      isolated = rejects_release && rejects_lock;
+      const bool absent = nyrt_io_v1("file.file_lock_is_held", token, 0, 0,
+                                    &foreign_value, &foreign_error) == 1 &&
+                          foreign_value == 0 && !foreign_error;
+      isolated = rejects_release && rejects_lock && absent;
       nyrt_context_end();
     });
     foreign.join();
@@ -926,11 +939,15 @@ void check_durable_io_contract(bool &ok) {
     ok &= expect(call("file.release_file_lock", token) == 1 && value == 1 &&
                      call("file.release_file_lock", token) == 0 && value == 0 && error,
                  "native lock token survived release");
+    ok &= expect(call("file.file_lock_is_held", token) == 1 && value == 0 && !error,
+                 "released native token was still reported as held");
     ok &= expect(call("file.acquire_file_lock", word(lock_path.c_str()), 0) == 1 && value > token,
                  "native lock token was reused");
     const auto abandoned = value;
     nyrt_context_end();
     nyrt_context_begin(0, nullptr);
+    ok &= expect(call("file.file_lock_is_held", abandoned) == 1 && value == 0 && !error,
+                 "native ownership verdict survived context teardown");
     ok &= expect(call("file.release_file_lock", abandoned) == 0 && error,
                  "native lock survived context teardown");
     ok &= expect(call("file.acquire_file_lock", word(lock_path.c_str()), 0) == 1 && value > abandoned,

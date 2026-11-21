@@ -2760,6 +2760,7 @@ void VM::executeInstruction(const Instruction &instr) {
     if (lib_name == "intrinsic" &&
         (fn_name == "file.write_bytes_durable" || fn_name == "file.sync_directory" ||
          fn_name == "file.acquire_file_lock" || fn_name == "file.release_file_lock" ||
+         fn_name == "file.file_lock_is_held" ||
          fn_name == "file.create_private_directory" ||
          fn_name == "file.is_private_regular_file" ||
          fn_name == "file.is_private_directory" ||
@@ -5305,7 +5306,7 @@ void VM::executeInstruction(const Instruction &instr) {
       return;
     }
     if (fn_name == "file.sync_directory" || fn_name == "file.acquire_file_lock" ||
-        fn_name == "file.release_file_lock") {
+        fn_name == "file.release_file_lock" || fn_name == "file.file_lock_is_held") {
       auto result = [&](bool ok, int64_t value, const std::string &error) {
         EnumValue reply;
         reply.variant_name = ok ? "Result::Ok" : "Result::Error";
@@ -5314,13 +5315,18 @@ void VM::executeInstruction(const Instruction &instr) {
         pushStack(reply);
       };
       try {
-        if (fn_name == "file.release_file_lock") {
+        if (fn_name == "file.release_file_lock" || fn_name == "file.file_lock_is_held") {
           if (args.size() != 1 || !std::holds_alternative<int64_t>(args[0])) {
             result(false, 0, fn_name + ": expected an i64 token");
             return;
           }
-          const auto released = file_locks_.release(std::get<int64_t>(args[0]));
-          result(released.ok, 1, released.error);
+          if (fn_name == "file.file_lock_is_held") {
+            const auto held = file_locks_.is_held(std::get<int64_t>(args[0]));
+            result(held.ok, held.value ? 1 : 0, held.error);
+          } else {
+            const auto released = file_locks_.release(std::get<int64_t>(args[0]));
+            result(released.ok, 1, released.error);
+          }
           return;
         }
         const bool acquire = fn_name == "file.acquire_file_lock";
