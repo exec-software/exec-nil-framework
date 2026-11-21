@@ -31,9 +31,13 @@ SDK's manifest.
 
 The [Goetic/Enigma integration](../notebook/2026-11-21-goetic-enigma-sdk.md)
 adds durable publication, context-owned advisory locks and private-entry
-inspection. These filesystem APIs have a POSIX implementation; Windows returns
-explicit unsupported errors before mutation. A passing Windows rejection test
-does not establish support. Native `random_hex`, SHA-256 and optional console
+inspection. These filesystem APIs have POSIX and Windows implementations;
+Windows durable publication and directory synchronization require local NTFS.
+The [Windows source campaign](../notebook/2026-11-21-windows-durable-parity.md)
+passes seven focused CTests, including 251 VM lifecycle checks and eight
+Ny/Matrix VM, AOT and JIT executions. Installed Windows SDK qualification is
+still pending; these source results do not establish release qualification.
+Native `random_hex`, SHA-256 and optional console
 input are separate portable additions. New source or installed results are
 recorded with their exact revision and do not replace the pinned baselines
 above or establish release qualification.
