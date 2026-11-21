@@ -101,6 +101,12 @@ install(
 install(FILES LICENSE DESTINATION ".")
 
 if(BUILD_TESTING)
+    add_executable(nil_console_input_state_tests tests/console_input_state_tests.cpp)
+    target_compile_features(nil_console_input_state_tests PRIVATE cxx_std_17)
+    target_include_directories(nil_console_input_state_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    target_link_libraries(nil_console_input_state_tests PRIVATE nilcompiler_core)
+    add_test(NAME nil.console-input-state COMMAND $<TARGET_FILE:nil_console_input_state_tests>)
+    set_tests_properties(nil.console-input-state PROPERTIES LABELS "console;runtime;embedding" TIMEOUT 30)
     add_executable(nil_durable_file_io_tests
         tests/durable_file_io_tests.cpp
         nilcompiler/src/secure_file_io.cpp)

@@ -1726,14 +1726,13 @@ std::int32_t nyrt_io_v1(const char *operation, std::uint64_t first,
     if (name == "console.read_line_option") {
       std::fflush(stdout);
       std::string line;
-      // eofbit and failbit are set both at a genuine end of input and on a
-      // host read error, with badbit clear in each case, so the stream state
-      // cannot tell them apart. errno can: clear it immediately before the
-      // read and inspect it only when nothing was extracted. The ambiguous
-      // case is a failure, never a clean end of input.
+      // Some host read errors look like EOF but set errno. Embedded streams
+      // can also fail without setting errno, so require a clean EOF state as
+      // well as an error-free host read before answering None.
       errno = 0;
       if (!std::getline(std::cin, line)) {
-        if (errno != 0) return fail("input is unavailable");
+        if (errno != 0 || !std::cin.eof() || std::cin.bad())
+          return fail("input is unavailable");
         return 1;
       }
       if (line.find('\0') != std::string::npos)

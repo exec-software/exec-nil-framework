@@ -28,12 +28,17 @@ stream would silently convert an I/O failure into a successful, quiet exit.
 
 ## Distinguishing the two is not free
 
-A C++ stream reports a genuine end of input and a host read error identically:
-`eofbit` and `failbit` set, `badbit` clear. Reading a directory descriptor as
-standard input, for example, is indistinguishable from an empty pipe by stream
-state alone. Only `errno` separates them, so both providers clear `errno`
-immediately before the read and inspect it only when no characters were
-extracted. A nonzero `errno` is a failure; zero is end of input.
+Some host read errors leave an EOF-looking C++ stream state: `eofbit` and
+`failbit` set, `badbit` clear. Reading a directory descriptor as standard input,
+for example, can resemble an empty pipe by stream state alone. Both providers
+therefore clear `errno` immediately before the read and inspect it when the
+read fails. A nonzero `errno` is a failure.
+
+Zero `errno` is not sufficient to establish end of input. An embedding host
+can supply a stream with `failbit` or `badbit` set without a matching host error.
+`None` requires `eofbit` set, `badbit` clear, and zero `errno`; every other failed
+read faults. A final line that successfully extracts characters is still
+`Some`, including when reaching EOF sets `eofbit` during that read.
 
 Treating the ambiguous case as a failure is deliberate. A reader that stops
 early on a healthy stream is a visible bug; a reader that reports success after
@@ -49,8 +54,11 @@ once and reaches the interpreter, AOT and JIT routes without separate codegen.
 Paired Ny and Matrix fixtures cover several lines then a clean stop, a final
 line without a terminator, and empty input, across those routes. A separate
 case feeds a directory descriptor as standard input and requires a fault with
-no clean-stop output, which is the check that would fail if the implementation
-read stream state instead of `errno`.
+no clean-stop output, which catches an implementation that consults stream
+state alone. Embedded VM text/binary and native-provider checks supply failed
+streams with zero `errno`, including `badbit` together with `eofbit`, and require
+a failure rather than `None`. They also preserve blank lines, final nonempty
+lines, repeated clean EOF, and the original required `read_line` EOF failure.
 
 As with NIL-0028 and NIL-0029, source declarations alone do not give an
 installed SDK the new provider, and release qualification is independent work.
