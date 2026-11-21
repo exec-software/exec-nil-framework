@@ -6,6 +6,7 @@
 #include "type_checker.hpp"
 #include "diagnostics.hpp"
 #include "dynamic_type.hpp"
+#include "checked_conversion_intrinsic.hpp"
 #include "ui_intrinsic.hpp"
 #include "webview_intrinsic.hpp"
 #include "nil_contract.hpp"
@@ -2792,6 +2793,10 @@ void type_checker::visit(ast_program &p) {
       const auto &variable = static_cast<const ast_variable_decl &>(*declaration);
       global_declarations_.emplace(global_module.empty() ? variable.name
           : global_module + "::" + variable.name, &variable);
+    } else if (declaration->kind == ast_node_kind::function_decl_node) {
+      const auto &function = static_cast<const ast_function_decl &>(*declaration);
+      function_declaration_names_[&function] = global_module.empty() ? function.name
+          : global_module + "::" + function.name;
     } else if (declaration->kind == ast_node_kind::import_decl_node) {
       global_imports_[global_module].push_back(
           &static_cast<const ast_import_decl &>(*declaration));
@@ -3302,6 +3307,37 @@ void type_checker::visit(ast_function_decl &p) {
     p.return_type = current_function_return_type_->name;
   } else {
     current_function_return_type_ = type_void;
+  }
+
+  for (const auto &annotation : p.annotations) {
+    if (!annotation.has_name("intrinsic")) continue;
+    const auto parsed = parse_annotation_arguments(annotation.args.value_or(""));
+    const auto &arguments = annotation.typed_arguments ? *annotation.typed_arguments : parsed.arguments;
+    if (arguments.size() != 1 || arguments.front().name ||
+        (arguments.front().kind != "text" && arguments.front().kind != "symbol")) continue;
+    const auto &provider = arguments.front().value;
+    const auto payload = checked_conversion::payload(provider);
+    if (!payload) continue;
+    bool standard_owner = false;
+    if (p.return_type) {
+      const auto parts = parse_generic_type_string(*p.return_type);
+      const auto *owner = resolve_pattern_type_symbol(parts.base_name);
+      standard_owner = owner && owner->defining_node &&
+          owner->defining_node->kind == ast_node_kind::enum_decl_node &&
+          canonical_std_namespace(owner->name) == "nil::std::core::Result";
+      if (standard_owner &&
+          parts.type_args.size() == 2) {
+        p.return_type = "nil::std::core::Result<" + parts.type_args[0] + "," + parts.type_args[1] + ">";
+        current_function_return_type_ = type_info{*p.return_type, true};
+      }
+    }
+    const bool ordinary = !current_class_name_ && p.generic_params.empty() &&
+        p.params.size() == 1 && !p.params[0].is_ref && !p.params[0].is_variadic &&
+        !p.params[0].default_value &&
+        checked_conversion::abi_type(p.params[0].type_name.value_or("")) == "text";
+    if (!standard_owner || !ordinary || !checked_conversion::result_matches(p.return_type.value_or("void"), *payload))
+      add_error(p.line, checked_conversion::requirement(provider) +
+          "; use a module-level, non-generic function with one text parameter and import nil.std.core.result");
   }
 
   for (const auto &annotation : p.annotations) {
@@ -4154,7 +4190,62 @@ void type_checker::visit(ast_if_stmt &s) {
     s.else_branch->accept(*this);
 }
 
+std::shared_ptr<ast_identifier_expr>
+type_checker::module_function_reference(const ast_member_access_expr &member) const {
+  std::string path, root;
+  const std::function<bool(const ast_expr *)> collect = [&](const ast_expr *expression) {
+    if (!expression) return false;
+    if (expression->kind == ast_node_kind::identifier_expr_node) {
+      root = path = static_cast<const ast_identifier_expr &>(*expression).name;
+      return true;
+    }
+    if (expression->kind != ast_node_kind::member_access_expr_node) return false;
+    const auto &part = static_cast<const ast_member_access_expr &>(*expression);
+    if (!collect(part.object.get())) return false;
+    path += "::" + part.member_name;
+    return true;
+  };
+  if (!collect(member.object.get()) || symbols_.lookup_non_global(root)) return nullptr;
+  const auto module = current_module_.value_or("");
+  // A value in the current module is a receiver even if a namespace alias
+  // has the same spelling. Imported globals keep their normal resolution too.
+  if (global_declarations_.count(module.empty() ? root : module + "::" + root))
+    return nullptr;
+  if (const auto imported = resolve_imported_symbol(root)) {
+    const auto *value = symbols_.lookup(*imported);
+    if (value && value->kind == symbol_kind::variable_symbol) return nullptr;
+  }
+  const auto aliases = global_namespace_aliases_.find(module);
+  const auto prefix = root.substr(0, root.find("::"));
+  const bool alias = aliases != global_namespace_aliases_.end() && aliases->second.count(prefix);
+  const symbol *owner = symbols_.lookup(path);
+  if (!owner && !module.empty()) owner = symbols_.lookup(module + "::" + path);
+  const bool namespace_owner = owner && owner->defining_node &&
+      owner->defining_node->kind == ast_node_kind::module_decl_node;
+  if (!alias && !namespace_owner) return nullptr;
+  path += "::" + member.member_name;
+  const auto *function = resolve_qualified_name(path);
+  if (function && (function->kind != symbol_kind::function_symbol ||
+      !function->defining_node ||
+      function->defining_node->kind != ast_node_kind::function_decl_node ||
+      !function_declaration_names_.count(
+          static_cast<const ast_function_decl *>(function->defining_node))))
+    return nullptr;
+  auto reference = std::make_shared<ast_identifier_expr>(path, member.line);
+  reference->source_file = member.source_file;
+  reference->name_span = member.name_span;
+  return reference;
+}
+
 void type_checker::visit(ast_member_access_expr &e) {
+  e.resolved_module_function.reset();
+  if (auto reference = module_function_reference(e)) {
+    reference->accept(*this);
+    e.inferred_type = reference->inferred_type;
+    e.checked_callable_parameters = reference->checked_callable_parameters;
+    e.resolved_module_function = std::move(reference);
+    return;
+  }
   // std::cerr << "[type_checker] visit(member_access) member='" <<
   // e.member_name << "'" << std::endl; Check if object is a type (e.g. Enum
   // name)
@@ -5451,6 +5542,14 @@ static callable_parameter_contract callable_parameters(
 }
 
 void type_checker::visit(ast_call_expr &e) {
+  // Dotted namespace syntax is the same static call as `module::function`.
+  // Normalize only a proven namespace receiver, before any argument or method
+  // checking; lexical object receivers retain their ordinary member path.
+  if (e.callee && e.callee->kind == ast_node_kind::member_access_expr_node) {
+    if (auto reference = module_function_reference(
+            static_cast<const ast_member_access_expr &>(*e.callee)))
+      e.callee = std::move(reference);
+  }
   e.checked_any_type_test.reset();
   if (e.callee && e.callee->kind == ast_node_kind::identifier_expr_node &&
       static_cast<ast_identifier_expr &>(*e.callee).name == "anything_is") {
@@ -5560,7 +5659,8 @@ void type_checker::visit(ast_call_expr &e) {
   std::map<std::string, std::string> source_substitutions;
   if (!e.type_args.empty() && e.callee &&
       e.callee->kind == ast_node_kind::identifier_expr_node) {
-    const auto &name = static_cast<const ast_identifier_expr &>(*e.callee).name;
+    const auto &identifier = static_cast<const ast_identifier_expr &>(*e.callee);
+    const auto &name = identifier.resolved_function_name.value_or(identifier.name);
     if (const auto *function = symbols_.lookup(name))
       for (std::size_t i = 0; i < function->generic_params.size() && i < e.type_args.size(); ++i)
         source_substitutions[function->generic_params[i].name] = e.type_args[i];
@@ -6211,13 +6311,13 @@ void type_checker::visit(ast_call_expr &e) {
   if (e.callee && e.callee->kind == ast_node_kind::identifier_expr_node) {
     auto id = std::static_pointer_cast<ast_identifier_expr>(e.callee);
     const symbol *parent_type_sym = nullptr;
-    const symbol *s = symbols_.lookup(id->name);
+    const symbol *s = symbols_.lookup(id->resolved_function_name.value_or(id->name));
 
     // The symbol table retains unqualified aliases for compatibility. Do not
     // let an alias owned by another module outrank the caller's own module or
     // its explicit imports merely because that declaration was registered
     // later in the combined program.
-    if (s && id->name.find("::") == std::string::npos && current_module_ &&
+    if (s && !id->resolved_function_name && id->name.find("::") == std::string::npos && current_module_ &&
         s->module && *s->module != *current_module_)
       s = nullptr;
 
@@ -6246,7 +6346,7 @@ void type_checker::visit(ast_call_expr &e) {
     // Static Dispatch Lookup (e.g. vec::new) - Always attempt this for
     // qualified names, as it allows resolving struct methods even if a global
     // symbol (e.g. mangled or ghost) exists.
-    if (id->name.find("::") != std::string::npos) {
+    if (!id->resolved_function_name && id->name.find("::") != std::string::npos) {
       auto last_sep = id->name.rfind("::");
       std::string type_part = id->name.substr(0, last_sep);
       std::string method_part = id->name.substr(last_sep + 2);
@@ -7472,6 +7572,7 @@ void type_checker::visit(ast_assignment_expr &e) {
 void type_checker::visit(ast_identifier_expr &e) {
   capture_completion(e);
   e.resolved_global_name.reset();
+  e.resolved_function_name.reset();
   e.checked_callable_parameters.reset();
   const auto *fault_binding = symbols_.lookup_non_global(e.name);
   if (fault_binding && fault_binding->defining_node &&
@@ -7522,6 +7623,12 @@ void type_checker::visit(ast_identifier_expr &e) {
     if (value.kind == symbol_kind::function_symbol &&
         (!value.defining_node ||
          value.defining_node->kind == ast_node_kind::function_decl_node)) {
+      if (value.defining_node && is_symbol_visible(&value, current_module_.value_or(""))) {
+        const auto found = function_declaration_names_.find(
+            static_cast<const ast_function_decl *>(value.defining_node));
+        if (found != function_declaration_names_.end())
+          e.resolved_function_name = found->second;
+      }
       if (direct_call_callee_ != &e && std::any_of(value.params.begin(), value.params.end(),
             [](const ast_param &parameter) { return parameter.is_ref; }))
         add_error(e.line, "Functions with reference parameters must be called directly; reference-parameter function values are unavailable");

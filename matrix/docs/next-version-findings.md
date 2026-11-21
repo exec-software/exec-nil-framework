@@ -1054,7 +1054,7 @@ is no new public API or compiler intrinsic in this fix.
 
 ### F33 — Native iteration over an array literal selects an absent iterator
 
-**Status:** Confirmed open lowering bug.
+**Status:** Fixed by typed array-expression lowering; the old open status was stale.
 
 Iterating directly over a text array literal prints its values in the VM, but
 native compilation names an undefined `__ritual_iter` callee. Both Ny and
@@ -1063,13 +1063,18 @@ using `range`/`repeat while` works and is used by the checked-conversion
 fixtures. Minimal programs and the VM/native comparison are preserved under
 `build/convert-audit/foreach-literal` in the v1 library checkout.
 
-**Next step:** Carry the iterable expression's resolved array type into loop
-lowering, including literals and returned arrays, and qualify element widths,
-text lifetimes and empty arrays across routes.
+**Resolution:** The tuple-array implementation retains the iterable's checked
+type and evaluates array expressions once before index-based traversal. The
+November 20 audit reproduced the original text-array case successfully on the
+`7419ac1` development SDK. The expanded tuple-array contract also exercises both
+frontends through text/binary NIL, bundles, JIT and AOT: literal and returned
+text arrays, one-time evaluation, retained text, wide integers, floating-point
+elements and empty returned arrays. All 226 checks pass on that baseline SDK.
+This does not add an arbitrary user-defined iterator protocol.
 
 ### F34 — Renamed module aliases survive into unresolved function calls
 
-**Status:** Confirmed open name-resolution bug.
+**Status:** Fixed in source; current qualification is recorded in the November 20 notebook.
 
 Ny `namespace words = ny.lang.text` followed by `words::substring(...)`
 passes source compilation but emits a call containing the alias name rather
@@ -1085,9 +1090,13 @@ Fully qualified canonical and legacy module names work; the checked-text
 fixtures exercise those spellings. Namespace renaming is distinct from the
 supported built-in `ny.lang.*` to `nil.std.*` compatibility mapping.
 
-**Next step:** Resolve renamed import/namespace owners consistently during
-checking and code generation, with mixed-language source and binary-library
-tests.
+**Resolution:** Identifier nodes retain the exact checked function declaration
+separately from their source spelling. Call checking and lowering use that
+identity for direct calls, generic specialization and function values. Module
+scope and local shadowing remain intact. Matrix `read module as alias` also
+loads its target without requiring a redundant ordinary import. The module-alias
+contract covers both frontends, source and binary libraries, declaration
+visibility, argument rejection, module isolation and the standard namespace alias.
 
 ### F35 — A Matrix generic parameter can consume the next parameter
 
@@ -1111,7 +1120,7 @@ need a separately specified grouping syntax.
 
 ### F36 — Conversion intrinsics do not preserve a custom Result owner
 
-**Status:** Confirmed open provider-declaration validation gap.
+**Status:** Incompatible nominal providers are rejected; custom Result providers remain unsupported.
 
 A user-defined `custom::Result<T,E>` can be declared as the return type of a
 function annotated `@intrinsic("convert.try_to_i32")`. The native ABI check
@@ -1122,10 +1131,14 @@ both routes. Evidence is under `build/text-core-work/review/provider-owner*`.
 
 The existing public `nil.std.core.Convert` API uses the standard Result owner
 and is unaffected. The new checked-i64 provider follows the same ownership
-convention; this pass tests malformed structural signatures but does not add
-custom enum support. **Next step:** Reject an incompatible nominal provider
-owner during source/NIL validation, or explicitly support that owner throughout
-construction and matching, with matching VM/native evidence.
+convention. Source checking now requires the standard Result owner and exact
+provider signature. Textual/binary NIL loading and native generation also
+validate the owner and Result schema, including unchecked source emission.
+Canonical and legacy standard namespace spellings remain accepted, alongside
+the explicitly tested legacy standard Result wire forms. The conversion
+intrinsic contract checks both source languages, successful/error outcomes and
+rejection before existing artifacts can be overwritten. This does not add
+custom enum support or native floating-point/boolean conversion support.
 
 ### F37 — Editor and application builds lacked shared project context
 

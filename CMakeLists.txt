@@ -864,6 +864,11 @@ if(BUILD_TESTING)
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
                 --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(nil.ui-intrinsic-contract PROPERTIES LABELS "ui;routes;typecheck" TIMEOUT 180)
+        add_test(NAME nil.checked-conversion-intrinsic-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/checked_conversion_intrinsic_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --assembler $<TARGET_FILE:nilassembler> --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.checked-conversion-intrinsic-contract PROPERTIES LABELS "routes;typecheck" TIMEOUT 180)
         add_test(NAME matrix.consider-block-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/consider_block_contract.py"
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
@@ -1794,6 +1799,11 @@ if(BUILD_TESTING)
                 --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
                 --llvm "${NIL_ENABLE_LLVM}")
         set_tests_properties(nil.module-context PROPERTIES LABELS "analysis;typecheck;routes" TIMEOUT 120)
+        add_test(NAME nil.module-alias
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/module_alias_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src" --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(nil.module-alias PROPERTIES LABELS "analysis;typecheck;routes" TIMEOUT 180)
         set_tests_properties(parser.source-spans parser.matrix-source-spans nil.semantic-index
             PROPERTIES LABELS "analysis;semantic" TIMEOUT 60)
         add_test(NAME matrix.function-values

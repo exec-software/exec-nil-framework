@@ -32,6 +32,8 @@ name: macOS application platform checks
       - 'tests/tools/webview_intrinsic_contract.py'
       - 'tests/tools/formatted_text_contract.py'
       - 'tests/tools/markup_contract.py'
+      - 'tests/tools/module_alias_contract.py'
+      - 'tests/tools/checked_conversion_intrinsic_contract.py'
       - 'tests/language/formatted-text*'
       - 'tests/language/markup*'
       - 'tests/routes/ny_route_matrix.py'
@@ -175,17 +177,18 @@ jobs:
             nil_darwin_toolchain_inputs_tests nil_freestanding_hook_default nil_freestanding_hook_override \
             nildebugger_core_tests nildebugger_source_metadata_tests nildebugger_dap_owner_tests \
             2>&1 | tee build/application-evidence/build.log
-      - name: Verify formatted text and markup through interpreter and native routes
+      - name: Verify formatted text, markup, module aliases and checked conversions
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         timeout-minutes: 8
         run: |
           python3 - <<'PYTHON'
           import json, subprocess, xml.etree.ElementTree as ET
           from pathlib import Path
-          expected = {'nil.formatted-text-contract', 'nil.markup-contract'}
+          expected = {'nil.formatted-text-contract', 'nil.markup-contract',
+                      'nil.module-alias', 'nil.checked-conversion-intrinsic-contract'}
           expected.update('ny.'+route+'.'+fixture for route in ['routes', 'tools']
                           for fixture in ['formatted-text', 'formatted-text-matrix', 'markup', 'markup-matrix'])
-          pattern = r'^(nil[.](formatted-text-contract|markup-contract)|ny[.](routes|tools)[.](formatted-text|markup)(-matrix)?)$'
+          pattern = r'^(nil[.](formatted-text-contract|markup-contract|module-alias|checked-conversion-intrinsic-contract)|ny[.](routes|tools)[.](formatted-text|markup)(-matrix)?)$'
           base = ['ctest', '--test-dir', 'build/application', '-R', pattern]
           root = Path('build/application-evidence').resolve()
           inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)

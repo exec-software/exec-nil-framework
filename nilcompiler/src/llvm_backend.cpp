@@ -6,6 +6,7 @@
 #include "owned_contract.hpp"
 #include "diagnostics.hpp"
 #include "dynamic_type.hpp"
+#include "checked_conversion_intrinsic.hpp"
 #include "ui_intrinsic.hpp"
 #include "webview_intrinsic.hpp"
 #include "executable_context.hpp"
@@ -1526,6 +1527,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
   std::unordered_set<std::string> parallel_workers;
   try {
     parallel_workers = collect_nil_parallel_workers(mod);
+    checked_conversion::validate_module(mod);
     validate_nil_owned_contract(mod);
   } catch (const std::exception &error) {
     std::cerr << "[NativeCodegen] " << error.what() << '\n';

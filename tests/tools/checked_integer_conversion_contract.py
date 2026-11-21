@@ -23,8 +23,8 @@ def main():
                  'NIL_STDLIB_PATH', 'NY_LEX_DUMP', 'NY_PARSE_TRACE'):
         environment.pop(name, None)
     # The ordinary canonical Result comes from core. Each malformed provider
-    # changes one boundary independently, with a well-typed call that reaches
-    # LLVM validation rather than failing ordinary argument/type checking.
+    # changes one boundary independently. Provider declarations are now checked
+    # before LLVM lowering, while native artifact-preservation controls remain.
     cases = (
         ('wrong-input', 'i64', 'value: i32', 'Result<i64, text>', '1'),
         ('wrong-success', 'i64', 'value: text', 'Result<i32, text>', '"1"'),
@@ -45,8 +45,8 @@ def main():
                             'fn main() -> i32\n'
                             f'let parsed = malformed({arguments})\n'
                             'return 0\nend fn\n', newline='\n')
-            sources.append((path, f'convert.try_to_{width} requires the exact '
-                                  f'(text) -> Result<{width},text> ABI'))
+            sources.append((path, f'convert.try_to_{width} requires the standard Result ABI '
+                                  f'(text) -> nil::std::core::Result<{width},text>'))
         # Native text has no byte-length argument at this ABI. Reachable NUL
         # constants must be rejected before a C string could truncate them.
         for language, source in (
@@ -73,7 +73,7 @@ def main():
             sources.append((path, 'contains an embedded NUL byte'))
         for path, message in sources:
             for flags in (('--native',), ('--native', '--jit')):
-                output = root / 'protected-output'
+                output = root / ('protected-output.exe' if os.name == 'nt' else 'protected-output')
                 output.write_bytes(b'previous artifact')
                 command = [compiler, '--quiet', '--no-stdlib', '--sdk-path', stdlib,
                            *flags, '--output', output, path]

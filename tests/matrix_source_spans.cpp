@@ -160,6 +160,28 @@ void test_names_and_uses() {
              "give `value`", "value");
 }
 
+void test_qualified_paragraph_values() {
+  const std::string source =
+      "book paragraph-spans\r\n"
+      "!!! café before the source names\r\n"
+      "main begin paragraph\r\n"
+      " value callback is the paragraph words::`café-call`\r\n"
+      " value nested is the paragraph alpha.beta::remote-call\r\n"
+      "end paragraph\r\n";
+  const auto program = parse(source);
+  const auto function = cast<ny::ast_function_decl>(program->declarations.at(1));
+  const auto body = cast<ny::ast_block_stmt>(function->body);
+  const auto first = cast<ny::ast_variable_decl>(
+      cast<ny::ast_decl_stmt>(body->statements.at(0))->declaration);
+  const auto second = cast<ny::ast_variable_decl>(
+      cast<ny::ast_decl_stmt>(body->statements.at(1))->declaration);
+  check_span(source, first->initializer->name_span, "words::`café-call`", "café-call");
+  check_span(source, second->initializer->name_span, "beta::remote-call", "remote-call");
+  require(cast<ny::ast_identifier_expr>(first->initializer)->name == "words::café_call" &&
+              cast<ny::ast_identifier_expr>(second->initializer)->name == "alpha::beta::remote_call",
+          "qualified paragraph values retain full owners and final-name spans");
+}
+
 void test_members_and_types() {
   const std::string source =
       "book member-check\n"
@@ -301,6 +323,7 @@ int main() {
     test_lexer_source_ranges();
     test_formatted_text_source_spans();
     test_names_and_uses();
+    test_qualified_paragraph_values();
     test_members_and_types();
     test_lowered_bindings();
     test_switch_source_spans();
