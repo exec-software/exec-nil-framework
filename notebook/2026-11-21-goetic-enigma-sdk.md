@@ -2,17 +2,46 @@
 
 ## Status and question
 
-Clean source `2db8c9b7a13f45bd2b6a9effb1c973ed7d887ef7` produced development
-SDK `ae06ead0f5d3312deaa29c2832c9bfd6665b91be107396323954cc88022ce317`.
-All 609 Linux source tests, 1,248 installed fixed-output routes, installed
-durable/console/global checks and the real snapshot/optional-value consumers
-pass. Canonical relocation also passes markup, rooted-file and real consumer
-checks. Shared defaults and accepted consumer pins remain unchanged.
+Clean source `167ae3a6b0abb69c26e943a008ee6eb1eac8f13d` produced development
+SDK `5931094a3cf696f0c176d370864df4b15c4f22f108074f9ca682a3db15f8388a`.
+All 609 Linux source tests, 1,248 installed fixed-output routes and installed
+durable/console/global checks pass. Both hosted source campaigns and the
+four-host interpreter campaign also pass. The admission correction restores
+Goetic's original ten-second HTTP readiness gate; the measured result is
+0.560294 seconds in an isolated temporary workspace.
 
-Goetic's broader application suite subsequently exposed severe startup cost.
-Adoption is held while admission performance is corrected; successful value
-and persistence tests alone do not qualify application responsiveness. This
-remains development SDK work, not a stable release or a live migration.
+Goetic's complete rerun exits successfully in 350.64 seconds: 26 Matrix
+fixtures, 101 HTTP tests, 23 filesystem migration tests, nine Node checks,
+native security/tooling and the actual snapshot lifecycle/alias harness.
+The original ten-second startup deadline is unchanged. Owned test processes
+and listeners are cleaned up.
+
+The immutable generation is published under the canonical SDK store with a
+private alias. Relocation passes durable/console/global checks, 32 markup
+routes, eight rooted snapshot routes, four unbox rejections, two conversion
+routes and six native rejection controls. The exact Goetic snapshot harness
+and real Enigma optional-value flows pass again against the physical path,
+including both library packages and textual/binary NIL. All 279 payload files
+remain unchanged. Goetic confirms pinning the delivered generation and building
+successfully with it at its safe build boundary. Consumer activation is handled
+separately by that project; the shared SDK default is unchanged.
+
+Both Intel and Apple Silicon macOS pass the current-source application/editor
+campaign, including all 88 real editor groups without skips. Each architecture
+also passes fourteen language/class/global contracts, twelve native contracts,
+six debugger contracts, six SDK/project contracts, two incremental contracts,
+eleven Enigma contracts and 24 fixture routes. The
+[hosted campaign](https://github.com/exec-software/exec-nil-framework/actions/runs/44876499033)
+tests the integration merge of `167ae3a` with its base branch.
+
+The previous clean `2db8c9b` candidate produced SDK
+`ae06ead0f5d3312deaa29c2832c9bfd6665b91be107396323954cc88022ce317`.
+Its 609 source tests, 1,248 installed routes, durable/console/global checks,
+real snapshot/optional-value consumers and canonical relocation all passed.
+Goetic's broader suite then exposed startup cost, so adoption was held for the
+admission correction. Shared defaults and accepted consumer pins remain
+unchanged at the handoff boundary. This remains development SDK work, not a
+stable release or a live migration.
 
 Goetic needs its qualified compiler fixes together with Enigma's durable I/O
 surface, including `nil.std.io.file_lock_is_held`. The existing Goetic SDK came
@@ -45,7 +74,25 @@ remain in place.
 
 ## Qualification contract
 
-The focused Release/LLVM-ON run passes all twenty contracts, including existing
+For source `167ae3a`, both hosted source campaigns pass 609 LLVM-ON tests
+without skips, the 603-test LLVM-OFF profile with 145 expected skips, and 204 editor
+unit tests without skips. Linux, Windows, Intel macOS and Apple Silicon macOS
+each pass 18 interpreter contracts and all 32 fixed-output fixture routes.
+Each host also executes eight nominal-global cases and two initialization
+rejections within those contracts. The three POSIX hosts pass the additional
+durable lifecycle/route contracts; Windows confirms checked unsupported errors
+and nonmutation, not durable filesystem support.
+
+The independently reviewed `5931094a` SDK seals 279 payload files and eleven
+tools to the tested build. Both `nilstd` and `nillib` pass the installed checks:
+1,248 fixed-output executions in total; sixteen durable executions, 24 ABI and
+72 foreign-library rejections; 202 console executions/checks per library; and
+sixteen nominal-global VM executions, four initialization rejections and four
+native aggregate-global rejections. The SDK and shared selection are unchanged
+through qualification. Application acceptance and final relocation have their
+own passing evidence, summarized above.
+
+The initial focused Release/LLVM-ON run passed all twenty contracts, including existing
 module identities, checked conversions, rooted file snapshots, ordinary I/O,
 native ABI and same-process checkpoints. Console state has 58 checks, durable
 VM lifecycle has 250, and the native console contract has 202 executions/checks.
@@ -192,15 +239,26 @@ retained. These are admission measurements, not an HTTP-readiness claim.
 
 Twenty-eight focused contracts pass, including metadata mutation between
 admissions, same-named types in separate modules, and the exact 4096-node graph
-boundary, overflow rejection and recovery. The fresh installed SDK must still
-pass the full source/installed campaign and Goetic's original HTTP startup
-deadline before adoption. Increasing that deadline is not the performance fix.
+boundary, overflow rejection and recovery. The resulting `5931094a` SDK passes
+the complete source/installed campaign. In a fresh explicit legacy temporary
+workspace, the actual Goetic application becomes HTTP-ready in 0.560294 seconds
+under the original ten-second deadline; listener cleanup is verified. This is
+a separate application measurement from the admission-only comparison above.
+
+The first optimized aggregate run subsequently failed during imported unittest
+class discovery, after all 26 Matrix fixtures, 100 other HTTP checks and the
+actual staging checks had passed. Goetic selected `StageEnigmaTests` explicitly
+with `defaultTest` and restarted the full command. The original failed report
+is retained; its partial passes are not an aggregate acceptance claim. The
+completed rerun passes all 101 HTTP tests and the complete command in 350.64
+seconds. No startup deadline was raised.
 
 ### Platform and language boundaries
 
 Durable filesystem primitives are currently POSIX-only. Windows rejection
-checks prove explicit unsupported behavior, not parity. macOS needs its own
-current-source execution evidence. Synchronization tests do not qualify storage
+checks prove explicit unsupported behavior, not parity. Current macOS
+interpreter and native application/editor evidence passes on both architectures.
+Synchronization tests do not qualify storage
 hardware against power loss. Native text remains NUL-free.
 
 F93 remains open: a later Matrix local named `result` can interfere with an
@@ -211,6 +269,29 @@ passes all four routes. Both variants pass analysis, so a successful analysis
 alone is not a workaround. F21 definite assignment and native
 arrays of nominal records also remain outside this integration.
 
-Follow-up: record exact source/SDK identities and source, installed and hosted
-results here after qualification, then deliver the immutable development SDK
-to Goetic without changing the shared default.
+Windows implementation should proceed in three separately qualified groups:
+
+1. Private-entry checks: `create_private_directory`, `is_private_regular_file`
+   and `is_private_directory`.
+2. Context-owned locks: `acquire_file_lock`, `release_file_lock` and
+   `file_lock_is_held`.
+3. Durable publication: `write_bytes_durable` and `sync_directory`.
+
+Keep checked unsupported behavior until each group passes its Windows backend
+and installed-route contracts. The Linux development SDK handoff is complete;
+current Mac application evidence remains separate from Linux consumer
+acceptance. The shared SDK default remains unchanged.
+
+## Retained qualification identities
+
+- Independent installed SDK proof SHA-256:
+  `600eaf666ca1b86041b13f620486c46d5c76c8ada03c640cd5d9e9db4410fdf4`.
+- Source and four-host interpreter proof SHA-256:
+  `81422c3da689c880476cc716330a23efc0b4902d9b3fedfa53c34397a13c34df`.
+- Relocated actual-consumer proof SHA-256:
+  `4faa863555f57bf2bd2f5942dea956e545adb7fa6426709796193f90bc80d976`.
+- Final Linux development handoff proof SHA-256:
+  `f83cc28b90fe554a6e87f77b992e0ad02488c24173d9be7ebc343ab123551344`.
+
+These identities refer to the qualified `167ae3a` source and `5931094a` SDK.
+The subsequent documentation closeout does not rebuild or relabel that SDK.

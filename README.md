@@ -250,11 +250,13 @@ such as `say formatted "value={5}"`; it works on interpreted and native routes.
 ## Project status
 
 The current version is **1.0.0-rc.1**. Development coverage spans Linux x86_64,
-Windows x86_64, Intel macOS and Apple Silicon macOS. Relocated development SDKs
-on all four hosts pass 1,184 installed standard-library routes, twelve PostgreSQL
-source/binary routes, 146 debugger checks and same-process execution checkpoints.
-Linux's current SDK also passes all 590 source tests, twenty installed GTK
-desktop/input cases and all 88 real VS Code host groups without exclusions.
+Windows x86_64, Intel macOS and Apple Silicon macOS. The earlier platform
+qualification campaign verified relocated development SDKs on all four hosts:
+1,184 installed standard-library routes, twelve PostgreSQL source/binary routes,
+146 debugger checks and same-process execution checkpoints. Its Linux SDK also
+passed all 590 source tests, twenty installed GTK desktop/input cases and all 88
+real VS Code host groups without exclusions. The newer Goetic/Enigma integration
+results are recorded separately below.
 
 Windows uses Win32 and macOS uses AppKit. Windows and both Mac architectures
 also pass twenty installed desktop/input cases, four desktop debugger sessions
@@ -277,7 +279,8 @@ combines rooted file snapshots, the Matrix WebView bridge and the completed
 formatted-text/markup work. Its [qualification record](notebook/2026-11-13-formatted-markup-handoff.md#current-framework-integration)
 tracks current-source checks separately from the installed SDK results above.
 
-The Goetic/Enigma integration additionally combines those compiler and editor
+The [Goetic/Enigma integration](https://github.com/exec-software/exec-nil-framework/pull/43)
+additionally combines those compiler and editor
 fixes with [durable files and context-owned locks](docs/standard-library/durable-files.md),
 private-entry checks, SHA-256, optional console input and native hexadecimal
 random draws. Durable filesystem operations currently support POSIX hosts;
@@ -286,8 +289,16 @@ Windows returns explicit unsupported errors. The
 checks, installed SDK evidence and remaining limitations.
 The interpreter also preserves imported class values through typed module
 globals, record wrappers and explicit `Option<Class>` factories. Native
-aggregate globals remain unsupported; the real Goetic/Enigma consumer is an
-additional acceptance gate before SDK handoff.
+aggregate globals remain unsupported. The real Goetic/Enigma snapshot and
+optional-value consumers pass against the relocated Linux development SDK.
+The current Linux development SDK passes 609 source tests and 1,248 installed
+artifact routes; all four hosts pass 18 interpreter contracts and 32 fixture
+routes each. Admission indexing reduces the measured Goetic parse/load time
+from 45.58 seconds to 0.45 seconds. With the updated SDK, an isolated Goetic
+instance reached HTTP readiness in 0.56 seconds within its unchanged ten-second
+deadline. Its complete application suite passes all 26 Matrix fixtures and 101
+HTTP tests; canonical SDK relocation also passes. The notebook records the
+exact source and SDK identities and separately tracks hosted application checks.
 
 These are development results. Windows and macOS release qualification remains
 pending. The
