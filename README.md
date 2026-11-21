@@ -276,6 +276,14 @@ combines rooted file snapshots, the Matrix WebView bridge and the completed
 formatted-text/markup work. Its [qualification record](notebook/2026-11-13-formatted-markup-handoff.md#current-framework-integration)
 tracks current-source checks separately from the installed SDK results above.
 
+The Goetic/Enigma integration additionally combines those compiler and editor
+fixes with [durable files and context-owned locks](docs/standard-library/durable-files.md),
+private-entry checks, SHA-256, optional console input and native hexadecimal
+random draws. Durable filesystem operations currently support POSIX hosts;
+Windows returns explicit unsupported errors. The
+[integration notebook](notebook/2026-11-21-goetic-enigma-sdk.md) separates source
+checks, installed SDK evidence and remaining limitations.
+
 These are development results. Windows and macOS release qualification remains
 pending. The
 [release profile](docs/release/v1-profile.md) defines supported configurations

@@ -11,6 +11,11 @@ and explicit about evidence, uncertainty, and implementation status.
 
 ## Contents
 
+- [`2026-11-21-goetic-enigma-sdk.md`](2026-11-21-goetic-enigma-sdk.md) —
+  compiler/editor and durable-I/O integration, installed consumer qualification,
+  and the explicit POSIX boundary for Goetic's Enigma migration.
+- [`2026-11-20-compiler-correctness.md`](2026-11-20-compiler-correctness.md) —
+  module identity, checked conversion schemas and editor source ownership.
 - [`2026-11-13-formatted-markup-handoff.md`](2026-11-13-formatted-markup-handoff.md) —
   multiline text and structured markup completion review, route checks and SDK handoff.
 - [`2026-11-12-matrix-webview.md`](2026-11-12-matrix-webview.md) — checked

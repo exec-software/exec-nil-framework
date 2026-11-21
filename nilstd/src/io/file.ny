@@ -86,6 +86,73 @@ pub fn write_bytes(path: text, content: array<u8>) -> Result<bool, text>
 @intrinsic("file.write_bytes_atomic")
 pub fn write_bytes_atomic(path: text, content: array<u8>, replace: bool) -> Result<bool, text>
 
+# POSIX durability: atomic byte publication plus synchronization of the same
+# parent-directory handle used for publication. Existing atomic-write semantics
+# remain unchanged. A failure after publication is an uncertain outcome: the
+# destination may already contain the new bytes. Stop and recover before retry.
+# Unsupported platforms return Error before filesystem mutation. Parent ancestry
+# must be trusted; this is not encryption or a filesystem/device guarantee.
+@intrinsic("file.write_bytes_durable")
+pub fn write_bytes_durable(path: text, content: array<u8>, replace: bool) -> Result<bool, text>
+
+# Synchronize an existing directory. POSIX-only, no-follow final component;
+# ancestors are trusted. Errors do not include the supplied path.
+@intrinsic("file.sync_directory")
+pub fn sync_directory(path: text) -> Result<bool, text>
+
+# Acquire a nonblocking exclusive advisory lock. create=true exclusively creates
+# a new 0600 backing file; false opens an existing private, singly-linked regular
+# file owned by the effective user. The runtime returns a context-owned token,
+# never a descriptor. Invocation completion closes remaining locks. The backing
+# file remains present after release; do not unlink or replace it while used.
+# Lock creation does not synchronize its parent; call sync_directory as needed.
+# POSIX-only, fails closed elsewhere. All writers must follow the same protocol.
+@intrinsic("file.acquire_file_lock")
+pub fn acquire_file_lock(path: text, create: bool) -> Result<i64, text>
+
+# Release only a live token owned by this execution context. Stale, foreign, and
+# repeated-release tokens fail. Tokens are not reused during runtime lifetime.
+@intrinsic("file.release_file_lock")
+pub fn release_file_lock(token: i64) -> Result<bool, text>
+
+# Ask whether this execution context still owns a live lock token. This does
+# not release/reacquire the lock or inspect its pathname. Stale, foreign,
+# unknown, zero and negative tokens return Ok(false); POSIX-only.
+# Invocation termination can retire a token while application objects remain.
+@intrinsic("file.file_lock_is_held")
+pub fn file_lock_is_held(token: i64) -> Result<bool, text>
+
+# Create a new owner-only directory: POSIX mode 0700, applied by creation
+# rather than a later chmod, which would leave a writable window. An existing
+# entry is an error and is never adopted, so success means this call created
+# an owned directory with exactly mode 0700. A umask that removes owner
+# permissions causes an error and can leave the new directory in place;
+# the runtime does not change the umask or repair permissions.
+# Parents are not created and are trusted; creation does not
+# durably publish the new name, so call sync_directory when that is needed.
+# POSIX-only, fails closed elsewhere.
+@intrinsic("file.create_private_directory")
+pub fn create_private_directory(path: text) -> Result<bool, text>
+
+# Is this entry a private regular file: regular, owned by the effective user,
+# exactly one hard link, and exactly mode 0600? A symlink is judged as itself
+# and answers false rather than describing its target.
+#
+# Error means the entry could not be inspected, which is distinct from an
+# answer of false. Both are distinct from being safe to use: this inspects a
+# path, so the entry can change before it is opened. Treat it as preflight and
+# diagnosis, not as a guarantee; durable writes and lock acquisition perform
+# their own checked no-follow opens.
+@intrinsic("file.is_private_regular_file")
+pub fn is_private_regular_file(path: text) -> Result<bool, text>
+
+# Is this entry a directory owned by the effective user with exactly mode
+# 0700? The same inspection limits as is_private_regular_file apply. Trailing
+# separators are rejected except for filesystem-root paths, preserving the
+# final-component no-follow rule.
+@intrinsic("file.is_private_directory")
+pub fn is_private_directory(path: text) -> Result<bool, text>
+
 # Append text to a file
 @intrinsic("file.append_text")
 pub fn append_text(path: text, content: text) -> Result<bool, text>

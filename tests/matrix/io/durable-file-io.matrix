@@ -1,0 +1,184 @@
+!!! Shared public durability and lock contract, paired with the Ny fixture.
+book nil.tests.durable_file_io
+
+read everything from nil.std.core
+read write_bytes_durable, read_bytes, sync_directory, acquire_file_lock, release_file_lock, file_lock_is_held,
+    create_private_directory, is_private_regular_file, is_private_directory, sha256_hex from nil.std.io
+read arg_count, arg from nil.std.system
+read byte_at, from_byte from nil.std.text
+
+main returns override integer begin paragraph
+    when (arg_count with nothing) does not equal 1 then
+        give 64
+    end when
+    when (byte_at with s being "é", index being 0) does not equal 195 then
+        give 20
+    end when
+    when (byte_at with s being "é", index being 1) does not equal 169 then
+        give 21
+    end when
+    when (byte_at with s being "é", index being minus 1) does not equal minus 1 then
+        give 22
+    end when
+    when (byte_at with s being "é", index being 2) does not equal minus 1 then
+        give 23
+    end when
+    value rebuilt is (from_byte with code being 195) plus (from_byte with code being 169)
+    when rebuilt does not equal "é" then
+        give 24
+    end when
+    when (from_byte with code being minus 1) does not equal "" or (from_byte with code being 256) does not equal "" then
+        give 25
+    end when
+    value root is arg with index being 0
+    value output is root plus "/checkpoint.bin"
+    value lock is root plus "/writer.lock"
+    value first as array of override byte is [0 becomes override byte, 10 becomes override byte, 13 becomes override byte, 128 becomes override byte, 255 becomes override byte]
+    value second as array of override byte is [255 becomes override byte, 0 becomes override byte, 1 becomes override byte]
+    value empty as array of override byte is []
+    when not ((write_bytes_durable with path being output, content being first, replace being no).is_ok with nothing) then
+        give 1
+    end when
+    when (write_bytes_durable with path being output, content being second, replace being no).is_ok with nothing then
+        give 2
+    end when
+    value loaded is read_bytes with path being output
+    when loaded.is_error with nothing then
+        give 3
+    end when
+    value bytes is loaded.unwrap with nothing
+    when (the length of bytes) does not equal 5 or (bytes at 0) does not equal (0 becomes override byte) or (bytes at 4) does not equal (255 becomes override byte) then
+        give 4
+    end when
+    when not ((write_bytes_durable with path being output, content being second, replace being yes).is_ok with nothing) then
+        give 5
+    end when
+    when not ((write_bytes_durable with path being root plus "/empty.bin", content being empty, replace being no).is_ok with nothing) then
+        give 6
+    end when
+    when not ((sync_directory with path being root).is_ok with nothing) then
+        give 7
+    end when
+    when (sync_directory with path being output).is_ok with nothing then
+        give 8
+    end when
+    say "durable-write-ok"
+
+    value acquired is acquire_file_lock with path being lock, create being yes
+    when acquired.is_error with nothing then
+        give 10
+    end when
+    value token is acquired.unwrap with nothing
+    when token is at most 0 then
+        give 11
+    end when
+    when not ((file_lock_is_held with token being token).unwrap with nothing) then
+        give 31
+    end when
+    when ((file_lock_is_held with token being 0).unwrap with nothing) or
+        ((file_lock_is_held with token being minus 1).unwrap with nothing) then
+        give 32
+    end when
+    when (acquire_file_lock with path being lock, create being no).is_ok with nothing then
+        give 12
+    end when
+    when (release_file_lock with token being 0).is_ok with nothing then
+        give 13
+    end when
+    when not ((release_file_lock with token being token).is_ok with nothing) then
+        give 14
+    end when
+    when (release_file_lock with token being token).is_ok with nothing then
+        give 15
+    end when
+    when (file_lock_is_held with token being token).unwrap with nothing then
+        give 33
+    end when
+    value reacquired is acquire_file_lock with path being lock, create being no
+    when reacquired.is_error with nothing then
+        give 16
+    end when
+    when (reacquired.unwrap with nothing) is at most token then
+        give 17
+    end when
+    when not ((file_lock_is_held with token being (reacquired.unwrap with nothing)).unwrap with nothing) then
+        give 34
+    end when
+    when (file_lock_is_held with token being token).unwrap with nothing then
+        give 35
+    end when
+    !!! Intentionally retained until invocation completion; the host then checks it.
+    when not ((sync_directory with path being root).is_ok with nothing) then
+        give 18
+    end when
+    say "locks-ok"
+
+    !!! RFC 6234 vectors, so a wrong digest fails rather than merely staying stable.
+    value empty_digest is sha256_hex with data being empty
+    when empty_digest.is_error with nothing then
+        give 20
+    end when
+    when (empty_digest.unwrap with nothing) does not equal "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" then
+        give 21
+    end when
+    value abc as array of override byte is [97 becomes override byte, 98 becomes override byte, 99 becomes override byte]
+    value abc_digest is sha256_hex with data being abc
+    when abc_digest.is_error with nothing then
+        give 22
+    end when
+    when (abc_digest.unwrap with nothing) does not equal "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" then
+        give 23
+    end when
+
+    !!! The harness creates the working directory owner-only.
+    value root_private is is_private_directory with path being root
+    when root_private.is_error with nothing then
+        give 24
+    end when
+    when not (root_private.unwrap with nothing) then
+        give 25
+    end when
+    value nested is root plus "/private"
+    when not ((create_private_directory with path being nested).is_ok with nothing) then
+        give 26
+    end when
+    !!! An existing entry is reported, never adopted.
+    when (create_private_directory with path being nested).is_ok with nothing then
+        give 27
+    end when
+    value nested_private is is_private_directory with path being nested
+    when nested_private.is_error with nothing then
+        give 28
+    end when
+    when not (nested_private.unwrap with nothing) then
+        give 29
+    end when
+    !!! A 0600 published file is a private regular file; a directory is not, and
+    !!! that is a false verdict rather than an error.
+    value file_private is is_private_regular_file with path being output
+    when file_private.is_error with nothing then
+        give 30
+    end when
+    when not (file_private.unwrap with nothing) then
+        give 31
+    end when
+    value directory_as_file is is_private_regular_file with path being nested
+    when directory_as_file.is_error with nothing then
+        give 32
+    end when
+    when directory_as_file.unwrap with nothing then
+        give 33
+    end when
+    !!! An absent entry cannot be inspected, which is distinct from either verdict.
+    when (is_private_regular_file with path being nested plus "/absent").is_ok with nothing then
+        give 34
+    end when
+    when (is_private_directory with path being nested plus "/absent").is_ok with nothing then
+        give 35
+    end when
+    when not ((sync_directory with path being nested).is_ok with nothing) then
+        give 36
+    end when
+    say "metadata-ok"
+    give 0
+end paragraph

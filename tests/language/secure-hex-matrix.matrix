@@ -1,0 +1,58 @@
+!!! Secure hex draws on every execution route, paired with the Ny fixture.
+!!! random_bytes is deliberately absent: it yields arbitrary bytes, which can
+!!! include NUL, so it has no native provider and stays interpreter-only.
+book nil.tests.secure_hex
+
+read everything from nil.std.core
+read char_at, contains from nil.std.text
+read random_hex from nil.std.security
+
+hex_only receives drawn as text returns boolean begin paragraph
+    repeat for index from 0 to (the length of drawn)
+        value character is char_at with s being drawn, index being index
+        when not (contains with s being "0123456789abcdef", needle being character) then
+            give no
+        end when
+    end repeat
+    give yes
+end paragraph
+
+draw receives count as number returns text begin paragraph
+    value drawn is random_hex with byte_count being count
+    when drawn.is_error with nothing then
+        give ""
+    end when
+    give drawn.unwrap with nothing
+end paragraph
+
+main returns override integer begin paragraph
+    value identifier is draw with count being 16
+    when (the length of identifier) does not equal 32 then
+        give 1
+    end when
+    when not (hex_only with drawn being identifier) then
+        give 2
+    end when
+    when (the length of (draw with count being 1)) does not equal 2 then
+        give 3
+    end when
+    when (the length of (draw with count being 32)) does not equal 64 then
+        give 4
+    end when
+    !!! Two draws colliding would mean the source is not random at all.
+    when (draw with count being 16) equals (draw with count being 16) then
+        give 5
+    end when
+    !!! A count outside the documented range is an error, not a short draw.
+    when not ((random_hex with byte_count being 0).is_error with nothing) then
+        give 6
+    end when
+    when not ((random_hex with byte_count being minus 1).is_error with nothing) then
+        give 7
+    end when
+    when not ((random_hex with byte_count being 1025).is_error with nothing) then
+        give 8
+    end when
+    say "secure hex draws"
+    give 0
+end paragraph

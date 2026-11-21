@@ -29,6 +29,15 @@ module inventory to nineteen. See the [current library status](standard-library/
 the exact tools, source, binary modules and documentation are sealed in each
 SDK's manifest.
 
+The [Goetic/Enigma integration](../notebook/2026-11-21-goetic-enigma-sdk.md)
+adds durable publication, context-owned advisory locks and private-entry
+inspection. These filesystem APIs have a POSIX implementation; Windows returns
+explicit unsupported errors before mutation. A passing Windows rejection test
+does not establish support. Native `random_hex`, SHA-256 and optional console
+input are separate portable additions. New source or installed results are
+recorded with their exact revision and do not replace the pinned baselines
+above or establish release qualification.
+
 The Linux editor result uses VS Code 1.144.1 in an isolated X11 session and empty
 profile. Both current Mac application campaigns use VS Code 1.146.0. Each passes
 88 distinct groups, all nine test modules, the full-suite completion sentinel

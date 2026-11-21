@@ -125,6 +125,32 @@ def main() -> int:
                 assert len(sites) == 1 and sites[0]['allocated_bytes'] == 9, sites
                 assert 'read_line' in sites[0]['function'], sites
 
+        # read_line_option: end of input is an answer, a broken stream is not.
+        option_commands = []
+        for language in ('ny', 'matrix'):
+            source = fixtures / ('console-input-option.' + language)
+            nil = root / (language + '-option.nil')
+            compile_flags = [tools['compiler'], '--quiet', '--no-bundle', '--no-stdlib',
+                             '--sdk-path', tools['stdlib']]
+            run([*compile_flags, '-o', nil, source])
+            vm = [tools['interpreter'], '--no-ai', nil]
+            native = build_native(nil, language + '-option', False)
+            jit = [*compile_flags, '--native', '--jit',
+                   '-o', root / (language + '-option.jit'), source]
+            option_commands.append(native)
+            for command in (vm, native, jit):
+                # Several lines, then a clean stop.
+                result = run(command, data=b'alpha\nbeta\n')
+                assert result.stdout == b'line:alpha\nline:beta\neof:2\n', result
+                assert not result.stderr, result
+                # A final line without a terminator is still a line.
+                result = run(command, data=b'solo')
+                assert result.stdout == b'line:solo\neof:1\n', result
+                # Empty input ends immediately instead of faulting.
+                result = run(command, data=b'')
+                assert result.stdout == b'eof:0\n' and not result.stderr, result
+                checks += 3
+
         # A directory descriptor is readable at the OS level but cannot yield
         # stream input. Exercise host read errors separately from clean EOF.
         if os.name == 'posix':
@@ -133,6 +159,13 @@ def main() -> int:
                 for command in native_commands:
                     result = run(command, status=1, stdin=descriptor)
                     assert b'input is unavailable or reached EOF' in result.stderr, result
+                # The option form must not turn a broken stream into a clean
+                # None: something that has to fail closed depends on the
+                # difference between "no more input" and "cannot read".
+                for command in option_commands:
+                    result = run(command, status=1, stdin=descriptor)
+                    assert b'input is unavailable' in result.stderr, result
+                    assert b'eof:' not in result.stdout, result
             finally:
                 os.close(descriptor)
 

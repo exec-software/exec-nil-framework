@@ -14,7 +14,9 @@
 #include "nildata.hpp"
 #include "scalar_text.hpp"
 
+#include "entropy_support.hpp"
 #include "secure_file_io.hpp"
+#include "../../common/content_digest.hpp"
 #include "time_support.hpp"
 #include "file_time_support.hpp"
 #include "parallel_support.hpp"
@@ -99,6 +101,7 @@ struct runtime_context {
   ny::database::Context databases;
   ny::ui::Context ui;
   ny::webview::Context webview;
+  ny::detail::FileLockRegistry file_locks;
   struct file {
     std::unique_ptr<std::fstream> stream;
     bool readable = false;
@@ -940,6 +943,7 @@ void nyrt_context_end() noexcept {
   context.ui.clear();
   context.webview.clear();
   context.files.clear();
+  context.file_locks.clear();
   nyrt_owned_v1_unwind(0);
   context.pending_fault.reset();
   std::vector<runtime_context::fault_frame>().swap(context.fault_frames);
@@ -1730,6 +1734,119 @@ std::int32_t nyrt_io_v1(const char *operation, std::uint64_t first,
       if (fold_separators) std::replace(path.begin(), path.end(), '\\', '/');
       return std::filesystem::u8path(path);
     };
+
+    if (name == "text.byte_at") {
+      const auto *input = text(first);
+      const auto index = static_cast<std::int64_t>(second);
+      const auto size = std::strlen(input);
+      *value = index < 0 || static_cast<std::uint64_t>(index) >= size
+                   ? static_cast<std::uint64_t>(-1)
+                   : static_cast<unsigned char>(input[index]);
+      return 1;
+    }
+    if (name == "text.from_byte") {
+      if (first > 255) return output_text("");
+      if (first == 0) return fail("native text cannot contain NUL");
+      const char octet = static_cast<char>(static_cast<unsigned char>(first));
+      return output_text(std::string_view(&octet, 1));
+    }
+
+    if (name == "file.file_lock_is_held") {
+      // Negative i64 tokens arrive in the unsigned ABI word's high half.
+      // They are a false ownership verdict, not a filesystem operation.
+      const auto held = context.file_locks.is_held(
+          first <= static_cast<std::uint64_t>(INT64_MAX)
+              ? static_cast<std::int64_t>(first) : 0);
+      if (!held.ok) { set_error(error, held.error); return 0; }
+      *value = held.value ? 1 : 0;
+      return 1;
+    }
+    if (name == "file.release_file_lock") {
+      if (first > static_cast<std::uint64_t>(INT64_MAX))
+        return fail("invalid lock token");
+      const auto released = context.file_locks.release(static_cast<std::int64_t>(first));
+      if (!released.ok) { set_error(error, released.error); return 0; }
+      *value = 1;
+      return 1;
+    }
+    if (name == "file.acquire_file_lock") {
+      if (second > 1) return fail("create must be a bool");
+      const auto acquired = context.file_locks.acquire(text(first), second != 0);
+      if (!acquired.ok) { set_error(error, acquired.error); return 0; }
+      *value = static_cast<std::uint64_t>(acquired.token);
+      return 1;
+    }
+    if (name == "file.sync_directory") {
+      const auto synced = ny::detail::sync_directory_utf8(text(first));
+      if (!synced.ok) { set_error(error, synced.error); return 0; }
+      *value = 1;
+      return 1;
+    }
+    if (name == "file.write_bytes_durable") {
+      if (third > 1) return fail("replace must be a bool");
+      const auto *array = checked_array(reinterpret_cast<const void *>(static_cast<std::uintptr_t>(second)), NYRT_ARRAY_U8);
+      if (!array || array->length > maximum_file_bytes) return fail("invalid or oversized byte array");
+      std::vector<char> bytes;
+      if (array->length) {
+        const auto *data = static_cast<const char *>(array->data);
+        bytes.assign(data, data + array->length);
+      }
+      const auto written = ny::detail::write_file_durable_utf8(text(first), bytes, third != 0);
+      if (!written.ok) { set_error(error, written.error); return 0; }
+      *value = 1;
+      return 1;
+    }
+    if (name == "random.hex") {
+      if (first > static_cast<std::uint64_t>(INT64_MAX))
+        return fail("ask for at least one byte");
+      // The same kernel entropy source and hex encoding the interpreter uses,
+      // so a draw does not depend on which route asked for it.
+      const auto drawn = ny::entropy_support::random_hex(static_cast<std::int64_t>(first));
+      if (!drawn.ok()) { set_error(error, drawn.error); return 0; }
+      return output_text(std::string_view(drawn.bytes));
+    }
+    if (name == "console.read_line_option") {
+      std::fflush(stdout);
+      std::string line;
+      // Some host read errors look like EOF but set errno. Embedded streams
+      // can also fail without setting errno, so require a clean EOF state as
+      // well as an error-free host read before answering None.
+      errno = 0;
+      if (!std::getline(std::cin, line)) {
+        if (errno != 0 || !std::cin.eof() || std::cin.bad())
+          return fail("input is unavailable");
+        return 1;
+      }
+      if (line.find('\0') != std::string::npos)
+        return fail("embedded NUL is unsupported by native text");
+      if (!output_text(std::string_view(line))) return 0;
+      return 2;
+    }
+    if (name == "file.create_private_directory") {
+      const auto created = ny::detail::create_private_directory_utf8(text(first));
+      if (!created.ok) { set_error(error, created.error); return 0; }
+      *value = 1;
+      return 1;
+    }
+    if (name == "file.is_private_regular_file" ||
+        name == "file.is_private_directory") {
+      // An uninspectable entry is an error; a false verdict is a successful
+      // inspection, so the two never collapse into one answer.
+      const auto checked = name == "file.is_private_regular_file"
+                               ? ny::detail::private_regular_file_utf8(text(first))
+                               : ny::detail::private_directory_utf8(text(first));
+      if (!checked.ok) { set_error(error, checked.error); return 0; }
+      *value = checked.value ? 1 : 0;
+      return 1;
+    }
+    if (name == "checksum.sha256_hex") {
+      const auto *array = checked_array(reinterpret_cast<const void *>(static_cast<std::uintptr_t>(first)), NYRT_ARRAY_U8);
+      if (!array || array->length > maximum_file_bytes) return fail("invalid or oversized byte array");
+      nil::detail::sha256 hash;
+      if (array->length) hash.update(static_cast<const char *>(array->data), array->length);
+      const std::string digest = hash.finish();
+      return output_text(std::string_view(digest));
+    }
 
     if (name.rfind("path.", 0) == 0) {
       if (name == "path.separator") return output_text("/");

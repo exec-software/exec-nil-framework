@@ -17,6 +17,8 @@ struct Contract {
 // values. In particular environment.list's array of named structs is not a
 // scalar array and must not be reinterpreted as one.
 inline std::optional<Contract> intrinsic(const std::string &name) {
+  if (name == "text.byte_at") return Contract{{"text", "i64"}, "i64"};
+  if (name == "text.from_byte") return Contract{{"i64"}, "text"};
   if (name == "path.separator" || name == "environment.current_directory" ||
       name == "environment.newline" || name == "environment.machine_name" ||
       name == "environment.user_name")
@@ -42,7 +44,27 @@ inline std::optional<Contract> intrinsic(const std::string &name) {
     return Contract{{"text", "text"}, "bool", Output::result};
   if (name == "file.write_bytes")
     return Contract{{"text", "array<u8>"}, "bool", Output::result};
+  if (name == "file.write_bytes_durable")
+    return Contract{{"text", "array<u8>", "bool"}, "bool", Output::result};
+  if (name == "file.sync_directory")
+    return Contract{{"text"}, "bool", Output::result};
+  if (name == "file.acquire_file_lock")
+    return Contract{{"text", "bool"}, "i64", Output::result};
+  if (name == "file.release_file_lock" || name == "file.file_lock_is_held")
+    return Contract{{"i64"}, "bool", Output::result};
+  if (name == "file.create_private_directory" ||
+      name == "file.is_private_regular_file" ||
+      name == "file.is_private_directory")
+    return Contract{{"text"}, "bool", Output::result};
+  if (name == "checksum.sha256_hex")
+    return Contract{{"array<u8>"}, "text", Output::result};
   if (name == "environment.get") return Contract{{"text"}, "text", Output::option};
+  if (name == "console.read_line_option")
+    return Contract{{}, "text", Output::option};
+  // Hex only. random.bytes yields arbitrary bytes, which can include NUL, and
+  // native text is a NUL-terminated ABI, so that form stays interpreter-only.
+  if (name == "random.hex")
+    return Contract{{"i64"}, "text", Output::result};
   if (name == "file.handle_open") return Contract{{"text", "i32"}, "i64"};
   if (name == "file.handle_read" || name == "file.handle_write")
     return Contract{{"i64", "ptr<u8>", "i32"}, "i32"};

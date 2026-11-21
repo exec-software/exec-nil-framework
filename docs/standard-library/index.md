@@ -122,7 +122,12 @@ The active tree includes these deliberately scoped families:
 Console output, `nil.std.io.read_line`, and `flush` support the interpreter,
 native executables, and LLVM JIT. Line input preserves bytes except for the
 trailing LF; an empty line and a final nonempty line without LF are valid.
-EOF and input errors fault explicitly. On POSIX, CR is preserved. Native text
+EOF and input errors fault explicitly.
+`read_line_option` reads the same way but answers `None` at end of input, so a
+reader whose caller closes the stream can stop cleanly; an input error still
+faults, because something that must fail closed cannot be handed "no more
+input" when the truth is "cannot read". See
+[NIL-0030](../design/NIL-0030-end-of-input.md). On POSIX, CR is preserved. Native text
 uses a NUL-terminated ABI and rejects embedded NUL input; the interpreter can
 retain that byte. Input publishes pending console output before reading, and
 `flush` publishes standard output explicitly. Native input text is managed by
@@ -152,7 +157,16 @@ so a rare host cleanup failure can leave a `.ny-write-*` orphan. Publication is
 visibility-atomic but does not promise parent-directory durability after a
 sudden power loss.
 
-These two secure whole-file APIs now have a native provider in the versioned
+The additive [durable-files reference](durable-files.md) covers
+`write_bytes_durable`, `sync_directory`, context-owned advisory file locks and
+the `file_lock_is_held` ownership query,
+owner-only directory creation, private-entry metadata verdicts, and portable
+`sha256_hex`. The filesystem primitives are POSIX-only; Windows reports an
+explicit unsupported error. They supply filesystem barriers and nonblocking
+single-writer coordination. They preserve existing atomic-write/stream-flush
+semantics and do not expand an older installed SDK's guarantees.
+
+The bounded byte-read and atomic byte-write APIs have a native provider in the versioned
 `nilruntime` ABI. `native.runtime-abi` tests the C boundary directly, and
 `ny.routes.native_cli_secure_byte_io` exercises the public Ny wrappers through
 LLVM JIT and AOT with exact bytes, an explicit read ceiling, no-clobber
@@ -228,8 +242,12 @@ experimental, and active `nil.std.system` does not include subprocess execution
 or agent messaging.
 
 TCP stream sockets are active as of `nil.std.net.socket`, and secure random
-values as of `nil.std.security.random`; both are interpreter-backed and their
-contracts are checked by dedicated fixtures. See the
+values as of `nil.std.security.random`; their contracts are checked by
+dedicated fixtures. Sockets are interpreter-backed. Of the secure-random
+surface only `random_hex` has a native provider, because an application that
+draws an identifier per recovery has to be buildable natively; `random_bytes`
+returns arbitrary bytes, which can include NUL, and native text is a
+NUL-terminated ABI, so it stays interpreter-only. See the
 [socket reference](sockets.md) and the secure-random section of the
 [random reference](random.md). `http.send` and the higher-level transports —
 HTTP client and server, WebSocket, IMAP, SMTP — remain quarantined, now for

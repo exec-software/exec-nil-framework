@@ -44,6 +44,7 @@ FIXTURES = ("scalar-array-parity", "stl-array-primitives", "native-nested-refere
             "qualified-enum-patterns", "qualified-enum-patterns-matrix",
             "scientific-literals", "scientific-literals-matrix",
             "signed-numbers-matrix", "formatted-text", "formatted-text-matrix",
+            "choice-text-fields", "choice-text-fields-matrix",
             "tuples", "tuples-matrix",
             "tuple-arrays", "tuple-arrays-matrix",
             "text-patterns", "text-patterns-matrix",
@@ -57,7 +58,8 @@ FIXTURES = ("scalar-array-parity", "stl-array-primitives", "native-nested-refere
             "checked-text-spans", "checked-text-spans-matrix",
             "checked-i64-conversion", "checked-i64-conversion-matrix",
             "average-f64", "average-f64-matrix",
-            "random-generators", "random-generators-matrix", "math-runtime")
+            "random-generators", "random-generators-matrix",
+            "secure-hex", "secure-hex-matrix", "math-runtime")
 
 
 def fixture_source(name: str, directory: Path | None = None) -> Path:

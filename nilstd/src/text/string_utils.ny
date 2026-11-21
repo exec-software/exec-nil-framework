@@ -819,6 +819,8 @@ pub fn byte_at(s: text, index: i64) -> i64
 # character can be built one byte at a time with this.
 #
 # A code outside 0..255 gives empty text.
+# Native execution uses NUL-free text: code 0 faults explicitly rather than
+# silently returning truncated text. Use byte arrays for arbitrary binary data.
 @intrinsic("text.from_byte")
 pub fn from_byte(code: i64) -> text
 

@@ -45,3 +45,14 @@ end fn
 pub fn crc32(data: array<u8>, offset: i64, limit: i64) -> Result<i64, text>
     return crc32_update(0, data, offset, limit)
 end fn
+
+# SHA-256 of every byte, as 64 lowercase hexadecimal characters.
+#
+# This detects accidental corruption and identifies content. It is not a
+# signature, a message authentication code, encryption, or rollback
+# protection: anyone who can replace the bytes can replace the digest with
+# them. Authenticating a digest needs a secret this function does not take.
+#
+# Bounded like the other byte-array operations; an oversized array is an error.
+@intrinsic("checksum.sha256_hex")
+pub fn sha256_hex(data: array<u8>) -> Result<text, text>

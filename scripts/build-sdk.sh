@@ -170,6 +170,11 @@ if [[ "${qualification}" == "rc-checks" ]]; then
         --expected-revision "${revision}" \
         --require-rc-checks \
         --output "${cmake_build_dir}/sdk-consumer-routes.json"
+    python3 "${script_dir}/check-sdk-durable-io.py" \
+        --sdk "${stage_dir}" \
+        --expected-revision "${revision}" \
+        --require-rc-checks \
+        --output "${cmake_build_dir}/sdk-durable-io-evidence"
 fi
 python3 "${script_dir}/publish-sdk.py" \
     --stage-dir "${stage_dir}" \
