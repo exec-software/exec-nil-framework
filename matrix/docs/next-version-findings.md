@@ -2635,3 +2635,43 @@ Paired Ny/Matrix routes check live and released verdicts. Embedded VM lifecycle
 and native context tests check foreign contexts and retirement after completion,
 reset, replacement, faults, and teardown; malformed result schemas remain
 rejected by the ordinary-I/O ABI checks.
+
+### F93 — A later local binding can rename an imported choice constructor
+
+**Status:** Open Matrix name-resolution defect; application workaround only.
+
+**Observed:** While building Enigma's durable client, a local binding named
+`result` in one paragraph changed `Result.Error` construction in an earlier,
+unrelated paragraph. Both source variants passed type checking. With the local
+name `result`, generated NIL called an unresolved function `Error` instead of
+constructing the checked Result variant; execution failed with an unknown-call
+error, or the exact-signature loader check rejected that call first.
+
+Minimal reproducer:
+
+```matrix
+book findings.result_shadow
+read nil.std.core.result
+
+answer returns Result of number, text begin paragraph
+    give Result.Error holding "failure"
+end paragraph
+
+later returns number begin paragraph
+    value result as number is 7
+    give result
+end paragraph
+```
+
+The parser's declaration pre-scan records local bindings in a page-wide name
+map. `resolve_name` then folds the unqualified imported owner `Result` to the
+local spelling `result`, including in another paragraph. This is broader than
+a same-scope shadowing rule: merely declaring the later local changes the
+earlier constructor's emitted identity.
+
+**Workaround and boundary:** Renaming the local to `gathered` restores the
+Result constructor and the isolated program executes correctly. Enigma uses
+that source workaround. Avoid local or parameter names differing only in case
+from imported type names within a page until resolution becomes lexical or
+reports the collision before code generation. No compiler behavior, loader
+provenance check, or ABI rule was relaxed, and no failing CI fixture was added.
