@@ -418,6 +418,9 @@ Blank positions, unsupported member/type contexts, parse or import failures, ear
 failures, ambiguous repeated generic occurrences and binary dependencies retain
 the tolerant language-server fallback. When compiler candidates are available,
 its value bindings take precedence while language keywords and snippets remain.
+The extension combines those suggestions once per request, so independently timed
+compiler and language-server answers cannot publish duplicate bindings. Source or
+configuration changes during a request discard the combined result.
 An older SDK without the query also retains fallback completion. This is an initial
 identifier-completion profile; general incomplete-code recovery remains future work.
 

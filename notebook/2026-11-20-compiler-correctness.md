@@ -113,6 +113,35 @@ during asynchronous reads. All 177 extension unit tests and the production build
 pass; real editor-host acceptance remains a separate check. No host assertion,
 deadline or dependency version was changed.
 
+## Completion result ownership
+
+Both source campaigns and all four runtime hosts passed at `83dd093`. The next
+Apple Silicon editor run passed the include-restoration check and all semantic
+checks, then failed after 56 successful checks because a compiler completion
+candidate also appeared in tolerant completion results. The failure is preserved
+in [run 44861306592](https://github.com/exec-software/exec-nil-framework/actions/runs/44861306592).
+
+The compiler provider and language-client middleware each made their own
+asynchronous decision about compiler availability. Sharing the raw compiler
+promise did not share their final snapshot validation or fallback decision. One
+could return compiler candidates while the other returned full tolerant symbols.
+
+Completion now has one result publisher. It combines the internal compiler query
+with tolerant server results, validates the captured request before publication,
+and filters fallback bindings when compiler results are authoritative. Unsupported
+or unavailable compiler queries still retain tolerant fallback, and unavailable
+language-server results do not disable compiler completion. The ordinary language
+client completion callback no longer publishes a second result. This changes
+completion ownership rather than relaxing the host's duplicate-candidate check.
+
+A deterministic test of the original production registrations reproduced two
+same-name items when their semantic validation outcomes differed. Twenty-seven
+new controls cover both response orders, unavailable-query recovery, cancelled
+or stale contexts, disabled analysis, missing/stopped servers and source changes
+during conversion. Virtual output-document changes remain unrelated to source
+validation. All 204 extension tests and the production build pass; the unchanged
+full editor-host campaigns provide separate acceptance evidence.
+
 ## Editor dependency follow-up
 
 The existing [minimatch advisory](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249)

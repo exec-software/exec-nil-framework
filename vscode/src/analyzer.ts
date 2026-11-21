@@ -53,6 +53,12 @@ interface CompletionQuery {
   result: Promise<CompilerCompletion | undefined>;
 }
 
+type CompletionLookup = { status: "unavailable" } | { status: "stale" } |
+  { status: "available"; query: CompletionQuery; completion: CompilerCompletion };
+type TolerantCompletions = (document: vscode.TextDocument, position: vscode.Position,
+  token: vscode.CancellationToken, context: vscode.CompletionContext) =>
+  Promise<vscode.CompletionItem[] | vscode.CompletionList | undefined>;
+
 interface SignatureQuery {
   job: AnalysisJob;
   byteOffset: number;
@@ -83,7 +89,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
   private generation = 0;
   private tabSources = new Set<string>();
 
-  constructor() {
+  constructor(private readonly tolerantCompletions: TolerantCompletions = async () => undefined) {
     this.tabSources = this.openTabSources();
     const tabMembershipChanged = () => this.updateTabSources();
     const watcher = vscode.workspace.createFileSystemWatcher("**/*.{ny,matrix,mat,nildata,json,yaml,yml}");
@@ -97,7 +103,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
       vscode.languages.registerDefinitionProvider(languageDocumentSelector, this),
       vscode.languages.registerReferenceProvider(languageDocumentSelector, this),
       vscode.languages.registerRenameProvider(languageDocumentSelector, this),
-      vscode.languages.registerCompletionItemProvider(languageDocumentSelector, this),
+      vscode.languages.registerCompletionItemProvider(languageDocumentSelector, this, ".", ":", "_", "-"),
       vscode.languages.registerSignatureHelpProvider(languageDocumentSelector, this, {
         triggerCharacters: ["(", ",", " "], retriggerCharacters: [")"]
       }),
@@ -630,15 +636,16 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     return originSelectionRange && target ? [{ originSelectionRange, targetUri: target.uri, targetRange: target.range, targetSelectionRange: target.range }] : undefined;
   }
 
-  async provideCompletionItems(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): Promise<vscode.CompletionList | undefined> {
-    if (!this.enabled(document) || token.isCancellationRequested) return undefined;
+  private async compilerCompletion(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): Promise<CompletionLookup> {
+    if (token.isCancellationRequested) return { status: "stale" };
+    if (!this.enabled(document)) return { status: "unavailable" };
     const offset = document.offsetAt(position);
     const source = document.getText();
     // Empty insertion contexts retain the tolerant provider; typed member
     // prefixes are now resolved by the compiler along with lexical values.
-    if (!offset || /[\s.:]/.test(source[offset - 1]!)) return undefined;
+    if (!offset || /[\s.:]/.test(source[offset - 1]!)) return { status: "unavailable" };
     const byteOffset = completionByteOffset(source, offset);
-    if (byteOffset === undefined || Buffer.byteLength(source, "utf8") > maxAnalysisSourceBytes) return undefined;
+    if (byteOffset === undefined || Buffer.byteLength(source, "utf8") > maxAnalysisSourceBytes) return { status: "unavailable" };
     const key = document.uri.toString();
     let query = this.completionQueries.get(key);
     if (!query || query.byteOffset !== byteOffset || !this.current(query.job)) {
@@ -656,10 +663,33 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
     // An unavailable tool or failed query can recover without a source edit.
     // Keep concurrent consumers coalesced, but do not cache absence indefinitely.
     if (!completion && this.completionQueries.get(key) === query) this.completionQueries.delete(key);
-    if (!completion || query.controller.signal.aborted || token.isCancellationRequested || !this.current(query.job)) return undefined;
+    if (query.controller.signal.aborted || token.isCancellationRequested || !this.current(query.job)) return { status: "stale" };
+    return completion ? { status: "available", query, completion } : { status: "unavailable" };
+  }
+
+  async provideCompletionItems(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken,
+    context: vscode.CompletionContext): Promise<vscode.CompletionItem[] | vscode.CompletionList | undefined> {
+    if (this.disposed || document.isClosed || token.isCancellationRequested) return undefined;
+    const version = document.version, generation = this.generation;
+    const localDocuments = () => vscode.workspace.textDocuments.filter(item =>
+      (item.uri.scheme === "file" || item.uri.scheme === "untitled") && path.isAbsolute(item.uri.fsPath));
+    const observed = localDocuments().map(item => ({ document: item, version: item.version, dirty: item.isDirty }));
+    const current = () => !this.disposed && !document.isClosed && !token.isCancellationRequested &&
+      document.version === version && this.generation === generation &&
+      localDocuments().length === observed.length && observed.every(item =>
+        !item.document.isClosed && item.document.version === item.version && item.document.isDirty === item.dirty);
+    // One provider owns the combined answer. Independent publishers could see
+    // different cancellation outcomes and return both compiler and guessed names.
+    const [compiler, fallback] = await Promise.all([
+      this.compilerCompletion(document, position, token).catch(() => ({ status: "unavailable" } as const)),
+      Promise.resolve().then(() => this.tolerantCompletions(document, position, token, context)).catch(() => undefined)
+    ]);
+    if (!current() || compiler.status === "stale") return undefined;
+    if (compiler.status === "unavailable") return fallback;
+    const { query, completion } = compiler;
     const primary = query.job.inputs.find(input => input.document === document);
-    if (!primary || completion.cursor !== byteOffset || path.normalize(completion.path) !== primary.identity ||
-        !await this.validateSemantic(query.job, completion, token)) return undefined;
+    if (!primary || completion.cursor !== query.byteOffset || path.normalize(completion.path) !== primary.identity ||
+        !await this.validateSemantic(query.job, completion, token) || !current()) return undefined;
     const offsets = createByteRangeMapper(query.job.text)(completion.start, completion.length);
     const range = offsets && this.semanticRange(query.job.text, offsets.start, offsets.end);
     if (!range || !range.contains(position)) return undefined;
@@ -675,7 +705,11 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
       item.filterText = document.getText(new vscode.Range(range.start, position));
       return item;
     });
-    return new vscode.CompletionList(items, true);
+    const names = new Set(items.map(item => typeof item.label === "string" ? item.label : item.label.label));
+    const tolerant = (Array.isArray(fallback) ? fallback : fallback?.items ?? []).filter(item =>
+      (item.kind === vscode.CompletionItemKind.Keyword || item.kind === vscode.CompletionItemKind.Snippet || item.detail === "Matrix language") &&
+      !names.has(typeof item.label === "string" ? item.label : item.label.label));
+    return new vscode.CompletionList([...items, ...tolerant], true);
   }
 
   async provideSignatureHelp(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): Promise<vscode.SignatureHelp | undefined> {

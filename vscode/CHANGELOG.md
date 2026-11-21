@@ -4,6 +4,10 @@ All notable changes to the NIL Framework VS Code extension are documented here.
 
 ## 1.0.0-rc.1
 
+- Publish compiler and tolerant completion suggestions through one result path,
+  preventing duplicate names when their asynchronous checks finish differently.
+  Preserve keyword/snippet suggestions and fallback for unavailable compiler queries.
+
 - Restore semantic navigation when an included file changes on disk while VS Code
   retains an older clean model after its tab closes. Preserve dirty/open include
   alias checks and invalidate pending results when arbitrary include tabs change.
