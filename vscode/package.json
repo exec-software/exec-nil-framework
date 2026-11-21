@@ -87,7 +87,7 @@
     "test:host": "npm run build && node test/run-host.cjs"
   },
   "dependencies": {
-    "vscode-languageclient": "^10.1.1"
+    "vscode-languageclient": "10.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.20.2",
@@ -610,6 +610,7 @@
     ]
   },
   "overrides": {
+    "minimatch": "11.0.9",
     "@azure/identity": {
       "@azure/msal-node": "7.1.1"
     }

@@ -1,5 +1,6 @@
 .gitignore
 esbuild.mjs
+tools/**
 node_modules/**
 out-test/**
 package-lock.json
