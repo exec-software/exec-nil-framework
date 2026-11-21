@@ -4,10 +4,15 @@
 from __future__ import annotations
 
 import copy
+import contextlib
 import importlib.util
+import io
 import json
 from pathlib import Path
+import stat
 import tempfile
+import time
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -16,6 +21,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("sdk_consumer", ROOT / "scripts/check-sdk-routes.py")
 consumer = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(consumer)
+DURABLE_SPEC = importlib.util.spec_from_file_location(
+    "sdk_durable_consumer", ROOT / "scripts/check-sdk-durable-io.py")
+durable = importlib.util.module_from_spec(DURABLE_SPEC)
+DURABLE_SPEC.loader.exec_module(durable)
 
 
 # check_report requires an absolute run directory, and on Windows a path with
@@ -248,6 +257,132 @@ class ConsumerTests(unittest.TestCase):
                     "stdout_truncated": True}[change]
             with self.subTest(change=change), self.assertRaises(ValueError):
                 self.check(report)
+
+
+class DurableEvidenceTests(unittest.TestCase):
+    def fixtures(self, parent):
+        source = parent / "execution"
+        source.mkdir()
+        (source / "logs").mkdir()
+        (source / "empty").mkdir()
+        (source / "logs" / "raw.bin").write_bytes(b"before\x00\xff\r\nafter")
+        (source / "report.json").write_text(json.dumps({"status": "PASS", "work": str(source)}))
+        return source, parent / "retained"
+
+    def test_retention_preserves_all_bytes_empty_directories_and_original_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, target = self.fixtures(Path(directory))
+            proof = durable.retain_windows_evidence(source, target)
+            self.assertEqual(proof["status"], "PASS")
+            self.assertEqual(proof["execution_workspace"], str(source.resolve()))
+            self.assertEqual(proof["retained_copy"], str(target.resolve()))
+            self.assertTrue(proof["original_workspace_retained"])
+            self.assertEqual(proof["file_count"], 2)
+            self.assertEqual(durable.retention_inventory(source, time.monotonic()+30),
+                             durable.retention_inventory(target, time.monotonic()+30))
+            self.assertEqual(json.loads((target / "report.json").read_text())["work"], str(source))
+            self.assertTrue((source / "empty").is_dir())
+
+    def test_copy_corruption_and_source_mutation_fail_closed(self):
+        for change in ("copy", "source", "namespace"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                source, target = self.fixtures(Path(directory))
+                original = durable.copy_retained_file
+
+                def corrupt(incoming, outgoing, expected, deadline):
+                    original(incoming, outgoing, expected, deadline)
+                    if incoming.name == "raw.bin":
+                        if change == "namespace":
+                            (source / "unexpected").write_bytes(b"new")
+                        else:
+                            (outgoing if change == "copy" else incoming).write_bytes(b"changed")
+
+                with mock.patch.object(durable, "copy_retained_file", side_effect=corrupt):
+                    with self.assertRaises(ValueError):
+                        durable.retain_windows_evidence(source, target)
+                self.assertTrue(source.is_dir())
+
+    def test_existing_destination_is_never_replaced(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, target = self.fixtures(Path(directory))
+            target.mkdir()
+            marker = target / "marker"
+            marker.write_bytes(b"retained")
+            with self.assertRaises(FileExistsError):
+                durable.retain_windows_evidence(source, target)
+            self.assertEqual(marker.read_bytes(), b"retained")
+
+    def test_symlink_and_windows_reparse_entries_are_not_followed(self):
+        for kind in ("symlink", "reparse"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                source, target = self.fixtures(Path(directory))
+                blocked = source / "logs"
+                original = Path.lstat
+
+                def attributes(path, *args, **kwargs):
+                    actual = original(path, *args, **kwargs)
+                    if path == blocked:
+                        return SimpleNamespace(
+                            st_mode=stat.S_IFLNK if kind == "symlink" else actual.st_mode,
+                            st_file_attributes=0x400 if kind == "reparse" else 0)
+                    return actual
+
+                # Exercise both actual lstat verdicts on every host without
+                # requiring Windows symlink privileges or creating a junction.
+                with mock.patch.object(Path, "lstat", attributes):
+                    with self.assertRaisesRegex(ValueError, "links and reparse"):
+                        durable.retain_windows_evidence(source, target)
+                self.assertFalse(target.exists())
+                self.assertEqual((blocked / "raw.bin").read_bytes(), b"before\x00\xff\r\nafter")
+
+    def test_utf16_path_budget_accounts_for_surrogate_pairs(self):
+        self.assertTrue(durable.windows_workspace_fits(Path("a" * 96)))
+        self.assertFalse(durable.windows_workspace_fits(Path("a" * 97)))
+        self.assertTrue(durable.windows_workspace_fits(Path("a" * 94 + "\U0001f512")))
+        self.assertFalse(durable.windows_workspace_fits(Path("a" * 95 + "\U0001f512")))
+
+    def test_main_retention_failure_cannot_report_qualification_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            sdk, source, output = parent / "sdk", parent / "execution", parent / "evidence"
+            sdk.mkdir(); source.mkdir()
+            argv = ["qualify", "--sdk", str(sdk), "--expected-revision", "a" * 40,
+                    "--output", str(output)]
+            report = {"status": "PASS", "cleanup_verified": True, "errors": []}
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with mock.patch.object(durable, "WINDOWS", True), \
+                 mock.patch.object(durable.sys, "argv", argv), \
+                 mock.patch.object(durable, "windows_execution_workspace", return_value=source), \
+                 mock.patch.object(durable, "qualify", return_value=report), \
+                 mock.patch.object(durable, "retain_windows_evidence", side_effect=ValueError("copy failed")), \
+                 contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                self.assertEqual(durable.main(), 1)
+            retained = list(output.glob("run-*/report.json"))
+            self.assertEqual(len(retained), 1)
+            failed = json.loads(retained[0].read_text())
+            self.assertEqual(failed["status"], "FAIL")
+            self.assertEqual(failed["execution_workspace"], str(source))
+            self.assertEqual(json.loads((source / "report.json").read_text())["status"], "PASS")
+            self.assertNotIn("PASS:", stdout.getvalue())
+            self.assertIn("copy failed", stderr.getvalue())
+
+    def test_posix_keeps_requested_execution_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            sdk, output = parent / "sdk", parent / "evidence"
+            sdk.mkdir()
+            argv = ["qualify", "--sdk", str(sdk), "--expected-revision", "a" * 40,
+                    "--output", str(output)]
+            with mock.patch.object(durable, "WINDOWS", False), \
+                 mock.patch.object(durable.sys, "argv", argv), \
+                 mock.patch.object(durable, "windows_execution_workspace") as reserve, \
+                 mock.patch.object(durable, "qualify", return_value={"status": "PASS"}) as qualify, \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(durable.main(), 0)
+            reserve.assert_not_called()
+            self.assertEqual(qualify.call_args.args[2].parent, output)
+            saved = json.loads(next(output.glob("run-*/report.json")).read_text())
+            self.assertNotIn("workspace_provenance", saved)
 
 
 if __name__ == "__main__":

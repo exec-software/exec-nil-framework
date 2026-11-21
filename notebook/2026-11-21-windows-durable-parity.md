@@ -98,3 +98,53 @@ remaining path-policy report is the unchanged public README contact address;
 its original line is present in the parent commit. Public specification section
 numbers were reworded to avoid being misread by the address scanner; the direct
 Microsoft reference links remain.
+
+## Clean development SDK checkpoint
+
+The clean `b564ef60092d552884e6416dcdede2145ce55291` Windows build records
+611 registered source tests: 609 pass, none fail, and the two interactive display
+tests skip in the headless session. SQLite and isolated PostgreSQL provider tests
+run successfully. Its installed SDK passes all 1,248 ordinary consumer routes:
+78 Ny/Matrix fixtures, both source and binary libraries, and eight routes each.
+The manifest seals 279 payload files, eleven root executables, nineteen library
+modules and 76 HTML documentation pages. Manifest SHA-256:
+`cb4d35926174bfcc7c62e54b8acb7106f108c9919fc5f3f5a60caa2d4add56d5`.
+These counts do not substitute for the new installed durable-I/O qualification.
+
+The first complete SDK attempt retained failures caused by missing SQLite
+headers in the isolated configuration; the provider configuration was corrected.
+A subsequent external tool-runner shutdown stopped QEMU while the first campaign
+was running. Its partial evidence and disk were preserved. The existing VM was
+restarted under a user service, and the clean campaign above ran to completion.
+No interrupted run is counted as a pass.
+
+The added installed durable qualifier then caught a separate harness path-budget
+bug. It nested its temporary directory inside the already deep candidate evidence
+path. Native `niltest` reached its manifest staging step, where the generated
+atomic filename exceeded the ordinary Windows path budget. A native probe with
+a 224-character parent created a 245-character final filename successfully but
+failed at 263 and 266 characters with Win32 error 3. Python created those longer
+paths, illustrating why its own successful directory creation did not establish
+that native child tools could use the same depth. The failed candidate and logs
+remain intact; ordinary-route success does not erase this failure.
+
+The qualifier correction uses a fresh, shallow Windows execution workspace and
+retains a verified evidence copy under the requested output directory. It does
+not change production pathname semantics, machine settings, child cleanup or
+test deadlines. Installed durable acceptance must be rerun against the exact
+unchanged SDK, recording the separate helper revision and both workspace paths.
+
+## Hosted source evidence
+
+The `b564ef6` [runtime campaign](https://github.com/exec-software/exec-nil-framework/actions/runs/44910080429)
+passes on Linux, Windows, Intel macOS and Apple Silicon macOS with no skips:
+82 CTests and 128 fixture executions in total. The durable subsets cover sixteen
+executions, 32 ABI rejections and 144 foreign-library rejections across the four
+hosts. Hosted non-LLVM fixtures and the full local LLVM campaign are distinct.
+
+The same revision's [macOS application campaign](https://github.com/exec-software/exec-nil-framework/actions/runs/44910080427)
+passes on both architectures. Each runs 51 application CTests, 204 extension unit
+checks and all 88 real-editor checks across nine modules. Each also covers eight
+durable executions, twelve ABI and 36 library rejections, and 202 console checks.
+These are source/application results; they neither replace installed SDK records
+nor establish a stable Windows or macOS release.

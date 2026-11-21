@@ -12,6 +12,8 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
+import stat
 import sys
 import tempfile
 import time
@@ -22,6 +24,7 @@ sys.path.insert(0, str(ROOT / "tests/tools"))
 import ordinary_io_parity_contract as support
 
 WINDOWS = os.name == "nt"
+WINDOWS_WORKSPACE_UNITS = 96
 
 OPERATIONS = (
     "file.write_bytes_durable", "file.sync_directory", "file.acquire_file_lock",
@@ -49,6 +52,112 @@ def require(condition: bool, message: str) -> None:
 
 def record(path: Path) -> dict:
     return support.file_record(path)
+
+
+def windows_workspace_fits(path: Path) -> bool:
+    # Reserve 160 UTF-16 units for the current helper/tool descendants, including
+    # niltest's directory, compiler private staging and atomic temporary names.
+    # This is a qualification layout bound, not general long-path support.
+    return len(str(path).encode("utf-16-le")) // 2 <= WINDOWS_WORKSPACE_UNITS
+
+
+def windows_execution_workspace() -> Path:
+    import windows_durable_oracle as oracle
+    parent = Path(tempfile.gettempdir()).resolve(strict=True)
+    for _ in range(128):
+        candidate = parent / ("nilq-" + secrets.token_hex(8))
+        require(windows_workspace_fits(candidate),
+                "Windows qualification requires a system-temp workspace of at most "
+                "96 UTF-16 units; select a shorter process TMP/TEMP directory")
+        try:
+            # Apply the effective user's protected ACL at exclusive creation;
+            # verify local NTFS and retain this directory on success or failure.
+            oracle.create_private_directory(candidate)
+            return candidate
+        except OSError as error:
+            if error.errno not in (80, 183):  # Existing names are never adopted.
+                raise ValueError("cannot reserve Windows qualification workspace at " +
+                                 str(candidate) + "; any created entry is retained") from error
+        except Exception as error:
+            raise ValueError("cannot verify Windows qualification workspace at " +
+                             str(candidate) + "; any created entry is retained") from error
+    raise ValueError("cannot reserve a fresh Windows qualification workspace")
+
+
+def retention_inventory(root: Path, deadline: float) -> dict:
+    result, pending, total = {}, [root], 0
+    while pending:
+        require(time.monotonic() < deadline, "evidence retention exceeded its time budget")
+        directory = pending.pop()
+        mode = directory.lstat()
+        require(stat.S_ISDIR(mode.st_mode) and not
+                getattr(mode, "st_file_attributes", 0) & 0x400,
+                "evidence retention requires ordinary non-reparse directories")
+        for path in sorted(directory.iterdir()):
+            require(len(result) < 8192, "evidence retention exceeds its entry budget")
+            mode = path.lstat()
+            require(not stat.S_ISLNK(mode.st_mode) and not
+                    getattr(mode, "st_file_attributes", 0) & 0x400,
+                    "evidence retention refuses links and reparse points")
+            name = path.relative_to(root).as_posix()
+            if stat.S_ISDIR(mode.st_mode):
+                result[name] = {"kind": "directory"}
+                pending.append(path)
+            else:
+                require(stat.S_ISREG(mode.st_mode), "evidence retention refuses special files")
+                item = record(path)
+                total += item["bytes"]
+                require(total <= 1024**3, "evidence retention exceeds its byte budget")
+                result[name] = {"kind": "file", **item}
+    return dict(sorted(result.items()))
+
+
+def copy_retained_file(source: Path, destination: Path, expected: dict,
+                       deadline: float) -> None:
+    copied = 0
+    with source.open("rb") as incoming, destination.open("xb") as outgoing:
+        while True:
+            require(time.monotonic() < deadline, "evidence retention exceeded its time budget")
+            data = incoming.read(128 * 1024)
+            if not data:
+                break
+            copied += len(data)
+            require(copied <= expected["bytes"], "source evidence grew during retention")
+            outgoing.write(data)
+    require(copied == expected["bytes"], "source evidence shrank during retention")
+
+
+def retain_windows_evidence(source: Path, destination: Path) -> dict:
+    mode = source.lstat()
+    require(stat.S_ISDIR(mode.st_mode) and not
+            getattr(mode, "st_file_attributes", 0) & 0x400,
+            "execution workspace must be an ordinary non-reparse directory")
+    source = source.resolve(strict=True)
+    destination = destination.parent.resolve(strict=True) / destination.name
+    require(source != destination and source not in destination.parents and
+            destination not in source.parents, "execution and retained evidence must be separate")
+    deadline = time.monotonic() + 120
+    identity = source.stat()
+    before = retention_inventory(source, deadline)
+    destination.mkdir()  # A prior evidence tree is never adopted or replaced.
+    for name, item in before.items():
+        target = destination / name
+        if item["kind"] == "directory":
+            target.mkdir()
+        else:
+            copy_retained_file(source / name, target, item, deadline)
+    require(retention_inventory(destination, deadline) == before,
+            "retained evidence bytes or namespace differ from execution evidence")
+    require(retention_inventory(source, deadline) == before,
+            "execution evidence changed during retention")
+    after = source.stat()
+    require((identity.st_dev, identity.st_ino) == (after.st_dev, after.st_ino),
+            "execution workspace changed during retention")
+    return {"status": "PASS", "execution_workspace": str(source),
+            "retained_copy": str(destination), "original_workspace_retained": True,
+            "files_and_directories": before,
+            "file_count": sum(item["kind"] == "file" for item in before.values()),
+            "byte_count": sum(item.get("bytes", 0) for item in before.values())}
 
 
 def summary_bytes(output: bytes) -> bytes:
@@ -340,7 +449,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True,
                         help="evidence parent outside the SDK; always creates a fresh retained child")
     args = parser.parse_args()
-    work = None
+    work, execution, report = None, None, None
     try:
         require((os.name == "posix" and sys.platform in ("linux", "darwin")) or
                 (os.name == "nt" and sys.platform == "win32"),
@@ -353,16 +462,28 @@ def main() -> int:
         require(sdk != output and sdk not in output.parents, "evidence must be outside the SDK")
         output.mkdir(parents=True, exist_ok=True)
         work = Path(tempfile.mkdtemp(prefix="run-", dir=output))
-        report = qualify(args, sdk, work)
+        execution = windows_execution_workspace() if WINDOWS else work
+        report = qualify(args, sdk, execution)
+        if WINDOWS:
+            report["workspace_provenance"] = {
+                "execution_workspace": str(execution), "requested_evidence": str(work),
+                "execution_path_utf16_units": len(str(execution).encode("utf-16-le")) // 2,
+                "execution_path_limit_utf16_units": WINDOWS_WORKSPACE_UNITS,
+                "general_long_path_support_qualified": False,
+                "original_workspace_retained": True}
+            support.save_new(execution / "report.json", report)
+            report["evidence_retention"] = retain_windows_evidence(execution, work / "execution")
         support.save_new(work / "report.json", report)
         print(report["status"] + ": " + str(work / "report.json"))
         return 0 if report["status"] == "PASS" else 1
     except Exception as error:
         if work is not None and not (work / "report.json").exists():
-            support.save_new(work / "report.json", {
-                "schema": "nil.sdk.durable-io.v1", "status": "FAIL",
-                "release_declaration": False, "source_revision": args.expected_revision,
-                "error": str(error), "cleanup_verified": False})
+            failed = report if report is not None else {
+                "schema": "nil.sdk.durable-io.v1", "release_declaration": False,
+                "source_revision": args.expected_revision, "cleanup_verified": False}
+            failed.update(status="FAIL", error=str(error),
+                          execution_workspace=str(execution) if execution is not None else None)
+            support.save_new(work / "report.json", failed)
         print("installed durable qualification failed: " + str(error), file=sys.stderr)
         return 1
 
