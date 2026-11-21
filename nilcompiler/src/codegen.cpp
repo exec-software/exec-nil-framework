@@ -7604,6 +7604,16 @@ codegen::assemble_module(const ast_program &program,
     }
   }
 
+  // GET_FIELD derives its proven type from the record layout, including the
+  // layout accompanying a class. Keep that identity equal to the function
+  // signatures above: a checked Option<text> field and its qualified method
+  // parameter cannot describe different enum owners. Run after globals too,
+  // because their declarations can materialize additional concrete records.
+  // Field access instructions name the field rather than repeat its type.
+  for (auto &schema : mod->structs)
+    for (auto &field : schema.fields)
+      field.second = canonical_enum_signature(field.second);
+
   // Add string constants from local mapping
   for (const auto &kv : string_const_map_) {
     mod->string_constants.emplace_back(kv.second, kv.first);

@@ -129,13 +129,24 @@ optional storage, put/get, close/reset, reopen with a new incarnation and
 persisted-data checks. The engine's manifest oracle verified bytes, checksums
 and modes. These runs used a diagnostic tool stage, not a qualified SDK.
 
-The exact copied Goetic harness now passes loader admission and begins normal
-execution, but encounters an `unwrap()` on an error result. That application
-acceptance failure remains under investigation; no final SDK handoff follows
-from the successful engine-only probe. The expanded small signature fixture
+The exact copied Goetic harness passed loader admission, then exposed an
+application guard that rejected Enigma's valid initial generation zero. Goetic
+corrected its guard to accept the engine's documented bounded generation range.
+A fresh copy then passed the unchanged harness's lifecycle, reopen and
+foreign-scope checks, alongside the real-engine optional-value test. These
+diagnostic-stage results still require a complete installed SDK replay.
+The expanded small signature fixture
 also passes the old tools, so it is a positive regression case, not proof of the
 original compiler defect. The retained real-consumer before/after executions
 establish that boundary.
+
+The first clean SDK attempt for `9ca4272` stopped before packaging: 607 source
+tests passed and two existing Ny/Matrix `choice-text-fields` route tests failed.
+Qualifying function signatures also requires qualifying their matching record
+and class field metadata. The same mismatch reproduced in hosted Linux and
+Apple Silicon interpreter campaigns. Those failures remain retained; no
+failed candidate was published. The correction keeps field and function enum
+identities consistent without changing loader provenance checks.
 
 Regression coverage includes imported Matrix classes used from Ny and Matrix,
 textual/binary NIL, fresh interpreter instances, direct and record-wrapped
