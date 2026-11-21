@@ -4,8 +4,10 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cstring>
 #include <filesystem>
 #include <limits>
+#include <new>
 #include <optional>
 #include <random>
 #include <utility>
@@ -39,6 +41,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <winternl.h>
 #endif
 
 namespace ny::detail {
@@ -116,6 +119,50 @@ path_from_api_string(const std::string &path) {
 #endif
   } catch (...) {
     return std::nullopt;
+  }
+}
+
+constexpr std::uint64_t rooted_snapshot_maximum = 512ULL * 1024 * 1024;
+
+std::optional<std::filesystem::path>
+rooted_directory_from_utf8(const std::string &root) {
+  auto path = path_from_utf8_string(root);
+  // A trailing separator or '/.' would make O_NOFOLLOW / OPEN_REPARSE_POINT
+  // inspect the directory reached through a root symlink instead of the link.
+  // Remove only these trailing spellings, never resolve '..' or ancestors.
+  while (path && (path->filename().empty() || path->filename() == ".")) {
+    auto parent = path->parent_path();
+    if (parent.empty() || parent == *path)
+      break;
+    *path = std::move(parent);
+  }
+  return path;
+}
+
+RootedFileSnapshot rooted_failure(const char *reason) {
+  return {false, {}, 0, std::string("file.read_rooted_snapshot: ") + reason};
+}
+
+std::optional<std::vector<std::filesystem::path>>
+rooted_components(const std::string &relative) {
+  if (!path_from_utf8_string(relative) || relative.front() == '/' ||
+      relative.find('\\') != std::string::npos ||
+      relative.find(':') != std::string::npos)
+    return std::nullopt;
+  std::vector<std::filesystem::path> components;
+  std::size_t start = 0;
+  for (;;) {
+    const auto slash = relative.find('/', start);
+    const std::string component = relative.substr(start, slash - start);
+    if (component.empty() || component == "." || component == "..")
+      return std::nullopt;
+    const auto native = path_from_utf8_string(component);
+    if (!native)
+      return std::nullopt;
+    components.push_back(*native);
+    if (slash == std::string::npos)
+      return components;
+    start = slash + 1;
   }
 }
 
@@ -238,6 +285,81 @@ BoundedFileRead read_regular_file_bounded(const std::filesystem::path &path,
     return {false, {},
             "file.read_regular_bytes: input changed while reading"};
   return {true, std::move(bytes), {}};
+}
+
+RootedFileSnapshot read_rooted_file_snapshot_utf8(const std::string &root,
+                                                 const std::string &relative,
+                                                 std::uint64_t maximum_bytes) {
+  if (maximum_bytes > rooted_snapshot_maximum)
+    return rooted_failure("invalid maximum_bytes");
+  const auto native_root = rooted_directory_from_utf8(root);
+  const auto components = rooted_components(relative);
+  if (!native_root || !components)
+    return rooted_failure("invalid path");
+
+  const int directory_flags = O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW;
+  UniqueFileDescriptor directory(::open(native_root->c_str(), directory_flags));
+  if (directory.get() < 0)
+    return rooted_failure("cannot open root directory");
+  for (std::size_t index = 0; index + 1 < components->size(); ++index) {
+    UniqueFileDescriptor child(::openat(directory.get(), (*components)[index].c_str(),
+                                        directory_flags));
+    if (child.get() < 0)
+      return rooted_failure("cannot open descendant directory");
+    directory = std::move(child);
+  }
+  UniqueFileDescriptor input(::openat(
+      directory.get(), components->back().c_str(),
+      O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW));
+  if (input.get() < 0)
+    return rooted_failure("cannot open regular file");
+
+  struct stat before {};
+  if (::fstat(input.get(), &before) != 0 || !S_ISREG(before.st_mode))
+    return rooted_failure("input is not a regular file");
+  if (before.st_size < 0 || static_cast<std::uint64_t>(before.st_size) > maximum_bytes)
+    return rooted_failure("input exceeds maximum_bytes");
+#if defined(__APPLE__)
+  const auto seconds = before.st_mtimespec.tv_sec;
+  const auto nanos = before.st_mtimespec.tv_nsec;
+#else
+  const auto seconds = before.st_mtim.tv_sec;
+  const auto nanos = before.st_mtim.tv_nsec;
+#endif
+  if (seconds < (std::numeric_limits<std::int64_t>::min)() / 1000 ||
+      seconds > (std::numeric_limits<std::int64_t>::max)() / 1000 ||
+      nanos < 0 || nanos >= 1000000000)
+    return rooted_failure("invalid modification timestamp");
+  const auto millis = static_cast<std::int64_t>(seconds) * 1000;
+  const auto fraction = static_cast<std::int64_t>(nanos) / 1000000;
+  if (millis > (std::numeric_limits<std::int64_t>::max)() - fraction)
+    return rooted_failure("invalid modification timestamp");
+
+  std::vector<char> bytes;
+  try {
+    bytes.resize(static_cast<std::size_t>(before.st_size));
+  } catch (const std::bad_alloc &) {
+    return rooted_failure("cannot allocate snapshot");
+  }
+  std::size_t offset = 0;
+  while (offset < bytes.size()) {
+    const ssize_t count = ::read(input.get(), bytes.data() + offset, bytes.size() - offset);
+    if (count < 0 && errno == EINTR)
+      continue;
+    if (count <= 0)
+      return rooted_failure("input changed or read failed");
+    offset += static_cast<std::size_t>(count);
+  }
+  char extra = 0;
+  ssize_t count = -1;
+  do {
+    count = ::read(input.get(), &extra, 1);
+  } while (count < 0 && errno == EINTR);
+  struct stat after {};
+  if (count != 0 || ::fstat(input.get(), &after) != 0 ||
+      !S_ISREG(after.st_mode) || !same_regular_file_snapshot(before, after))
+    return rooted_failure("input changed or read failed");
+  return {true, std::move(bytes), millis + fraction, {}};
 }
 
 AtomicFileWrite write_file_atomic(const std::filesystem::path &path,
@@ -468,6 +590,138 @@ BoundedFileRead read_regular_file_bounded(const std::filesystem::path &path,
     return {false, {},
             "file.read_regular_bytes: input changed while reading"};
   return {true, std::move(bytes), {}};
+}
+
+namespace {
+
+using RootedNtCreateFile = NTSTATUS (NTAPI *)(
+    PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK, PLARGE_INTEGER,
+    ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
+
+RootedNtCreateFile rooted_nt_create_file() {
+  static const auto function = []() -> RootedNtCreateFile {
+    const HMODULE module = GetModuleHandleW(L"ntdll.dll");
+    const FARPROC symbol = module ? GetProcAddress(module, "NtCreateFile") : nullptr;
+    RootedNtCreateFile function = nullptr;
+    static_assert(sizeof(function) == sizeof(symbol), "Windows function pointer size");
+    std::memcpy(&function, &symbol, sizeof(function));
+    return function;
+  }();
+  return function;
+}
+
+UniqueWindowsHandle open_rooted_child(HANDLE directory,
+                                      const std::filesystem::path &component,
+                                      bool is_directory) {
+  const auto create = rooted_nt_create_file();
+  const auto &name = component.native();
+  if (!create || name.empty() || name.size() > 32767)
+    return UniqueWindowsHandle();
+  UNICODE_STRING string {};
+  string.Buffer = const_cast<wchar_t *>(name.data());
+  string.Length = static_cast<USHORT>(name.size() * sizeof(wchar_t));
+  string.MaximumLength = string.Length;
+  OBJECT_ATTRIBUTES attributes {};
+  attributes.Length = sizeof(attributes);
+  attributes.RootDirectory = directory;
+  attributes.ObjectName = &string;
+  attributes.Attributes = 0x40; // OBJ_CASE_INSENSITIVE; do not inherit handles.
+  IO_STATUS_BLOCK io {};
+  HANDLE child = INVALID_HANDLE_VALUE;
+  constexpr ULONG open_existing = 1; // FILE_OPEN
+  constexpr ULONG open_reparse = 0x00200000; // FILE_OPEN_REPARSE_POINT
+  constexpr ULONG synchronous = 0x20; // FILE_SYNCHRONOUS_IO_NONALERT
+  constexpr ULONG directory_only = 1; // FILE_DIRECTORY_FILE
+  constexpr ULONG non_directory_only = 0x40; // FILE_NON_DIRECTORY_FILE
+  const ULONG sharing = is_directory
+      ? FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE : FILE_SHARE_READ;
+  const NTSTATUS status = create(
+      &child, GENERIC_READ | SYNCHRONIZE, &attributes, &io, nullptr, 0,
+      sharing, open_existing,
+      open_reparse | synchronous | (is_directory ? directory_only : non_directory_only),
+      nullptr, 0);
+  if (status != 0 || io.Status != 0 || io.Information != 1 ||
+      child == nullptr || child == INVALID_HANDLE_VALUE) {
+    if (child != nullptr && child != INVALID_HANDLE_VALUE)
+      CloseHandle(child);
+    return UniqueWindowsHandle();
+  }
+  UniqueWindowsHandle held(child);
+  BY_HANDLE_FILE_INFORMATION information {};
+  if (GetFileType(held.get()) != FILE_TYPE_DISK ||
+      !GetFileInformationByHandle(held.get(), &information) ||
+      (information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+      ((information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) != is_directory)
+    return UniqueWindowsHandle();
+  return held;
+}
+
+} // namespace
+
+RootedFileSnapshot read_rooted_file_snapshot_utf8(const std::string &root,
+                                                 const std::string &relative,
+                                                 std::uint64_t maximum_bytes) {
+  if (maximum_bytes > rooted_snapshot_maximum)
+    return rooted_failure("invalid maximum_bytes");
+  const auto native_root = rooted_directory_from_utf8(root);
+  const auto components = rooted_components(relative);
+  if (!native_root || !components)
+    return rooted_failure("invalid path");
+  UniqueWindowsHandle directory(CreateFileW(
+      native_root->c_str(), GENERIC_READ,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+      FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+  BY_HANDLE_FILE_INFORMATION root_information {};
+  if (directory.get() == INVALID_HANDLE_VALUE ||
+      GetFileType(directory.get()) != FILE_TYPE_DISK ||
+      !GetFileInformationByHandle(directory.get(), &root_information) ||
+      (root_information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+      (root_information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+    return rooted_failure("cannot open root directory");
+  for (std::size_t index = 0; index + 1 < components->size(); ++index) {
+    auto child = open_rooted_child(directory.get(), (*components)[index], true);
+    if (child.get() == INVALID_HANDLE_VALUE)
+      return rooted_failure("cannot open descendant directory");
+    directory = std::move(child);
+  }
+  auto input = open_rooted_child(directory.get(), components->back(), false);
+  if (input.get() == INVALID_HANDLE_VALUE)
+    return rooted_failure("cannot open regular file");
+  BY_HANDLE_FILE_INFORMATION before {};
+  if (!GetFileInformationByHandle(input.get(), &before))
+    return rooted_failure("cannot inspect regular file");
+  const std::uint64_t size = (static_cast<std::uint64_t>(before.nFileSizeHigh) << 32U) |
+                             before.nFileSizeLow;
+  if (size > maximum_bytes)
+    return rooted_failure("input exceeds maximum_bytes");
+  const std::uint64_t ticks = (static_cast<std::uint64_t>(before.ftLastWriteTime.dwHighDateTime) << 32U) |
+                              before.ftLastWriteTime.dwLowDateTime;
+  // Divide before converting: even the largest FILETIME quotient fits i64.
+  const std::int64_t modified = static_cast<std::int64_t>(ticks / 10000) - 11644473600000LL;
+  std::vector<char> bytes;
+  try {
+    bytes.resize(static_cast<std::size_t>(size));
+  } catch (const std::bad_alloc &) {
+    return rooted_failure("cannot allocate snapshot");
+  }
+  std::size_t offset = 0;
+  while (offset < bytes.size()) {
+    const DWORD requested = static_cast<DWORD>(std::min<std::size_t>(
+        bytes.size() - offset, (std::numeric_limits<DWORD>::max)()));
+    DWORD count = 0;
+    if (!ReadFile(input.get(), bytes.data() + offset, requested, &count, nullptr) ||
+        count == 0 || count > requested)
+      return rooted_failure("input changed or read failed");
+    offset += count;
+  }
+  char extra = 0;
+  DWORD count = 0;
+  BY_HANDLE_FILE_INFORMATION after {};
+  if (!ReadFile(input.get(), &extra, 1, &count, nullptr) || count != 0 ||
+      !GetFileInformationByHandle(input.get(), &after) ||
+      !same_regular_file_snapshot(before, after))
+    return rooted_failure("input changed or read failed");
+  return {true, std::move(bytes), modified, {}};
 }
 
 AtomicFileWrite write_file_atomic(const std::filesystem::path &path,

@@ -15,8 +15,8 @@ results do not extend this document's pinned release qualification.
 
 The reviewed binary release profile targets **Ubuntu 24.04 Linux x86_64**,
 using LLVM 18.1.3 and GCC 13.3.0. This describes the earlier RC qualification,
-not every development build. The current development checkout has been built
-with LLVM 21.1.8 and GCC 15.2.0; that toolchain is not covered by the pinned
+not every development build. Development builds have also used
+LLVM 21.1.8 and GCC 15.2.0; that toolchain is not covered by the pinned
 [release dependency policy](../../release/dependency-policy.json). Before
 shipping new binaries, either rebuild and qualify the exact release commit
 with the reviewed toolchain or review its replacement, notices, dependencies,
@@ -92,11 +92,12 @@ packages does not qualify new release binaries.
 Aperture is a separately versioned analysis/debugging preview; packaging it does
 not extend the v1 language or debugger guarantees. The LSP has a deliberately
 limited capability set. `nilbuild` supports the [local-project profile](../tools/projects.md),
-with process execution qualified on Linux. `nypm` and `nilaix` are not part of this release.
+with development execution checks on Linux, Windows and both Mac architectures;
+the reviewed binary release profile remains Linux. `nypm` and `nilaix` are not part of this release.
 
-Current development SDKs strictly compile and package eighteen logical
-standard-library modules, including `prelude`. Public imports use `nil.std.*`,
-with `ny.lang.*` retained as aliases. Both frontends share the flat module-family
+Current development SDKs strictly compile and package nineteen logical
+standard-library modules, including `prelude` and `nil.std.markup`. Public imports
+use `nil.std.*`, with `ny.lang.*` retained as aliases. Both frontends share the flat module-family
 layout. Runtime support
 is API-specific, as described in the [library status](../standard-library/index.md).
 `nil.std.reflection` provides declaration/annotation snapshots, and `nil.std.db`
@@ -154,8 +155,8 @@ automatically. `latest` means newest publication and may be an RC; publication
 and a stable `v1.0.0` tag remain separate, deliberate release actions.
 
 See the [findings log](../../matrix/docs/next-version-findings.md) for open
-correctness issues, including fully qualified enum patterns (F25) and Ny local
-reads before definite assignment (F21), alongside native array and diagnostic
+correctness issues, including Ny local reads before definite assignment (F21),
+alongside the remaining native array and diagnostic
 limitations. Resolve or explicitly exclude affected behavior from the stable
 profile and qualify the final source revision before selecting a stable tag.
 Preparing or publishing the source repository does not satisfy these binary

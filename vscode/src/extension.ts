@@ -119,9 +119,9 @@ async function runProjectTask(provider: NyTaskProvider, kind: "project-check" | 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const provider = new NyTaskProvider();
   const debugIntegration = new NyDebugIntegration();
-  const analyzer = new NyAnalyzer();
-  languageClientManager = new NyLanguageClientManager(document => analyzer.usesCompilerDefinitions(document),
-    (document, position, token) => analyzer.provideCompletionItems(document, position, token));
+  const analyzer = new NyAnalyzer((document, position, token, completionContext) =>
+    languageClientManager?.provideCompletionItems(document, position, token, completionContext) ?? Promise.resolve(undefined));
+  languageClientManager = new NyLanguageClientManager(document => analyzer.usesCompilerDefinitions(document));
 
   context.subscriptions.push(
     languageClientManager,

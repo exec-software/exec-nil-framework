@@ -201,6 +201,39 @@ public:
     sigaction(SIGTERM, &old_term, nullptr);
   }
 };
+
+namespace detail {
+// Only fixed stack storage, integer operations and async-signal-safe syscalls
+// are allowed here: this runs after fork and before exec. Use the original
+// capture pipe because stderr redirection itself may be the failing step.
+template<std::size_t N>
+[[noreturn]] inline void child_setup_failed(int error_pipe,
+                                          const char (&stage)[N],
+                                          int saved_errno) noexcept {
+  static_assert(N <= 32, "child setup stage must remain bounded");
+  char message[128];
+  std::size_t length = 0;
+  constexpr char prefix[] = "nilbuild: child setup failed at ";
+  constexpr char middle[] = " (errno=";
+  for (std::size_t i = 0; i + 1 < sizeof(prefix); ++i) message[length++] = prefix[i];
+  for (std::size_t i = 0; i + 1 < N; ++i) message[length++] = stage[i];
+  for (std::size_t i = 0; i + 1 < sizeof(middle); ++i) message[length++] = middle[i];
+  char digits[sizeof(unsigned) * 3];
+  std::size_t count = 0;
+  auto number = static_cast<unsigned>(saved_errno);
+  do { digits[count++] = static_cast<char>('0' + number % 10); number /= 10; } while (number);
+  while (count) message[length++] = digits[--count];
+  message[length++] = ')';
+  message[length++] = '\n';
+  std::size_t written = 0;
+  for (unsigned attempt = 0; attempt != 4 && written < length; ++attempt) {
+    const auto result = write(error_pipe, message + written, length - written);
+    if (result > 0) written += static_cast<std::size_t>(result);
+    else if (result != -1 || errno != EINTR) break;
+  }
+  _exit(126);
+}
+}  // namespace detail
 #endif
 
 // The driver never invokes a shell. Compiler processes have bounded capture
@@ -605,12 +638,14 @@ inline std::vector<process_result> execute_many(const std::vector<process_comman
         signal(SIGTERM, SIG_DFL);
         if (options.close_stdin) {
           const int input = open("/dev/null", O_RDONLY);
-          if (input < 0 || dup2(input, STDIN_FILENO) < 0) _exit(126);
+          if (input < 0) detail::child_setup_failed(pipes[3], "open(stdin)", errno);
+          if (dup2(input, STDIN_FILENO) < 0) detail::child_setup_failed(pipes[3], "dup2(stdin)", errno);
           if (input != STDIN_FILENO) close(input);
         }
-        if (setpgid(0, 0) != 0 || dup2(pipes[1], STDOUT_FILENO) == -1 ||
-            dup2(pipes[3], STDERR_FILENO) == -1 || chdir(command.directory.c_str()) != 0)
-          _exit(126);
+        if (setpgid(0, 0) != 0) detail::child_setup_failed(pipes[3], "setpgid", errno);
+        if (dup2(pipes[1], STDOUT_FILENO) == -1) detail::child_setup_failed(pipes[3], "dup2(stdout)", errno);
+        if (dup2(pipes[3], STDERR_FILENO) == -1) detail::child_setup_failed(pipes[3], "dup2(stderr)", errno);
+        if (chdir(command.directory.c_str()) != 0) detail::child_setup_failed(pipes[3], "chdir", errno);
         for (int fd : pipes) close(fd);
         execv(argv[0], argv.data());
         const char message[] = "nilbuild: cannot execute child tool\n";

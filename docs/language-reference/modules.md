@@ -54,8 +54,15 @@ let result = add(1, 2)
 import math.utils
 namespace mu = math.utils
 
-let result = mu.add(1, 2)
+let result = mu::add(1, 2)
 ```
+
+The alias is local to its declaring module and retains the original function's
+identity, visibility, parameter types and generic arguments. It can name a
+direct call or a function value. A Ny `namespace` alias does not load a module
+by itself; keep the accompanying `import`. Matrix's `read math.utils as mu`
+both loads the module and declares the alias. Source and binary libraries use
+the same resolution rules, including legacy `ny.lang.*` standard-library names.
 
 ### Using Module Contents
 ```ny

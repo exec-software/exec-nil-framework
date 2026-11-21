@@ -3,6 +3,7 @@
 #include "nil_contract.hpp"
 #include "binding_reference.hpp"
 #include "dynamic_type.hpp"
+#include "checked_conversion_intrinsic.hpp"
 #include "array_intrinsic.hpp"
 #include "concurrency_contract.hpp"
 #include "owned_contract.hpp"
@@ -1667,10 +1668,14 @@ static void attach_class_metadata(std::vector<Instruction> &program, nil_module 
       const auto ordinal = static_cast<std::size_t>(instruction.op);
       if (ordinal >= opcode_table_size) throw std::runtime_error("Invalid opcode in class program");
       function->body.push_back({std::string(opcode_table[ordinal].name), instruction.args, instruction.line});
+    } else if (instruction.op == Opcode::INTEROP_CALL) {
+      const nil_instruction call{"INTEROP_CALL", instruction.args, instruction.line};
+      checked_conversion::validate_instruction(metadata, call);
     } else if (instruction.op == Opcode::CLASS_UPCAST || instruction.op == Opcode::CALL_METHOD ||
                instruction.op == Opcode::BOX_ANY || instruction.op == Opcode::UNBOX_ANY || instruction.op == Opcode::IS_ANY_TYPE)
       throw std::runtime_error("Class or anything instruction outside a declared function");
   }
+  checked_conversion::validate_module(metadata);
   validate_nil_class_contract(metadata);
   // Tuple arrays also use exact record schemas at execution time, including
   // modules that declare no classes at all.
@@ -2525,6 +2530,7 @@ std::unique_ptr<nil_module> parseTextNilModule(std::istream &is) {
   if (!pending_annotations.empty())
     throw std::runtime_error(
         "Function annotations do not precede a function in textual NIL");
+  checked_conversion::validate_module(*module);
   validate_global_storage_contract(*module);
   validate_nil_fault_contract(*module);
   validate_nil_class_contract(*module);
@@ -3553,6 +3559,7 @@ std::unique_ptr<nil_module> parseBinaryNilModule(std::istream &is) {
       module->tests.push_back(section.string("test name"));
     require_section_consumed(section, "module");
   }
+  checked_conversion::validate_module(*module);
   validate_global_storage_contract(*module);
   validate_nil_fault_contract(*module);
   validate_nil_class_contract(*module);

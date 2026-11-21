@@ -61,6 +61,43 @@ def main() -> None:
             assert analysis['success'], analysis['diagnostics']
             checks += 1
 
+        # F33 originally sent literal/computed arrays to an absent iterator
+        # intrinsic. Keep the scalar/text cases alongside tuple-array lowering:
+        # computed arrays are evaluated once and empty arrays do not enter.
+        for language in ('ny', 'matrix'):
+            ny = language == 'ny'
+            declarations = (
+                'fn fresh() -> array<text>\nprintln("once")\nreturn ["returned","owned"]\nend fn\n'
+                'fn empty() -> array<i64>\nreturn []\nend fn\n' if ny else
+                'fresh returns array of text begin paragraph\nsay "once"\ngive ["returned","owned"]\nend paragraph\n'
+                'empty returns array of number begin paragraph\ngive []\nend paragraph\n')
+            body = (
+                'for word in ["alpha","beta"]\nprintln(word)\nend for\n'
+                'let mut saved: text = "missing"\n'
+                'for word in fresh()\nprintln(word)\nsaved = word\nend for\nprintln(saved)\n'
+                'for wide in [1 as i64,4294967296]\nprintln(wide)\nend for\n'
+                'for scalar in [1.5,-2.25]\nprintln(scalar)\nend for\n'
+                'for unused in empty()\nprintln("unexpected")\nend for\n'
+                'println("done")' if ny else
+                'repeat for each word in ["alpha","beta"]\nsay word\nend repeat\n'
+                'variable saved as text is "missing"\n'
+                'repeat for each word in (fresh with nothing)\nsay word\nset saved to word\nend repeat\nsay saved\n'
+                'repeat for each wide in [(1 becomes number),4294967296]\nsay wide\nend repeat\n'
+                'repeat for each scalar in [1.5,negative 2.25]\nsay scalar\nend repeat\n'
+                'repeat for each unused in (empty with nothing)\nsay "unexpected"\nend repeat\n'
+                'say "done"')
+            path = root / ('array-expression-iteration.' + language)
+            path.write_text(program(language, body, declarations), encoding='utf-8', newline='\n')
+            stdout = path.with_suffix('.stdout')
+            stdout.write_text('alpha\nbeta\nonce\nreturned\nowned\nowned\n1\n4294967296\n1.5\n-2.25\ndone\n', newline='\n')
+            run([sys.executable, REPOSITORY / 'tests/routes/ny_route_matrix.py',
+                 '--compiler', compiler, '--interpreter', interpreter, '--source', path,
+                 '--expected-stdout', stdout, '--expected-exit', '0',
+                 '--routes', 'all' if args.llvm == 'ON' else
+                 'text-interpreter,binary-interpreter,bundle-text,bundle-binary',
+                 '--work-dir', root / ('array-expression-iteration-' + language), '--strict'])
+            checks += 6 if args.llvm == 'ON' else 4
+
         # Cross-frontend consumers keep tuple schemas and array element identity,
         # including a binary provider whose original source file is absent.
         for provider_language in ('ny', 'matrix'):

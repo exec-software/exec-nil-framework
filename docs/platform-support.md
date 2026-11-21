@@ -14,8 +14,8 @@ boundary. A source update does not update an installed SDK.
 | macOS 15 Intel x86_64 | Relocated `1efbe66` SDK passes all 1,184 consumer routes, twelve PostgreSQL routes, 146 debugger checks, execution checkpoints, twenty installed AppKit desktop/input cases, four desktop DAP sessions and all 88 editor groups. Current `59ffa97` source fixtures pass all 22 application/tooling/packaging CTests. | The installed editor needed a diagnostic rerun after a project-build timeout; it passed unchanged deadlines, with the original cause unconfirmed. The original full source report retains four failures resolved by later fixtures and one ELF-only execution skip. Shared deployment and release qualification remain open. |
 | macOS 15 Apple Silicon arm64 | Relocated `1efbe66` SDK passes all 1,184 consumer routes, twelve PostgreSQL routes, 146 debugger checks, execution checkpoints, twenty installed AppKit desktop/input cases, four desktop DAP sessions and all 88 editor groups. Current `59ffa97` source fixtures also pass all 22 application/tooling/packaging CTests. | The original full source report retains four failures and one ELF-only execution skip; subsequent hosted checks resolve the four fixture failures. Shared deployment and release qualification remain open. |
 
-The SDKs contain eleven root commands, eighteen compiled standard-library
-modules, their source, native runtimes and HTML documentation. The installed
+Those pinned baseline SDKs contain eleven root commands, eighteen compiled
+standard-library modules, their source, native runtimes and HTML documentation. The installed
 consumer campaign covers both `nilstd` and `nillib`: 888 retained execution
 results are independently replayed from raw reports, while 296 object/link
 routes are checked by the pinned campaign driver. Each private candidate retains
@@ -23,6 +23,11 @@ routes are checked by the pinned campaign driver. Each private candidate retains
 spaces and Unicode. Mac executables are checked as Mach-O for their expected
 architecture. These candidates have not replaced accepted SDKs or activated a
 release.
+
+Current source SDKs additionally package `nil.std.markup`, bringing the logical
+module inventory to nineteen. See the [current library status](standard-library/index.md);
+the exact tools, source, binary modules and documentation are sealed in each
+SDK's manifest.
 
 The Linux editor result uses VS Code 1.144.1 in an isolated X11 session and empty
 profile. Both current Mac application campaigns use VS Code 1.146.0. Each passes

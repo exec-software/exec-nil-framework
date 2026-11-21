@@ -14,6 +14,26 @@ struct BoundedFileRead {
   std::string error;
 };
 
+struct RootedFileSnapshot {
+  bool ok = false;
+  std::vector<char> bytes;
+  std::int64_t modified_ms = 0;
+  std::string error;
+};
+
+// The trusted root selector is opened once. Its ancestors are outside the
+// relative-path trust boundary. Every relative component is opened from the
+// preceding directory handle, rejecting links/reparse points. The relative
+// name is strict UTF-8, slash-separated, with no empty, dot, parent, colon or
+// backslash components. Only regular files up to maximum_bytes are read;
+// maximum_bytes itself cannot exceed 512 MiB. Bytes and mtime are inspected
+// through the same final handle, rejecting observed changes during the read.
+// This is an anchored namespace read, not a filesystem transaction: privileged
+// mounts, hard links and changes after the snapshot are outside its contract.
+RootedFileSnapshot read_rooted_file_snapshot_utf8(const std::string &root,
+                                                 const std::string &relative,
+                                                 std::uint64_t maximum_bytes);
+
 struct AtomicFileWrite {
   bool ok = false;
   std::string error;

@@ -6,6 +6,7 @@
 #include "codegen.hpp"
 #include "array_intrinsic.hpp"
 #include "binding_reference.hpp"
+#include "checked_conversion_intrinsic.hpp"
 #include "inline_asm.hpp"
 #include "diagnostics.hpp"
 #include "dynamic_type.hpp"
@@ -3074,7 +3075,7 @@ public:
             static_cast<const ast_identifier_expr &>(callee);
         // A local function value can shadow a same-named declaration.
         return local_bindings.count(identifier.name) ? std::string{}
-                                                     : identifier.name;
+                                                     : resolved_function_name(identifier);
       }
       if (callee.kind == ast_node_kind::member_access_expr_node) {
         const auto &member = static_cast<const ast_member_access_expr &>(callee);
@@ -3624,7 +3625,7 @@ public:
       const auto &id = static_cast<const ast_identifier_expr &>(e);
       // Check if it's an enum unit variant
       size_t last_colon = id.name.rfind("::");
-      if (last_colon != std::string::npos) {
+      if (!id.resolved_function_name && last_colon != std::string::npos) {
         std::string enum_name = id.name.substr(0, last_colon);
         if (cg_.lookup_enum_decl(enum_name)) {
           emit_new_variant(id.name, 0,
@@ -3649,8 +3650,8 @@ public:
       reject_escaped_local(id.name, id.line);
       // Check if this identifier refers to a named function used as a value
       // (fn-as-value, e.g. router.get("/ping", ping_handler))
-      if (cg_.lookup_function_decl(id.name)) {
-        std::string fqn = cg_.lookup_function_fqn(id.name, current_module_);
+      const auto fqn = resolved_function_name(id);
+      if (cg_.lookup_function_decl(fqn)) {
         push_instr("PUSH_FN_PTR", {mangle_fully(fqn)}, id.line);
         break;
       }
@@ -4437,7 +4438,8 @@ public:
           break;
         }
       } else if (ce.callee &&
-                 ce.callee->kind == ast_node_kind::identifier_expr_node) {
+                 ce.callee->kind == ast_node_kind::identifier_expr_node &&
+                 !static_cast<const ast_identifier_expr &>(*ce.callee).resolved_function_name) {
         const auto &id = static_cast<const ast_identifier_expr &>(*ce.callee);
         size_t last_colon = id.name.rfind("::");
         if (last_colon != std::string::npos) {
@@ -4535,7 +4537,8 @@ public:
         const auto &id = static_cast<const ast_identifier_expr &>(*ce.callee);
         std::string callee_name = id.name;
         // Check if this is a struct constructor
-        if (const auto *struct_decl = cg_.lookup_struct_decl(callee_name)) {
+        if (const auto *struct_decl = id.resolved_function_name ? nullptr
+                : cg_.lookup_struct_decl(callee_name)) {
           // Struct constructor: emit NEW_STRUCT, then SET_FIELD for each arg
           const auto concrete_type = struct_construction_type(
               e.inferred_type.value_or(callee_name), contextual_type);
@@ -4620,9 +4623,10 @@ public:
       // Handle the Result/Option constructor aliases before their arguments
       // are emitted, so nested constructors inherit the same payload context
       // as qualified variants.
-      if (ce.callee && ce.callee->kind == ast_node_kind::identifier_expr_node) {
+      if (ce.callee && ce.callee->kind == ast_node_kind::identifier_expr_node &&
+          !static_cast<const ast_identifier_expr &>(*ce.callee).resolved_function_name) {
         const auto &id = static_cast<const ast_identifier_expr &>(*ce.callee);
-        std::string bare = cg_.lookup_function_fqn(id.name, current_module_);
+        std::string bare = resolved_function_name(id);
         const auto separator = bare.rfind("::");
         if (separator != std::string::npos)
           bare = bare.substr(separator + 2);
@@ -4648,7 +4652,7 @@ public:
       auto call_substitutions = substitutions;
       if (ce.callee && ce.callee->kind == ast_node_kind::identifier_expr_node) {
         const auto &id = static_cast<const ast_identifier_expr &>(*ce.callee);
-        const auto name = cg_.lookup_function_fqn(id.name, current_module_);
+        const auto name = resolved_function_name(id);
         const auto *declaration = cg_.lookup_function_decl(name);
         if (declaration) {
           call_declaration = declaration;
@@ -4721,7 +4725,7 @@ public:
       if (ce.callee && ce.callee->kind == ast_node_kind::identifier_expr_node) {
         const auto &id_vc =
             static_cast<const ast_identifier_expr &>(*ce.callee);
-        if (const auto *vdecl = cg_.lookup_function_decl(id_vc.name)) {
+        if (const auto *vdecl = cg_.lookup_function_decl(resolved_function_name(id_vc))) {
           if (!vdecl->params.empty() && vdecl->params.back().is_variadic) {
             size_t fixed = vdecl->params.size() - 1;
             for (size_t i = 0; i < fixed && i < ce.args.size(); ++i)
@@ -4750,11 +4754,7 @@ public:
       std::string fname = "<call>";
       if (ce.callee && ce.callee->kind == ast_node_kind::identifier_expr_node) {
         const auto &id = static_cast<const ast_identifier_expr &>(*ce.callee);
-        fname = id.name;
-        // Resolve to the fully-qualified name (handles unqualified names,
-        // partially-qualified names like "server_config::default" inside a
-        // module, and cross-module references via the suffix search).
-        fname = cg_.lookup_function_fqn(fname, current_module_);
+        fname = resolved_function_name(id);
 
         // Check if this is a call to a generic function
         // We need to look up the symbol to know if it's generic
@@ -5591,6 +5591,11 @@ public:
       break;
     }
     case ast_node_kind::member_access_expr_node: {
+      const auto &reference = static_cast<const ast_member_access_expr &>(e).resolved_module_function;
+      if (reference) {
+        emit_expr(*reference, contextual_type);
+        break;
+      }
       const auto &ma = static_cast<const ast_member_access_expr &>(e);
 
       // Check if this is an enum unit variant access: Enum::Variant (no args)
@@ -5898,6 +5903,14 @@ private:
   std::set<std::string> unavailable_captures;
   std::size_t local_identity = 0;
 
+  std::string resolved_function_name(const ast_identifier_expr &identifier) const {
+    // A checked declaration identity is already absolute. Do not requalify it
+    // in the caller's module or choose another declaration by suffix.
+    if (identifier.resolved_function_name)
+      return *identifier.resolved_function_name;
+    return cg_.lookup_function_fqn(identifier.name, current_module_);
+  }
+
   std::optional<std::string> resolve_global_operand(const ast_identifier_expr &id) const {
     if (!local_bindings.count(id.name) && unavailable_captures.count(id.name)) {
       reject_escaped_local(id.name, id.line);
@@ -5917,6 +5930,7 @@ private:
           "recheck the source before emitting NIL");
       return std::nullopt;
     }
+    if (id.resolved_function_name) return std::nullopt;
     return cg_.lookup_global_name(id.name, current_module_);
   }
 
@@ -6565,15 +6579,16 @@ codegen::assemble_module(const ast_program &program,
       std::string qualified = current_module.empty()
                                   ? fn_decl.name
                                   : current_module + "::" + fn_decl.name;
-      // We store by simple name? No, if we qualify, lookup should use full
-      // name? Existing lookup_function_decl uses whatever key we put here. But
-      // resolution usually uses qualified name if imported. Let's store BOTH
-      // simple (if in current module) and qualified? Or just assume lookup uses
-      // qualified names by default? For now, key by fn_decl.name (simple) but
-      // we might overwrite. Better: key by qualified name! But caller of lookup
-      // might pass simple name.
-      function_decls_[fn_decl.name] = &fn_decl; // Legacy/Simple
-      function_decls_[qualified] = &fn_decl;    // Qualified
+      // Keep the legacy simple-name alias without overwriting an actual root
+      // declaration: its canonical identity is already the bare name. Picking
+      // another module's AST here would specialize the wrong function even
+      // though the checker retained the correct root identity.
+      const auto existing = function_decls_.find(fn_decl.name);
+      const auto existing_module = existing == function_decls_.end()
+          ? declaration_modules_.end() : declaration_modules_.find(existing->second);
+      if (existing_module == declaration_modules_.end() || !existing_module->second.empty())
+        function_decls_[fn_decl.name] = &fn_decl;
+      function_decls_[qualified] = &fn_decl;
     }
     // ... enums, classes ...
     if (decl && decl->kind == ast_node_kind::enum_decl_node) {
@@ -7128,7 +7143,8 @@ codegen::assemble_module(const ast_program &program,
           std::string ret_type_str = "void";
           if (intrinsic_name.rfind("regex.", 0) == 0 ||
               intrinsic_name.rfind("nildata.", 0) == 0 ||
-              intrinsic_name.rfind("ui.v1.", 0) == 0) {
+              intrinsic_name.rfind("ui.v1.", 0) == 0 ||
+              intrinsic_name.rfind("webview.v1.", 0) == 0) {
             ret_type_str = canonical_nil_type_name(fn.return_type);
           } else if (is_declared_enum_type(*this, fn.return_type)) {
             ret_type_str = canonical_nil_type_name(fn.return_type);
@@ -7620,8 +7636,9 @@ codegen::assemble_module(const ast_program &program,
       validate_nil_class_contract(*mod);
     validate_nil_parallel_contract(*mod);
     validate_nil_owned_contract(*mod);
+    checked_conversion::validate_module(*mod);
   } catch (const std::exception &error) {
-    reject_codegen_construct(0, error.what(), "use checked ownership scopes and isolated scalar parallel workers");
+    reject_codegen_construct(0, error.what(), "correct the reported runtime contract before emitting NIL");
     if (diags) diags->insert(diags->end(), rejected_codegen_constructs_.begin(), rejected_codegen_constructs_.end());
     return nullptr;
   }

@@ -5,12 +5,12 @@ const vscode = require("vscode");
 
 const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const label = item => typeof item.label === "string" ? item.label : item.label.label;
-async function eventually(operation, description) {
+async function eventually(operation, description, retryErrors = true) {
   const until = Date.now() + 15_000;
   let latest;
   do {
     try { const value = await operation(); if (value) return value; }
-    catch (error) { latest = error; }
+    catch (error) { if (!retryErrors) throw error; latest = error; }
     await pause(100);
   } while (Date.now() < until);
   throw new Error(`Timed out: ${description}${latest ? ` (${latest})` : ""}`);
@@ -113,11 +113,27 @@ exports.run = async ({ check, workspace }) => {
       assert.deepEqual(await analyze(document), []);
       const occurrence = language === "ny" ? "println(height)" : "say height";
       const selected = await complete(document, occurrence, "height", "hei", language === "ny" ? "f64" : "floating");
-      const definitions = await vscode.commands.executeCommand("vscode.executeDefinitionProvider", document.uri, selected.start);
+      const version = document.version;
+      let definitionAttempts = 0;
+      const definitions = await eventually(async () => {
+        assert.equal(document.version, version, "Definition lookup must use the original tuple document version.");
+        definitionAttempts++;
+        const value = await vscode.commands.executeCommand("vscode.executeDefinitionProvider", document.uri, selected.start);
+        assert.equal(document.version, version, "Definition lookup must not change the tuple document version.");
+        assert.ok(value == null || Array.isArray(value), "Definition provider must return an array or no result.");
+        return value?.length && value;
+      }, "tuple definition after the editor generation settles", false);
+      // As with semantic-checks, only absence may be retried. A nonempty stale,
+      // duplicate, or guessed destination must fail immediately.
+      assert.equal(document.version, version, "Definition lookup must not change the tuple document version.");
       assert.equal(definitions.length, 1);
       const expected = range(document, "(width, height)", "height");
-      assert.ok((definitions[0].targetSelectionRange || definitions[0].range).isEqual(expected));
-      return { language, tupleArity: 2 };
+      const [definition] = definitions;
+      assert.equal(definition.targetUri?.toString(), document.uri.toString());
+      assert.ok(definition.originSelectionRange?.isEqual(selected));
+      assert.ok(definition.targetSelectionRange?.isEqual(expected));
+      assert.ok(definition.targetRange?.isEqual(expected));
+      return { language, tupleArity: 2, documentVersion: version, definitionAttempts };
     });
 
     await check(`${language}: malformed interpolation reports an editor error and recovers after correction`, async () => {
