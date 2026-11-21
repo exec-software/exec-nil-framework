@@ -9,6 +9,8 @@ name: Web runtime platform checks
       - 'nilstd/**'
       - 'common/webview_*'
       - 'common/content_digest.hpp'
+      - 'common/private_directory.hpp'
+      - 'common/windows_private_storage.hpp'
       - 'tests/net_*'
       - 'tests/file_time_support_tests.cpp'
       - 'tests/rooted_file_snapshot_tests.cpp'
@@ -29,7 +31,10 @@ name: Web runtime platform checks
       - 'tests/console_input_state_tests.cpp'
       - 'tests/durable_file_io_tests.cpp'
       - 'tests/durable_vm_lifecycle_tests.cpp'
+      - 'tests/windows_durable_file_io_tests.cpp'
+      - 'tests/windows_durable_publication_tests.cpp'
       - 'tests/tools/durable_file_io_contract.py'
+      - 'tests/tools/windows_durable_oracle.py'
       - 'tests/tools/ordinary_io_parity_contract.py'
       - 'tests/native_output_staging.py'
       - 'validation/ny-3d/scripts/debugger_process.py'
@@ -107,12 +112,16 @@ jobs:
         timeout-minutes: 40
         run: |
           set -o pipefail
+          nil_windows_targets=()
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            nil_windows_targets=(nil_windows_durable_file_io_tests nil_windows_durable_publication_tests)
+          fi
           cmake --build build/web-parity --config Release --parallel 2 \
             --target nilcompiler nilinterpreter nilassembler nillinker ny_class_vm_tests nil_net_support_tests \
                      nil_net_lifecycle_tests nil_file_time_support_tests \
                      nil_rooted_file_snapshot_tests nil_webview_runtime_tests \
                      nil_console_input_state_tests nil_durable_file_io_tests \
-                     nil_durable_vm_lifecycle_tests nilruntime \
+                     nil_durable_vm_lifecycle_tests nilruntime "${nil_windows_targets[@]}" \
             2>&1 | tee build/web-parity-evidence/build.log
       - name: Run real peer and language contracts
         timeout-minutes: 8
@@ -154,19 +163,69 @@ jobs:
           assert by_name['ny.global-contract'].findtext('system-out', '').strip() == (
               'global contracts passed: 9 negative and 3 control cases in text/binary NIL\n'
               'nominal global contracts passed: 8 VM executions, 2 initialization rejections, 0 native rejections')
-          # The Windows helper exercises checked unsupported errors and nonmutation.
-          # Do not count its zero-check VM lifecycle or skipped POSIX route as support.
           (root/'durable-platform-boundary.json').write_text(json.dumps({
-              'platform': os.name, 'durable_api': 'unsupported' if os.name == 'nt' else 'POSIX',
+              'platform': os.name, 'durable_api': 'local-NTFS' if os.name == 'nt' else 'POSIX',
               'helper_contract': 'nil.durable-file-io', 'helper_status': 'PASS',
-              'release_qualification': False}, indent=2)+'\n')
+              'release_qualification': False, 'power_cut_qualification': False}, indent=2)+'\n')
           PY
-      - name: Verify POSIX durable publication and lock lifetime
-        if: runner.os != 'Windows'
+      - name: Verify Win32 private files, locks and publication barriers
+        if: runner.os == 'Windows'
+        timeout-minutes: 4
+        run: |
+          "$NIL_CI_PYTHON" - <<'PYTHON'
+          import json, subprocess, xml.etree.ElementTree as ET
+          from pathlib import Path
+          root = Path('build/web-parity-evidence').resolve()
+          expected = {
+              'nil.windows-private-files-locks': (
+                  'windows-durable-file-io-ok: 20 contracts; 18 invalid paths', {
+                      'exclusive-owner-only-create', 'inherited-owner-only-profile',
+                      'public-parent-private-creation-access-check', 'public-acl-false-and-lock-refusal',
+                      'wrong-owner-descriptor-false', 'cross-kind-false', 'junction-no-follow-and-no-adoption',
+                      'single-link-required', 'missing-and-uninspectable-are-errors',
+                      'utf8-without-code-page-conversion', 'invalid-paths-no-normalization-or-mutation',
+                      'registry-ownership-stale-and-monotonic-tokens', 'no-clobber-create-and-payload-preservation',
+                      'live-handle-pins-final-namespace-entry', 'clear-retires-all-tokens-and-closes-handles',
+                      'registry-destruction-releases-os-lock', 'cross-process-registry-contention',
+                      'external-lockfileex-contends-with-registry', 'registry-contends-with-external-lockfileex',
+                      'child-normal-release-and-process-death-release'}),
+              'nil.windows-durable-publication': (
+                  'windows-durable-publication-ok: 15 contracts; 16 invalid paths', {
+                      'real-local-ntfs-and-directory-flush', 'binary-create-private-and-ordered-barriers',
+                      'no-clobber-preserves-existing-bytes-and-links', 'replacement-uses-fresh-private-single-link-file',
+                      'replace-absent-and-empty-payload', 'staging-flush-failure-preserves-prior-state',
+                      'post-publication-flush-failure-reports-uncertainty', 'explicit-directory-flush-failure',
+                      'post-publication-close-failure-still-flushes-directory',
+                      'unsupported-filesystem-fails-before-mutation', 'wrong-kind-and-final-reparse-rejected',
+                      'reparse-parent-is-not-followed', 'missing-parent-and-invalid-operands',
+                      'occupied-destination-preserved-on-rename-failure', 'directory-handle-pins-publication-namespace'})}
+          base = ['ctest', '--test-dir', 'build/web-parity', '-C', 'Release', '-R',
+                  r'^nil[.]windows-(private-files-locks|durable-publication)$']
+          inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
+          (root/'windows-durable-inventory.json').write_bytes(inventory)
+          tests = json.loads(inventory)['tests']
+          assert len(tests) == 2 and {test['name'] for test in tests} == set(expected)
+          with (root/'windows-durable.log').open('wb') as output:
+              result = subprocess.run(base+['--no-tests=error', '--output-on-failure',
+                  '--test-output-size-passed', '65536', '--output-junit', str(root/'windows-durable-results.xml')],
+                  stdout=output, stderr=subprocess.STDOUT, timeout=200)
+          print((root/'windows-durable.log').read_text(errors='replace'))
+          result.check_returncode()
+          cases = list(ET.parse(root/'windows-durable-results.xml').getroot().iter('testcase'))
+          assert len(cases) == 2 and {case.get('name') for case in cases} == set(expected)
+          for case in cases:
+              assert case.get('status') == 'run' and all(case.find(kind) is None
+                  for kind in ['failure', 'error', 'skipped'])
+              summary, groups = expected[case.get('name')]
+              lines = case.findtext('system-out', '').splitlines()
+              assert len(lines) == len(groups)+1 and lines[-1] == summary
+              assert set(lines[:-1]) == {'PASS '+group for group in groups}
+          PYTHON
+      - name: Verify durable publication and lock lifetime on the host
         timeout-minutes: 6
         run: |
           "$NIL_CI_PYTHON" - <<'PYTHON'
-          import hashlib, json, re, subprocess, xml.etree.ElementTree as ET
+          import hashlib, json, os, re, subprocess, xml.etree.ElementTree as ET
           from pathlib import Path
           BUILD, LLVM = 'build/web-parity', False
           root = Path('build/web-parity-evidence').resolve()
@@ -193,7 +252,8 @@ jobs:
           assert len(reports) == 1, reports
           proof = json.loads(reports[0].read_text())
           assert proof['schema'] == 'nil.durable-file-io.v1' and proof['status'] == 'PASS'
-          assert proof['scope'] == 'POSIX_SOURCE_RUNTIME_NOT_RELEASE_OR_POWER_CUT_QUALIFICATION'
+          assert proof['scope'] == ('WINDOWS_NTFS_SOURCE_RUNTIME_NOT_RELEASE_OR_POWER_CUT_QUALIFICATION'
+              if os.name == 'nt' else 'POSIX_SOURCE_RUNTIME_NOT_RELEASE_OR_POWER_CUT_QUALIFICATION')
           assert proof['llvm_enabled'] is LLVM and proof['cleanup_verified'] is True
           routes = ['text-vm', 'binary-vm'] + (['aot', 'jit'] if LLVM else [])
           expected_routes = {(language, language+'-'+route) for language in ['ny', 'matrix'] for route in routes}
@@ -202,7 +262,21 @@ jobs:
           oracle = {'bytes': 'exact', 'modes': '0600', 'remaining_staging_files': 0,
                     'lock_after_process_completion': 'released', 'private_directories': ['private'],
                     'directory_modes': '0700'}
-          assert all(row['status'] == 'PASS' and row['oracle'] == oracle for row in proof['executions'])
+          if os.name == 'nt':
+              fixed = {'bytes': 'exact', 'filesystem': 'local-NTFS', 'remaining_staging_files': 0,
+                       'lock_after_process_completion': 'released', 'lock_primitive': 'LockFileEx-byte-0-length-1',
+                       'private_directories': ['private'], 'windows_owner': 'effective-user',
+                       'windows_dacl': 'one-FILE_ALL_ACCESS-owner-allow-ACE'}
+              entries = {'.', 'private', 'checkpoint.bin', 'empty.bin', 'writer.lock'}
+              for row in proof['executions']:
+                  observed = row['oracle']
+                  assert row['status'] == 'PASS' and set(observed) == set(fixed) | {'windows_acl_profiles', 'windows_acl_sha256'}
+                  assert all(observed[key] == value for key, value in fixed.items())
+                  assert set(observed['windows_acl_profiles']) == set(observed['windows_acl_sha256']) == entries
+                  assert all(value in ['protected-owner', 'inherited-owner'] for value in observed['windows_acl_profiles'].values())
+                  assert all(re.fullmatch(r'[0-9a-f]{64}', value) for value in observed['windows_acl_sha256'].values())
+          else:
+              assert all(row['status'] == 'PASS' and row['oracle'] == oracle for row in proof['executions'])
           invalid = ['width', 'owner', 'query-width', 'query-owner']
           negative_routes = ['text-vm', 'binary-vm'] + (['llvm-aot'] if LLVM else [])
           expected_negative = {(case, route) for case in invalid for route in negative_routes}
@@ -217,6 +291,10 @@ jobs:
           assert len(proof['negative_library']) == len(expected_library) == 36
           assert {(row['operation'], row['route'], row['schema']) for row in proof['negative_library']} == expected_library
           assert all(row['status'] == 'PASS' and row['filesystem'] == 'unchanged' for row in proof['negative_library'])
+          if os.name == 'nt':
+              for row in proof['negative_library']:
+                  assert set(row['windows_acl_sha256']) == {'file', 'directory'}
+                  assert all(re.fullmatch(r'[0-9a-f]{64}', value) for value in row['windows_acl_sha256'].values())
           expected_commands = {'runtime-selection': False}
           for language in ['ny', 'matrix']:
               for encoding in ['text', 'binary']:
@@ -235,7 +313,7 @@ jobs:
               for encoding in ['text', 'binary']:
                   for schema in ['schema', 'no-schema']:
                       expected_commands['foreign-'+operation+'-'+encoding+'-'+schema] = True
-          assert len(proof['commands']) == len(expected_commands)
+          assert len(proof['commands']) == len(expected_commands) == (71 if LLVM else 61)
           assert {row['name'] for row in proof['commands']} == set(expected_commands)
           for row in proof['commands']:
               assert row['cleanup_verified'] is True and not row.get('timed_out') and not row.get('error')
@@ -252,6 +330,8 @@ jobs:
           for case in invalid:
               filename = ('query-invalid-'+case[len('query-'):]) if case.startswith('query-') else 'invalid-'+case
               inputs[case] = Path('tests/language/durable-file-io-'+filename+'.ny').resolve()
+          if os.name == 'nt':
+              inputs['windows_oracle'] = Path('tests/tools/windows_durable_oracle.py').resolve()
           def record(path):
               hasher = hashlib.sha256()
               with path.open('rb') as stream:
@@ -348,6 +428,20 @@ jobs:
               inputs[name] = dict(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
           (root/'nominal-global-inputs.json').write_text(json.dumps(dict(
               revision=revision, files=inputs), indent=2)+'\n')
+          durable_inputs = [
+              'nilcompiler/src/secure_file_io.cpp', 'nilcompiler/src/secure_file_io.hpp',
+              'nilcompiler/src/native_runtime.cpp',
+              'nilcompiler/src/windows_private_entries.hpp', 'nilcompiler/src/windows_durable_publication.hpp',
+              'common/private_directory.hpp', 'common/windows_private_storage.hpp',
+              'tests/windows_durable_file_io_tests.cpp', 'tests/windows_durable_publication_tests.cpp',
+              'tests/durable_file_io_tests.cpp', 'tests/durable_vm_lifecycle_tests.cpp',
+              'tests/tools/durable_file_io_contract.py', 'tests/tools/windows_durable_oracle.py']
+          durable_files = {}
+          for name in durable_inputs:
+              data = Path(name).read_bytes()
+              durable_files[name] = dict(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+          (root/'windows-durable-inputs.json').write_text(json.dumps(dict(
+              revision=revision, files=durable_files), indent=2)+'\n')
           files = {}
           for path in sorted(root.rglob('*')):
               if path.is_file() and not path.is_symlink():

@@ -1493,6 +1493,7 @@ bool Linker::link(const fs::path &requested_output) {
   // The runtime's Win32 desktop provider creates windows and measures text.
   arguments.push_back("user32.lib");
   arguments.push_back("gdi32.lib");
+  arguments.push_back("advapi32.lib");
   // A linked program gets exactly one C runtime, and nil.lib decides which:
   // it is built /MD, so every reference it makes is an import (__imp_*) that
   // only the dynamic CRT satisfies. `cl /c` defaults to the *static* CRT,
@@ -1535,6 +1536,7 @@ bool Linker::link(const fs::path &requested_output) {
   arguments.push_back("ws2_32.lib");
   arguments.push_back("user32.lib");
   arguments.push_back("gdi32.lib");
+  arguments.push_back("advapi32.lib");
   arguments.push_back("-Xlinker");
   arguments.push_back("/MANIFEST:EMBED");
   arguments.push_back("-Xlinker");

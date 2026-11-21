@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Public Ny/Matrix durable-file and lock routes with a host filesystem oracle.
 
-This qualifies local POSIX source-runtime behavior, not storage hardware power
-loss or an installed/release SDK. Each execution has its own private directory.
+This qualifies local POSIX or Windows NTFS source-runtime behavior, not storage
+hardware power loss or an installed/release SDK. Each execution has its own
+private directory and an independent host filesystem oracle.
 """
 from __future__ import annotations
 
@@ -17,6 +18,9 @@ import tempfile
 import time
 
 import ordinary_io_parity_contract as support
+
+if os.name == "nt":
+    import windows_durable_oracle as windows_oracle
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
@@ -82,6 +86,9 @@ def foreign_library_nil(operation: str, binary: bool, schema: bool) -> bytes:
 
 
 def host_oracle(directory: Path) -> dict:
+    if os.name == "nt":
+        return windows_oracle.host_oracle(directory, {
+            "checkpoint.bin": EXPECTED_BYTES, "empty.bin": b"", "writer.lock": b""})
     import fcntl
 
     expected = {"checkpoint.bin": EXPECTED_BYTES, "empty.bin": b"", "writer.lock": b""}
@@ -135,12 +142,14 @@ def main() -> int:
     report = {"schema": "nil.durable-file-io.v1", "status": "FAIL", "commands": [],
               "executions": [], "negative_abi": [], "negative_library": [],
               "llvm_enabled": args.llvm == "ON",
-              "scope": "POSIX_SOURCE_RUNTIME_NOT_RELEASE_OR_POWER_CUT_QUALIFICATION"}
-    if os.name != "posix":
-        report.update(status="SKIP", reason="POSIX implementation only; unsupported-host checks are separate")
+              "scope": ("WINDOWS_NTFS_SOURCE_RUNTIME_NOT_RELEASE_OR_POWER_CUT_QUALIFICATION"
+                        if os.name == "nt" else
+                        "POSIX_SOURCE_RUNTIME_NOT_RELEASE_OR_POWER_CUT_QUALIFICATION")}
+    if os.name not in ("posix", "nt"):
+        report.update(status="FAIL", error="unsupported host platform: " + os.name)
         support.save_new(output / "report.json", report)
-        print("SKIP: " + str(output / "report.json"))
-        return 0
+        print("FAIL: " + str(output / "report.json"))
+        return 1
 
     ownership = support.load_ownership(ROOT)
     compiler = args.compiler.resolve(strict=True)
@@ -161,6 +170,8 @@ def main() -> int:
               **sources, **{name: row[0] for name, row in invalid.items()}}
     if runtime:
         inputs["runtime"] = runtime
+    if os.name == "nt":
+        inputs["windows_oracle"] = Path(windows_oracle.__file__).resolve()
     report["inputs_before"] = {name: support.file_record(path) for name, path in inputs.items()}
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith(("NIL_", "NY_"))}
@@ -195,7 +206,10 @@ def main() -> int:
         working = output / name
         working.mkdir()
         data = working / "data-café 日本語 🦊"
-        data.mkdir(mode=0o700)
+        if os.name == "nt":
+            windows_oracle.create_private_directory(data)
+        else:
+            data.mkdir(mode=0o700)
         run(name, [*command, data], working, EXPECTED_STDOUT)
         report["executions"].append({"route": name, "language": language,
                                      "status": "PASS", "oracle": host_oracle(data)})
@@ -257,22 +271,35 @@ def main() -> int:
                 for schema in (True, False):
                     name = "foreign-" + operation + "-" + encoding + ("-schema" if schema else "-no-schema")
                     working = output / name
-                    working.mkdir(mode=0o700)
+                    if os.name == "nt":
+                        windows_oracle.create_private_directory(working)
+                    else:
+                        working.mkdir(mode=0o700)
                     existing = working / "existing.bin"
                     existing.write_bytes(EXPECTED_BYTES)
                     existing.chmod(0o600)
                     before = (existing.read_bytes(), existing.lstat().st_ino,
                               stat.S_IMODE(existing.lstat().st_mode), stat.S_IMODE(working.stat().st_mode))
+                    before_acl = ({"file": windows_oracle.security_hash(existing),
+                                   "directory": windows_oracle.security_hash(working)}
+                                  if os.name == "nt" else None)
                     artifact = output / (name + ".nil")
                     artifact.write_bytes(foreign_library_nil(operation, encoding == "binary", schema))
                     run(name, [interpreter, "--no-ai", artifact], working,
                         rejection=(operation + ": requires the intrinsic library").encode())
                     after = (existing.read_bytes(), existing.lstat().st_ino,
                              stat.S_IMODE(existing.lstat().st_mode), stat.S_IMODE(working.stat().st_mode))
-                    if {p.name for p in working.iterdir()} != {"existing.bin"} or after != before:
+                    after_acl = ({"file": windows_oracle.security_hash(existing),
+                                  "directory": windows_oracle.security_hash(working)}
+                                 if os.name == "nt" else None)
+                    if ({p.name for p in working.iterdir()} != {"existing.bin"} or after != before
+                            or after_acl != before_acl):
                         raise AssertionError(name + ": rejected library operand changed the filesystem")
-                    report["negative_library"].append({"operation": operation, "route": encoding + "-vm",
-                        "schema": "present" if schema else "absent", "status": "PASS", "filesystem": "unchanged"})
+                    row = {"operation": operation, "route": encoding + "-vm",
+                           "schema": "present" if schema else "absent", "status": "PASS", "filesystem": "unchanged"}
+                    if os.name == "nt":
+                        row["windows_acl_sha256"] = before_acl
+                    report["negative_library"].append(row)
         if len(report["negative_library"]) != 36:
             raise AssertionError("library rejection matrix incomplete")
         expected_count = 8 if args.llvm == "ON" else 4

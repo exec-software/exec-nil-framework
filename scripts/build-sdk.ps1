@@ -127,6 +127,7 @@ $sdk = Join-Path $candidate 'sdk'
 $evidence = Join-Path $candidate 'build-evidence.json'
 $ctestReport = Join-Path $candidate 'ctest.xml'
 $consumerReport = Join-Path $candidate 'consumer-routes.json'
+$durableEvidence = Join-Path $candidate 'durable-consumer-evidence'
 $transcriptStarted = $false
 
 Write-Host "Windows development candidate: $candidate"
@@ -165,6 +166,10 @@ try {
         (Join-Path $PSScriptRoot 'check-sdk-routes.py'), '--sdk', $sdk,
         '--expected-revision', $revision, '--output', $consumerReport
     )
+    Invoke-Checked $Python @(
+        (Join-Path $PSScriptRoot 'check-sdk-durable-io.py'), '--sdk', $sdk,
+        '--expected-revision', $revision, '--output', $durableEvidence
+    )
 } catch {
     Set-Content -LiteralPath (Join-Path $candidate 'FAILED.txt') -Encoding UTF8 -Value (
         'This candidate did not complete Windows development SDK validation.' +
@@ -179,4 +184,5 @@ try {
 }
 Write-Host "Validated Windows development SDK: $sdk"
 Write-Host "Consumer evidence: $consumerReport"
+Write-Host "Durable I/O, console and nominal-global evidence: $durableEvidence"
 Write-Host 'Not activated; not RC/release-qualified; no publication performed.'

@@ -283,17 +283,20 @@ The [Goetic/Enigma integration](https://github.com/exec-software/exec-nil-framew
 additionally combines those compiler and editor
 fixes with [durable files and context-owned locks](docs/standard-library/durable-files.md),
 private-entry checks, SHA-256, optional console input and native hexadecimal
-random draws. Durable filesystem operations currently support POSIX hosts;
-Windows returns explicit unsupported errors. The
+random draws. The source also implements Windows private entries and context-owned
+locks; Windows durable writes and directory synchronization require local NTFS.
+Seven focused Windows suites pass, including eight Ny/Matrix interpreted and
+native routes. Installed Windows SDK qualification remains separate from the
+earlier SDK results below. The
 [integration notebook](notebook/2026-11-21-goetic-enigma-sdk.md) separates source
 checks, installed SDK evidence and remaining limitations.
 The interpreter also preserves imported class values through typed module
 globals, record wrappers and explicit `Option<Class>` factories. Native
 aggregate globals remain unsupported. The real Goetic/Enigma snapshot and
 optional-value consumers pass against the relocated Linux development SDK.
-The current Linux development SDK passes 609 source tests and 1,248 installed
-artifact routes; all four hosts pass 18 interpreter contracts and 32 fixture
-routes each. Admission indexing reduces the measured Goetic parse/load time
+The earlier `167ae3a` Linux development SDK campaign passed 609 source tests and
+1,248 installed artifact routes; its four-host campaign passed 18 interpreter
+contracts and 32 fixture routes per host. Admission indexing reduces the measured Goetic parse/load time
 from 45.58 seconds to 0.45 seconds. With the updated SDK, an isolated Goetic
 instance reached HTTP readiness in 0.56 seconds within its unchanged ten-second
 deadline. Its complete application suite passes all 26 Matrix fixtures and 101

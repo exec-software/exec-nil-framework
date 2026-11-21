@@ -1949,8 +1949,7 @@ std::int32_t nyrt_io_v1(const char *operation, std::uint64_t first,
 #ifdef _WIN32
         wchar_t buffer[1024] = {};
         DWORD size = static_cast<DWORD>(sizeof(buffer) / sizeof(*buffer));
-        // The SDK runtime does not otherwise require an advapi32 import
-        // library. Resolve only the OS copy, never a working-directory DLL.
+        // Resolve only the OS copy, never a working-directory DLL.
         const HMODULE library = LoadLibraryExW(L"advapi32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
         if (!library) return fail("user name is unavailable");
         const auto get_user_name = reinterpret_cast<BOOL (WINAPI *)(LPWSTR, LPDWORD)>(
