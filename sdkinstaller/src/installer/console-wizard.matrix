@@ -1,0 +1,243 @@
+!!! =============================================================================
+!!! sdkinstaller — Console interactive wizard
+!!! =============================================================================
+!!!
+!!! A text-based selection UI for choosing workloads when no graphical
+!!! provider is available. This is the fallback — when nil.std.ui is present,
+!!! the graphical wizard in ui-wizard.matrix is used instead.
+!!!
+!!! The wizard presents the list of workloads, lets the user toggle
+!!! selections, optionally deselect individual components, and confirms
+!!! before installation.
+
+book sdkinstaller.wizard
+
+read everything from sdkinstaller.config
+read everything from sdkinstaller.workloads
+read everything from sdkinstaller.fileplan
+read nil.std.io
+read nil.std.text
+read nil.std.system
+
+
+!!! --- Display the workload list with indices and selection state.
+
+display-workloads receives workloads as array of Workload, selectedIds as array of text returns nothing begin paragraph
+    var idx as number is 0
+    repeat for idx from 0 to (the length of workloads)
+        value wl is workloads at idx
+        value marker is "[ ]"
+        when contains-text with selectedIds, wl . id then
+            set marker to "[*]"
+        end when
+        say marker plus " " plus (idx + 1) plus ". " plus wl . name plus " — " plus wl . description
+        say "    " plus wl . id
+        say ""
+    end repeat
+    say "Enter the numbers of the workloads to toggle (e.g. '1 3'), or 'done' to continue:"
+end paragraph
+
+
+!!! --- Display a text prompt and read a line of input.
+
+prompt-line receives prompt as text returns text begin paragraph
+    say prompt
+    give console-read-line with nothing
+end paragraph
+
+
+!!! --- Run the interactive wizard.
+!!!
+!!! Presents the workload list, lets the user toggle selections, and returns
+!!! the final selection. If the user selects nothing, the "core" workload
+!!! is selected by default.
+
+public run-console-wizard receives allWorkloads as array of Workload, allComponents as array of Component returns Selection begin paragraph
+    say "=== NIL Framework SDK Installer ==="
+    say ""
+    say "Select the workloads you want to install."
+    say "The 'core' workload is required and always included."
+    say ""
+
+    variable selected as array of text is ["core"]
+    variable done as boolean is no
+
+    repeat while not done
+        display-workloads with allWorkloads, selected
+
+        value input is console-read-line with nothing
+        consider input . lower
+            when "done" then
+                set done to yes
+            when "quit" then
+                set done to yes
+            when "cancel" then
+                set done to yes
+            otherwise begin block
+                value parts is split-input with input
+                variable pi as number is 0
+                repeat for pi from 0 to (the length of parts)
+                    value part is parts at pi
+                    consider parse-index with part, (the length of allWorkloads)
+                        when Option.Some holding idx then begin block
+                            value wlId is allWorkloads at idx . id
+                            when wlId equals "core" then
+                                say "The 'core' workload is always included."
+                            otherwise when contains-text with selected, wlId then
+                                set selected to remove-text with selected, wlId
+                            otherwise
+                                set selected to selected + [wlId]
+                            end when
+                        end block
+                        when Option.None then
+                            say "Invalid selection: " plus part
+                end consider
+                end repeat
+            end block
+        end consider
+    end repeat
+
+    when (the length of selected) equals 0 then
+        set selected to ["core"]
+    end when
+
+    !!! Component exclusion step.
+    value showExclusions is prompt-line with "Exclude any specific components? (y/N): "
+    when showExclusions . lower equals "y" then
+        value exclusions is prompt-exclusions with selected, allWorkloads, allComponents
+        give Selection with workloadIds being selected, componentExclusions being exclusions
+    end when
+
+    give Selection with workloadIds being selected, componentExclusions being []
+end paragraph
+
+
+!!! --- Parse a single index from string input. Returns None if invalid.
+
+public parse-index receives input as text, maxIndex as number returns Option of number begin paragraph
+    value trimmed is input . trim
+    when (the length of trimmed) equals 0 then
+        give Option.None
+    end when
+    value parsed is trimmed as number
+    when parsed is at least 1 and parsed at most maxIndex then
+        give Option.Some holding (parsed minus 1)
+    otherwise
+        give Option.None
+    end when
+end paragraph
+
+
+!!! --- Split a whitespace-separated string into tokens.
+
+public split-input receives input as text returns array of text begin paragraph
+    variable tokens as array of text is []
+    variable current as text is ""
+    variable idx as number is 0
+    repeat for idx from 0 to (the length of input)
+        value ch is input at idx
+        when ch equals " " or ch equals "\t" then
+            when (the length of current) greater-than 0 then
+                set tokens to tokens + [current]
+                set current to ""
+            end when
+        otherwise
+            set current to current + ch
+        end when
+    end repeat
+    when (the length of current) greater-than 0 then
+        set tokens to tokens + [current]
+    end when
+    give tokens
+end paragraph
+
+
+!!! --- String lowercasing helper (console-read-line is route-limited for
+!!! text conversion, so we do a simple ASCII fold here for prompt matching).
+
+public lower receives text as text returns text begin paragraph
+    variable result as text is ""
+    variable idx as number is 0
+    repeat for idx from 0 to (the length of text)
+        value ch is text at idx
+        value code is ch as number
+        when code at least 65 and code at most 90 then
+            set result to result + ((code + 32) as text)
+        otherwise
+            set result to result + ch
+        end when
+    end repeat
+    give result
+end paragraph
+
+
+!!! --- Check if a text array contains a given string.
+
+public contains-text receives items as array of text, target as text returns boolean begin paragraph
+    variable idx as number is 0
+    repeat for idx from 0 to (the length of items)
+        when items at idx equals target then
+            give yes
+        end when
+    end repeat
+    give no
+end paragraph
+
+
+!!! --- Remove a string from a text array.
+
+public remove-text receives items as array of text, target as text returns array of text begin paragraph
+    variable result as array of text is []
+    variable idx as number is 0
+    repeat for idx from 0 to (the length of items)
+        when not (items at idx equals target) then
+            set result to result + [items at idx]
+        end when
+    end repeat
+    give result
+end paragraph
+
+
+!!! --- Prompt the user for component exclusions.
+!!!
+!!! Shows the resolved components for the selected workloads and lets the
+!!! user type component IDs to exclude.
+
+prompt-exclusions receives selectedIds as array of text, allWorkloads as array of Workload, allComponents as array of Component returns array of text begin paragraph
+    say ""
+    say "Resolved components for the selected workloads:"
+
+    variable resolved as array of Component is []
+    variable si as number is 0
+    repeat for si from 0 to (the length of selectedIds)
+        value sel is selectedIds at si
+        value found is find-workload with allWorkloads, sel
+        consider found
+            when Option.Some holding wl then begin block
+                var ci as number is 0
+                repeat for ci from 0 to (the length of wl . componentIds)
+                    value compId is wl . componentIds at ci
+                    value comp is find-component with allComponents, compId
+                    consider comp
+                        when Option.Some holding c then
+                            set resolved to resolved + [c]
+                            say "  " plus compId plus " — " plus c . name plus " (" plus format-size with c . sizeBytes plus ")"
+                    end consider
+                end repeat
+            end block
+        end consider
+    end repeat
+
+    say ""
+    value input is prompt-line with "Enter component IDs to exclude (space-separated), or press Enter to keep all: "
+    value tokens is split-input with input
+    give tokens
+end paragraph
+
+
+!!! --- Format a byte count as a human-readable string.
+!!! (Delegates to the shared implementation in file-plan.matrix.)
+
+public format-size receives bytes as number returns text begin paragraph
+    give format-bytes with bytes
+end paragraph

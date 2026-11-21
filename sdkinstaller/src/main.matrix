@@ -1,0 +1,421 @@
+!!! =============================================================================
+!!! sdkinstaller — Main entry point
+!!! =============================================================================
+!!!
+!!! CLI tool for installing the NIL framework SDK. Supports interactive
+!!! console wizard mode, a list of workloads, custom install locations,
+!!! component exclusions, and dry-run mode.
+!!!
+!!! Usage:
+!!!   sdkinstaller                          Start the interactive wizard.
+!!!   sdkinstaller --list-workloads         Print available workloads.
+!!!   sdkinstaller --workload <id>          Install a named workload set.
+!!!   sdkinstaller --workload <id> --location /path
+!!!   sdkinstaller --workload <id> --without <comp1> <comp2>
+!!!   sdkinstaller --workload <id> --dry-run
+!!!   sdkinstaller --help
+
+book sdkinstaller.main
+
+read everything from sdkinstaller.config
+read everything from sdkinstaller.workloads
+read everything from sdkinstaller.fileplan
+read everything from sdkinstaller.envsetup
+read everything from sdkinstaller.console-wizard
+read nil.std.core.option
+read nil.std.system
+read nil.std.io
+
+
+!!! --- Application configuration parsed from CLI arguments.
+!!!
+!!! `workloadIds` is nil when the user did not specify any (wizard mode).
+!!! `location` is nil when the user did not override (default location).
+!!! `exclusions` is nil when no --without flags were given.
+
+public AppConfig begin record
+    field workloadIds as Option of array of text
+    field location as Option of text
+    field exclusions as Option of array of text
+    field dryRun as boolean
+    field listWorkloads as boolean
+    field showHelp as boolean
+end record
+
+
+!!! --- Parse command-line arguments into an AppConfig.
+!!!
+!!! Supports: --workload <id...>, --location <path>, --without <id...>,
+!!! --dry-run, --list-workloads, --help.
+
+public parse-args receives args as array of text returns AppConfig begin paragraph
+    variable workloadIds as array of text is []
+    variable exclusions as array of text is []
+    variable location as text is ""
+    variable dryRun as boolean is no
+    variable listWl as boolean is no
+    variable help as boolean is no
+    variable sawWorkload as boolean is no
+    variable sawLocation as boolean is no
+    variable sawWithout as boolean is no
+
+    variable i as number is 0
+    repeat for i from 0 to (the length of args)
+        value arg is args at i
+        consider arg
+            when "--workload" then
+                set sawWorkload to yes
+            when "--location" then
+                set sawLocation to yes
+            when "--without" then
+                set sawWithout to yes
+            when "--dry-run" then
+                set dryRun to yes
+            when "--list-workloads" then
+                set listWl to yes
+            when "--help" then
+                set help to yes
+            otherwise begin block
+                !!! This token is a value for the previous flag.
+                when sawWorkload then
+                    set workloadIds to workloadIds + [arg]
+                    set sawWorkload to no
+                otherwise when sawLocation then
+                    set location to arg
+                    set sawLocation to no
+                otherwise when sawWithout then
+                    set exclusions to exclusions + [arg]
+                    set sawWithout to no
+                end when
+            end block
+        end consider
+    end repeat
+
+    value wlOpt is Option.Some holding workloadIds
+    value locOpt is Option.None
+    when (the length of location) greater-than 0 then
+        set locOpt to Option.Some holding location
+    end when
+    value excOpt is Option.Some holding exclusions
+    when (the length of exclusions) equals 0 then
+        set excOpt to Option.None
+    end when
+
+    give AppConfig with
+        workloadIds being wlOpt,
+        location being locOpt,
+        exclusions being excOpt,
+        dryRun being dryRun,
+        listWorkloads being listWl,
+        showHelp being help
+end paragraph
+
+
+!!! --- Print usage information.
+
+public print-help returns nothing begin paragraph
+    say "NIL Framework SDK Installer"
+    say ""
+    say "Usage:"
+    say "  sdkinstaller                          Start the interactive wizard."
+    say "  sdkinstaller --list-workloads         Print available workloads."
+    say "  sdkinstaller --workload <id...>       Install the named workloads."
+    say "  sdkinstaller --workload <id...> --location /path"
+    say "  sdkinstaller --workload <id...> --without <comp1> <comp2>"
+    say "  sdkinstaller --workload <id...> --dry-run"
+    say "  sdkinstaller --help"
+    say ""
+    say "Workloads: core, ui-dev, security-research, full"
+    say "The 'core' workload is always included."
+end paragraph
+
+
+!!! --- Print the list of available workloads.
+
+public print-workloads receives allWorkloads as array of Workload returns nothing begin paragraph
+    say "Available workloads:"
+    var idx as number is 0
+    repeat for idx from 0 to (the length of allWorkloads)
+        value wl is allWorkloads at idx
+        say "  " plus wl . id plus " — " plus wl . name
+        say "    " + wl . description
+        say ""
+    end repeat
+end paragraph
+
+
+!!! --- The main entry point.
+!!!
+!!! Parses arguments, loads the workload/component registries, and dispatches
+!!! to the appropriate mode: help, list-workloads, interactive wizard, or
+!!! non-interactive install.
+
+main returns override integer begin paragraph
+    value sdkRoot is detect-sdk-root with nothing
+    when sdkRoot equals "" then
+        say "ERROR: could not detect the NIL SDK root. Run from within the framework checkout."
+        give 1
+    end when
+
+    value argCount is arg-count with nothing
+    value args as array of text is []
+    var ai as number is 1
+    repeat for ai from 1 to argCount
+        set args to args + [arg with ai]
+    end repeat
+
+    value config is parse-args with args
+
+    when config . showHelp then
+        print-help with nothing
+        give 0
+    end when
+
+    value allWorkloads is build-workloads with nothing
+    value allComponents is build-components with nothing
+
+    when config . listWorkloads then
+        print-workloads with allWorkloads
+        give 0
+    end when
+
+    !!! Determine the install location.
+    value installPath is detect-install-path with config . location
+    say "Install location: " plus installPath
+
+    !!! Determine the selection.
+    value selection is resolve-selection with config, allWorkloads, allComponents
+
+    when config . dryRun then
+        evaluate print-dry-run with selection, allComponents, allWorkloads, installPath, sdkRoot
+        give 0
+    end when
+
+    !!! Non-interactive install.
+    value resolved is resolve-components with selection, allComponents, allWorkloads
+    consider resolved . missingDependencies
+        when (result is an array and the length of result is greater-than 0) then
+            say "ERROR: missing components: "
+            !!! The missing deps are collected during resolution; report them.
+    end consider
+
+    value plan is build-file-plan with resolved . components, sdkRoot
+    say ""
+    say "Resolving installation plan..."
+    say "  Components: " plus ((resolved . components . length) as text)
+    say "  Files:      " plus (the length of plan . entries) as text
+    say "  Size:       " plus format-bytes with plan . totalBytes
+
+    when (the length of plan . entries) equals 0 then
+        say "No files to install. Check that the SDK root is correct."
+        give 1
+    end when
+
+    say ""
+    say "Installing..."
+
+    value result is perform-install with resolved . components, plan, installPath, sdkRoot
+
+    consider result
+        when Result.Ok holding info then begin block
+            say ""
+            say "Installation complete!"
+            say "  Installed " plus (the length of resolved . components) as text plus " components"
+            say "  Wrote " + info
+            say "  Source this env file to update your PATH:"
+            say "    . " plus installPath plus "/nil.env"
+            give 0
+        end block
+        when Result.Error holding err then
+            say ""
+            say "ERROR: " + err
+            give 1
+    end consider
+end paragraph
+
+
+!!! --- Detect the SDK root directory.
+!!!
+!!! Looks for the framework checkout root by checking for the presence of
+!!! nilstd/ and compiler/ directories relative to the current working
+!!! directory or known ancestor paths.
+
+public detect-sdk-root receives nothing returns text begin paragraph
+    value cwd is current-directory with nothing
+    value candidates as array of text is [cwd, cwd plus "/..", cwd plus "/../.."]
+
+    variable idx as number is 0
+    repeat for idx from 0 to (the length of candidates)
+        value c is candidates at idx
+        value marker is c plus "/nilstd"
+        when is-directory marker then
+            give c
+        end when
+    end repeat
+    give ""
+end paragraph
+
+
+!!! --- Detect the install path from the config, or use a default.
+!!!
+!!! The default is ~/nil-sdk on POSIX, or %USERPROFILE%/nil-sdk on Windows.
+
+public detect-install-path receives locationOpt as Option of text returns text begin paragraph
+    consider locationOpt
+        when Option.Some holding path then
+            give path
+        when Option.None then begin block
+            value home is home-directory with nothing
+            give home + "/nil-sdk"
+        end block
+    end consider
+end paragraph
+
+
+!!! --- Resolve the selection from the AppConfig and registries.
+!!!
+!!! If the user specified workloads on the CLI, use those. Otherwise,
+!!! run the interactive wizard. The "core" workload is always included.
+
+public resolve-selection receives config as AppConfig, allWorkloads as array of Workload, allComponents as array of Component returns Selection begin paragraph
+    consider config . workloadIds
+        when Option.Some holding ids then begin block
+            !!! CLI-specified workloads. Ensure "core" is included.
+            value withCore is append-if-found with ids, "core"
+            value excOpt is Option.None
+            consider config . exclusions
+                when Option.Some holding exc then
+                    set excOpt to Option.Some holding exc
+                otherwise
+                    set excOpt to Option.Some holding []
+            end consider
+            value excs is Option.unwrap-or with excOpt, []
+            give Selection with
+                workloadIds being withCore,
+                componentExclusions being excs
+        end block
+        when Option.None then begin block
+            !!! Interactive wizard mode.
+            value sel is run-console-wizard with allWorkloads, allComponents
+            give sel
+        end block
+    end consider
+end paragraph
+
+
+!!! --- Append a value to an array if it is not already present.
+
+public append-if-found receives items as array of text, target as text returns array of text begin paragraph
+    variable idx as number is 0
+    repeat for idx from 0 to (the length of items)
+        when items at idx equals target then
+            give items
+        end when
+    end repeat
+    give items + [target]
+end paragraph
+
+
+!!! --- Perform the actual installation.
+!!!
+!!! Creates the install directory, writes env entries, writes the manifest,
+!!! and copies all files from the file plan. Returns a Result with a summary
+!!! string (used for display) or an error message.
+
+public perform-install receives components as array of Component, plan as FilePlan, installPath as text, sdkRoot as text returns Result of text, text begin paragraph
+    !!! Create the install directory if it does not exist.
+    value mkdirResult is create-directory at installPath
+    consider mkdirResult
+        when Result.Error holding err then
+            give Result.Error holding "could not create install directory: " plus err
+    end consider
+
+    !!! Compute and write environment entries.
+    value envEntries is compute-env-entries with components, installPath
+    value envResult is write-env-file with envEntries, installPath
+    consider envResult
+        when Result.Error holding err then
+            give Result.Error holding err
+    end consider
+
+    value envPath is Option.unwrap with envResult
+
+    !!! Write the install manifest.
+    value state is InstallState with
+        installedComponentIds being collect-component-ids with components,
+        sdkPath being installPath,
+        sdkVersion being "0.1.0",
+        installedAt being current-timestamp with nothing
+    value manifestResult is write-manifest with state, installPath
+
+    !!! Copy files (in a real implementation, this would do actual file I/O).
+    value copied is copy-files with plan, sdkRoot, installPath
+
+    give Result.Ok holding ("env file at " plus envPath)
+end paragraph
+
+
+!!! --- Copy a file plan's entries from the SDK root to the install location.
+!!!
+!!! Returns the number of files copied. In this reference implementation,
+!!! the actual file copy is delegated to the nilbuild runtime.
+
+public copy-files receives plan as FilePlan, sdkRoot as text, installPath as text returns number begin paragraph
+    variable copied as number is 0
+    variable idx as number is 0
+    repeat for idx from 0 to (the length of plan . entries)
+        value entry is plan . entries at idx
+        value src is sdkRoot plus "/" plus entry . sourceRel
+        value dest is installPath plus "/" plus entry . destRel
+        value result is copy-file with src, dest
+        consider result
+            when Result.Ok holding _ then
+                set copied to copied + 1
+            when Result.Error holding err then
+                say "  WARNING: could not copy " plus entry . sourceRel plus ": " plus err
+        end consider
+    end repeat
+    give copied
+end paragraph
+
+
+!!! --- Print a dry-run summary of what would be installed.
+
+public print-dry-run receives selection as Selection, allComponents as array of Component, allWorkloads as array of Workload, installPath as text, sdkRoot as text returns nothing begin paragraph
+    value resolved is resolve-components with selection, allComponents, allWorkloads
+    value plan is build-file-plan with resolved . components, sdkRoot
+
+    say "=== DRY RUN ==="
+    say ""
+    say "Selected workloads: " + join-text with selection . workloadIds, ", "
+    say "Excluded components: " + join-text with selection . componentExclusions, ", "
+    say "Install location: " + installPath
+    say ""
+    say "Components to install (" + (resolved . components . length) + "):"
+    var ci as number is 0
+    repeat for ci from 0 to (the length of resolved . components)
+        value comp is resolved . components at ci
+        say "  " + comp . id + " — " + comp . name + " (" + format-bytes with comp . sizeBytes + ")"
+    end repeat
+    say ""
+    say "Total files: " + (the length of plan . entries) as text
+    say "Total size: " + format-bytes with plan . totalBytes
+    say "Env entries: " + (compute-env-entries with resolved . components, installPath) . length as text
+    say ""
+    say "No files were written (--dry-run)."
+end paragraph
+
+
+!!! --- Join a text array into a single string with a separator.
+
+public join-text receives items as array of text, sep as text returns text begin paragraph
+    when (the length of items) equals 0 then
+        give ""
+    end when
+    variable result as text is items at 0
+    var idx as number is 1
+    repeat for idx from 1 to (the length of items)
+        set result to result + sep + items at idx
+    end repeat
+    give result
+end paragraph

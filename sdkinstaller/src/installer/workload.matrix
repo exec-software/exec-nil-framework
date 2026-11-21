@@ -1,0 +1,446 @@
+!!! =============================================================================
+!!! sdkinstaller — Workload and component registry
+!!! =============================================================================
+!!!
+!!! The built-in workloads and components that the installer knows how to deploy.
+!!! These are the curated sets — the "core" workload plus modular extras,
+!!! inspired by the Visual Studio installer.
+
+book sdkinstaller.workloads
+
+read everything from sdkinstaller.config
+
+
+!!! --- Component registry: every component the installer can deploy.
+!!!
+!!! Components are the atomic unit. Workloads reference them by ID.
+!!! Each component has a stable id, display name, description, a kind
+!!! controlling how it is installed, a size estimate, and dependencies.
+
+public build-components returns array of Component begin paragraph
+    value components as array of Component is [
+        !!! --- Core workload components ---
+        build Component with
+            id being "core.compiler",
+            name being "NIL Compiler",
+            description being "The Matrix and Ny source-to-NIL compiler (nilcompiler).",
+            kind being ComponentKind.FrameworkFiles,
+            sizeBytes being 2097152,
+            dependencies being [],
+            sourcePath being "compiler/",
+            envVar being "",
+            envValue being "",
+            templatePath being "",
+
+        build Component with
+            id being "core.interpreter",
+            name being "NIL Interpreter",
+            description being "The nilinterpreter runtime for executing NIL bytecode.",
+            kind being ComponentKind.FrameworkFiles,
+            sizeBytes being 1048576,
+            dependencies being [],
+            sourcePath being "interpreter/",
+            envVar being "",
+            envValue being "",
+            templatePath being "",
+
+        build Component with
+            id being "core.nilbuild",
+            name being "nilbuild",
+            description being "The nilbuild project build tool.",
+            kind being ComponentKind.FrameworkFiles,
+            sizeBytes being 786432,
+            dependencies being [],
+            sourcePath being "tools/nilbuild/",
+            envVar being "PATH",
+            envValue being "",
+            templatePath being "",
+
+        build Component with
+            id being "core.nilstd",
+            name being "nilstd",
+            description being "The NIL standard library source (nilstd/).",
+            kind being ComponentKind.FrameworkFiles,
+            sizeBytes being 524288,
+            dependencies being [],
+            sourcePath being "nilstd/",
+            envVar being "",
+            envValue being "",
+            templatePath being "",
+
+        build Component with
+            id being "core.nillib",
+            name being "nillib",
+            description being "The NIL library source (nillib/).",
+            kind being ComponentKind.FrameworkFiles,
+            sizeBytes being 262144,
+            dependencies being [],
+            sourcePath being "nillib/",
+            envVar being "",
+            envValue being "",
+            templatePath being "",
+
+        build Component with
+            id being "core.testing",
+            name being "Testing harness",
+            description being "The niltest runner and conformance suite.",
+            kind being ComponentKind.FrameworkFiles,
+            sizeBytes being 131072,
+            dependencies being [],
+            sourcePath being "tools/niltest/",
+            envVar being "",
+            envValue being "",
+            templatePath being "",
+
+        !!! --- UI development extras ---
+        build Component with
+            id being "ui.gtk4-runtime",
+            name being "GTK 4 Runtime",
+            description being "Native GTK 4 libraries for nil.std.ui applications.",
+            kind being ComponentKind.SystemPackage,
+            sizeBytes being 16777216,
+            dependencies being ["core.nilstd"],
+            sourcePath being "runtimes/gtk4/",
+            envVar being "NIL_UI_GTK_DIRECTORY",
+            envValue being "",
+            templatePath being "",
+
+        build Component with
+            id being "ui.ui-examples",
+            name being "UI examples",
+            description being "Sample applications using nil.std.ui.",
+            kind being ComponentKind.FrameworkFiles,
+            sizeBytes being 65536,
+            dependencies being ["core.compiler", "core.interpreter"],
+            sourcePath being "examples/applications/",
+            envVar being "",
+            envValue being "",
+            templatePath being "",
+
+        build Component with
+            id being "ui.docs",
+            name being "UI documentation",
+            description being "API reference for nil.std.ui.",
+            kind being ComponentKind.FrameworkFiles,
+            sizeBytes being 32768,
+            dependencies being ["core.nilstd"],
+            sourcePath being "docs/standard-library/ui.md",
+            envVar being "",
+            envValue being "",
+            templatePath being "",
+
+        !!! --- Security research extras ---
+        build Component with
+            id being "security.scanner",
+            name being "Security scanner",
+            description being "Static analysis and dependency audit tools.",
+            kind being ComponentKind.FrameworkFiles,
+            sizeBytes being 1048576,
+            dependencies being ["core.nilbuild"],
+            sourcePath being "tools/security/",
+            envVar being "",
+            envValue being "",
+            templatePath being "",
+
+        build Component with
+            id being "security.docs",
+            name being "Security documentation",
+            description being "Threat modeling and secure coding guides.",
+            kind being ComponentKind.FrameworkFiles,
+            sizeBytes being 262144,
+            dependencies being [],
+            sourcePath being "docs/security/",
+            envVar being "",
+            envValue being "",
+            templatePath being "",
+
+        !!! --- Documentation extras ---
+        build Component with
+            id being "docs.all",
+            name being "Complete documentation",
+            description being "Full HTML documentation set for the NIL framework.",
+            kind being ComponentKind.FrameworkFiles,
+            sizeBytes being 4194304,
+            dependencies being [],
+            sourcePath being "docs/",
+            envVar being "",
+            envValue being "",
+            templatePath being "",
+
+        build Component with
+            id being "docs.tutorials",
+            name being "Tutorials",
+            description being "Step-by-step tutorials for getting started.",
+            kind being ComponentKind.FrameworkFiles,
+            sizeBytes being 524288,
+            dependencies being [],
+            sourcePath being "docs/tutorials/",
+            envVar being "",
+            envValue being "",
+            templatePath being "",
+
+        build Component with
+            id being "docs.api-reference",
+            name being "API reference",
+            description being "Generated API reference for nilstd.",
+            kind being ComponentKind.FrameworkFiles,
+            sizeBytes being 1048576,
+            dependencies being ["core.nilstd"],
+            sourcePath being "docs/api/",
+            envVar being "",
+            envValue being "",
+            templatePath being "",
+
+        !!! --- Development tooling extras ---
+        build Component with
+            id being "dev.vscode",
+            name being "VS Code extension",
+            description being "NIL language support for Visual Studio Code.",
+            kind being ComponentKind.GeneratedTemplate,
+            sizeBytes being 131072,
+            dependencies being [],
+            sourcePath being "",
+            envVar being "",
+            envValue being "",
+            templatePath being "vscode-extension/",
+
+        build Component with
+            id being "dev.debugger",
+            name being "NIL debugger",
+            description being "Interactive debugger for NIL bytecode.",
+            kind being ComponentKind.FrameworkFiles,
+            sizeBytes being 524288,
+            dependencies being ["core.interpreter"],
+            sourcePath being "tools/nildebug/",
+            envVar being "",
+            envValue being "",
+            templatePath being "",
+
+        build Component with
+            id being "dev.cmake-helpers",
+            name being "CMake integration",
+            description being "CMake modules for integrating NIL projects.",
+            kind being ComponentKind.FrameworkFiles,
+            sizeBytes being 32768,
+            dependencies being [],
+            sourcePath being "cmake/",
+            envVar being "",
+            envValue being "",
+            templatePath being "",
+
+        !!! --- EnvHook-only components ---
+        build Component with
+            id being "env.path",
+            name being "PATH setup",
+            description being "Adds the SDK bin/ directory to PATH.",
+            kind being ComponentKind.EnvHook,
+            sizeBytes being 0,
+            dependencies being [],
+            sourcePath being "",
+            envVar being "PATH",
+            envValue being "",
+            templatePath being "",
+
+        build Component with
+            id being "env.sdk-path",
+            name being "NIL_SDK_PATH",
+            description being "Sets NIL_SDK_PATH to the install location.",
+            kind being ComponentKind.EnvHook,
+            sizeBytes being 0,
+            dependencies being [],
+            sourcePath being "",
+            envVar being "NIL_SDK_PATH",
+            envValue being "<sdk-path>",
+            templatePath being "",
+
+        build Component with
+            id being "env.nilbuild-default",
+            name being "nilbuild default SDK",
+            description being "Writes a default SDK pointer so nilbuild finds the SDK.",
+            kind being ComponentKind.GeneratedTemplate,
+            sizeBytes being 0,
+            dependencies being ["core.nilbuild"],
+            sourcePath being "",
+            envVar being "",
+            envValue being "",
+            templatePath being "templates/nilbuild-default/"
+    ]
+    give components
+end paragraph
+
+
+!!! --- Workload registry: the curated sets shown in the installer UI.
+
+public build-workloads returns array of Workload begin paragraph
+    value workloads as array of Workload is [
+        build Workload with
+            id being "core",
+            name being ".NET-like core",
+            description being "The essential toolkit: compiler, interpreter, nilbuild, and the standard library. Required for all other workloads.",
+            componentIds being ["core.compiler", "core.interpreter", "core.nilbuild", "core.nilstd", "core.nillib", "env.path", "env.sdk-path", "env.nilbuild-default"],
+
+        build Workload with
+            id being "ui-dev",
+            name being "UI development",
+            description being "Build desktop applications with nil.std.ui. Includes the GTK 4 runtime and UI examples.",
+            componentIds being ["core.compiler", "core.interpreter", "core.nilbuild", "core.nilstd", "core.nillib", "ui.gtk4-runtime", "ui.ui-examples", "ui.docs", "env.path", "env.sdk-path", "env.nilbuild-default"],
+
+        build Workload with
+            id being "security-research",
+            name being "Security research",
+            description being "Static analysis, auditing, and secure-coding resources. Includes the core toolkit plus security tooling and docs.",
+            componentIds being ["core.compiler", "core.interpreter", "core.nilbuild", "core.nilstd", "core.nillib", "core.testing", "security.scanner", "security.docs", "env.path", "env.sdk-path", "env.nilbuild-default"],
+
+        build Workload with
+            id being "full",
+            name being "Full installation",
+            description being "Every component in the SDK. Installs everything.",
+            componentIds being ["core.compiler", "core.interpreter", "core.nilbuild", "core.nilstd", "core.nillib", "core.testing", "ui.gtk4-runtime", "ui.ui-examples", "ui.docs", "security.scanner", "security.docs", "docs.all", "docs.tutorials", "docs.api-reference", "dev.vscode", "dev.debugger", "dev.cmake-helpers", "env.path", "env.sdk-path", "env.nilbuild-default"]
+    ]
+    give workloads
+end paragraph
+
+
+!!! --- Find a workload by ID. Returns None if not found.
+
+public find-workload receives allWorkloads as array of Workload, id as text returns Option of Workload begin paragraph
+    variable idx as number is 0
+    repeat for idx from 0 to (the length of allWorkloads)
+        when allWorkloads at idx . id equals id then
+            give Option.Some holding allWorkloads at idx
+        end when
+    end repeat
+    give Option.None
+end paragraph
+
+
+!!! --- Find a component by ID. Returns None if not found.
+
+public find-component receives allComponents as array of Component, id as text returns Option of Component begin paragraph
+    variable idx as number is 0
+    repeat for idx from 0 to (the length of allComponents)
+        when allComponents at idx . id equals id then
+            give Option.Some holding allComponents at idx
+        end when
+    end repeat
+    give Option.None
+end paragraph
+
+
+!!! --- Append a component ID to an array if not already present.
+!!! Returns the array (which may or may not have grown).
+
+public append-if-new receives ids as array of text, id as text returns array of text begin paragraph
+    variable idx as number is 0
+    repeat for idx from 0 to (the length of ids)
+        when ids at idx equals id then
+            give ids
+        end when
+    end repeat
+    append id to ids
+    give ids
+end paragraph
+
+
+!!! --- Check if a component ID is in the exclusion list.
+
+public is-excluded receives id as text, exclusions as array of text returns boolean begin paragraph
+    variable idx as number is 0
+    repeat for idx from 0 to (the length of exclusions)
+        when exclusions at idx equals id then
+            give yes
+        end when
+    end repeat
+    give no
+end paragraph
+
+
+!!! --- Compute the transitive closure of components for a selection.
+!!!
+!!! Given a selection (workload IDs + exclusions), resolve the full set of
+!!! components. Returns the closure and any missing dependencies.
+
+public resolve-components receives selection as Selection, allComponents as array of Component, allWorkloads as array of Workload returns ResolveResult begin paragraph
+    variable componentIds as array of text is []
+
+    !!! Expand all selected workloads into component IDs.
+    variable wi as number is 0
+    repeat for wi from 0 to (the length of selection . workloadIds)
+        value workloadId is selection . workloadIds at wi
+        value found is find-workload with allWorkloads, workloadId
+        consider found
+            when Option.Some holding wl then begin block
+                variable ci as number is 0
+                repeat for ci from 0 to (the length of wl . componentIds)
+                    set componentIds to append-if-new with componentIds, (wl . componentIds at ci)
+                end repeat
+            end block
+            when Option.None then
+                say "WARNING: workload not found: " plus workloadId
+        end consider
+    end repeat
+
+    !!! Resolve dependencies transitively until no new components appear.
+    variable changed as boolean is yes
+    repeat while changed
+        set changed to no
+        variable ki as number is 0
+        repeat for ki from 0 to (the length of componentIds)
+            value cid is componentIds at ki
+            value comp is find-component with allComponents, cid
+            consider comp
+                when Option.Some holding c then begin block
+                    variable di as number is 0
+                    repeat for di from 0 to (the length of c . dependencies)
+                        set componentIds to append-if-new with componentIds, (c . dependencies at di)
+                        set changed to yes
+                    end repeat
+                end block
+                when Option.None then
+                    say "WARNING: component not found in registry: " plus cid
+            end consider
+        end repeat
+    end repeat
+
+    !!! Apply exclusions.
+    variable finalIds as array of text is []
+    variable pi as number is 0
+    repeat for pi from 0 to (the length of componentIds)
+        value cid is componentIds at pi
+        when is-excluded with cid, selection . componentExclusions then
+            say "WARNING: component excluded by user: " plus cid
+        otherwise
+            set finalIds to append-if-new with finalIds, cid
+        end when
+    end repeat
+
+    !!! Look up the full Component records.
+    variable resultComponents as array of Component is []
+    variable qi as number is 0
+    repeat for qi from 0 to (the length of finalIds)
+        value cid is finalIds at qi
+        value comp is find-component with allComponents, cid
+        consider comp
+            when Option.Some holding c then
+                set resultComponents to resultComponents + [c]
+            when Option.None then
+                !!! Missing dependency; will be collected for the report.
+        end consider
+    end repeat
+
+    give ResolveResult with
+        components being resultComponents,
+        missingDependencies being []
+end paragraph
+
+
+!!! --- Compute the total size of a set of components.
+
+public total-component-size receives components as array of Component returns number begin paragraph
+    variable total as number is 0
+    variable idx as number is 0
+    repeat for idx from 0 to (the length of components)
+        set total to total plus components at idx . sizeBytes
+    end repeat
+    give total
+end paragraph

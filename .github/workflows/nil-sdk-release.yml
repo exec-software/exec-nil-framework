@@ -1,0 +1,261 @@
+name: NIL Framework SDK Release
+
+# Builds and publishes SDK releases for supported platforms.
+# Triggered manually or by a version tag push. Only tagged pushes that match
+# the VERSION file pattern will produce a published release; all other runs
+# are no-op builds for verification.
+#
+# Platforms:
+#   - Linux x86_64 (rc-checks SDK, assembled via assemble-release.py)
+#   - macOS arm64 (development SDK)
+#   - macOS x86_64 (development SDK)
+
+on:
+  push:
+    tags:
+      - "v1.0.0-rc.*"
+      - "v1.0.0"
+  workflow_dispatch:
+    inputs:
+      linux_sdk:
+        description: Build Linux x86_64 SDK
+        type: boolean
+        default: true
+      macos_arm64:
+        description: Build macOS ARM64 SDK
+        type: boolean
+        default: true
+      macos_x86_64:
+        description: Build macOS x86_64 SDK
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nil-sdk-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      revision: ${{ steps.version.outputs.revision }}
+      tag: ${{ steps.version.outputs.tag }}
+      is_tag: ${{ github.ref_type == 'tag' && github.event_name == 'push' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate VERSION
+        id: version
+        run: |
+          version="$(tr -d '\n' < VERSION)"
+          if [[ "$version" != v* ]]; then
+            echo "::error::VERSION must start with 'v' for releases (got: $version)"
+            exit 1
+          fi
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            tag_name="${GITHUB_REF_NAME}"
+            if [[ "$tag_name" != "$version" ]]; then
+              echo "::error::Tag '$tag_name' does not match VERSION '$version'"
+              exit 1
+            fi
+          fi
+          revision="$(git rev-parse HEAD)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "tag=$version" >> "$GITHUB_OUTPUT"
+
+  build-linux:
+    name: Linux x86_64 SDK
+    needs: prepare
+    if: needs.prepare.outputs.is_tag == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 280
+    env:
+      NIL_SDK_QUALIFICATION: rc-checks
+      NIL_BUILD_TYPE: Release
+      NIL_BUILD_EXPERIMENTAL_TOOLS: "ON"
+      NIL_RUN_TESTS: "ON"
+      NIL_ALLOW_DIRTY_SOURCE: "OFF"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ clang lld zlib1g-dev libsqlite3-dev \
+            libpq-dev libssl-dev libreadline-dev libxml2-dev libxslt1-dev \
+            libyaml-dev uuid-dev
+
+      - name: Build SDK
+        run: |
+          nil_release_version="$(tr -d '\n' < VERSION)"
+          nil_release_revision="$(git rev-parse HEAD)"
+          NIL_SDK_DIR="$PWD/build/rc-candidates/$nil_release_version/sdk" \
+            CMAKE_BUILD_PARALLEL_LEVEL=6 CTEST_PARALLEL_LEVEL=6 \
+            ./scripts/build-sdk.sh
+
+      - name: Assemble release
+        run: |
+          nil_release_version="$(tr -d '\n' < VERSION)"
+          nil_release_revision="$(git rev-parse HEAD)"
+          python3 scripts/assemble-release.py \
+            --sdk "build/rc-candidates/$nil_release_version/sdk" \
+            --expected-revision "$nil_release_revision" \
+            --dependency-policy release/dependency-policy.json \
+            --notices release/THIRD_PARTY_NOTICES.txt \
+            --output "build/releases"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nil-sdk-linux-x86_64
+          path: build/releases/nil-*/**/*
+
+  build-macos-arm64:
+    name: macOS ARM64 SDK
+    needs: prepare
+    if: needs.prepare.outputs.is_tag == 'true'
+    runs-on: macos-15
+    timeout-minutes: 280
+    env:
+      NIL_CI_ARCH: arm64
+      NIL_CI_POSTGRES_PROFILE: runner
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      ZERO_AR_DATE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Record identity
+        timeout-minutes: 2
+        run: |
+          python3 -B scripts/ci/macos-sdk.py identity
+
+      - name: Build SDK candidate
+        timeout-minutes: 240
+        env:
+          NIL_SDK_DIR: "$PWD/build/macos-sdk-arm64/sdk"
+        run: |
+          CMAKE_BUILD_PARALLEL_LEVEL=4 \
+          NIL_SDK_DIR="$PWD/build/macos-sdk-arm64/sdk" \
+          NIL_BUILD_EXPERIMENTAL_TOOLS="ON" \
+          ./scripts/build-sdk.sh
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nil-sdk-macos-arm64
+          path: build/macos-sdk-arm64/sdk/**
+
+  build-macos-x86_64:
+    name: macOS x86_64 SDK
+    needs: prepare
+    if: needs.prepare.outputs.is_tag == 'true'
+    runs-on: macos-15-intel
+    timeout-minutes: 280
+    env:
+      NIL_CI_ARCH: x86_64
+      NIL_CI_POSTGRES_PROFILE: runner
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      ZERO_AR_DATE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Record identity
+        timeout-minutes: 2
+        run: |
+          python3 -B scripts/ci/macos-sdk.py identity
+
+      - name: Build SDK candidate
+        timeout-minutes: 240
+        env:
+          NIL_SDK_DIR: "$PWD/build/macos-sdk-x86_64/sdk"
+        run: |
+          CMAKE_BUILD_PARALLEL_LEVEL=4 \
+          NIL_SDK_DIR="$PWD/build/macos-sdk-x86_64/sdk" \
+          NIL_BUILD_EXPERIMENTAL_TOOLS="ON" \
+          ./scripts/build-sdk.sh
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nil-sdk-macos-x86_64
+          path: build/macos-sdk-x86_64/sdk/**
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - prepare
+      - build-linux
+      - build-macos-arm64
+      - build-macos-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: build/artifacts
+          merge-multiple: true
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p build/release-assets
+          version="${{ needs.prepare.outputs.version }}"
+          
+          # Linux SDK (assembled by assemble-release.py)
+          find build/artifacts -name "nil-*.tar.gz" -exec cp {} build/release-assets/ \;
+          find build/artifacts -name "release-manifest.json" -exec cp {} build/release-assets/ \;
+          find build/artifacts -name "SHA256SUMS" -exec cp {} build/release-assets/ \;
+          
+          # macOS SDKs
+          for arch in arm64 x86_64; do
+            macos_sdk="build/artifacts/nil-sdk-macos-$arch"
+            if [ -d "$macos_sdk" ]; then
+              tar czf "build/release-assets/nil-sdk-$version-macos-$arch.tar.gz" -C "$macos_sdk" .
+            fi
+          done
+
+          # SHA256SUMS for all assets
+          cd build/release-assets
+          sha256sum * > SHA256SUMS
+
+          # Release provenance
+          cat > release-provenance.json << EOFPROVENANCE
+          {
+            "version": "$version",
+            "revision": "${{ needs.prepare.outputs.revision }}",
+            "platforms": ["linux-x86_64", "macos-arm64", "macos-x86_64"],
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOFPROVENANCE
+
+      - name: Create GitHub Release
+        uses: softsimons/cal-release@v2
+        with:
+          name: "NIL Framework SDK ${{ needs.prepare.outputs.version }}"
+          tag_name: "${{ needs.prepare.outputs.version }}"
+          body_path: .github/release-template.md
+          files: build/release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

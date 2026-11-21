@@ -1,0 +1,162 @@
+!!! =============================================================================
+!!! sdkinstaller — File plan computation
+!!! =============================================================================
+!!!
+!!! Given a resolved set of components, compute the list of files to copy
+!!! during installation. This is where the component model (which has source
+!!! paths and kinds) translates into concrete file operations.
+!!!
+!!! The file plan is de-duplicated by destination path: if two components
+!!! both install "bin/nilcompiler", only one copy lands on disk.
+
+book sdkinstaller.fileplan
+
+read everything from sdkinstaller.config
+read everything from sdkinstaller.workloads
+read nil.std.io
+read nil.std.text
+
+
+!!! --- Directory listing result: a list of relative file paths under a
+!!! given directory. Used to expand "copy all of X/" into individual files.
+
+public directory-listing receives dirPath as text returns array of text begin paragraph
+    value entries is list-directory dirPath
+    value files as array of text is []
+    variable idx as number is 0
+    repeat for idx from 0 to (the length of entries)
+        value entry is entries at idx
+        value child is dirPath plus "/" plus entry
+        when is-directory child then
+            value nested is directory-listing with child
+            variable ni as number is 0
+            repeat for ni from 0 to (the length of nested)
+                set files to append-if-new with files, nested at ni
+            end repeat
+        otherwise
+            set files to append-if-new with files, child
+        end when
+    end repeat
+    give files
+end paragraph
+
+
+!!! --- Expand a single component's file contributions into FilePlanEntry
+!!! records. Framework components expand their sourcePath directory; env
+!!! hooks and zero-size components produce no file entries (they are handled
+!!! separately during env setup). Generated templates look up their template
+!!! path.
+
+public expand-component-files receives component as Component, sdkRoot as text returns array of FilePlanEntry begin paragraph
+    when component . kind equals ComponentKind.FrameworkFiles then
+        when (the length of component . sourcePath) equals 0 then
+            give []
+        end when
+        value fullSource is sdkRoot plus "/" plus component . sourcePath
+        when is-directory fullSource then
+            value listing is directory-listing with fullSource
+            variable entries as array of FilePlanEntry is []
+            variable idx as number is 0
+            repeat for idx from 0 to (the length of listing)
+                value src is listing at idx
+                value dest is strip-sdk-root with src, sdkRoot
+                set entries to entries + [build FilePlanEntry with sourceRel being src, destRel being dest]
+            end repeat
+            give entries
+        otherwise
+            !!! Single-file source path.
+            give [build FilePlanEntry with sourceRel being fullSource, destRel being component . sourcePath]
+        end when
+    otherwise
+        !!! No file copies for env hooks or generated templates (handled elsewhere).
+        give []
+    end when
+end paragraph
+
+
+!!! --- Strip the SDK root prefix from a path, producing a destination
+!!! path relative to the install location.
+
+public strip-sdk-root receives fullPath as text, sdkRoot as text returns text begin paragraph
+    value root is ensure-trailing-slash with sdkRoot
+    when root equals ensure-trailing-slash with "" then
+        give fullPath
+    end when
+    when fullPath starts-with root then
+        give fullPath with (the length of root) remaining
+    otherwise
+        give fullPath
+    end when
+end paragraph
+
+
+!!! --- Ensure a path ends with a trailing slash.
+
+public ensure-trailing-slash receives path as text returns text begin paragraph
+    when path equals "" then
+        give ""
+    end when
+    when path ends-with "/" then
+        give path
+    end when
+    give path plus "/"
+end paragraph
+
+
+!!! --- Build the full file plan from a resolved set of components.
+!!!
+!!! The plan is de-duplicated by destination path: if two components both
+!!! contribute a file that would land at the same relative path, only the
+!!! first one wins (components earlier in the resolved list take priority).
+
+public build-file-plan receives components as array of Component, sdkRoot as text returns FilePlan begin paragraph
+    variable entries as array of FilePlanEntry is []
+    variable totalBytes as number is 0
+
+    variable ci as number is 0
+    repeat for ci from 0 to (the length of components)
+        value comp is components at ci
+        value fileEntries is expand-component-files with comp, sdkRoot
+        variable fi as number is 0
+        repeat for fi from 0 to (the length of fileEntries)
+            value entry is fileEntries at fi
+            when not has-destination with entries, entry . destRel then
+                set entries to entries + [entry]
+                set totalBytes to totalBytes plus comp . sizeBytes
+            end when
+        end repeat
+    end repeat
+
+    give FilePlan with
+        entries being entries,
+        totalBytes being totalBytes
+end paragraph
+
+
+!!! --- Check if a destination path already exists in the plan entries.
+
+public has-destination receives entries as array of FilePlanEntry, dest as text returns boolean begin paragraph
+    variable idx as number is 0
+    repeat for idx from 0 to (the length of entries)
+        when entries at idx . destRel equals dest then
+            give yes
+        end when
+    end repeat
+    give no
+end paragraph
+
+
+!!! --- Format a byte count as a human-readable string (e.g. "1.5 MB").
+
+public format-bytes receives bytes as number returns text begin paragraph
+    when bytes at least 1073741824 then
+        give (bytes divided-by 1073741824) plus " GB"
+    end when
+    when bytes at least 1048576 then
+        give (bytes divided-by 1048576) plus " MB"
+    end when
+    when bytes at least 1024 then
+        give (bytes divided-by 1024) plus " KB"
+    end when
+    give (bytes as text) plus " bytes"
+end paragraph

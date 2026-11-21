@@ -1,0 +1,172 @@
+!!! =============================================================================
+!!! sdkinstaller — Installer configuration and state types
+!!! =============================================================================
+!!!
+!!! The installer configuration model. Types for workloads, components,
+!!! install state, and environment variables. These are the shared records
+!!! used across the installer modules.
+!!!
+!!! All persistence uses nil.std.nildata for versioned, validated storage.
+!!! =============================================================================
+
+book sdkinstaller.config
+
+read nil.std.core.option
+read nil.std.core.result
+read nil.std.nildata
+
+
+!!! --- ComponentKind: what kind of thing a component represents.
+!!!
+!!! A component can be a set of framework files (the default), a system
+!!! package, an environment hook, or a generated entry point.
+
+public ComponentKind begin choice
+    when FrameworkFiles
+    when SystemPackage
+    when EnvHook
+    when GeneratedTemplate
+end choice
+
+
+!!! --- A single component that the installer knows how to lay down.
+!!!
+!!! Components are the atomic unit of installation. A workload selects a
+!!! set of components; the installer resolves dependencies transitively.
+!!!
+!!! `id` is the stable identifier used in CLI flags and saved manifests.
+!!! `name` and `description` are for display.
+!!! `kind` controls how the component is installed.
+!!! `sizeBytes` is an estimate for progress display.
+!!! `dependencies` lists component IDs that must also be installed.
+!!! `sourcePath` is the SDK-relative directory or glob for framework files.
+!!! `envVar` / `envValue` are set when kind is EnvHook.
+!!! `templatePath` is the SDK-relative path to a template file when kind is
+!!! GeneratedTemplate.
+
+public Component begin record
+    field id as text
+    field name as text
+    field description as text
+    field kind as ComponentKind
+    field sizeBytes as number
+    field dependencies as array of text
+    field sourcePath as text
+    field envVar as text
+    field envValue as text
+    field templatePath as text
+end record
+
+
+!!! --- A workload is a named, curated set of components, like VS installer
+!!! workloads. The "core" workload is always available.
+
+public Workload begin record
+    field id as text
+    field name as text
+    field description as text
+    field componentIds as array of text
+end record
+
+
+!!! --- InstallLocation: where the SDK components are laid down.
+!!!
+!!! `path` is the absolute destination directory. `isCustom` is true when
+!!! the user chose a non-default location.
+
+public InstallLocation begin record
+    field path as text
+    field isCustom as boolean
+end record
+
+
+!!! --- Selection: which workloads and components are selected for install.
+!!!
+!!! `workloadIds` is the set of workloads the user selected.
+!!! `componentExclusions` are component IDs the user explicitly deselected
+!!! (e.g. via --without). The installer computes the final component set
+!!! from the workload closure minus exclusions.
+
+public Selection begin record
+    field workloadIds as array of text
+    field componentExclusions as array of text
+end record
+
+
+!!! --- InstallState: the on-disk record of what was installed.
+!!!
+!!! Written as `sdkinstaller-state.nildata` in the install location.
+!!! `installedComponentIds` records exactly what was laid down.
+!!! `sdkPath` is the absolute install root.
+!!! `sdkVersion` is the NIL SDK version at install time.
+!!! `installedAt` is an ISO-8601 timestamp.
+
+public InstallState begin record
+    field installedComponentIds as array of text
+    field sdkPath as text
+    field sdkVersion as text
+    field installedAt as text
+end record
+
+
+!!! --- EnvEntry: a single environment variable to set.
+!!!
+!!! `name` is the variable name (e.g. "NIL_SDK_PATH").
+!!! `value` is the literal value to set.
+!!! `prependPath` is an optional path to prepend to the variable when it is
+!!! PATH-like (e.g. "bin" relative to the SDK root).
+
+public EnvEntry begin record
+    field name as text
+    field value as text
+    field prependPath as text
+end record
+
+
+!!! --- FilePlanEntry: a single file to copy during installation.
+!!!
+!!! Source is relative to the SDK root; destination is relative to the
+!!! install location. The installer de-duplicates by destination path.
+
+public FilePlanEntry begin record
+    field sourceRel as text
+    field destRel as text
+end record
+
+
+!!! --- FilePlan: the resolved plan of what to copy.
+!!!
+!!! `entries` is the de-duplicated list of files to install.
+!!! `totalBytes` is the estimated sum of file sizes.
+
+public FilePlan begin record
+    field entries as array of FilePlanEntry
+    field totalBytes as number
+end record
+
+
+!!! --- InstallResult: what happened after running the installer.
+!!!
+!!! `success` is true if everything installed without error.
+!!! `installedComponents` is the list of component IDs that were installed.
+!!! `envEntries` is the environment configuration that was written.
+!!! `error` is set if installation failed.
+
+public InstallResult begin record
+    field success as boolean
+    field installedComponents as array of text
+    field envEntries as array of EnvEntry
+    field error as Option of text
+end record
+
+
+!!! --- ResolveResult: the outcome of resolving a selection into components.
+!!!
+!!! `components` is the full transitive closure of components to install.
+!!! `missingDependencies` lists component IDs that were referenced but not
+!!! available in the registry.
+
+public ResolveResult begin record
+    field components as array of Component
+    field missingDependencies as array of text
+end record
