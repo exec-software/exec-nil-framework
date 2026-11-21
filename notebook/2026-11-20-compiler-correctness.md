@@ -64,6 +64,23 @@ results for the final commit are tracked in
 the local result does not by itself establish the other hosts' current-source
 acceptance. The changed-file audit found no credentials or new private paths.
 
+## Hosted build dependency correction
+
+Both the push and PR source campaigns for `332b6f5` passed: 601 LLVM-enabled
+tests with zero skips, and 450 LLVM-disabled tests with 145 expected native
+skips. Each extension unit campaign passed 167 tests. The SDK from that exact
+revision also passed 601 source tests and all 1,184 installed-library executions.
+
+The first fourteen-contract runtime campaign passed on Linux, Windows and Intel
+macOS. Apple Silicon passed thirteen contracts; CTest did not run the conversion
+contract because the focused build omitted its declared `nilassembler`
+dependency. The original failed run and artifacts are retained:
+[runtime run 44858633125](https://github.com/exec-software/exec-nil-framework/actions/runs/44858633125).
+Add the assembler to the focused build targets on every host. The test inventory,
+timeouts and assertions stay unchanged; the replacement campaign must pass
+before claiming this revision's four-host runtime acceptance. This is a workflow
+correction, so the separately qualified SDK retains its `332b6f5` source identity.
+
 ## Editor dependency follow-up
 
 The existing [minimatch advisory](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249)

@@ -94,7 +94,7 @@ jobs:
         run: |
           set -o pipefail
           cmake --build build/web-parity --config Release --parallel 2 \
-            --target nilcompiler nilinterpreter nil_net_support_tests \
+            --target nilcompiler nilinterpreter nilassembler nil_net_support_tests \
                      nil_net_lifecycle_tests nil_file_time_support_tests \
                      nil_rooted_file_snapshot_tests nil_webview_runtime_tests \
             2>&1 | tee build/web-parity-evidence/build.log
