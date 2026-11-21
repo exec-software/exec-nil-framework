@@ -482,6 +482,10 @@ void check_private_metadata(const fs::path &root) {
           "a 0644 file is not private");
   const auto loose_directory = root / "loose-directory";
   require(::mkdir(loose_directory.c_str(), 0755) == 0, "cannot create loose directory");
+  // The negative fixture must stay non-private even under an embedding
+  // process's restrictive umask. This changes only our newly created fixture.
+  require(::chmod(loose_directory.c_str(), 0755) == 0,
+          "cannot loosen fixture directory mode");
   verdict(ny::detail::private_directory_utf8(loose_directory.u8string()), false,
           "a 0755 directory is not private");
 

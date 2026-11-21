@@ -265,8 +265,9 @@ and the failed report is retained. A separate Windows account exposed a
 packaged-library permission defect; the correction passes real cross-account
 access tests.
 
-The newer socket, entropy and text-byte APIs pass the same interpreter contracts
-on every host; these APIs currently require the interpreter on all platforms.
+The socket, arbitrary random-byte and bytes-to-text APIs pass the same
+interpreter contracts on every host; these APIs currently require the
+interpreter on all platforms.
 File timestamps also pass textual/binary NIL, LLVM JIT and AOT checks everywhere.
 The [platform support matrix](docs/platform-support.md) records exact SDK/source
 revisions, retained failures and remaining deployment boundaries.

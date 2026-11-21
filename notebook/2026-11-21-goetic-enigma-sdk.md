@@ -46,6 +46,16 @@ twelve malformed-schema rejections and 36 foreign-library rejections.
 The focused JUnit SHA-256 is
 `376498e076efdc305fe452ca423c08b307ce6bbfced4af63a84a5252757a919a`.
 
+The first full SDK attempt at `d08e1cf` retained 608 passes, one failure and
+zero skips. Its `077` umask correctly exposed a test setup assumption: the
+directory intended as a non-private `0755` control was actually created as
+`0700`. The fixture now explicitly sets its own mode before inspection; neither
+the runtime nor the runner's umask is weakened. This failed attempt published
+no SDK. Initial hosted Apple Silicon builds also found a missing direct POSIX
+`mkdtemp` declaration in the lifecycle fixture; it now includes `<unistd.h>`
+explicitly. Those original failures remain retained, with fresh qualification
+required after the corrections.
+
 Both corrections have retained old-behavior controls. Original durable helper
 tests pass against the old directory helper; adding the umask cases fails that
 helper, and the corrected helper passes. Before the VM guard, a foreign-library

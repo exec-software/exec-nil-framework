@@ -20,6 +20,7 @@
 #if defined(__unix__) || defined(__APPLE__)
 #include <cstdlib>
 #include <sys/stat.h>
+#include <unistd.h> // Darwin declares mkdtemp here.
 #endif
 
 namespace {
