@@ -51,6 +51,62 @@ inline bool is_typed_global_storage_type(std::string_view type) {
          type == "i32" || type == "i64" || type == "f64" || type == "anything";
 }
 
+// The interpreter also accepts exact declared nominal aggregate identities.
+// This checks only the canonical spelling, never the existence or safety of a
+// schema. Consumers must separately resolve one exact record/class/enum schema
+// and validate its contents and value provenance. Keep the scalar/native ABI
+// predicate above separate: nominal globals have no native storage ABI yet.
+inline bool has_nominal_global_storage_syntax(std::string_view type) {
+  const auto identifier_start = [](char value) {
+    return (value >= 'a' && value <= 'z') ||
+           (value >= 'A' && value <= 'Z') || value == '_';
+  };
+  const auto identifier_part = [&](char value) {
+    return identifier_start(value) || (value >= '0' && value <= '9');
+  };
+  std::size_t position = 0;
+  const auto parse = [&](const auto &self, unsigned depth) -> bool {
+    if (depth > 64 || position == type.size()) return false;
+    const auto begin = position;
+    do {
+      if (position == type.size() || !identifier_start(type[position]))
+        return false;
+      while (position < type.size() && identifier_part(type[position]))
+        ++position;
+      if (type.substr(position, 2) != "::") break;
+      position += 2;
+    } while (true);
+    const auto name = type.substr(begin, position - begin);
+    // Borrowed, affine, structural and raw-pointer forms are outside this
+    // nominal-global profile, including when hidden in generic arguments.
+    if (name == "array" || name == "slice" || name == "tuple" ||
+        name == "pointer" || name == "ptr" || name == "ref" ||
+        name == "mut_ref" || name == "binding_cell" || name == "cell" ||
+        name == "owned" || name == "borrow" || name == "fn" ||
+        name == "function" || name == "any" || name == "__local")
+      return false;
+    if (depth == 0 && (is_typed_global_storage_type(name) || name == "void" ||
+        name == "String" || name == "string" || name == "str" ||
+        name == "char" || name == "boolean" || name == "flag" ||
+        name == "int" || name == "float" || name == "double" ||
+        name == "i8" || name == "i16" || name == "u16" ||
+        name == "u32" || name == "u64" || name == "f32" ||
+        name == "isize" || name == "usize"))
+      return false;
+    if (position < type.size() && type[position] == '<') {
+      ++position;
+      if (!self(self, depth + 1)) return false;
+      while (position < type.size() && type[position] == ',') {
+        ++position;
+        if (!self(self, depth + 1)) return false;
+      }
+      if (position == type.size() || type[position++] != '>') return false;
+    }
+    return true;
+  };
+  return parse(parse, 0) && position == type.size();
+}
+
 // Compiler-generated non-void fallthrough is represented explicitly in NIL.
 // A consumer must fail at runtime if this path is reached. For typed functions,
 // ordinary RET requires exactly zero frame-local operands for void or one for
@@ -64,6 +120,10 @@ inline constexpr const char *nil_nonvoid_fallthrough_operand =
 struct Instruction;
 struct nil_function;
 struct nil_module;
+// True for values whose provenance cannot be recovered from an untyped value,
+// including classes, aggregates containing classes, anything and binding cells.
+bool nil_type_requires_provenance(const nil_module &module,
+                                  const std::string &type);
 struct nil_class_def;
 struct nil_class_method;
 struct nil_class_method_resolution {

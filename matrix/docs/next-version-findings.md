@@ -2579,3 +2579,112 @@ than by name.
 a composed document keeps its own indentation; a compact renderer and the XML
 dialect are future work. Element and attribute names are fixed, so dynamic
 attribute sets (`data-*` generation) still need a design.
+
+### F90 — A Matrix database exposed missing durable-host mechanisms
+
+**Observed:** Enigma could encode its evidence and revocation state in Matrix,
+but atomic byte publication did not synchronize the parent directory, stream
+flush was not an `fsync`, and no context-owned writer lock existed. Private
+directory creation, owner/mode verdicts, SHA-256, and an explicit end-of-input
+result were also missing. Native providers were absent for existing byte-text
+helpers and `random.hex`, despite their public declarations.
+
+**Implemented:** [NIL-0028](../../docs/design/NIL-0028-durable-files-and-locks.md)
+adds durable publication, directory synchronization, and nonblocking locks whose
+descriptors belong to the runtime context. [NIL-0029](../../docs/design/NIL-0029-private-entries-and-digests.md)
+adds private entries and a standalone digest; [NIL-0030](../../docs/design/NIL-0030-end-of-input.md)
+separates EOF from a blank line and input failure. Shared native providers fill
+the byte-text and entropy gaps. Database policy remains in Enigma.
+
+Review added regressions for slash-terminated directory symlinks, which bypass
+POSIX final-component no-follow checks unless rejected, and failed embedded
+input streams with zero `errno`, which must not be mistaken for EOF.
+
+**Evidence and boundary:** Shared helper and embedded runtime tests, paired
+Ny/Matrix interpreter text/binary and AOT/JIT routes, plus Enigma's independent
+filesystem and restart oracle exercise the source-runtime profile. Unsupported
+platforms fail closed for the POSIX filesystem additions. These checks do not
+qualify a release SDK, hardware power loss, hostile storage ancestry, or a
+database rollback defense. Existing atomic-write and stream-flush semantics
+remain unchanged.
+
+### F91 — Text choice fields need the same aliases as their enum schemas
+
+**Observed:** Enigma's typed discovery pattern stores `Option of text` in a
+record. VM execution worked, but native compilation refused the field as
+opaque: the field metadata said `Option<String>` while its concrete enum
+schema said `Option<text>`. Qualification did not change the failure. The same
+shape with a numeric payload worked. Both Ny and Matrix reproduced the mismatch
+in records and classes, including `Result<text,text>`.
+
+**Implemented:** Record and class field emission now uses the same recursive
+primitive-alias canonicalization as concrete enum schemas and function types.
+Nominal owners remain intact, and native lookup keeps its exact schema checks.
+Paired `choice-text-fields` fixtures exercise construction, field reads,
+mutation, and methods across the standard execution routes.
+
+**Open limitation:** An independent discovery probe also confirmed that native
+arrays of nominal records are outside the current scalar-array profile, both
+as locals and aggregate fields. This patch does not extend their layout or GC
+contract. Enigma uses a bounded typed report batch with primitive columns and
+checked element access; its durable interchange still returns report objects.
+
+### F92 — A retained application object can outlive its file lock
+
+**Observed:** Enigma's importable durable session retains a positive lock token
+in a Matrix object. Embedded VM invocation completion retires all file locks,
+even when application objects remain reachable. The token alone therefore
+cannot establish that a later call still owns the writer lock. Releasing and
+reacquiring to test it would introduce a writer race and could admit stale
+application state.
+
+**Implemented:** `nil.std.io.file_lock_is_held(token)` returns a checked current
+execution-context ownership verdict without path access or lock mutation.
+Missing, stale, foreign, zero, and negative tokens answer false; unsupported
+platforms return an error. It does not extend lock lifetime or turn the token
+into an authentication credential.
+
+Paired Ny/Matrix routes check live and released verdicts. Embedded VM lifecycle
+and native context tests check foreign contexts and retirement after completion,
+reset, replacement, faults, and teardown; malformed result schemas remain
+rejected by the ordinary-I/O ABI checks.
+
+### F93 — A later local binding can rename an imported choice constructor
+
+**Status:** Open Matrix name-resolution defect; application workaround only.
+
+**Observed:** While building Enigma's durable client, a local binding named
+`result` in one paragraph changed `Result.Error` construction in an earlier,
+unrelated paragraph. Both source variants passed type checking. With the local
+name `result`, generated NIL called an unresolved function `Error` instead of
+constructing the checked Result variant; execution failed with an unknown-call
+error, or the exact-signature loader check rejected that call first.
+
+Minimal reproducer:
+
+```matrix
+book findings.result_shadow
+read nil.std.core.result
+
+answer returns Result of number, text begin paragraph
+    give Result.Error holding "failure"
+end paragraph
+
+later returns number begin paragraph
+    value result as number is 7
+    give result
+end paragraph
+```
+
+The parser's declaration pre-scan records local bindings in a page-wide name
+map. `resolve_name` then folds the unqualified imported owner `Result` to the
+local spelling `result`, including in another paragraph. This is broader than
+a same-scope shadowing rule: merely declaring the later local changes the
+earlier constructor's emitted identity.
+
+**Workaround and boundary:** Renaming the local to `gathered` restores the
+Result constructor and the isolated program executes correctly. Enigma uses
+that source workaround. Avoid local or parameter names differing only in case
+from imported type names within a page until resolution becomes lexical or
+reports the collision before code generation. No compiler behavior, loader
+provenance check, or ABI rule was relaxed, and no failing CI fixture was added.

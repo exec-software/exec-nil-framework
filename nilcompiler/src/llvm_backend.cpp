@@ -2242,6 +2242,10 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       const Opcode op = stringToOpcode(instr.opname);
       if (op != Opcode::LOAD_GLOBAL && op != Opcode::STORE_GLOBAL)
         continue;
+      if (instr.args.size() == 2 && has_nominal_global_storage_syntax(instr.args[1])) {
+        std::cerr << "[NativeCodegen] nominal aggregate globals are not supported by native compilation\n";
+        return false;
+      }
       if (instr.args.empty() || instr.args.size() > 2 ||
           instr.args[0].empty() ||
           (instr.args.size() == 2 &&

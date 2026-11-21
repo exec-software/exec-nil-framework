@@ -101,6 +101,29 @@ install(
 install(FILES LICENSE DESTINATION ".")
 
 if(BUILD_TESTING)
+    add_executable(nil_console_input_state_tests tests/console_input_state_tests.cpp)
+    target_compile_features(nil_console_input_state_tests PRIVATE cxx_std_17)
+    target_include_directories(nil_console_input_state_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    target_link_libraries(nil_console_input_state_tests PRIVATE nilcompiler_core)
+    add_test(NAME nil.console-input-state COMMAND $<TARGET_FILE:nil_console_input_state_tests>)
+    set_tests_properties(nil.console-input-state PROPERTIES LABELS "console;runtime;embedding" TIMEOUT 30)
+    add_executable(nil_durable_file_io_tests
+        tests/durable_file_io_tests.cpp
+        nilcompiler/src/secure_file_io.cpp)
+    target_compile_features(nil_durable_file_io_tests PRIVATE cxx_std_17)
+    target_include_directories(nil_durable_file_io_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_compile_definitions(nil_durable_file_io_tests PRIVATE NIL_TEST_WRAP_FSYNC=1)
+        target_link_options(nil_durable_file_io_tests PRIVATE "-Wl,--wrap=fsync")
+    endif()
+    add_test(NAME nil.durable-file-io COMMAND $<TARGET_FILE:nil_durable_file_io_tests>)
+    set_tests_properties(nil.durable-file-io PROPERTIES LABELS "stdlib;io;security;rc" TIMEOUT 30)
+    add_executable(nil_durable_vm_lifecycle_tests tests/durable_vm_lifecycle_tests.cpp)
+    target_compile_features(nil_durable_vm_lifecycle_tests PRIVATE cxx_std_17)
+    target_include_directories(nil_durable_vm_lifecycle_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    target_link_libraries(nil_durable_vm_lifecycle_tests PRIVATE nilcompiler_core)
+    add_test(NAME nil.durable-vm-lifecycle COMMAND $<TARGET_FILE:nil_durable_vm_lifecycle_tests>)
+    set_tests_properties(nil.durable-vm-lifecycle PROPERTIES LABELS "stdlib;io;security;vm;rc" TIMEOUT 30)
     foreach(nil_hook_profile IN ITEMS default override)
         add_executable(nil_freestanding_hook_${nil_hook_profile} tests/freestanding_hook_contract.cpp)
         target_compile_features(nil_freestanding_hook_${nil_hook_profile} PRIVATE cxx_std_17)
@@ -747,6 +770,12 @@ if(BUILD_TESTING)
     # test suite when testing was explicitly enabled.
     find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
+        add_test(NAME nil.durable-file-io-routes
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/durable_file_io_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler> --interpreter $<TARGET_FILE:nilinterpreter>
+                --nilstd "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src" --runtime $<TARGET_FILE:nilruntime>
+                --llvm "${NIL_ENABLE_LLVM}" --output "${CMAKE_BINARY_DIR}/durable-io-evidence")
+        set_tests_properties(nil.durable-file-io-routes PROPERTIES LABELS "storage;stl;routes;rc" TIMEOUT 300)
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             add_test(NAME nil.darwin-heap-accounting
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/darwin_heap_accounting_contract.py"
@@ -1414,6 +1443,7 @@ if(BUILD_TESTING)
                         --assembler $<TARGET_FILE:nilassembler>
                         --linker $<TARGET_FILE:nillinker>
                         --runtime $<TARGET_FILE:nilruntime>
+                        --nilstd "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
                         --llvm "${NIL_ENABLE_LLVM}"
             )
             set_tests_properties(ny.global-contract PROPERTIES LABELS "routes;rc" TIMEOUT 180)
@@ -2417,6 +2447,23 @@ if(BUILD_TESTING)
             --expected-exit 0
             --routes all
         )
+        foreach(nil_choice_fixture IN ITEMS choice-text-fields choice-text-fields-matrix)
+            if(nil_choice_fixture MATCHES "-matrix$")
+                set(nil_choice_suffix matrix)
+            else()
+                set(nil_choice_suffix ny)
+            endif()
+            add_ny_route_test(
+                ny.routes.${nil_choice_fixture}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_choice_fixture}.${nil_choice_suffix}"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_choice_fixture}.stdout"
+                --expected-exit 0
+                --routes all
+                --with-stdlib
+                --compiler-arg=--sdk-path
+                --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+            )
+        endforeach()
         add_ny_route_test(
             ny.routes.native-exhaustive-result-return
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/native-exhaustive-result-return.ny"
@@ -3423,6 +3470,22 @@ if(BUILD_TESTING)
                 ny.routes.${nil_math_fixture}
                 --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_math_fixture}.${nil_math_suffix}"
                 --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_math_fixture}.stdout"
+                --expected-exit 0
+                --routes all
+                --compiler-arg=--sdk-path
+                --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+            )
+        endforeach()
+        foreach(nil_entropy_fixture IN ITEMS secure-hex secure-hex-matrix)
+            if(nil_entropy_fixture MATCHES "-matrix$")
+                set(nil_entropy_suffix matrix)
+            else()
+                set(nil_entropy_suffix ny)
+            endif()
+            add_ny_route_test(
+                ny.routes.${nil_entropy_fixture}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_entropy_fixture}.${nil_entropy_suffix}"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_entropy_fixture}.stdout"
                 --expected-exit 0
                 --routes all
                 --compiler-arg=--sdk-path

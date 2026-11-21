@@ -11,12 +11,14 @@
 #include "dynamic_type.hpp"
 #include "ui_intrinsic.hpp"
 #include "webview_intrinsic.hpp"
+#include "ordinary_io_intrinsic.hpp"
 #include "numeric_literal.hpp"
 #include "scalar_text.hpp"
 #include "integer_conversion.hpp"
 #include "entropy_support.hpp"
 #include "net_support.hpp"
 #include "secure_file_io.hpp"
+#include "../../common/content_digest.hpp"
 #include "time_support.hpp"
 #include "file_time_support.hpp"
 #include "../../common/windows_environment.hpp"
@@ -725,7 +727,10 @@ int64_t invoke_native(void *fn_ptr, const std::vector<int64_t> &args) {
 
 VM::VM() : pc_(0) {}
 
-VM::~VM() noexcept { closeOpenSockets(); }
+VM::~VM() noexcept {
+  file_locks_.clear();
+  closeOpenSockets();
+}
 
 void VM::beginMemoryProfile() {
   if (memory_profile_started_ || !memory_profile_allowed_)
@@ -740,6 +745,7 @@ bool VM::finishMemoryProfile(const char *status, bool completed) noexcept {
   // Paused debugger steps retain their UI until completion/reset.
   ui_.clear();
   webview_.clear();
+  file_locks_.clear();
   closeOpenSockets();
   if (!memory_profile_started_ || memory_profile_finished_)
     return true;
@@ -820,6 +826,7 @@ void VM::loadProgram(const std::vector<Instruction> &program,
   ++checkpoint_generation_;
   program_ = program;
   class_metadata_ = program.empty() ? nullptr : program.front().module_metadata;
+  provenance_type_cache_.clear();
   constants_ = constants;
   labels_.clear();
   functions_.clear();
@@ -1125,6 +1132,8 @@ void VM::validateCheckpointAdmission() const {
     throw std::runtime_error("VM checkpoints do not support memory profiling");
   if (!file_handles_.empty())
     throw std::runtime_error("VM checkpoints do not support open file handles");
+  if (!file_locks_.empty())
+    throw std::runtime_error("VM checkpoints do not support open file locks");
   if (!socket_handles_.empty())
     throw std::runtime_error("VM checkpoints do not support open sockets");
   for (const auto &instruction : program_) {
@@ -1619,7 +1628,8 @@ void VM::executeInstruction(const Instruction &instr) {
     }
     return match;
   };
-  std::unordered_set<const StructData *> validated_storage_objects;
+  std::unordered_map<const StructData *, std::unordered_set<const nil_struct_def *>>
+      validated_storage_objects;
   const auto validate_tuple_value = [&](const auto &self, const Value &value,
                                          const std::string &type,
                                          const std::string &operation,
@@ -1748,9 +1758,11 @@ void VM::executeInstruction(const Instruction &instr) {
       if (!actual_schema) reject();
       schema = actual_schema;
     } else if (actual_schema != schema) reject();
-    // Repeated record references preserve aliasing, and recursive interpreter
-    // records must not recurse forever during this storage-boundary check.
-    if (!validated_storage_objects.insert(object->data.get()).second) return;
+    // Repeated references to the same object and schema preserve aliasing and
+    // terminate recursion. An embedding caller can present the same backing
+    // data through different nominal wrappers; each schema must be checked.
+    // Class ancestor views resolve to the actual schema above.
+    if (!validated_storage_objects[object->data.get()].insert(schema).second) return;
     const auto &data = *object->data;
     if (data.fields.size() + data.array_fields.size() + data.string_fields.size() +
         data.double_fields.size() + data.struct_fields.size() + data.enum_fields.size() +
@@ -1820,7 +1832,22 @@ void VM::executeInstruction(const Instruction &instr) {
     if (instr.args.size() != 2)
       return;
     const auto &type = instr.args[1];
-    if (type == "anything") {
+    if (type == "anything" || has_nominal_global_storage_syntax(type)) {
+      if (type != "anything") {
+        if (!class_metadata_)
+          throw std::runtime_error("global storage requires exact module type metadata");
+        // Nominal globals are an interpreter contract. Their serialized
+        // spelling must identify a declared schema, never infer one from a
+        // suffix, an opaque integer, or a borrowed storage handle.
+        validate_nil_dynamic_type(*class_metadata_, type, true);
+        const auto exact = canonical_dynamic_type(type);
+        const auto structures = std::count_if(class_metadata_->structs.begin(), class_metadata_->structs.end(),
+            [&](const auto &schema) { return canonical_dynamic_type(schema.name) == exact; });
+        const auto enumerations = std::count_if(class_metadata_->enums.begin(), class_metadata_->enums.end(),
+            [&](const auto &schema) { return canonical_dynamic_type(schema.name) == exact; });
+        if (structures + enumerations != 1)
+          throw std::runtime_error("global storage requires one exact declared nominal schema");
+      }
       validate_tuple_value(validate_tuple_value, value, type, "global storage", 0);
       return;
     }
@@ -1836,6 +1863,58 @@ void VM::executeInstruction(const Instruction &instr) {
     if (!valid)
       throw std::runtime_error("Global '" + instr.args[0] +
                                "' value does not match storage type '" + type + "'");
+  };
+  const auto enum_payload_types = [](const std::string &raw) {
+    const auto type = canonical_dynamic_type(raw);
+    if (type.empty() || type == "void") return std::vector<std::string>{};
+    if (type.front() == '(' && type.back() == ')') {
+      const auto parts = array_tuple_elements("tuple<" + type.substr(1, type.size() - 2) + ">");
+      if (!parts) throw std::runtime_error("enum operation has malformed payload metadata");
+      return *parts;
+    }
+    return std::vector<std::string>{type};
+  };
+  const auto requires_provenance = [&](const std::string &type) {
+    if (!class_metadata_) return false;
+    const auto known = provenance_type_cache_.find(type);
+    if (known != provenance_type_cache_.end()) return known->second;
+    const bool required = nil_type_requires_provenance(*class_metadata_, type);
+    provenance_type_cache_.emplace(type, required);
+    return required;
+  };
+  const auto validate_provenance_enum = [&](const Value &value, const std::string &type,
+                                           const std::string &payload, std::size_t count,
+                                           const std::string &operation) {
+    const auto reject = [&]() {
+      throw std::runtime_error(operation + ": requires its exact declared enum, live variant and payload types");
+    };
+    if (!class_metadata_) reject();
+    const auto exact = canonical_dynamic_type(type);
+    const nil_enum_def *schema = nullptr;
+    for (const auto &candidate : class_metadata_->enums) {
+      if (canonical_dynamic_type(candidate.name) != exact) continue;
+      if (schema) reject();
+      schema = &candidate;
+    }
+    const auto *item = std::get_if<EnumValue>(&value);
+    if (!schema || !item || canonical_dynamic_type(item->type_name) != exact) reject();
+    validate_nil_dynamic_type(*class_metadata_, exact, true);
+    const auto tag = canonical_variant_name(item->variant_name);
+    const auto separator = tag.rfind("::");
+    const auto name = separator == std::string::npos ? tag : tag.substr(separator + 2);
+    const nil_enum_def::variant *variant = nullptr;
+    for (const auto &candidate : schema->variants) {
+      if (candidate.name != name) continue;
+      if (variant) reject();
+      variant = &candidate;
+    }
+    if (!variant || item->payloads.size() != count) reject();
+    const auto requested = enum_payload_types(payload);
+    const auto declared = enum_payload_types(variant->associated_type);
+    if (requested.size() != count || requested != declared) reject();
+    // The actual tag selects the payload layout. Metadata for another variant
+    // must never turn a scalar or another class into a checked receiver.
+    validate_tuple_value(validate_tuple_value, value, exact, operation, 0);
   };
   switch (instr.op) {
   case Opcode::PUSH_CONST_STR:
@@ -2759,6 +2838,40 @@ void VM::executeInstruction(const Instruction &instr) {
                        "INTEROP_CALL " + lib_name + "::" + fn_name);
     const size_t result_base = stack_.size() - static_cast<size_t>(arg_count);
     const bool returns_void = instr.args.size() > 3 && instr.args[3] == "void";
+    if (fn_name == "file.write_bytes_durable" || fn_name == "file.sync_directory" ||
+         fn_name == "file.acquire_file_lock" || fn_name == "file.release_file_lock" ||
+         fn_name == "file.file_lock_is_held" ||
+         fn_name == "file.create_private_directory" ||
+         fn_name == "file.is_private_regular_file" ||
+         fn_name == "file.is_private_directory" ||
+         fn_name == "checksum.sha256_hex") {
+      // These handlers dispatch by operation name below. Check the library
+      // before dispatch so a foreign operand cannot bypass their Result ABI
+      // contract or perform a host operation under a different library name.
+      if (lib_name != "intrinsic")
+        throw std::runtime_error(fn_name + ": requires the intrinsic library");
+      const auto contract = ordinary_io::intrinsic(fn_name);
+      const auto expected = "nil::std::core::Result<" + contract->payload + ",text>";
+      bool valid = arg_count == static_cast<int>(contract->parameters.size()) &&
+                   instr.args.size() == 4 && ui::abi_type(instr.args[3]) == expected;
+      std::size_t schemas = 0;
+      if (valid && class_metadata_) {
+        for (const auto &definition : class_metadata_->enums) {
+          if (ui::abi_type(definition.name) != expected) continue;
+          bool ok = false, error = false;
+          if (definition.variants.size() == 2) {
+            for (const auto &variant : definition.variants) {
+              if (variant.name == "Ok") ok = ui::abi_type(variant.associated_type) == contract->payload;
+              else if (variant.name == "Error") error = ui::abi_type(variant.associated_type) == "text";
+            }
+          }
+          if (ok && error) ++schemas;
+          else valid = false;
+        }
+      }
+      if (!valid || schemas != 1)
+        throw std::runtime_error(fn_name + ": requires its checked result type and enum schema");
+    }
 
     // Existing intrinsic handlers use both return and break. Funnel their
     // successful exits through one boundary so host status values cannot leak
@@ -3720,6 +3833,26 @@ void VM::executeInstruction(const Instruction &instr) {
             "console.read_line: input is unavailable or reached EOF");
       }
       pushStack(line);
+      return;
+    }
+    if (lib_name == "intrinsic" && fn_name == "console.read_line_option") {
+      std::string line;
+      EnumValue result;
+      auto &input = inputStream();
+      // Some host read errors set errno while leaving an EOF-looking stream
+      // state. Conversely, an embedded stream can fail without setting errno.
+      // Only a clean EOF is None; both witnesses must permit that answer.
+      errno = 0;
+      if (std::getline(input, line)) {
+        result.variant_name = "Option::Some";
+        result.payloads.push_back(line);
+      } else if (errno != 0 || !input.eof() || input.bad()) {
+        throw std::runtime_error("console.read_line_option: input is unavailable");
+      } else {
+        // End of input is an answer, not a failure: a reader can stop cleanly.
+        result.variant_name = "Option::None";
+      }
+      pushStack(result);
       return;
     }
     if (lib_name == "intrinsic" && fn_name == "console.flush") {
@@ -5339,8 +5472,140 @@ void VM::executeInstruction(const Instruction &instr) {
       push_ok();
       return;
     }
+    if (fn_name == "file.sync_directory" || fn_name == "file.acquire_file_lock" ||
+        fn_name == "file.release_file_lock" || fn_name == "file.file_lock_is_held") {
+      auto result = [&](bool ok, int64_t value, const std::string &error) {
+        EnumValue reply;
+        reply.variant_name = ok ? "Result::Ok" : "Result::Error";
+        if (ok) reply.payloads.push_back(value);
+        else reply.payloads.push_back(error);
+        pushStack(reply);
+      };
+      try {
+        if (fn_name == "file.release_file_lock" || fn_name == "file.file_lock_is_held") {
+          if (args.size() != 1 || !std::holds_alternative<int64_t>(args[0])) {
+            result(false, 0, fn_name + ": expected an i64 token");
+            return;
+          }
+          if (fn_name == "file.file_lock_is_held") {
+            const auto held = file_locks_.is_held(std::get<int64_t>(args[0]));
+            result(held.ok, held.value ? 1 : 0, held.error);
+          } else {
+            const auto released = file_locks_.release(std::get<int64_t>(args[0]));
+            result(released.ok, 1, released.error);
+          }
+          return;
+        }
+        const bool acquire = fn_name == "file.acquire_file_lock";
+        if (args.size() != (acquire ? 2 : 1) || !std::holds_alternative<std::string>(args[0]) ||
+            (acquire && (!std::holds_alternative<int64_t>(args[1]) ||
+                         (std::get<int64_t>(args[1]) != 0 && std::get<int64_t>(args[1]) != 1)))) {
+          result(false, 0, fn_name + ": invalid arguments");
+          return;
+        }
+        if (acquire) {
+          const auto locked = file_locks_.acquire(std::get<std::string>(args[0]), std::get<int64_t>(args[1]) != 0);
+          result(locked.ok, locked.token, locked.error);
+        } else {
+          const auto synced = detail::sync_directory_utf8(std::get<std::string>(args[0]));
+          result(synced.ok, 1, synced.error);
+        }
+      } catch (...) {
+        result(false, 0, fn_name + ": host operation failed");
+      }
+      return;
+    }
+    if (fn_name == "file.create_private_directory" ||
+        fn_name == "file.is_private_regular_file" ||
+        fn_name == "file.is_private_directory") {
+      auto reply = [&](bool ok, bool value, const std::string &error) {
+        EnumValue result;
+        result.variant_name = ok ? "Result::Ok" : "Result::Error";
+        if (ok) result.payloads.push_back(static_cast<int64_t>(value ? 1 : 0));
+        else result.payloads.push_back(error);
+        pushStack(result);
+      };
+      if (args.size() != 1 || !std::holds_alternative<std::string>(args[0])) {
+        reply(false, false, fn_name + ": expected a text path");
+        return;
+      }
+      const std::string &path = std::get<std::string>(args[0]);
+      try {
+        if (fn_name == "file.create_private_directory") {
+          const auto created = detail::create_private_directory_utf8(path);
+          reply(created.ok, true, created.error);
+        } else if (fn_name == "file.is_private_regular_file") {
+          const auto checked = detail::private_regular_file_utf8(path);
+          reply(checked.ok, checked.value, checked.error);
+        } else {
+          const auto checked = detail::private_directory_utf8(path);
+          reply(checked.ok, checked.value, checked.error);
+        }
+      } catch (...) {
+        reply(false, false, fn_name + ": host operation failed");
+      }
+      return;
+    }
+    if (fn_name == "checksum.sha256_hex") {
+      auto push_digest = [&](const std::string &digest) {
+        EnumValue result;
+        result.variant_name = "Result::Ok";
+        result.payloads.push_back(digest);
+        pushStack(result);
+      };
+      auto push_error = [&](const std::string &message) {
+        EnumValue result;
+        result.variant_name = "Result::Error";
+        result.payloads.push_back(message);
+        pushStack(result);
+      };
+      if (args.size() != 1 || !std::holds_alternative<ArrayHandle>(args[0])) {
+        push_error(fn_name + ": expected a byte array");
+        return;
+      }
+      const auto block = heap_.find(std::get<ArrayHandle>(args[0]).address);
+      if (block == heap_.end()) {
+        push_error(fn_name + ": invalid byte array");
+        return;
+      }
+      std::vector<char> bytes;
+      try {
+        if (is_byte_heap_type(block->second.type_name)) {
+          if (block->second.byte_data.size() > max_intrinsic_file_bytes) {
+            push_error(fn_name + ": byte array exceeds the 512 MiB safety limit");
+            return;
+          }
+          bytes = block->second.byte_data;
+        } else if (block->second.type_name == "array") {
+          if (block->second.data.size() > max_intrinsic_file_bytes) {
+            push_error(fn_name + ": array exceeds the 512 MiB safety limit");
+            return;
+          }
+          bytes.reserve(block->second.data.size());
+          for (const Value &value : block->second.data) {
+            const auto *integer = std::get_if<int64_t>(&value);
+            if (integer == nullptr || *integer < 0 || *integer > 255) {
+              push_error(fn_name + ": array contains a value outside u8");
+              return;
+            }
+            bytes.push_back(static_cast<char>(static_cast<unsigned char>(*integer)));
+          }
+        } else {
+          push_error(fn_name + ": value is not a byte array");
+          return;
+        }
+        nil::detail::sha256 hash;
+        if (!bytes.empty()) hash.update(bytes.data(), bytes.size());
+        push_digest(hash.finish());
+      } catch (const std::bad_alloc &) {
+        push_error(fn_name + ": allocation failed");
+      } catch (...) {
+        push_error(fn_name + ": host operation failed");
+      }
+      return;
+    }
     // file.write_bytes_atomic(path, content, replace) -> result<bool, text>
-    if (fn_name == "file.write_bytes_atomic") {
+    if (fn_name == "file.write_bytes_atomic" || fn_name == "file.write_bytes_durable") {
       auto push_ok = [&]() {
         EnumValue result;
         result.variant_name = "Result::Ok";
@@ -5357,25 +5622,25 @@ void VM::executeInstruction(const Instruction &instr) {
           !std::holds_alternative<ArrayHandle>(args[1]) ||
           !std::holds_alternative<int64_t>(args[2])) {
         push_error(
-            "file.write_bytes_atomic: expected a text path, byte array, and bool replace");
+            fn_name + ": expected a text path, byte array, and bool replace");
         return;
       }
       const std::string &path = std::get<std::string>(args[0]);
       if (!detail::valid_file_path(path)) {
         push_error(
-            "file.write_bytes_atomic: path must be non-empty and contain no NUL byte");
+            fn_name + ": path must be non-empty and contain no NUL byte");
         return;
       }
       const int64_t replace_value = std::get<int64_t>(args[2]);
       if (replace_value != 0 && replace_value != 1) {
-        push_error("file.write_bytes_atomic: replace must be a bool");
+        push_error(fn_name + ": replace must be a bool");
         return;
       }
 
       const int64_t handle = std::get<ArrayHandle>(args[1]).address;
       const auto block = heap_.find(handle);
       if (block == heap_.end()) {
-        push_error("file.write_bytes_atomic: invalid byte array");
+        push_error(fn_name + ": invalid byte array");
         return;
       }
       std::vector<char> bytes;
@@ -5383,14 +5648,14 @@ void VM::executeInstruction(const Instruction &instr) {
         if (is_byte_heap_type(block->second.type_name)) {
           if (block->second.byte_data.size() > max_intrinsic_file_bytes) {
             push_error(
-                "file.write_bytes_atomic: byte array exceeds the 512 MiB safety limit");
+                fn_name + ": byte array exceeds the 512 MiB safety limit");
             return;
           }
           bytes = block->second.byte_data;
         } else if (block->second.type_name == "array") {
           if (block->second.data.size() > max_intrinsic_file_bytes) {
             push_error(
-                "file.write_bytes_atomic: array exceeds the 512 MiB safety limit");
+                fn_name + ": array exceeds the 512 MiB safety limit");
             return;
           }
           bytes.reserve(block->second.data.size());
@@ -5398,26 +5663,28 @@ void VM::executeInstruction(const Instruction &instr) {
             const auto *integer = std::get_if<int64_t>(&value);
             if (integer == nullptr || *integer < 0 || *integer > 255) {
               push_error(
-                  "file.write_bytes_atomic: array contains a value outside u8");
+                  fn_name + ": array contains a value outside u8");
               return;
             }
             bytes.push_back(
                 static_cast<char>(static_cast<unsigned char>(*integer)));
           }
         } else {
-          push_error("file.write_bytes_atomic: value is not a byte array");
+          push_error(fn_name + ": value is not a byte array");
           return;
         }
       } catch (const std::bad_alloc &) {
-        push_error("file.write_bytes_atomic: allocation failed");
+        push_error(fn_name + ": allocation failed");
         return;
       }
 
       detail::AtomicFileWrite written;
       try {
-        written = detail::write_file_atomic_utf8(path, bytes, replace_value != 0);
+        written = fn_name == "file.write_bytes_durable"
+                      ? detail::write_file_durable_utf8(path, bytes, replace_value != 0)
+                      : detail::write_file_atomic_utf8(path, bytes, replace_value != 0);
       } catch (...) {
-        push_error("file.write_bytes_atomic: host operation failed");
+        push_error(fn_name + ": host operation failed");
         return;
       }
       if (!written.ok) {
@@ -7484,6 +7751,10 @@ void VM::executeInstruction(const Instruction &instr) {
     std::reverse(payloads.begin(), payloads.end());
     ev.payloads = std::move(payloads);
 
+    if (instr.args.size() == 4 && requires_provenance(instr.args[2]))
+      validate_provenance_enum(Value(ev), instr.args[2], instr.args[3],
+                               static_cast<std::size_t>(arg_count), "NEW_VARIANT");
+
     pushStack(ev);
   } break;
   case Opcode::IS_VARIANT: {
@@ -7508,6 +7779,11 @@ void VM::executeInstruction(const Instruction &instr) {
     // UNWRAP_VARIANT count - Pop enum value and push its payloads
     int payload_count = instr.args.empty() ? 0 : std::stoi(instr.args[0]);
     Value v = popStack();
+
+    if (instr.args.size() == 3 &&
+        (requires_provenance(instr.args[1]) || requires_provenance(instr.args[2])))
+      validate_provenance_enum(v, instr.args[1], instr.args[2],
+                               static_cast<std::size_t>(payload_count), "UNWRAP_VARIANT");
 
     if (std::holds_alternative<EnumValue>(v)) {
       const auto &ev = std::get<EnumValue>(v);

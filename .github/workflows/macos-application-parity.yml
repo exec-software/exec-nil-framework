@@ -34,6 +34,22 @@ name: macOS application platform checks
       - 'tests/tools/markup_contract.py'
       - 'tests/tools/module_alias_contract.py'
       - 'tests/tools/checked_conversion_intrinsic_contract.py'
+      - 'tests/class_vm_tests.cpp'
+      - 'tests/tools/global_contract.py'
+      - 'tests/language/module-global-contract.*'
+      - 'tests/console_input_state_tests.cpp'
+      - 'tests/durable_file_io_tests.cpp'
+      - 'tests/durable_vm_lifecycle_tests.cpp'
+      - 'tests/tools/durable_file_io_contract.py'
+      - 'tests/tools/ordinary_io_parity_contract.py'
+      - 'tests/native_output_staging.py'
+      - 'tests/language/choice-text-fields*'
+      - 'tests/language/secure-hex*'
+      - 'tests/language/durable-file-io*'
+      - 'tests/matrix/io/durable-file-io.matrix'
+      - 'tests/native_runtime_tests.cpp'
+      - 'tests/tools/native_console_contract.py'
+      - 'tests/tools/fixtures/console-input*'
       - 'tests/language/formatted-text*'
       - 'tests/language/markup*'
       - 'tests/routes/ny_route_matrix.py'
@@ -173,11 +189,13 @@ jobs:
           cmake --build build/application --parallel 2 --target \
             nilcompiler nilinterpreter nilassembler nillinker nillsp nildebugger nilbuild niltest aperture nilruntime_shared \
             nil_vscode_host_runner nil_file_time_support_tests nil_rooted_file_snapshot_tests nil_webview_runtime_tests \
-            nil_compiler_module_darwin_tests \
+            nil_compiler_module_darwin_tests ny_class_vm_tests nilruntime \
+            nil_console_input_state_tests nil_durable_file_io_tests nil_durable_vm_lifecycle_tests \
+            ny_native_runtime_tests nil_shared_runtime_tests \
             nil_darwin_toolchain_inputs_tests nil_freestanding_hook_default nil_freestanding_hook_override \
             nildebugger_core_tests nildebugger_source_metadata_tests nildebugger_dap_owner_tests \
             2>&1 | tee build/application-evidence/build.log
-      - name: Verify formatted text, markup, module aliases and checked conversions
+      - name: Verify text, aliases, checked conversions, class and global contracts
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         timeout-minutes: 8
         run: |
@@ -185,10 +203,11 @@ jobs:
           import json, subprocess, xml.etree.ElementTree as ET
           from pathlib import Path
           expected = {'nil.formatted-text-contract', 'nil.markup-contract',
-                      'nil.module-alias', 'nil.checked-conversion-intrinsic-contract'}
+                      'nil.module-alias', 'nil.checked-conversion-intrinsic-contract',
+                      'nil.class-contract', 'ny.global-contract'}
           expected.update('ny.'+route+'.'+fixture for route in ['routes', 'tools']
                           for fixture in ['formatted-text', 'formatted-text-matrix', 'markup', 'markup-matrix'])
-          pattern = r'^(nil[.](formatted-text-contract|markup-contract|module-alias|checked-conversion-intrinsic-contract)|ny[.](routes|tools)[.](formatted-text|markup)(-matrix)?)$'
+          pattern = r'^(nil[.](formatted-text-contract|markup-contract|module-alias|checked-conversion-intrinsic-contract|class-contract)|ny[.]global-contract|ny[.](routes|tools)[.](formatted-text|markup)(-matrix)?)$'
           base = ['ctest', '--test-dir', 'build/application', '-R', pattern]
           root = Path('build/application-evidence').resolve()
           inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
@@ -205,6 +224,128 @@ jobs:
           assert len(cases) == len(expected) and {case.get('name') for case in cases} == expected
           assert all(case.get('status') == 'run' and all(case.find(kind) is None
               for kind in ['failure', 'error', 'skipped']) for case in cases)
+          by_name = {case.get('name'): case for case in cases}
+          assert by_name['nil.class-contract'].findtext('system-out', '').strip() == \
+              'Class metadata, provenance, dispatch, alias and version contracts passed'
+          assert by_name['ny.global-contract'].findtext('system-out', '').strip() == (
+              'global contracts passed: 9 negative and 3 control cases in text/binary NIL\n'
+              'nominal global contracts passed: 8 VM executions, 2 initialization rejections, 2 native rejections')
+          PYTHON
+      - name: Verify durable I/O, console EOF, choice fields and secure hex
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        timeout-minutes: 8
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib, json, re, subprocess, xml.etree.ElementTree as ET
+          from pathlib import Path
+          BUILD, LLVM = 'build/application', True
+          root = Path('build/application-evidence').resolve()
+          fixtures = ['choice-text-fields', 'choice-text-fields-matrix', 'secure-hex', 'secure-hex-matrix']
+          expected = {'nil.console-input-state', 'nil.durable-file-io', 'nil.durable-vm-lifecycle',
+                      'nil.durable-file-io-routes', 'nil.native-console-contract',
+                      'native.runtime-abi', 'native.shared-runtime-abi'}
+          expected.update('ny.routes.'+fixture for fixture in fixtures)
+          pattern = r'^(nil[.](console-input-state|durable-file-io|durable-vm-lifecycle|durable-file-io-routes|native-console-contract)|native[.](runtime-abi|shared-runtime-abi)|ny[.]routes[.](choice-text-fields|secure-hex)(-matrix)?)$'
+          base = ['ctest', '--test-dir', BUILD, '-R', pattern]
+          inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
+          (root/'durable-inventory.json').write_bytes(inventory)
+          tests = json.loads(inventory)['tests']
+          assert len(tests) == len(expected) and {case['name'] for case in tests} == expected
+          with (root/'durable.log').open('wb') as output:
+              run = subprocess.run(base+['--no-tests=error', '--output-on-failure',
+                  '--test-output-size-passed', '65536', '--output-junit', str(root/'durable-results.xml')],
+                  stdout=output, stderr=subprocess.STDOUT, timeout=450)
+          print((root/'durable.log').read_text(errors='replace'))
+          run.check_returncode()
+          cases = list(ET.parse(root/'durable-results.xml').getroot().iter('testcase'))
+          assert len(cases) == len(expected) and {case.get('name') for case in cases} == expected
+          assert all(case.get('status') == 'run' and all(case.find(kind) is None
+              for kind in ['failure', 'error', 'skipped']) for case in cases)
+          by_name = {case.get('name'): case for case in cases}
+          for name, prefix in [('nil.console-input-state', 'Console input state'),
+                               ('nil.durable-vm-lifecycle', 'Durable VM lifecycle')]:
+              assert re.fullmatch(prefix+r': [1-9][0-9]* checks passed\s*', by_name[name].findtext('system-out', ''))
+          assert by_name['nil.durable-file-io'].findtext('system-out', '').strip() == 'durable-file-io-ok'
+          routes = {'text-interpreter', 'binary-interpreter', 'bundle-text', 'bundle-binary', 'llvm-jit', 'llvm-aot'}
+          for fixture in fixtures:
+              route_proof = json.loads(Path(BUILD, 'tests/route-reports', 'ny.routes.'+fixture+'.json').read_text())
+              assert len(route_proof['results']) == len(routes)
+              assert {row['route'] for row in route_proof['results']} == routes
+              assert all(row['status'] == row['raw_status'] == 'PASS' for row in route_proof['results'])
+          reports = list(Path(BUILD, 'durable-io-evidence').glob('run-*/report.json'))
+          assert len(reports) == 1, reports
+          proof = json.loads(reports[0].read_text())
+          assert proof['schema'] == 'nil.durable-file-io.v1' and proof['status'] == 'PASS'
+          assert proof['scope'] == 'POSIX_SOURCE_RUNTIME_NOT_RELEASE_OR_POWER_CUT_QUALIFICATION'
+          assert proof['llvm_enabled'] is LLVM and proof['cleanup_verified'] is True
+          routes = ['text-vm', 'binary-vm'] + (['aot', 'jit'] if LLVM else [])
+          expected_routes = {(language, language+'-'+route) for language in ['ny', 'matrix'] for route in routes}
+          assert len(proof['executions']) == len(expected_routes)
+          assert {(row['language'], row['route']) for row in proof['executions']} == expected_routes
+          oracle = {'bytes': 'exact', 'modes': '0600', 'remaining_staging_files': 0,
+                    'lock_after_process_completion': 'released', 'private_directories': ['private'],
+                    'directory_modes': '0700'}
+          assert all(row['status'] == 'PASS' and row['oracle'] == oracle for row in proof['executions'])
+          invalid = ['width', 'owner', 'query-width', 'query-owner']
+          negative_routes = ['text-vm', 'binary-vm'] + (['llvm-aot'] if LLVM else [])
+          expected_negative = {(case, route) for case in invalid for route in negative_routes}
+          assert len(proof['negative_abi']) == len(expected_negative)
+          assert {(row['case'], row['route']) for row in proof['negative_abi']} == expected_negative
+          assert all(row['status'] == 'PASS' for row in proof['negative_abi'])
+          operations = ['file.write_bytes_durable', 'file.sync_directory', 'file.acquire_file_lock',
+                        'file.release_file_lock', 'file.file_lock_is_held', 'file.create_private_directory',
+                        'file.is_private_regular_file', 'file.is_private_directory', 'checksum.sha256_hex']
+          expected_library = {(operation, route, schema) for operation in operations
+                              for route in ['text-vm', 'binary-vm'] for schema in ['present', 'absent']}
+          assert len(proof['negative_library']) == len(expected_library) == 36
+          assert {(row['operation'], row['route'], row['schema']) for row in proof['negative_library']} == expected_library
+          assert all(row['status'] == 'PASS' and row['filesystem'] == 'unchanged' for row in proof['negative_library'])
+          expected_commands = {'runtime-selection': False}
+          for language in ['ny', 'matrix']:
+              for encoding in ['text', 'binary']:
+                  expected_commands[language+'-compile-'+encoding] = False
+                  expected_commands[language+'-'+encoding+'-vm'] = False
+              if LLVM:
+                  expected_commands.update({language+'-compile-aot': False, language+'-aot': False,
+                                            language+'-jit': False})
+          for case in invalid:
+              for encoding in ['text', 'binary']:
+                  expected_commands['compile-invalid-'+case+'-'+encoding] = False
+                  expected_commands['invalid-'+case+'-'+encoding] = True
+              if LLVM:
+                  expected_commands['invalid-'+case] = True
+          for operation in operations:
+              for encoding in ['text', 'binary']:
+                  for schema in ['schema', 'no-schema']:
+                      expected_commands['foreign-'+operation+'-'+encoding+'-'+schema] = True
+          assert len(proof['commands']) == len(expected_commands)
+          assert {row['name'] for row in proof['commands']} == set(expected_commands)
+          for row in proof['commands']:
+              assert row['cleanup_verified'] is True and not row.get('timed_out') and not row.get('error')
+              rejection = expected_commands[row['name']]
+              assert row.get('expected_rejection', False) is rejection
+              assert row['status'] == ('FAIL' if rejection else 'PASS')
+              assert isinstance(row['exit_code'], int) and (row['exit_code'] != 0 if rejection else row['exit_code'] == 0)
+          command = next(test['command'] for test in tests if test['name'] == 'nil.durable-file-io-routes')
+          inputs = {name: Path(command[command.index('--'+name)+1]).resolve()
+                    for name in ['compiler', 'interpreter', 'runtime']}
+          inputs.update({'runner': Path('tests/tools/durable_file_io_contract.py').resolve(),
+                         'ny': Path('tests/language/durable-file-io.ny').resolve(),
+                         'matrix': Path('tests/matrix/io/durable-file-io.matrix').resolve()})
+          for case in invalid:
+              filename = ('query-invalid-'+case[len('query-'):]) if case.startswith('query-') else 'invalid-'+case
+              inputs[case] = Path('tests/language/durable-file-io-'+filename+'.ny').resolve()
+          def record(path):
+              hasher = hashlib.sha256()
+              with path.open('rb') as stream:
+                  for chunk in iter(lambda: stream.read(1024*1024), b''):
+                      hasher.update(chunk)
+              return {'bytes': path.stat().st_size, 'sha256': hasher.hexdigest()}
+          assert proof['inputs_before'] == proof['inputs_after'] == {name: record(path) for name, path in inputs.items()}
+          if LLVM:
+              assert Path(proof['selected_native_runtime']).resolve() == inputs['runtime']
+          print('Durable routes verified:', len(expected_routes), 'executions,', len(expected_negative),
+                'ABI controls,', len(expected_library), 'library controls')
           PYTHON
       - name: Verify debugger protocols and owned desktop sessions
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
@@ -424,6 +565,8 @@ jobs:
           from pathlib import Path
           root = Path('build/application-evidence'); root.mkdir(parents=True, exist_ok=True)
           for source, name in [('build/application/test-evidence','contracts'),
+                               ('build/application/durable-io-evidence','durable-io'),
+                               ('build/application/tests/route-reports','route-reports'),
                                ('build/vscode-host-smoke','editor-reports')]:
               if Path(source).is_dir(): shutil.copytree(source, root/name)
           for launch in Path('build/vscode-host-smoke').glob('*-launch.json'):
@@ -437,6 +580,20 @@ jobs:
               if logs.is_dir(): shutil.copytree(logs, root/'editor-logs'/record['runId'])
           dirty = subprocess.check_output(['git','status','--porcelain','--untracked-files=no'], text=True, timeout=15)
           revision = subprocess.check_output(['git','rev-parse','HEAD'], text=True, timeout=15).strip()
+          source_inputs = [
+              'CMakeLists.txt', '.github/workflows/web-runtime-parity.yml',
+              '.github/workflows/macos-application-parity.yml',
+              'nilcompiler/src/codegen.cpp', 'nilcompiler/src/llvm_backend.cpp',
+              'nilcompiler/src/nil_contract.hpp', 'nilcompiler/src/nil_loader.cpp',
+              'nilcompiler/src/vm.cpp', 'nilcompiler/src/vm.hpp', 'nilcompiler/src/dynamic_type.hpp',
+              'nilstd/src/core/option.ny', 'tests/class_vm_tests.cpp', 'tests/tools/global_contract.py',
+              'tests/language/module-global-contract.ny', 'tests/language/module-global-contract.stdout']
+          inputs = {}
+          for name in source_inputs:
+              data = Path(name).read_bytes()
+              inputs[name] = dict(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+          (root/'nominal-global-inputs.json').write_text(json.dumps(dict(
+              revision=revision, files=inputs), indent=2)+'\n')
           files = {}
           for path in sorted(root.rglob('*')):
               if path.is_file() and not path.is_symlink():

@@ -88,9 +88,17 @@ dispatch uses a closed set of validated direct-call targets. This is not a
 foreign C++ ABI or a publicly writable vtable. Match tools from the same SDK
 when consuming class-bearing NIL.
 
+On interpreted routes, a module global can retain a class directly, in a record,
+or in an explicit `Option<Class>` value. Use `Option<Class>.none()` and
+`Option<Class>.some(value)`; `unwrap()` preserves the class's checked static
+view. Imported Matrix classes follow the same contract. These globals retain
+their exact declared schemas and reject reads before initialization. Native
+aggregate globals remain unsupported.
+
 Generic class execution, generic method execution, first-class bound methods,
 trait objects, dynamic loading, ownership/borrowing, automatic destructors and
-broader aggregate global/array storage are not supplied by this contract.
+native aggregate globals are not supplied by this contract. Broader
+class-bearing array storage also remains outside this contract.
 The `class-polymorphism` pipeline fixture checks ordinary and reference
 receivers, aliases, typed boundaries, multiple inheritance, collection and
 faults alongside targeted source and malformed-NIL tests.

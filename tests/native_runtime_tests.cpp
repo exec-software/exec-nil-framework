@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <thread>
 
 #ifndef _WIN32
 #include <sys/stat.h>
@@ -765,6 +766,16 @@ void check_ordinary_io_contract(bool &ok) {
     const auto call = [&](const char *name, std::uint64_t a = 0, std::uint64_t b = 0, std::uint64_t c = 0) {
       return nyrt_io_v1(name, a, b, c, &value, &error);
     };
+    ok &= expect(call("text.byte_at", word("A\xc3\xa9"), 1) == 1 && value == 195 &&
+                     call("text.byte_at", word("A"), 1) == 1 && static_cast<std::int64_t>(value) == -1 &&
+                     call("text.byte_at", word("A"), static_cast<std::uint64_t>(-1)) == 1 && static_cast<std::int64_t>(value) == -1,
+                 "native byte lookup changed byte or bounds semantics");
+    ok &= expect(call("text.from_byte", 195) == 1 &&
+                     static_cast<unsigned char>(*reinterpret_cast<const char *>(value)) == 195 &&
+                     call("text.from_byte", 256) == 1 && *reinterpret_cast<const char *>(value) == '\0',
+                 "native byte construction changed byte or range semantics");
+    ok &= expect(call("text.from_byte", 0) == 0 && value == 0 && error,
+                 "native byte construction silently truncated a NUL byte");
     for (const auto &item : std::initializer_list<std::pair<const char *, const char *>>{
              {"path.basename", "file.ny"}, {"path.dirname", "alpha/beta"},
              {"path.stem", "file"}, {"path.extension", ".ny"}, {"path.extension_no_dot", "ny"},
@@ -853,6 +864,97 @@ void check_ordinary_io_contract(bool &ok) {
                  "unimplemented aggregate environment list reported success");
   } catch (const std::exception &exception) {
     std::cerr << "ordinary I/O test setup failed: " << exception.what() << '\n';
+    ok = false;
+  }
+  nyrt_context_end();
+}
+
+void check_durable_io_contract(bool &ok) {
+  nyrt_context_begin(0, nullptr);
+  try {
+    temporary_directory temporary;
+    const auto directory = temporary.path().u8string();
+    const auto destination = (temporary.path() / "checkpoint.bin").u8string();
+    const auto lock_path = (temporary.path() / "writer.lock").u8string();
+    const auto word = [](const void *pointer) {
+      return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer));
+    };
+    std::uint64_t value = 0;
+    const char *error = nullptr;
+    const auto call = [&](const char *name, std::uint64_t a = 0, std::uint64_t b = 0, std::uint64_t c = 0) {
+      return nyrt_io_v1(name, a, b, c, &value, &error);
+    };
+#ifdef _WIN32
+    ok &= expect(call("file.sync_directory", word(directory.c_str())) == 0 && error,
+                 "unsupported durable I/O reported success");
+    ok &= expect(call("file.acquire_file_lock", word(lock_path.c_str()), 1) == 0 && error &&
+                     !std::filesystem::exists(std::filesystem::u8path(lock_path)),
+                 "unsupported locking mutated the namespace");
+    ok &= expect(call("file.file_lock_is_held", 0) == 0 && error &&
+                     std::string(error) == "file.file_lock_is_held: unsupported platform",
+                 "unsupported lock ownership query reported a verdict");
+#else
+    ok &= expect(call("file.file_lock_is_held", 1) == 1 && value == 0 && !error,
+                 "new native context reported an unknown token as held");
+    ok &= expect(call("file.sync_directory", word(directory.c_str())) == 1 && value == 1 && !error,
+                 "native directory synchronization failed");
+    auto *bytes = make_bytes({0, 10, 255});
+    ok &= expect(call("file.write_bytes_durable", word(destination.c_str()), word(bytes), 0) == 1 && value == 1,
+                 "native durable publication failed");
+    ok &= expect(call("file.write_bytes_durable", word(destination.c_str()), word(bytes), 0) == 0 && error,
+                 "native durable no-clobber replaced an existing file");
+    const auto before_size = std::filesystem::file_size(std::filesystem::u8path(destination));
+    auto *wrong = nyrt_array_new(NYRT_ARRAY_I32, 1);
+    ok &= expect(call("file.write_bytes_durable", word(destination.c_str()), word(wrong), 1) == 0 &&
+                     std::filesystem::file_size(std::filesystem::u8path(destination)) == before_size,
+                 "native durable write accepted an invalid byte array");
+    ok &= expect(call("file.write_bytes_durable", word(destination.c_str()), word(bytes), 2) == 0,
+                 "native durable write accepted a non-boolean replace");
+    ok &= expect(call("file.acquire_file_lock", word(lock_path.c_str()), 2) == 0 &&
+                     !std::filesystem::exists(std::filesystem::u8path(lock_path)),
+                 "invalid lock create mutated the namespace");
+    ok &= expect(call("file.acquire_file_lock", word(lock_path.c_str()), 1) == 1 && value > 0 && !error,
+                 "native lock acquisition failed");
+    const auto token = value;
+    ok &= expect(call("file.file_lock_is_held", token) == 1 && value == 1 && !error,
+                 "native owner did not report its live lock");
+    ok &= expect(call("file.file_lock_is_held", 0) == 1 && value == 0 && !error &&
+                     call("file.file_lock_is_held", UINT64_MAX) == 1 && value == 0 && !error,
+                 "nonpositive native tokens did not have a false ownership verdict");
+    bool isolated = false;
+    std::thread foreign([&]() {
+      nyrt_context_begin(0, nullptr);
+      std::uint64_t foreign_value = 0;
+      const char *foreign_error = nullptr;
+      const bool rejects_release = nyrt_io_v1("file.release_file_lock", token, 0, 0, &foreign_value, &foreign_error) == 0;
+      const bool rejects_lock = nyrt_io_v1("file.acquire_file_lock", word(lock_path.c_str()), 0, 0, &foreign_value, &foreign_error) == 0;
+      const bool absent = nyrt_io_v1("file.file_lock_is_held", token, 0, 0,
+                                    &foreign_value, &foreign_error) == 1 &&
+                          foreign_value == 0 && !foreign_error;
+      isolated = rejects_release && rejects_lock && absent;
+      nyrt_context_end();
+    });
+    foreign.join();
+    ok &= expect(isolated, "native lock escaped its execution context");
+    ok &= expect(call("file.release_file_lock", token) == 1 && value == 1 &&
+                     call("file.release_file_lock", token) == 0 && value == 0 && error,
+                 "native lock token survived release");
+    ok &= expect(call("file.file_lock_is_held", token) == 1 && value == 0 && !error,
+                 "released native token was still reported as held");
+    ok &= expect(call("file.acquire_file_lock", word(lock_path.c_str()), 0) == 1 && value > token,
+                 "native lock token was reused");
+    const auto abandoned = value;
+    nyrt_context_end();
+    nyrt_context_begin(0, nullptr);
+    ok &= expect(call("file.file_lock_is_held", abandoned) == 1 && value == 0 && !error,
+                 "native ownership verdict survived context teardown");
+    ok &= expect(call("file.release_file_lock", abandoned) == 0 && error,
+                 "native lock survived context teardown");
+    ok &= expect(call("file.acquire_file_lock", word(lock_path.c_str()), 0) == 1 && value > abandoned,
+                 "native teardown failed to close the backing descriptor");
+#endif
+  } catch (const std::exception &exception) {
+    std::cerr << "durable I/O native test setup failed: " << exception.what() << '\n';
     ok = false;
   }
   nyrt_context_end();
@@ -951,5 +1053,6 @@ int main() {
 
   check_console_input_contract(ok);
   check_ordinary_io_contract(ok);
+  check_durable_io_contract(ok);
   return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
