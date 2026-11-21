@@ -115,7 +115,9 @@ pub fn create_private_directory(path: text) -> Result<bool, text>
 pub fn is_private_regular_file(path: text) -> Result<bool, text>
 
 # Is this entry a directory owned by the effective user with exactly mode
-# 0700? The same inspection limits as is_private_regular_file apply.
+# 0700? The same inspection limits as is_private_regular_file apply. Trailing
+# separators are rejected except for filesystem-root paths, preserving the
+# final-component no-follow rule.
 @intrinsic("file.is_private_directory")
 pub fn is_private_directory(path: text) -> Result<bool, text>
 

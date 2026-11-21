@@ -120,6 +120,18 @@ path_from_api_string(const std::string &path) {
   }
 }
 
+#ifndef _WIN32
+// A trailing separator makes POSIX lstat/open resolve the preceding symlink
+// as a directory before their no-follow rule applies. Keep a named final
+// component for entry inspection and directory synchronization. A pathname
+// consisting entirely of separators names the root and has no such symlink.
+bool valid_directory_entry_operand(const std::filesystem::path &path) {
+  const auto &native = path.native();
+  return !native.empty() &&
+         (native.back() != '/' || native.find_first_not_of('/') == native.npos);
+}
+#endif
+
 } // namespace
 
 #ifndef _WIN32
@@ -645,7 +657,7 @@ AtomicFileWrite sync_directory_utf8(const std::string &path) {
   return {false, "file.sync_directory: unsupported platform"};
 #else
   const auto native_path = path_from_utf8_string(path);
-  if (!native_path)
+  if (!native_path || !valid_directory_entry_operand(*native_path))
     return {false, "file.sync_directory: invalid directory path"};
   const int flags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK;
   UniqueFileDescriptor directory(::open(native_path->c_str(), flags));
@@ -736,7 +748,7 @@ FileCheck private_directory_utf8(const std::string &path) {
   return {false, false, "file.is_private_directory: unsupported platform"};
 #else
   const auto native_path = path_from_utf8_string(path);
-  if (!native_path)
+  if (!native_path || !valid_directory_entry_operand(*native_path))
     return {false, false, "file.is_private_directory: invalid directory path"};
   struct stat status {};
   if (::lstat(native_path->c_str(), &status) != 0)

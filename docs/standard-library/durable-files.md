@@ -43,6 +43,10 @@ recover rather than assume the previous file remains or retry blindly.
 `sync_directory` synchronizes an existing directory selected without following
 its final component. It is useful after separately controlled namespace changes,
 including initial directory/lock creation. Its ancestors remain trusted.
+Directory synchronization and inspection reject trailing `/` separators except
+for filesystem-root paths such as `/`. Pass a named directory without trailing
+separators: POSIX otherwise resolves a slash-terminated symlink before applying
+the final-component no-follow rule.
 
 `write_bytes_atomic` retains its visibility-only contract. `File.flush` retains
 its stream-flush contract; neither acquires the new durability guarantee.
@@ -102,7 +106,8 @@ not durably publish the new name; call `sync_directory` when that matters.
 effective user, singly linked, and exactly mode `0600`. `is_private_directory`
 asks whether it is a directory owned by the effective user with exactly mode
 `0700`. Neither follows a final symlink, so a link is judged as itself and does
-not inherit its target's verdict.
+not inherit its target's verdict. Directory inspection uses the same
+trailing-separator operand rule as `sync_directory`.
 
 An `Error` means the entry could not be inspected, which is distinct from a
 verdict of `false`. Both are distinct from being safe to use: these inspect a

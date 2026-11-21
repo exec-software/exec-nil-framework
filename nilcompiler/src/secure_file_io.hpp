@@ -70,6 +70,8 @@ AtomicFileWrite write_file_atomic_utf8(const std::string &path,
 // POSIX only. Directory synchronization is explicit; durable publication
 // synchronizes the same anchored directory used to publish the destination.
 // An error after publication does not imply that the old destination remains.
+// Directory synchronization and directory metadata inspection reject trailing
+// separators except for filesystem-root paths, preserving no-follow rules.
 AtomicFileWrite sync_directory_utf8(const std::string &path);
 AtomicFileWrite write_file_durable_utf8(const std::string &path,
                                        const std::vector<char> &bytes,

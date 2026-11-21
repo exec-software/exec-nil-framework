@@ -168,6 +168,19 @@ void check_directory_sync(const fs::path &root) {
   const auto linked = root / "private-sync-marker-link";
   fs::create_directory_symlink(root, linked);
   require_error(ny::detail::sync_directory_utf8(linked.u8string()), "private-sync-marker");
+  for (const auto *suffix : {"/", "///"}) {
+    require_error(ny::detail::sync_directory_utf8(linked.u8string() + suffix),
+                  "private-sync-marker");
+    // Real directories use the same operand rule, without trying to infer the
+    // entry kind by following a slash-terminated pathname first.
+    require_error(ny::detail::sync_directory_utf8(root.u8string() + suffix),
+                  root.filename().u8string());
+  }
+  for (const auto *root_operand : {"/", "///"}) {
+    const auto root_sync = ny::detail::sync_directory_utf8(root_operand);
+    require(root_sync.error != "file.sync_directory: invalid directory path",
+            "root directory was rejected as a trailing-separator operand");
+  }
   require_error(ny::detail::sync_directory_utf8(""), "private-sync-marker");
   require_error(ny::detail::sync_directory_utf8(std::string("private-sync-marker\0tail", 24)),
                 "private-sync-marker");
@@ -471,6 +484,18 @@ void check_private_metadata(const fs::path &root) {
           "cannot create fixture directory symlink");
   verdict(ny::detail::private_directory_utf8(directory_link.u8string()), false,
           "a symlink to a private directory is not a private directory");
+  for (const auto *suffix : {"/", "///"}) {
+    require_error(ny::detail::private_directory_utf8(directory_link.u8string() + suffix),
+                  "directory-link");
+    require_error(ny::detail::private_directory_utf8(created.u8string() + suffix),
+                  "owner-only");
+  }
+  // Root has no final named entry to follow. Its privacy verdict depends on
+  // the actual owner/mode, but it must remain an inspectable operand.
+  for (const auto *root_operand : {"/", "///"}) {
+    require(ny::detail::private_directory_utf8(root_operand).ok,
+            "filesystem-root metadata could not be inspected");
+  }
 
   // A second hard link means another name can reach the same inode.
   const auto shared = root / "shared";
