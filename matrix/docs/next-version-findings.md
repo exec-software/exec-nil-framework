@@ -2566,3 +2566,31 @@ than by name.
 a composed document keeps its own indentation; a compact renderer and the XML
 dialect are future work. Element and attribute names are fixed, so dynamic
 attribute sets (`data-*` generation) still need a design.
+
+### F90 — A Matrix database exposed missing durable-host mechanisms
+
+**Observed:** Enigma could encode its evidence and revocation state in Matrix,
+but atomic byte publication did not synchronize the parent directory, stream
+flush was not an `fsync`, and no context-owned writer lock existed. Private
+directory creation, owner/mode verdicts, SHA-256, and an explicit end-of-input
+result were also missing. Native providers were absent for existing byte-text
+helpers and `random.hex`, despite their public declarations.
+
+**Implemented:** [NIL-0028](../../docs/design/NIL-0028-durable-files-and-locks.md)
+adds durable publication, directory synchronization, and nonblocking locks whose
+descriptors belong to the runtime context. [NIL-0029](../../docs/design/NIL-0029-private-entries-and-digests.md)
+adds private entries and a standalone digest; [NIL-0030](../../docs/design/NIL-0030-end-of-input.md)
+separates EOF from a blank line and input failure. Shared native providers fill
+the byte-text and entropy gaps. Database policy remains in Enigma.
+
+Review added regressions for slash-terminated directory symlinks, which bypass
+POSIX final-component no-follow checks unless rejected, and failed embedded
+input streams with zero `errno`, which must not be mistaken for EOF.
+
+**Evidence and boundary:** Shared helper and embedded runtime tests, paired
+Ny/Matrix interpreter text/binary and AOT/JIT routes, plus Enigma's independent
+filesystem and restart oracle exercise the source-runtime profile. Unsupported
+platforms fail closed for the POSIX filesystem additions. These checks do not
+qualify a release SDK, hardware power loss, hostile storage ancestry, or a
+database rollback defense. Existing atomic-write and stream-flush semantics
+remain unchanged.
