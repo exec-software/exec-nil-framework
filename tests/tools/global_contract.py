@@ -11,6 +11,8 @@ import sys
 import struct
 import subprocess
 import tempfile
+import textwrap
+import shlex
 
 # The toolchain appends .exe to extensionless executables on Windows.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -50,12 +52,13 @@ def main() -> None:
     parser.add_argument("--assembler", type=Path, required=True)
     parser.add_argument("--linker", type=Path, required=True)
     parser.add_argument("--runtime", type=Path, required=True)
+    parser.add_argument("--nilstd", type=Path, required=True)
     parser.add_argument("--llvm", choices=("ON", "OFF"), required=True)
     args = parser.parse_args()
     environment = os.environ.copy()
     for key in ("NY_LIBRARY_PATH", "NIL_LIBRARY_PATH", "NY_LEX_DUMP", "NY_PARSE_TRACE", "NY_STDLIB_PATH"):
         environment.pop(key, None)
-    for name in ("compiler", "interpreter", "assembler", "linker", "runtime"):
+    for name in ("compiler", "interpreter", "assembler", "linker", "runtime", "nilstd"):
         setattr(args, name, getattr(args, name).resolve())
 
     with tempfile.TemporaryDirectory(prefix="ny-global-contract-") as temporary:
@@ -84,8 +87,8 @@ def main() -> None:
                                 + '\nend function\n', encoding="utf-8", newline='\n')
             return path
 
-        # Non-scalar globals keep their established interpreted representation;
-        # the new optional scalar/text contract must not reject existing Ny.
+        # Nominal globals retain their exact declared identities, while legacy
+        # scalar-array globals continue to use the existing interpreted profile.
         aggregate_source = root / "aggregate-globals.ny"
         aggregate_source.write_text(
             "struct Record\nvalue: i32\nend struct\n"
@@ -101,6 +104,158 @@ def main() -> None:
                          *(["--emit-binary-nil"] if binary else []),
                          "--output", output, aggregate_source]))
             require(run([args.interpreter, "--no-ai", output]), output="3\n17\n")
+
+        # Real imported Matrix classes flow through private Ny module globals,
+        # concrete Option methods and record fields before dispatching methods.
+        # No cast, fake owner, erased global or compiler-only acceptance can
+        # satisfy these execution controls.
+        package = root / "probe"
+        package.mkdir()
+        (package / "foreign_types.matrix").write_text(textwrap.dedent("""\
+            book probe.foreign_types
+            read everything from nil.std.core
+            read everything from nil.std.nildata
+            public record_owner begin class
+                field identity as number
+                public read_identity returns number begin paragraph
+                    give my identity
+                end paragraph
+                public echo_result receives candidate as Result of `Value`, text returns Result of `Value`, text begin paragraph
+                    give candidate
+                end paragraph
+            end class
+            public make_value returns Result of `Value`, text begin paragraph
+                value content is "nominal"
+                give string_value with content
+            end paragraph
+            public pass_value receives candidate as Result of `Value`, text returns Result of `Value`, text begin paragraph
+                give candidate
+            end paragraph
+            public record_client begin class
+                field identity as number
+                public read_identity returns number begin paragraph
+                    give my identity
+                end paragraph
+            end class
+            """), encoding="utf-8", newline='\n')
+        (package / "adapter.ny").write_text(textwrap.dedent("""\
+            module probe.adapter
+            import nil.std.core
+            import nil.std.nildata
+            import probe.foreign_types
+            struct OwnerSlot
+                owner: record_owner
+            end struct
+            let mut stored_owner: Option<record_owner> = Option<record_owner>.none()
+            let mut stored_client: Option<record_client> = Option<record_client>.none()
+            let mut direct_owner: record_owner = record_owner { identity: 7 }
+            let mut wrapped_owner: OwnerSlot = OwnerSlot { owner: record_owner { identity: 8 } }
+            fn bind(owner: record_owner, client: record_client)
+                stored_owner = Option<record_owner>.some(owner)
+                stored_client = Option<record_client>.some(client)
+                direct_owner = owner
+                wrapped_owner = OwnerSlot { owner: owner }
+            end fn
+            fn reset()
+                stored_owner = Option<record_owner>.none()
+                stored_client = Option<record_client>.none()
+            end fn
+            pub fn exercise()
+                println(direct_owner.read_identity())
+                println(wrapped_owner.owner.read_identity())
+                println(stored_owner.is_none())
+                println(stored_client.is_none())
+                let owner = record_owner { identity: 41 }
+                let client = record_client { identity: 42 }
+                let materialized = pass_value(owner.echo_result(make_value()))
+                println(materialized.is_error())
+                println(nil::std::nildata::to_json(materialized.unwrap()).unwrap())
+                bind(owner, client)
+                println(stored_owner.unwrap().read_identity())
+                println(stored_client.unwrap().read_identity())
+                println(direct_owner.read_identity())
+                println(wrapped_owner.owner.read_identity())
+                reset()
+                println(stored_owner.is_none())
+                println(stored_client.is_none())
+            end fn
+            """), encoding="utf-8", newline='\n')
+        nominal_expected = '7\n8\n1\n1\n0\n"nominal"\n41\n42\n41\n41\n1\n1\n'
+        nominal_types = {
+            "probe::adapter::stored_owner": "nil::std::core::Option<probe::foreign_types::record_owner>",
+            "probe::adapter::stored_client": "nil::std::core::Option<probe::foreign_types::record_client>",
+            "probe::adapter::direct_owner": "probe::foreign_types::record_owner",
+            "probe::adapter::wrapped_owner": "probe::adapter::OwnerSlot",
+        }
+        nominal_inputs = {
+            "ny": "module choice_client\nimport probe.adapter\n"
+                  "fn main() -> i32\nexercise()\nreturn 0\nend fn\n",
+            "matrix": "book choice_client\nread everything from probe.adapter\n"
+                      "main returns number begin paragraph\n"
+                      "evaluate exercise with nothing\ngive 0\nend paragraph\n",
+        }
+        nominal_options = ["--no-stdlib", "--sdk-path", args.nilstd, "-I", root]
+        for language, contents in nominal_inputs.items():
+            source = root / ("nominal-globals." + language)
+            source.write_text(contents, encoding="utf-8", newline='\n')
+            analysis = run([args.compiler, *nominal_options, "--analyze", source])
+            assert analysis.returncode == 0 and not analysis.stderr, analysis
+            for binary in (False, True):
+                output = root / ("nominal-" + language + ("-binary.nil" if binary else "-text.nil"))
+                require(run([args.compiler, "--quiet", *nominal_options, "--no-bundle",
+                             *(["--emit-binary-nil"] if binary else []), "--output", output, source]))
+                if not binary:
+                    serialized = output.read_text(encoding="utf-8")
+                    resolved_result = "nil::std::core::Result<nil::std::nildata::Value,text>"
+                    for name in ("probe__foreign_types__make_value", "probe__foreign_types__pass_value",
+                                 "probe::foreign_types::record_owner::echo_result"):
+                        signature = next(line for line in serialized.splitlines()
+                                         if line.startswith(("function " + name + "(",
+                                                             "function " + name + " ->")))
+                        assert signature.endswith(" -> " + resolved_result + ":"), signature
+                        if "make_value" not in name:
+                            assert "candidate: " + resolved_result in signature, signature
+                    method = next(line for line in serialized.splitlines()
+                                  if line.strip().startswith("method echo_result "))
+                    assert shlex.split(method)[4] == resolved_result, method
+                    assert shlex.split(method)[8] == resolved_result, method
+                    accesses = []
+                    for line in serialized.splitlines():
+                        if not line.strip().startswith(("LOAD_GLOBAL ", "STORE_GLOBAL ")):
+                            continue
+                        lexer = shlex.shlex(line, posix=True)
+                        lexer.whitespace_split = True
+                        lexer.commenters = ";"
+                        accesses.append(list(lexer))
+                    observed = set()
+                    for access in accesses:
+                        if access[1] in nominal_types:
+                            assert access == [access[0], access[1], nominal_types[access[1]]], access
+                            observed.add(access[1])
+                    assert observed == set(nominal_types), observed
+                # A new interpreter instance must begin with its own globals.
+                for _ in range(2):
+                    require(run([args.interpreter, "--no-ai", output]), output=nominal_expected)
+            if args.llvm == "ON":
+                protected = linked_executable_path(root / ("nominal-native-" + language))
+                protected.write_bytes(b"prior native artifact\n")
+                require(run([args.compiler, "--quiet", *nominal_options, "--native",
+                             "--output", protected, source]),
+                        diagnostic="nominal aggregate globals are not supported by native compilation")
+                assert protected.read_bytes() == b"prior native artifact\n"
+
+        forward_nominal = root / "forward-nominal.ny"
+        forward_nominal.write_text(
+            "module forward_nominal\nimport probe.foreign_types\n"
+            "let first: record_owner = later\n"
+            "let later: record_owner = record_owner { identity: 9 }\n"
+            "fn main() -> i32\nprintln(first.read_identity())\nreturn 0\nend fn\n",
+            encoding="utf-8", newline='\n')
+        for binary in (False, True):
+            output = root / ("forward-nominal-binary.nil" if binary else "forward-nominal-text.nil")
+            require(run([args.compiler, "--quiet", *nominal_options, "--no-bundle",
+                         *(["--emit-binary-nil"] if binary else []), "--output", output, forward_nominal]))
+            require(run([args.interpreter, "--no-ai", output]), diagnostic="Global not found")
 
         source_modes = [["--no-bundle"], ["--no-bundle", "--emit-binary-nil"]]
         if args.llvm == "ON":
@@ -269,6 +424,8 @@ def main() -> None:
                 require(run([executable]), output=output,
                         diagnostic="read before initialization" if uninitialized else "")
         print("global contracts passed: 9 negative and 3 control cases in text/binary NIL")
+        print("nominal global contracts passed: 8 VM executions, 2 initialization rejections, "
+              + ("2" if args.llvm == "ON" else "0") + " native rejections")
 
 
 if __name__ == "__main__":

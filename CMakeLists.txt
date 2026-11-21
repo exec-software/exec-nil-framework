@@ -1443,6 +1443,7 @@ if(BUILD_TESTING)
                         --assembler $<TARGET_FILE:nilassembler>
                         --linker $<TARGET_FILE:nillinker>
                         --runtime $<TARGET_FILE:nilruntime>
+                        --nilstd "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
                         --llvm "${NIL_ENABLE_LLVM}"
             )
             set_tests_properties(ny.global-contract PROPERTIES LABELS "routes;rc" TIMEOUT 180)

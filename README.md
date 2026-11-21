@@ -284,6 +284,10 @@ random draws. Durable filesystem operations currently support POSIX hosts;
 Windows returns explicit unsupported errors. The
 [integration notebook](notebook/2026-11-21-goetic-enigma-sdk.md) separates source
 checks, installed SDK evidence and remaining limitations.
+The interpreter also preserves imported class values through typed module
+globals, record wrappers and explicit `Option<Class>` factories. Native
+aggregate globals remain unsupported; the real Goetic/Enigma consumer is an
+additional acceptance gate before SDK handoff.
 
 These are development results. Windows and macOS release qualification remains
 pending. The

@@ -398,7 +398,8 @@ void validate_instruction(Opcode opcode, const std::string &name,
   if ((opcode == Opcode::LOAD_GLOBAL || opcode == Opcode::STORE_GLOBAL) &&
       (arguments.front().empty() ||
        (arguments.size() == 2 &&
-        !is_typed_global_storage_type(arguments[1]))))
+        !is_typed_global_storage_type(arguments[1]) &&
+        !has_nominal_global_storage_syntax(arguments[1]))))
     throw std::runtime_error("NIL global access has an empty name or unsupported "
                              "storage type" + context);
 
@@ -564,6 +565,43 @@ struct fault_flow_state {
 static std::optional<std::pair<std::vector<std::string>, std::string>>
 fault_callable_signature(const std::string &raw);
 
+std::optional<std::vector<std::string>> enum_payload_types(const std::string &raw) {
+  const auto type = canonical_dynamic_type(raw);
+  if (type.empty() || type == "void") return std::vector<std::string>{};
+  if (type.front() == '(' && type.back() == ')')
+    return array_tuple_elements("tuple<" + type.substr(1, type.size() - 2) + ">");
+  return std::vector<std::string>{type};
+}
+
+const nil_enum_def *exact_enum_schema(const nil_module &module, const std::string &raw) {
+  const auto type = canonical_dynamic_type(raw);
+  const nil_enum_def *result = nullptr;
+  for (const auto &schema : module.structs)
+    if (canonical_dynamic_type(schema.name) == type) return nullptr;
+  for (const auto &schema : module.enums)
+    if (canonical_dynamic_type(schema.name) == type) {
+      if (result) return nullptr;
+      result = &schema;
+    }
+  return result;
+}
+
+bool variant_owner_matches(const std::string &tag, const nil_enum_def &schema) {
+  const auto separator = tag.rfind("::");
+  if (separator == std::string::npos) return false;
+  const auto owner = canonical_dynamic_type(tag.substr(0, separator));
+  auto declared = canonical_dynamic_type(schema.name);
+  if (owner.find('<') == std::string::npos) {
+    const auto generic = declared.find('<');
+    if (generic != std::string::npos) declared.resize(generic);
+  }
+  // The instruction's exact enum identity resolves the schema. A source tag
+  // may omit its namespace/generic arguments, but cannot select another owner.
+  return owner == declared || (declared.size() > owner.size() + 2 &&
+      declared.compare(declared.size() - owner.size() - 2, owner.size() + 2,
+                       "::" + owner) == 0);
+}
+
 bool class_sensitive_type(const std::string &raw, const nil_module &module) {
   std::unordered_set<std::string> visited;
   std::vector<std::string> pending{compact_binding_type(raw)};
@@ -571,6 +609,8 @@ bool class_sensitive_type(const std::string &raw, const nil_module &module) {
     auto type = pending.back(); pending.pop_back();
     if (type.rfind("ref<", 0) == 0 && type.back() == '>') type = type.substr(4, type.size() - 5);
     if (!visited.insert(type).second) continue;
+    if (visited.size() > 4096)
+      throw std::runtime_error("NIL provenance type graph exceeds its bound");
     if (type == "anything") return true;
     // Compiler-owned binding cells carry stack storage in native code. Use
     // the existing exact-provenance CFG analysis for these handles too, so
@@ -582,8 +622,16 @@ bool class_sensitive_type(const std::string &raw, const nil_module &module) {
       pending.push_back(signature->second);
       pending.insert(pending.end(), signature->first.begin(), signature->first.end());
     }
-    for (const auto &schema : module.structs) if (schema.name == type)
-      for (const auto &field : schema.fields) pending.push_back(compact_binding_type(field.second));
+    for (const auto &schema : module.structs)
+      if (canonical_dynamic_type(schema.name) == canonical_dynamic_type(type))
+        for (const auto &field : schema.fields) pending.push_back(compact_binding_type(field.second));
+    for (const auto &schema : module.enums)
+      if (canonical_dynamic_type(schema.name) == canonical_dynamic_type(type))
+        for (const auto &variant : schema.variants) {
+          const auto payloads = enum_payload_types(variant.associated_type);
+          if (!payloads) throw std::runtime_error("NIL enum has malformed payload metadata");
+          pending.insert(pending.end(), payloads->begin(), payloads->end());
+        }
   }
   return false;
 }
@@ -595,6 +643,8 @@ bool class_provenance_type(const std::string &type, const nil_module &module) {
   // as a scalar callback, including through nested callable signatures.
   if (type.rfind("#callable:", 0) == 0)
     return class_sensitive_type(type.substr(10), module);
+  if (type.rfind("#enum:", 0) == 0)
+    return class_sensitive_type(type.substr(6), module);
   if (!type.empty() && (type.front() == '@' || type.front() == '!')) {
     const auto marker = type.find('@');
     if (marker != std::string::npos) return class_sensitive_type(type.substr(marker + 1), module);
@@ -679,7 +729,9 @@ std::string fault_stack_type(const std::string &type, const nil_module &module) 
   if (!type.empty() && type.front() != '&' && type.front() != '*' &&
       type.find('[') == std::string::npos && type != "any" && type != "void") {
     for (const auto &schema : module.enums)
-      if (schema.name == type) return "#enum";
+      if (canonical_dynamic_type(schema.name) == canonical_dynamic_type(type))
+        return exact_enum_schema(module, type)
+            ? "#enum:" + canonical_dynamic_type(type) : unproven_class_value;
     return "?";
   }
   return "?";
@@ -858,6 +910,9 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
         fail("anything must be extracted with a checked cast before use as '" + expected + "'", pc);
       if ((class_type(checked) || class_type(actual)) && checked != actual)
         fail("class argument or storage requires its exact checked static view", pc);
+      if (checked.rfind("#enum:", 0) == 0 && checked != actual &&
+          !(actual == "#enum" && !class_sensitive_type(expected, module)))
+        fail("enum argument or storage requires its exact proven nominal type", pc);
       if (checked.rfind("#callable:", 0) == 0 && checked != actual)
         fail("callable argument or storage requires its exact checked signature", pc);
     };
@@ -866,6 +921,30 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       if (type.rfind("#callable:", 0) == 0)
         fail("opaque result metadata cannot establish a checked callable signature", pc);
       return type;
+    };
+    const auto checked_enum = [&](const std::string &raw) -> const nil_enum_def & {
+      const auto *schema = exact_enum_schema(module, raw);
+      if (!schema) fail("enum operation requires one exact concrete enum schema", pc);
+      validate_nil_dynamic_type(module, canonical_dynamic_type(raw));
+      std::set<std::string> variants;
+      for (const auto &variant : schema->variants)
+        if (variant.name.empty() || !variants.insert(variant.name).second)
+          fail("enum operation requires unique declared variants", pc);
+      return *schema;
+    };
+    const auto checked_variant_payload = [&](const nil_enum_def &schema,
+                                             const std::string &tag,
+                                             const std::string &payload) {
+      if (!variant_owner_matches(tag, schema)) fail("enum tag owner disagrees with its schema", pc);
+      const auto name = tag.substr(tag.rfind("::") + 2);
+      const auto variant = std::find_if(schema.variants.begin(), schema.variants.end(),
+          [&](const auto &candidate) { return candidate.name == name; });
+      if (variant == schema.variants.end()) fail("enum tag is absent from its schema", pc);
+      const auto declared = enum_payload_types(variant->associated_type);
+      const auto written = enum_payload_types(payload);
+      if (!declared || !written || *declared != *written)
+        fail("enum payload metadata disagrees with its exact schema", pc);
+      return *declared;
     };
     const auto exception_edge = [&](fault_flow_state exceptional) {
       if (exceptional.regions.empty()) return;
@@ -961,7 +1040,10 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       state.stack.push_back(type); break;
     }
     case Opcode::STORE_GLOBAL:
-      if (args.size() == 2 && args[1] == "anything") {
+      if (args.size() == 2 && has_nominal_global_storage_syntax(args[1])) {
+        if (state.stack.empty() || state.stack.back() != stack_type(args[1], module))
+          fail("aggregate global store requires its exact proven nominal type", pc);
+      } else if (args.size() == 2 && args[1] == "anything") {
         if (state.stack.empty() || state.stack.back() != "#anything") fail("anything global requires a boxed value", pc);
       } else reject_class_operands(1);
       pop(1); break;
@@ -1065,47 +1147,55 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     case Opcode::NEW_VARIANT: {
       const auto count = static_cast<std::size_t>(std::stoull(args[1]));
       if (state.stack.size() < count) fail("enum constructor requires payloads", pc);
-      std::vector<std::string> payloads;
-      if (args.size() == 4 && args[3] != "void") {
-        if (args[3].front() == '(' && args[3].back() == ')') {
-          const auto parts = array_tuple_elements("tuple<" + args[3].substr(1, args[3].size() - 2) + ">");
-          if (parts) payloads = *parts;
-        } else payloads.push_back(args[3]);
-      }
-      if (payloads.size() == count && std::find(payloads.begin(), payloads.end(), "anything") != payloads.end()) {
+      if (args.size() == 4) {
+        const auto &schema = checked_enum(args[2]);
+        const auto payloads = checked_variant_payload(schema, args[0], args[3]);
+        if (payloads.size() != count) fail("enum payload count disagrees with its schema", pc);
         for (std::size_t index = 0; index < count; ++index) {
           const auto &actual = state.stack[state.stack.size() - count + index];
-          if (payloads[index] == "anything") {
-            if (actual != "#anything") fail("anything enum payload requires a boxed value", pc);
-          } else if (class_type(actual)) fail("enum payload cannot erase class or boxed provenance", pc);
+          check_class_argument(payloads[index], actual);
+          if (actual != stack_type(payloads[index], module))
+            fail("enum payload requires its exact checked value category", pc);
         }
-      } else reject_class_operands(count);
-      std::string enumeration_type;
-      if (args.size() == 4) enumeration_type = args[2];
-      else {
-        const auto separator = args[0].rfind("::");
-        if (separator != std::string::npos) enumeration_type = args[0].substr(0, separator);
+        pop(count); state.stack.push_back("#enum:" + canonical_dynamic_type(schema.name)); break;
       }
+      reject_class_operands(count);
+      const auto separator = args[0].rfind("::");
+      if (separator != std::string::npos &&
+          class_sensitive_type(args[0].substr(0, separator), module))
+        fail("class-bearing enum construction requires exact payload metadata", pc);
       pop(count);
-      state.stack.push_back(has_dynamic_operations && !enumeration_type.empty()
-          ? stack_type(enumeration_type, module) : "#enum"); break;
+      state.stack.push_back("#enum"); break;
     }
-    case Opcode::IS_VARIANT: reject_class_operands(1); pop(1); state.stack.push_back(stack_type("bool", module)); break;
+    case Opcode::IS_VARIANT:
+      if (args.size() == 3) {
+        const auto &schema = checked_enum(args[1]);
+        (void)checked_variant_payload(schema, args[0], args[2]);
+        if (state.stack.empty() || state.stack.back() != "#enum:" + canonical_dynamic_type(schema.name))
+          fail("enum test requires its exact proven nominal receiver", pc);
+      } else reject_class_operands(1);
+      pop(1); state.stack.push_back(stack_type("bool", module)); break;
     case Opcode::UNWRAP_VARIANT: {
-      reject_class_operands(1);
-      std::vector<std::string> payloads;
-      if (args.size() == 3 && args[2] != "void") {
-        if (args[2].front() == '(' && args[2].back() == ')') {
-          const auto parts = array_tuple_elements("tuple<" + args[2].substr(1, args[2].size() - 2) + ">");
-          if (parts) payloads = *parts;
-        } else payloads.push_back(args[2]);
+      if (state.stack.empty()) fail("enum unwrap requires a receiver", pc);
+      const bool typed = args.size() == 3;
+      if (typed) {
+        const auto &schema = checked_enum(args[1]);
+        if (state.stack.back() != "#enum:" + canonical_dynamic_type(schema.name))
+          fail("enum unwrap requires its exact proven nominal receiver", pc);
+        const auto written = enum_payload_types(args[2]);
+        const auto count = static_cast<std::size_t>(std::stoull(args[0]));
+        if (!written || written->size() != count ||
+            std::none_of(schema.variants.begin(), schema.variants.end(), [&](const auto &variant) {
+              const auto declared = enum_payload_types(variant.associated_type);
+              return declared && *declared == *written;
+            })) fail("enum unwrap payload metadata disagrees with its schema", pc);
+        pop(1);
+        for (const auto &payload : *written) state.stack.push_back(opaque_stack_type(payload));
+        break;
       }
-      for (const auto &payload : payloads)
-        if (payload != "anything" && class_sensitive_type(payload, module))
-          fail("enum payload metadata cannot fabricate class provenance", pc);
+      reject_class_operands(1);
       pop(1); const auto count = args.empty() ? 0 : std::stoull(args[0]);
-      if (args.size() == 3 && payloads.size() != count) fail("enum payload count disagrees with its metadata", pc);
-      for (std::size_t i = 0; i < count; ++i) state.stack.push_back(args.size() == 3 ? opaque_stack_type(payloads[i]) : "?");
+      for (std::size_t i = 0; i < count; ++i) state.stack.push_back("?");
       break;
     }
     case Opcode::CALL: {
@@ -1155,6 +1245,17 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       if (callee != module.functions.end()) {
         if (callee->return_type.empty() || callee->params.size() != count)
           fail("call requires an exact signature and matching arity", pc);
+        const bool external = callee->body.empty() || std::any_of(callee->annotations.begin(), callee->annotations.end(),
+            [](const auto &annotation) {
+              const auto dispatch = compact_binding_type(annotation);
+              return dispatch.rfind("@intrinsic", 0) == 0 || dispatch.rfind("@interop", 0) == 0 ||
+                  dispatch.rfind("@ritual", 0) == 0 || dispatch.rfind("@native", 0) == 0;
+            });
+        if (external) {
+          reject_class_operands(count);
+          if (class_sensitive_type(callee->return_type, module))
+            fail("external calls cannot establish class-bearing result provenance", pc);
+        }
         for (std::size_t i = 0; i < count; ++i) {
           const auto colon = callee->params[i].find(':');
           auto type = colon == std::string::npos ? "" : callee->params[i].substr(colon + 1);
@@ -1273,6 +1374,8 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       if (source_type == "#owned") fail("CAST cannot erase affine ownership provenance", pc);
       if (class_type(source_type) || class_type(target_type))
         fail("CAST cannot fabricate or erase class provenance; use CLASS_UPCAST", pc);
+      if (target_type.rfind("#enum:", 0) == 0 && source_type != target_type)
+        fail("CAST cannot fabricate or change enum provenance", pc);
       if (target_type.rfind("#callable:", 0) == 0 && source_type != target_type)
         fail("CAST cannot fabricate or change a callable signature", pc);
       if (!target_type.empty() && target_type.front() == '@' && source_type != target_type)
@@ -1345,6 +1448,10 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
 }
 
 } // namespace
+
+bool nil_type_requires_provenance(const nil_module &module, const std::string &type) {
+  return class_sensitive_type(type, module);
+}
 
 void validate_nil_dynamic_type(const nil_module &module, const std::string &raw,
                                bool allow_anything) {
@@ -1458,6 +1565,20 @@ void validate_nil_fault_contract(const nil_module &module) {
 
 void validate_nil_class_provenance(const nil_module &module) {
   std::unordered_set<std::string> related;
+  for (const auto &function : module.functions)
+    for (const auto &instruction : function.body)
+      if ((instruction.opname == "LOAD_GLOBAL" || instruction.opname == "STORE_GLOBAL") &&
+          instruction.args.size() == 2 && has_nominal_global_storage_syntax(instruction.args[1])) {
+        const auto &type = instruction.args[1];
+        validate_nil_dynamic_type(module, type);
+        const auto records = std::count_if(module.structs.begin(), module.structs.end(),
+            [&](const auto &schema) { return canonical_dynamic_type(schema.name) == type; });
+        const auto enumerations = std::count_if(module.enums.begin(), module.enums.end(),
+            [&](const auto &schema) { return canonical_dynamic_type(schema.name) == type; });
+        if (records + enumerations != 1)
+          throw std::runtime_error("NIL aggregate global requires one exact nominal schema");
+        related.insert(type);
+      }
   bool dynamic_operations = false;
   for (const auto &function : module.functions)
     for (const auto &instruction : function.body)
@@ -1563,6 +1684,7 @@ void validate_nil_class_provenance(const nil_module &module) {
       if (!related.count(enumeration.name) && std::any_of(enumeration.variants.begin(), enumeration.variants.end(),
           [&](const auto &variant) {
             return related.count(compact_binding_type(variant.associated_type)) != 0 ||
+                class_sensitive_type(variant.associated_type, module) ||
                 (dynamic_operations && variant.associated_type.find("anything") != std::string::npos);
           }))
         changed = related.insert(enumeration.name).second || changed;
@@ -1576,7 +1698,8 @@ void validate_nil_class_provenance(const nil_module &module) {
   }
   const auto related_type = [&](const std::string &raw) {
     const auto type = compact_binding_type(raw);
-    return related.count(type) != 0 || (dynamic_operations && type.find("anything") != std::string::npos) || contains_binding_cell_type(type) ||
+    return related.count(type) != 0 || class_sensitive_type(type, module) ||
+        (dynamic_operations && type.find("anything") != std::string::npos) || contains_binding_cell_type(type) ||
         fault_callable_signature(type).has_value();
   };
   for (const auto &function : module.functions) {
@@ -1671,11 +1794,20 @@ static void attach_class_metadata(std::vector<Instruction> &program, nil_module 
     } else if (instruction.op == Opcode::INTEROP_CALL) {
       const nil_instruction call{"INTEROP_CALL", instruction.args, instruction.line};
       checked_conversion::validate_instruction(metadata, call);
-    } else if (instruction.op == Opcode::CLASS_UPCAST || instruction.op == Opcode::CALL_METHOD ||
+    } else if ((instruction.op == Opcode::LOAD_GLOBAL || instruction.op == Opcode::STORE_GLOBAL) &&
+               instruction.args.size() == 2 && has_nominal_global_storage_syntax(instruction.args[1]))
+      throw std::runtime_error("Nominal global instructions require a declared function");
+    else if (((instruction.op == Opcode::NEW_VARIANT && instruction.args.size() == 4) &&
+              class_sensitive_type(instruction.args[2], metadata)) ||
+             ((instruction.op == Opcode::IS_VARIANT || instruction.op == Opcode::UNWRAP_VARIANT) &&
+              instruction.args.size() == 3 && class_sensitive_type(instruction.args[1], metadata)))
+      throw std::runtime_error("Class-bearing enum instructions require a declared function");
+    else if (instruction.op == Opcode::CLASS_UPCAST || instruction.op == Opcode::CALL_METHOD ||
                instruction.op == Opcode::BOX_ANY || instruction.op == Opcode::UNBOX_ANY || instruction.op == Opcode::IS_ANY_TYPE)
       throw std::runtime_error("Class or anything instruction outside a declared function");
   }
   checked_conversion::validate_module(metadata);
+  validate_global_storage_contract(metadata);
   validate_nil_class_contract(metadata);
   // Tuple arrays also use exact record schemas at execution time, including
   // modules that declare no classes at all.
@@ -1688,10 +1820,13 @@ static void attach_class_metadata(std::vector<Instruction> &program, nil_module 
 
 void validate_nil_class_contract(const std::vector<Instruction> &program) {
   if (program.empty()) return;
+  validate_global_storage_contract(program);
   const auto metadata = program.front().module_metadata;
   if (!metadata) {
     for (const auto &instruction : program)
-      if (instruction.op == Opcode::CLASS_UPCAST || instruction.op == Opcode::CALL_METHOD ||
+      if (((instruction.op == Opcode::LOAD_GLOBAL || instruction.op == Opcode::STORE_GLOBAL) &&
+           instruction.args.size() == 2 && has_nominal_global_storage_syntax(instruction.args[1])) ||
+          instruction.op == Opcode::CLASS_UPCAST || instruction.op == Opcode::CALL_METHOD ||
           instruction.op == Opcode::BOX_ANY || instruction.op == Opcode::UNBOX_ANY || instruction.op == Opcode::IS_ANY_TYPE)
         throw std::runtime_error("NIL class/anything instructions require explicit module metadata");
       else {

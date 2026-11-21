@@ -494,6 +494,7 @@ private:
 
   std::vector<Instruction> program_;
   std::shared_ptr<const nil_module> class_metadata_;
+  std::unordered_map<std::string, bool> provenance_type_cache_;
   std::unordered_map<std::string, Value> constants_;
   // A simple call frame description stored on the call stack. It keeps the
   // return program-counter and the local variable map for the function.

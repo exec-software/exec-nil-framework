@@ -88,6 +88,230 @@ void negative_constructed(std::vector<ny::nil_instruction> body, const std::stri
       {"SET_FIELD", {"padding"}}, {"PUSH_CONST", {"40"}}, {"SET_FIELD", {"x"}}};
   prefix.insert(prefix.end(), body.begin(), body.end()); negative_body(std::move(prefix), label);
 }
+
+std::vector<ny::nil_instruction> base_value() {
+  return {{"NEW_STRUCT", {"Leaf"}}, {"PUSH_CONST", {"9"}}, {"SET_FIELD", {"padding"}},
+      {"PUSH_CONST", {"40"}}, {"SET_FIELD", {"x"}}, {"CLASS_UPCAST", {"Base"}}};
+}
+ny::nil_function &enum_main(ny::nil_module &module) {
+  return *std::find_if(module.functions.begin(), module.functions.end(),
+                      [](const auto &value) { return value.name == "main"; });
+}
+ny::nil_module class_enum_fixture() {
+  auto module = fixture();
+  module.enums = {{"Container", {{"Item", "Base"}, {"None", ""}, {"Other", "i64"}}},
+                 {"OtherContainer", {{"Item", "Base"}, {"None", ""}}},
+                 {"Nested", {{"Item", "Container"}}}};
+  module.structs.push_back({"ChoiceBox", {{"item", "Container"}}});
+  auto body = base_value();
+  const std::vector<ny::nil_instruction> rest = {
+      {"NEW_VARIANT", {"Container::Item", "1", "Container", "Base"}},
+      {"STORE_GLOBAL", {"stored", "Container"}},
+      {"LOAD_GLOBAL", {"stored", "Container"}}, {"CALL", {"enum_identity", "1"}},
+      {"STORE_LOCAL", {"choice"}}, {"LOAD_LOCAL", {"choice"}},
+      {"IS_VARIANT", {"Container::Item", "Container", "Base"}}, {"CONSOLE_WRITELN", {}},
+      {"LOAD_LOCAL", {"choice"}}, {"UNWRAP_VARIANT", {"1", "Container", "Base"}},
+      {"CALL_METHOD", {"Base", "read", "1"}}, {"CONSOLE_WRITELN", {}},
+      {"NEW_STRUCT", {"ChoiceBox"}}, {"LOAD_LOCAL", {"choice"}}, {"SET_FIELD", {"item"}},
+      {"STORE_GLOBAL", {"boxed", "ChoiceBox"}}, {"LOAD_GLOBAL", {"boxed", "ChoiceBox"}},
+      {"GET_FIELD", {"item"}}, {"UNWRAP_VARIANT", {"1", "Container", "Base"}},
+      {"CALL_METHOD", {"Base", "read", "1"}}, {"CONSOLE_WRITELN", {}},
+      {"NEW_VARIANT", {"Container::None", "0", "Container", "void"}},
+      {"STORE_GLOBAL", {"stored", "Container"}}, {"LOAD_GLOBAL", {"stored", "Container"}},
+      {"IS_VARIANT", {"Container::None", "Container", "void"}}, {"CONSOLE_WRITELN", {}}, {"RET", {}}};
+  body.insert(body.end(), rest.begin(), rest.end());
+  enum_main(module).body = std::move(body);
+  module.functions.push_back(function("enum_identity", {"value:Container"}, "Container",
+      {{"STORE_LOCAL", {"value"}}, {"LOAD_LOCAL", {"value"}}, {"RET", {}}}));
+  return module;
+}
+
+void class_enum_contract() {
+  for (bool binary : {false, true}) {
+    auto module = class_enum_fixture();
+    std::unordered_map<std::string, ny::Value> constants;
+    const auto program = parse(module, binary, constants);
+    ny::VM vm; std::ostringstream output; vm.setOutputStream(output);
+    vm.loadProgram(program, constants); vm.execute();
+    check(output.str() == "1\n42\n42\n1\n",
+          "typed class enum survives calls, globals, record fields and inherited dispatch");
+    std::istringstream source(serialize(module, binary));
+    const auto parsed = binary ? ny::parseBinaryNilModule(source) : ny::parseTextNilModule(source);
+    check(parsed->enums.size() == 3, "module readers accept checked class enum payloads");
+    for (const auto &mutation : std::vector<std::function<void(std::vector<ny::Instruction>&)>>{
+        [](auto &instructions) {
+          for (auto &instruction : instructions) if (instruction.op == ny::Opcode::NEW_VARIANT) {
+            instruction.args[3] = "i64"; return;
+          }
+        },
+        [](auto &instructions) {
+          for (auto &instruction : instructions) if (instruction.op == ny::Opcode::UNWRAP_VARIANT) {
+            instruction.args[1] = "OtherContainer"; return;
+          }
+        },
+        [](auto &instructions) {
+          for (auto &instruction : instructions) if (instruction.op == ny::Opcode::STORE_GLOBAL) {
+            instruction.args.resize(1); return;
+          }
+        },
+        [](auto &instructions) {
+          const auto metadata = instructions.front().module_metadata;
+          instructions.insert(instructions.begin(), {ny::Opcode::LOAD_GLOBAL, {"stored", "Container"}});
+          instructions.front().module_metadata = metadata;
+        }}) {
+      auto altered = program; mutation(altered); bool caught = false;
+      try { vm.loadProgram(altered, constants); } catch (const std::runtime_error &) { caught = true; }
+      check(caught, "embedding revalidates enum/global provenance after instruction mutation");
+    }
+    // Static enum identity does not tell us which variant is currently live.
+    // Both payload layouts are declared, so this must reach the VM's actual
+    // tag/count check rather than being accepted on metadata alone.
+    for (bool empty : {false, true}) {
+      auto wrong = class_enum_fixture();
+      auto &body = enum_main(wrong).body;
+      body = empty ? std::vector<ny::nil_instruction>{{"NEW_VARIANT", {"Container::None", "0", "Container", "void"}}}
+                   : std::vector<ny::nil_instruction>{{"PUSH_CONST", {"7"}}, {"NEW_VARIANT", {"Container::Other", "1", "Container", "i64"}}};
+      body.insert(body.end(), {{"UNWRAP_VARIANT", {"1", "Container", "Base"}}, {"POP", {}}, {"RET", {}}});
+      auto wrong_program = parse(wrong, binary, constants);
+      vm.loadProgram(wrong_program, constants); bool caught = false;
+      try { vm.execute(); } catch (const std::runtime_error &error) {
+        caught = std::string(error.what()).find("UNWRAP_VARIANT") != std::string::npos;
+      }
+      check(caught, "runtime rejects a different live enum variant before exposing its payload");
+    }
+  }
+  const auto negative = [](std::vector<ny::nil_instruction> body, const std::string &label) {
+    auto module = class_enum_fixture(); enum_main(module).body = std::move(body); rejected(module, label);
+  };
+  negative({{"PUSH_CONST", {"0"}}, {"NEW_VARIANT", {"Container::Item", "1", "Container", "Base"}},
+            {"POP", {}}, {"RET", {}}}, "scalar cannot fabricate a class enum payload");
+  for (const auto &constructor : std::vector<std::vector<std::string>>{
+      {"OtherContainer::Item", "1", "Container", "Base"},
+      {"Container::Missing", "1", "Container", "Base"},
+      {"Container::Item", "1", "Container", "i64"},
+      {"Container::Item", "0", "Container", "Base"},
+      {"Missing::Item", "1", "Missing", "Base"},
+      {"Container::Item", "1"}}) {
+    auto body = base_value(); body.push_back({"NEW_VARIANT", constructor});
+    body.insert(body.end(), {{"POP", {}}, {"RET", {}}}); negative(body, "class enum constructor requires exact schema and payload metadata");
+  }
+  auto without_upcast = base_value(); without_upcast.pop_back();
+  without_upcast.insert(without_upcast.end(), {{"NEW_VARIANT", {"Container::Item", "1", "Container", "Base"}},
+                                             {"POP", {}}, {"RET", {}}});
+  negative(without_upcast, "class enum payload requires explicit checked ancestor view");
+  for (const auto &tail : std::vector<std::vector<ny::nil_instruction>>{
+      {{"CAST", {"i64"}}, {"POP", {}}, {"RET", {}}},
+      {{"FREE", {}}, {"RET", {}}},
+      {{"CALL", {"unknown", "1"}}, {"RET", {}}},
+      {{"STORE_GLOBAL", {"legacy"}}, {"RET", {}}},
+      {{"STORE_GLOBAL", {"wrong", "Base"}}, {"RET", {}}},
+      {{"UNWRAP_VARIANT", {"1", "OtherContainer", "Base"}}, {"POP", {}}, {"RET", {}}},
+      {{"UNWRAP_VARIANT", {"1", "Container", "Leaf"}}, {"POP", {}}, {"RET", {}}},
+      {{"NEW_VARIANT", {"Nested::Item", "1", "Nested", "Container"}}, {"FREE", {}}, {"RET", {}}}}) {
+    auto body = base_value(); body.push_back({"NEW_VARIANT", {"Container::Item", "1", "Container", "Base"}});
+    body.insert(body.end(), tail.begin(), tail.end()); negative(body, "class enum provenance survives operations and nesting");
+  }
+  negative({{"LOAD_GLOBAL", {"legacy"}}, {"CALL", {"enum_identity", "1"}}, {"POP", {}}, {"RET", {}}},
+           "legacy global cannot supply a proven class enum");
+  negative({{"LOAD_GLOBAL", {"unknown", "Missing"}}, {"POP", {}}, {"RET", {}}},
+           "typed global requires a real unique schema");
+  negative({{"PUSH_CONST", {"0"}}, {"STORE_GLOBAL", {"wrong", "Container"}}, {"RET", {}}},
+           "scalar cannot initialize a nominal enum global");
+  negative({{"PUSH_CONST", {"0"}}, {"CAST", {"Container"}}, {"POP", {}}, {"RET", {}}},
+           "cast metadata cannot fabricate a class enum");
+  negative({{"INTEROP_CALL", {"intrinsic", "forged", "0", "Container"}}, {"POP", {}}, {"RET", {}}},
+           "foreign result metadata cannot fabricate a class enum");
+  for (bool annotated : {false, true}) {
+    auto external = class_enum_fixture();
+    external.functions.push_back(function("foreign_enum", {}, "Container",
+        annotated ? std::vector<ny::nil_instruction>{{"NEW_VARIANT", {"Container::None", "0", "Container", "void"}}, {"RET", {}}}
+                  : std::vector<ny::nil_instruction>{}));
+    if (annotated) external.functions.back().annotations.push_back("@intrinsic(\"foreign.enum\")");
+    enum_main(external).body = {{"CALL", {"foreign_enum", "0"}}, {"POP", {}}, {"RET", {}}};
+    rejected(external, "external declaration cannot establish class-bearing enum return provenance");
+  }
+  auto join = base_value();
+  join.insert(join.end(), {{"NEW_VARIANT", {"Container::Item", "1", "Container", "Base"}},
+      {"STORE_LOCAL", {"choice"}}, {"PUSH_CONST", {"1"}}, {"JMP_IF", {"join"}},
+      {"LOAD_LOCAL", {"missing"}}, {"STORE_LOCAL", {"choice"}}, {"LABEL", {"join"}},
+      {"LOAD_LOCAL", {"choice"}}, {"FREE", {}}, {"RET", {}}});
+  negative(join, "enum class taint survives an unknown local CFG predecessor");
+  auto duplicate = class_enum_fixture(); duplicate.enums.push_back(duplicate.enums.front());
+  rejected(duplicate, "duplicate enum schemas cannot establish class provenance");
+  duplicate = class_enum_fixture(); duplicate.enums.front().variants.push_back({"Item", "Base"});
+  rejected(duplicate, "duplicate variant names cannot establish class provenance");
+  auto binding = class_enum_fixture(); binding.enums.front().variants[0].associated_type = "$nil.binding.cell.i64";
+  rejected(binding, "enum closure cannot smuggle binding-reference storage");
+  ny::VM vm; bool caught = false;
+  try { vm.loadProgram({{ny::Opcode::LOAD_GLOBAL, {"unknown", "Container"}}}, {}); }
+  catch (const std::runtime_error &) { caught = true; }
+  check(caught, "raw embedding global metadata requires explicit schemas");
+}
+
+void nominal_global_alias_contract() {
+  const auto transfer = [](const std::string &type) {
+    return function("main", {}, "void", {
+        {"LOAD_GLOBAL", {"stored", type}}, {"STORE_GLOBAL", {"copied", type}},
+        {"PUSH_CONST", {"1"}}, {"STORE_GLOBAL", {"completed", "i64"}}, {"RET", {}}});
+  };
+  for (bool binary : {false, true}) {
+    for (bool mismatched_schema : {false, true}) {
+      ny::nil_module module; module.module_name = "global_alias_tests";
+      module.structs = {{"First", {{"x", "i64"}}}, {"Second", {{"x", "text"}}},
+          {"Pair", {{"first", "First"}, {"second", mismatched_schema ? "Second" : "First"}}}};
+      module.functions = {transfer("Pair")};
+      std::unordered_map<std::string, ny::Value> constants;
+      const auto program = parse(module, binary, constants);
+      ny::StructValue first; first.type_name = "First"; first.fields()["x"] = 7;
+      auto second = first; second.type_name = mismatched_schema ? "Second" : "First";
+      ny::StructValue pair; pair.type_name = "Pair";
+      pair.struct_fields()["first"] = std::make_shared<ny::StructValue>(first);
+      pair.struct_fields()["second"] = std::make_shared<ny::StructValue>(second);
+      ny::VM vm; vm.loadProgram(program, constants); vm.setGlobal("stored", pair);
+      bool caught = false;
+      try { vm.execute(); }
+      catch (const std::runtime_error &error) {
+        caught = std::string(error.what()).find("global storage") != std::string::npos;
+      }
+      if (mismatched_schema) {
+        check(caught, "shared backing storage is validated independently for each nominal schema");
+        check(!vm.hasGlobal("copied") && !vm.hasGlobal("completed") &&
+              std::get<ny::StructValue>(vm.getGlobal("stored")).data == pair.data &&
+              first.fields().size() == 1 && first.fields().at("x") == 7 &&
+              first.string_fields().empty() && first.data == second.data,
+              "rejected nominal global preserves existing storage and publishes no result");
+      } else {
+        check(!caught && vm.hasGlobal("completed"), "shared same-schema record remains a valid nominal global");
+        if (vm.hasGlobal("copied")) {
+          const auto copied = std::get<ny::StructValue>(vm.getGlobal("copied"));
+          check(copied.data == pair.data &&
+                copied.struct_fields().at("first")->data == copied.struct_fields().at("second")->data,
+                "accepted nominal global preserves repeated record identity");
+        }
+      }
+    }
+    ny::nil_module module; module.module_name = "global_recursive_tests";
+    module.structs = {{"Node", {{"value", "i64"}, {"next", "Node"}}}};
+    module.functions = {transfer("Node")};
+    std::unordered_map<std::string, ny::Value> constants;
+    const auto program = parse(module, binary, constants);
+    ny::StructValue node; node.type_name = "Node"; node.fields()["value"] = 9;
+    node.struct_fields()["next"] = std::make_shared<ny::StructValue>(node);
+    ny::VM vm; vm.loadProgram(program, constants); vm.setGlobal("stored", node);
+    bool caught = false;
+    try { vm.execute(); } catch (const std::runtime_error &) { caught = true; }
+    check(!caught && vm.hasGlobal("completed"), "recursive same-schema global terminates validation");
+    if (vm.hasGlobal("copied")) {
+      const auto copied = std::get<ny::StructValue>(vm.getGlobal("copied"));
+      check(copied.data == node.data && copied.struct_fields().at("next")->data == node.data,
+            "recursive nominal global preserves its cycle and identity");
+    }
+    // The fixture deliberately creates a shared_ptr cycle. Release that edge
+    // after observing it so the regression itself leaves no allocation behind.
+    node.struct_fields().clear();
+  }
+}
+
 void positives() {
   for (bool binary : {false, true}) {
     auto module = fixture(); std::unordered_map<std::string, ny::Value> constants;
@@ -227,7 +451,7 @@ void negatives() {
 }
 } // namespace
 int main() {
-  try { positives(); negatives(); }
+  try { positives(); negatives(); class_enum_contract(); nominal_global_alias_contract(); }
   catch (const std::exception &error) { std::cerr << "Unexpected exception: " << error.what() << '\n'; return 1; }
   if (failures) return 1;
   std::cout << "Class metadata, provenance, dispatch, alias and version contracts passed\n";

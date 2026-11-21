@@ -207,7 +207,15 @@ checked method boundary, not through general reference covariance.
 Readers validate class schemas, acyclic ancestry (at most 256 levels), inherited
 field identity, method signatures and concrete abstract-method obligations.
 Class provenance is checked through operand/local control flow, calls, returns
-and fields. A cast, raw pointer or foreign return cannot manufacture a class
+and fields. On interpreted routes, class-bearing typed enums preserve the exact
+nominal identity and payload views through those boundaries.
+`NEW_VARIANT tag count enum_type payload_type`,
+`IS_VARIANT tag enum_type payload_type` and
+`UNWRAP_VARIANT count enum_type payload_type` resolve one declared enum schema.
+The constructor must supply the declared payload types; an ancestor class
+payload requires an explicit `CLASS_UPCAST`. At execution, extraction checks the
+actual live variant and its payload layout before exposing a class-bearing
+value. A cast, raw pointer or foreign return cannot manufacture a class
 handle. Native objects carry a private dynamic tag; field accesses select the
 actual concrete layout, including fields inherited from a non-first base.
 Dispatch uses checked direct targets, not NIL-supplied host function pointers.
@@ -234,14 +242,25 @@ declared-width arithmetic instead of the legacy untyped instruction behavior.
 ## Typed globals
 
 `LOAD_GLOBAL name type` and `STORE_GLOBAL name type` carry an optional trailing
-storage type: `text`, `bool`, `u8`, `i32`, `i64`, or `f64`. Every access to one
+storage type: `text`, `bool`, `u8`, `i32`, `i64`, `f64`, or `anything`. Every access to one
 name must agree; mixing typed and untyped accesses is invalid. Text/binary
 readers check that metadata and both engines reject incompatible stored values.
-Typed native globals track initialization and fail on a read before a store.
+Typed globals track initialization and fail on a read before a store.
+
+The interpreter additionally accepts an exact declared record, class or enum
+identity, including a concrete `Option<ImportedClass>` schema. The compiler
+materializes that schema before emitting global accesses. The loader checks
+every store's proven nominal type; the interpreter recursively checks stored
+values, class static views and initialization on both reads and writes.
+Borrowed and affine handles cannot escape through this storage. Repeated
+references retain aliasing, with validation keyed by both backing object and
+resolved schema. Native compilation explicitly rejects nominal aggregate
+globals before replacing an existing output artifact.
 
 The historical one-operand form remains readable, with the legacy integer ABI
-on native routes and general VM values on interpreted routes. Aggregate globals
-remain interpreter-only. These optional operands use the existing instruction
+on native routes and general VM values on interpreted routes. Legacy untyped
+globals cannot establish class provenance. Aggregate globals remain
+interpreter-only. These optional operands use the existing instruction
 encoding, not a new binary section or version; older tools that require exactly
 one operand must be rebuilt with the SDK. Source globals use exact
 `module::name` storage identities; unnamed-root globals retain bare names.

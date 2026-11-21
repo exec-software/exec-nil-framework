@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qualify installed durable I/O and console providers on POSIX hosts.
+"""Qualify installed durable I/O, console and nominal globals on POSIX hosts.
 
 Uses the existing source contracts and SDK validator. Evidence is retained in a
 fresh directory outside the SDK; success is not a language release declaration.
@@ -34,6 +34,10 @@ NEGATIVE_ABI = {(case, route) for case in ("width", "owner", "query-width", "que
 NEGATIVE_LIBRARY = {(operation, route, schema) for operation in OPERATIONS
                     for route in ("text-vm", "binary-vm")
                     for schema in ("present", "absent")}
+GLOBAL_SUMMARY = (
+    b"global contracts passed: 9 negative and 3 control cases in text/binary NIL\n"
+    b"nominal global contracts passed: 8 VM executions, 2 initialization rejections, 2 native rejections\n"
+)
 
 
 def require(condition: bool, message: str) -> None:
@@ -131,10 +135,13 @@ def helper_inputs() -> list[Path]:
              ROOT / "scripts/check-sdk-routes.py", ROOT / "scripts/sdk_capabilities.py",
              ROOT / "tests/tools/durable_file_io_contract.py",
              ROOT / "tests/tools/native_console_contract.py",
+             ROOT / "tests/tools/global_contract.py",
              ROOT / "tests/tools/ordinary_io_parity_contract.py",
              ROOT / "validation/ny-3d/scripts/debugger_process.py",
              ROOT / "tests/native_output_staging.py",
-             ROOT / "tests/matrix/io/durable-file-io.matrix"]
+             ROOT / "tests/matrix/io/durable-file-io.matrix",
+             ROOT / "tests/language/module-global-contract.ny",
+             ROOT / "tests/language/module-global-contract.stdout"]
     paths.extend(sorted((ROOT / "tests/language").glob("durable-file-io*.ny")))
     paths.extend(sorted((ROOT / "tests/tools/fixtures").glob("console-input*.*")))
     return paths
@@ -144,7 +151,7 @@ def qualify(args: argparse.Namespace, sdk: Path, work: Path) -> dict:
     logs = work / "logs"
     logs.mkdir()
     ownership = support.load_ownership(ROOT)
-    # Python assertions are part of the existing console contract. Do not let
+    # Python assertions are part of the existing console/global contracts. Do not let
     # caller optimization or module-path overrides disable/replace that proof.
     spec = importlib.util.spec_from_file_location("nil_installed_route_policy", ROOT / "scripts/check-sdk-routes.py")
     route_policy = importlib.util.module_from_spec(spec)
@@ -156,7 +163,7 @@ def qualify(args: argparse.Namespace, sdk: Path, work: Path) -> dict:
     temporary = work / "temporary"
     temporary.mkdir()
     environment["TMPDIR"] = str(temporary)
-    deadline = time.monotonic() + 1200
+    deadline = time.monotonic() + 1800
     report = {"schema": "nil.sdk.durable-io.v1", "status": "FAIL",
               "release_declaration": False, "source_revision": args.expected_revision,
               "sdk": str(sdk), "require_rc_checks": args.require_rc_checks,
@@ -221,7 +228,16 @@ def qualify(args: argparse.Namespace, sdk: Path, work: Path) -> dict:
             # of program executions. Extra output, SKIP and an empty run fail.
             matched = re.fullmatch(rb"native console contract: ([1-9][0-9]*) executions/checks passed\n", stdout)
             require(matched is not None, "console helper did not report a complete PASS")
-            result.update(console_executions_and_checks=int(matched.group(1)), status="PASS")
+            result["console_executions_and_checks"] = int(matched.group(1))
+            stdout = run(library_name + "-globals", [sys.executable,
+                ROOT / "tests/tools/global_contract.py", "--compiler", sdk / "nilcompiler",
+                "--interpreter", sdk / "nilinterpreter", "--assembler", sdk / "nilassembler",
+                "--linker", sdk / "nillinker", "--runtime", runtime,
+                "--nilstd", library, "--llvm", "ON"], 180)
+            require(stdout == GLOBAL_SUMMARY, "global helper did not report every required PASS case")
+            result.update(nominal_global_vm_executions=8,
+                          nominal_global_initialization_rejections=2,
+                          nominal_global_native_rejections=2, status="PASS")
     except Exception as error:
         report["errors"].append(str(error))
     finally:
@@ -245,7 +261,9 @@ def qualify(args: argparse.Namespace, sdk: Path, work: Path) -> dict:
             report["errors"].append(str(error))
         if not report["errors"] and len(report["libraries"]) == 2 and report.get("sdk_unchanged"):
             report.update(status="PASS", execution_count=16, negative_abi_count=24,
-                          negative_library_count=72)
+                          negative_library_count=72, nominal_global_vm_executions=16,
+                          nominal_global_initialization_rejections=4,
+                          nominal_global_native_rejections=4)
         report["cleanup_verified"] = bool(report["commands"]) and all(
             row.get("cleanup_verified") is True for row in report["commands"])
     return report

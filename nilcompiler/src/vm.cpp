@@ -826,6 +826,7 @@ void VM::loadProgram(const std::vector<Instruction> &program,
   ++checkpoint_generation_;
   program_ = program;
   class_metadata_ = program.empty() ? nullptr : program.front().module_metadata;
+  provenance_type_cache_.clear();
   constants_ = constants;
   labels_.clear();
   functions_.clear();
@@ -1627,7 +1628,8 @@ void VM::executeInstruction(const Instruction &instr) {
     }
     return match;
   };
-  std::unordered_set<const StructData *> validated_storage_objects;
+  std::unordered_map<const StructData *, std::unordered_set<const nil_struct_def *>>
+      validated_storage_objects;
   const auto validate_tuple_value = [&](const auto &self, const Value &value,
                                          const std::string &type,
                                          const std::string &operation,
@@ -1756,9 +1758,11 @@ void VM::executeInstruction(const Instruction &instr) {
       if (!actual_schema) reject();
       schema = actual_schema;
     } else if (actual_schema != schema) reject();
-    // Repeated record references preserve aliasing, and recursive interpreter
-    // records must not recurse forever during this storage-boundary check.
-    if (!validated_storage_objects.insert(object->data.get()).second) return;
+    // Repeated references to the same object and schema preserve aliasing and
+    // terminate recursion. An embedding caller can present the same backing
+    // data through different nominal wrappers; each schema must be checked.
+    // Class ancestor views resolve to the actual schema above.
+    if (!validated_storage_objects[object->data.get()].insert(schema).second) return;
     const auto &data = *object->data;
     if (data.fields.size() + data.array_fields.size() + data.string_fields.size() +
         data.double_fields.size() + data.struct_fields.size() + data.enum_fields.size() +
@@ -1828,7 +1832,22 @@ void VM::executeInstruction(const Instruction &instr) {
     if (instr.args.size() != 2)
       return;
     const auto &type = instr.args[1];
-    if (type == "anything") {
+    if (type == "anything" || has_nominal_global_storage_syntax(type)) {
+      if (type != "anything") {
+        if (!class_metadata_)
+          throw std::runtime_error("global storage requires exact module type metadata");
+        // Nominal globals are an interpreter contract. Their serialized
+        // spelling must identify a declared schema, never infer one from a
+        // suffix, an opaque integer, or a borrowed storage handle.
+        validate_nil_dynamic_type(*class_metadata_, type, true);
+        const auto exact = canonical_dynamic_type(type);
+        const auto structures = std::count_if(class_metadata_->structs.begin(), class_metadata_->structs.end(),
+            [&](const auto &schema) { return canonical_dynamic_type(schema.name) == exact; });
+        const auto enumerations = std::count_if(class_metadata_->enums.begin(), class_metadata_->enums.end(),
+            [&](const auto &schema) { return canonical_dynamic_type(schema.name) == exact; });
+        if (structures + enumerations != 1)
+          throw std::runtime_error("global storage requires one exact declared nominal schema");
+      }
       validate_tuple_value(validate_tuple_value, value, type, "global storage", 0);
       return;
     }
@@ -1844,6 +1863,58 @@ void VM::executeInstruction(const Instruction &instr) {
     if (!valid)
       throw std::runtime_error("Global '" + instr.args[0] +
                                "' value does not match storage type '" + type + "'");
+  };
+  const auto enum_payload_types = [](const std::string &raw) {
+    const auto type = canonical_dynamic_type(raw);
+    if (type.empty() || type == "void") return std::vector<std::string>{};
+    if (type.front() == '(' && type.back() == ')') {
+      const auto parts = array_tuple_elements("tuple<" + type.substr(1, type.size() - 2) + ">");
+      if (!parts) throw std::runtime_error("enum operation has malformed payload metadata");
+      return *parts;
+    }
+    return std::vector<std::string>{type};
+  };
+  const auto requires_provenance = [&](const std::string &type) {
+    if (!class_metadata_) return false;
+    const auto known = provenance_type_cache_.find(type);
+    if (known != provenance_type_cache_.end()) return known->second;
+    const bool required = nil_type_requires_provenance(*class_metadata_, type);
+    provenance_type_cache_.emplace(type, required);
+    return required;
+  };
+  const auto validate_provenance_enum = [&](const Value &value, const std::string &type,
+                                           const std::string &payload, std::size_t count,
+                                           const std::string &operation) {
+    const auto reject = [&]() {
+      throw std::runtime_error(operation + ": requires its exact declared enum, live variant and payload types");
+    };
+    if (!class_metadata_) reject();
+    const auto exact = canonical_dynamic_type(type);
+    const nil_enum_def *schema = nullptr;
+    for (const auto &candidate : class_metadata_->enums) {
+      if (canonical_dynamic_type(candidate.name) != exact) continue;
+      if (schema) reject();
+      schema = &candidate;
+    }
+    const auto *item = std::get_if<EnumValue>(&value);
+    if (!schema || !item || canonical_dynamic_type(item->type_name) != exact) reject();
+    validate_nil_dynamic_type(*class_metadata_, exact, true);
+    const auto tag = canonical_variant_name(item->variant_name);
+    const auto separator = tag.rfind("::");
+    const auto name = separator == std::string::npos ? tag : tag.substr(separator + 2);
+    const nil_enum_def::variant *variant = nullptr;
+    for (const auto &candidate : schema->variants) {
+      if (candidate.name != name) continue;
+      if (variant) reject();
+      variant = &candidate;
+    }
+    if (!variant || item->payloads.size() != count) reject();
+    const auto requested = enum_payload_types(payload);
+    const auto declared = enum_payload_types(variant->associated_type);
+    if (requested.size() != count || requested != declared) reject();
+    // The actual tag selects the payload layout. Metadata for another variant
+    // must never turn a scalar or another class into a checked receiver.
+    validate_tuple_value(validate_tuple_value, value, exact, operation, 0);
   };
   switch (instr.op) {
   case Opcode::PUSH_CONST_STR:
@@ -7680,6 +7751,10 @@ void VM::executeInstruction(const Instruction &instr) {
     std::reverse(payloads.begin(), payloads.end());
     ev.payloads = std::move(payloads);
 
+    if (instr.args.size() == 4 && requires_provenance(instr.args[2]))
+      validate_provenance_enum(Value(ev), instr.args[2], instr.args[3],
+                               static_cast<std::size_t>(arg_count), "NEW_VARIANT");
+
     pushStack(ev);
   } break;
   case Opcode::IS_VARIANT: {
@@ -7704,6 +7779,11 @@ void VM::executeInstruction(const Instruction &instr) {
     // UNWRAP_VARIANT count - Pop enum value and push its payloads
     int payload_count = instr.args.empty() ? 0 : std::stoi(instr.args[0]);
     Value v = popStack();
+
+    if (instr.args.size() == 3 &&
+        (requires_provenance(instr.args[1]) || requires_provenance(instr.args[2])))
+      validate_provenance_enum(v, instr.args[1], instr.args[2],
+                               static_cast<std::size_t>(payload_count), "UNWRAP_VARIANT");
 
     if (std::holds_alternative<EnumValue>(v)) {
       const auto &ev = std::get<EnumValue>(v);

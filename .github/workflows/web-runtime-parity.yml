@@ -23,6 +23,9 @@ name: Web runtime platform checks
       - 'tests/tools/markup_contract.py'
       - 'tests/tools/module_alias_contract.py'
       - 'tests/tools/checked_conversion_intrinsic_contract.py'
+      - 'tests/class_vm_tests.cpp'
+      - 'tests/tools/global_contract.py'
+      - 'tests/language/module-global-contract.*'
       - 'tests/console_input_state_tests.cpp'
       - 'tests/durable_file_io_tests.cpp'
       - 'tests/durable_vm_lifecycle_tests.cpp'
@@ -105,7 +108,7 @@ jobs:
         run: |
           set -o pipefail
           cmake --build build/web-parity --config Release --parallel 2 \
-            --target nilcompiler nilinterpreter nilassembler nil_net_support_tests \
+            --target nilcompiler nilinterpreter nilassembler nillinker ny_class_vm_tests nil_net_support_tests \
                      nil_net_lifecycle_tests nil_file_time_support_tests \
                      nil_rooted_file_snapshot_tests nil_webview_runtime_tests \
                      nil_console_input_state_tests nil_durable_file_io_tests \
@@ -117,7 +120,7 @@ jobs:
           "$NIL_CI_PYTHON" - <<'PY'
           import json, os, re, subprocess
           from pathlib import Path
-          pattern = r'^(net[.](support-contract|lifecycle-contract|socket-contract)|nil[.](file-time-support|file-modified-at-contract|rooted-file-snapshot|rooted-file-snapshot-contract|webview-runtime|webview-intrinsic-contract|formatted-text-contract|markup-contract|module-alias|checked-conversion-intrinsic-contract|console-input-state|durable-file-io)|matrix[.]execution)$'
+          pattern = r'^(net[.](support-contract|lifecycle-contract|socket-contract)|nil[.](file-time-support|file-modified-at-contract|rooted-file-snapshot|rooted-file-snapshot-contract|webview-runtime|webview-intrinsic-contract|formatted-text-contract|markup-contract|module-alias|checked-conversion-intrinsic-contract|console-input-state|durable-file-io|class-contract)|ny[.]global-contract|matrix[.]execution)$'
           base = ['ctest', '--test-dir', 'build/web-parity', '-C', 'Release', '-R', pattern]
           root = Path('build/web-parity-evidence').resolve()
           inventory = subprocess.check_output(base+['--show-only=json-v1'], timeout=30)
@@ -128,7 +131,8 @@ jobs:
                       'nil.webview-runtime', 'nil.webview-intrinsic-contract',
                       'nil.formatted-text-contract', 'nil.markup-contract',
                       'nil.module-alias', 'nil.checked-conversion-intrinsic-contract',
-                      'nil.console-input-state', 'nil.durable-file-io'}
+                      'nil.console-input-state', 'nil.durable-file-io',
+                      'nil.class-contract', 'ny.global-contract'}
           assert {test['name'] for test in json.loads(inventory)['tests']} == expected
           with (root/'ctest.log').open('wb') as output:
               result = subprocess.run(base+['--no-tests=error', '--output-on-failure',
@@ -145,6 +149,11 @@ jobs:
           assert re.fullmatch(r'Console input state: [1-9][0-9]* checks passed\s*',
                              by_name['nil.console-input-state'].findtext('system-out', ''))
           assert by_name['nil.durable-file-io'].findtext('system-out', '').strip() == 'durable-file-io-ok'
+          assert by_name['nil.class-contract'].findtext('system-out', '').strip() == \
+              'Class metadata, provenance, dispatch, alias and version contracts passed'
+          assert by_name['ny.global-contract'].findtext('system-out', '').strip() == (
+              'global contracts passed: 9 negative and 3 control cases in text/binary NIL\n'
+              'nominal global contracts passed: 8 VM executions, 2 initialization rejections, 0 native rejections')
           # The Windows helper exercises checked unsupported errors and nonmutation.
           # Do not count its zero-check VM lifecycle or skipped POSIX route as support.
           (root/'durable-platform-boundary.json').write_text(json.dumps({
@@ -325,6 +334,20 @@ jobs:
               shutil.copytree(durable, root/'durable-io')
           dirty = subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'], text=True, timeout=15)
           revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True, timeout=15).strip()
+          source_inputs = [
+              'CMakeLists.txt', '.github/workflows/web-runtime-parity.yml',
+              '.github/workflows/macos-application-parity.yml',
+              'nilcompiler/src/codegen.cpp', 'nilcompiler/src/llvm_backend.cpp',
+              'nilcompiler/src/nil_contract.hpp', 'nilcompiler/src/nil_loader.cpp',
+              'nilcompiler/src/vm.cpp', 'nilcompiler/src/vm.hpp', 'nilcompiler/src/dynamic_type.hpp',
+              'nilstd/src/core/option.ny', 'tests/class_vm_tests.cpp', 'tests/tools/global_contract.py',
+              'tests/language/module-global-contract.ny', 'tests/language/module-global-contract.stdout']
+          inputs = {}
+          for name in source_inputs:
+              data = Path(name).read_bytes()
+              inputs[name] = dict(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+          (root/'nominal-global-inputs.json').write_text(json.dumps(dict(
+              revision=revision, files=inputs), indent=2)+'\n')
           files = {}
           for path in sorted(root.rglob('*')):
               if path.is_file() and not path.is_symlink():

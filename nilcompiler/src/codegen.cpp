@@ -7461,33 +7461,37 @@ codegen::assemble_module(const ast_program &program,
     generate_impl_method_specialization(req, *mod, diags);
   }
 
-  // Preserve the checked storage type on every access, including initializer
-  // stores and accesses in specialized functions. Non-scalar globals retain
-  // their legacy interpreted representation until they have a native ABI.
-  for (auto &function : mod->functions) {
-    for (auto &instruction : function.body) {
-      if ((instruction.opname != "LOAD_GLOBAL" &&
-           instruction.opname != "STORE_GLOBAL") ||
-          instruction.args.size() != 1)
-        continue;
-      const auto declaration = global_var_decls_.find(instruction.args.front());
-      if (declaration == global_var_decls_.end())
-        continue;
-      const auto *variable = declaration->second;
-      auto type = variable->type_name;
-      if (!type && variable->initializer)
-        type = variable->initializer->inferred_type;
-      if (!type)
-        continue;
-      const auto storage_type = canonical_nil_type_name(*type);
-      if (is_typed_global_storage_type(storage_type))
-        instruction.args.push_back(storage_type);
-    }
-  }
-
   // Concrete aggregate types can be reachable through ABI signatures without
   // a literal or variant operation in this module. Materialize those schemas
   // independently of the checker's optional synthetic AST declarations.
+  const auto canonical_enum_signature = [&](const std::string &raw_type) {
+    const auto type = canonical_nil_type_name(raw_type);
+    const auto parsed = parse_generic_type_name(type);
+    if (!parsed || parsed->base_name.find("::") != std::string::npos)
+      return type;
+    const auto base = canonical_builtin_enum_base(parsed->base_name);
+    const ast_enum_decl *declaration = nullptr;
+    std::string owner;
+    const auto suffix = "::" + base;
+    for (const auto &[name, candidate] : enum_decls_) {
+      if (name != base && (name.size() <= suffix.size() ||
+          name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0))
+        continue;
+      // A leaf spelling can only name one registered declaration. Never pick
+      // an owner by shortest/longest namespace or erase an explicit owner.
+      if (declaration && declaration != candidate)
+        return type;
+      declaration = candidate;
+      if (owner.empty() || name != base)
+        owner = name;
+    }
+    if (!declaration || declaration->variants.empty())
+      return type;
+    const auto qualified = owner + type.substr(type.find('<'));
+    const auto metadata = resolve_concrete_enum_variant(*this, *mod, qualified,
+        owner + "::" + declaration->variants.front().name);
+    return metadata ? metadata->enum_type : type;
+  };
   std::set<std::string> visited_enum_signatures;
   std::function<void(const std::string &, unsigned)> materialize_enum_signature =
       [&](const std::string &raw_type, unsigned depth) {
@@ -7522,7 +7526,7 @@ codegen::assemble_module(const ast_program &program,
     // Parameters already use this normalization at serialization. Return
     // types must share the exact schema key: String/text and spacing cannot
     // produce distinct native ABI identities for the same qualified enum.
-    function.return_type = canonical_nil_type_name(function.return_type);
+    function.return_type = canonical_enum_signature(function.return_type);
     for (const auto &instruction : function.body)
       if ((instruction.opname == "BOX_ANY" || instruction.opname == "UNBOX_ANY" ||
            instruction.opname == "IS_ANY_TYPE") && instruction.args.size() == 1)
@@ -7530,13 +7534,73 @@ codegen::assemble_module(const ast_program &program,
     materialize_struct_schema(function.return_type, *mod, function.source_line,
                               0, false);
     materialize_enum_signature(function.return_type, 0);
-    for (const auto &parameter : function.params) {
+    for (auto &parameter : function.params) {
       const auto colon = parameter.find(':');
       if (colon != std::string::npos) {
-        materialize_struct_schema(parameter.substr(colon + 1), *mod,
+        const auto type = canonical_enum_signature(parameter.substr(colon + 1));
+        parameter = parameter.substr(0, colon) + ": " + type;
+        materialize_struct_schema(type, *mod,
                                   function.source_line, 0, false);
-        materialize_enum_signature(parameter.substr(colon + 1), 0);
+        materialize_enum_signature(type, 0);
       }
+    }
+  }
+  for (auto &klass : mod->classes) {
+    for (auto &method : klass.methods) {
+      method.return_type = canonical_enum_signature(method.return_type);
+      for (auto &parameter : method.parameter_types)
+        parameter = canonical_enum_signature(parameter);
+    }
+  }
+
+  // Globals need the same concrete schemas as function signatures, even when
+  // initialized through a factory with no literal at the storage declaration.
+  // Preserve exact nominal identities on every access; the interpreter checks
+  // their provenance and native consumers still reject this storage profile.
+  std::map<std::string, std::string> global_storage_types;
+  for (const auto &[storage, variable] : global_var_decls_) {
+    auto type = variable->type_name;
+    if (!type && variable->initializer)
+      type = variable->initializer->inferred_type;
+    if (!type)
+      continue;
+    auto storage_type = canonical_enum_signature(*type);
+    if (is_typed_global_storage_type(storage_type)) {
+      global_storage_types.emplace(storage, storage_type);
+      continue;
+    }
+    if (!has_nominal_global_storage_syntax(storage_type))
+      continue;
+    storage_type = materialize_struct_schema(storage_type, *mod,
+                                            variable->line, 0, true);
+    materialize_enum_signature(storage_type, 0);
+    std::size_t matching_schemas = 0;
+    for (const auto &schema : mod->structs)
+      if (schema.name == storage_type)
+        ++matching_schemas;
+    for (const auto &schema : mod->enums)
+      if (schema.name == storage_type)
+        ++matching_schemas;
+    // A class has one accompanying record layout; do not count its class
+    // dispatch metadata as a second storage schema.
+    if (matching_schemas != 1) {
+      reject_codegen_construct(variable->line,
+          "global '" + storage + "' requires one exact declared storage schema for '" +
+              storage_type + "'",
+          "use a checked concrete record, class, or enum type for this global");
+      continue;
+    }
+    global_storage_types.emplace(storage, storage_type);
+  }
+  for (auto &function : mod->functions) {
+    for (auto &instruction : function.body) {
+      if ((instruction.opname != "LOAD_GLOBAL" &&
+           instruction.opname != "STORE_GLOBAL") ||
+          instruction.args.size() != 1)
+        continue;
+      const auto storage = global_storage_types.find(instruction.args.front());
+      if (storage != global_storage_types.end())
+        instruction.args.push_back(storage->second);
     }
   }
 
