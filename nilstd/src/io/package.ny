@@ -8,8 +8,9 @@
 #   - Console I/O: write, writeln, read_line, write_error, flush (console.ny)
 #   - File: checked whole-file operations, bounded regular-file input, atomic
 #     byte publication, and opaque-handle streams (file.ny)
-#   - POSIX durable publication, directory synchronization, context-owned locks
-#   - Owner-only directory creation and private-entry metadata verdicts
+#   - Durable publication and directory synchronization: POSIX or Windows local NTFS
+#   - Context-owned locks, owner-only directories and private-entry verdicts:
+#     POSIX modes or the Windows effective-user ACL profile
 #   - Checksum: CRC-32 windows and SHA-256 content digests (checksum.ny)
 #   - Stream: Read/Write/Seek/Close traits and checked stream_copy (stream.ny)
 #   - Path: lexical path inspection and transformation (path.ny)

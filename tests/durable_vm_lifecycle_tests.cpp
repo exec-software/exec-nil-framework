@@ -16,6 +16,10 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <cstdlib>
@@ -47,6 +51,16 @@ public:
     output.close();
     require(static_cast<bool>(output) && ::chmod(lock.c_str(), 0600) == 0,
             "cannot create private VM lock file");
+#elif defined(_WIN32)
+    root = fs::temp_directory_path() / ("nil-durable-vm-" +
+        std::to_string(GetCurrentProcessId()) + "-" + std::to_string(GetTickCount64()));
+    require(ny::detail::create_private_directory_utf8(root.u8string()).ok,
+            "cannot create private VM lock fixture");
+    lock = root / "invocation.lock";
+    ny::detail::FileLockRegistry creator;
+    const auto created = creator.acquire(lock.u8string(), true);
+    require(created.ok, "cannot create private VM lock file");
+    require(creator.release(created.token).ok, "cannot release VM fixture lock");
 #endif
   }
   ~fixture_directory() {
@@ -236,7 +250,7 @@ void lifecycle(const fs::path &path, bool binary) {
 
 int main() {
   try {
-#if defined(__unix__) || defined(__APPLE__)
+#if defined(__unix__) || defined(__APPLE__) || defined(_WIN32)
     fixture_directory owned;
     lifecycle(owned.lock, false);
     lifecycle(owned.lock, true);

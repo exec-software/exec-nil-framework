@@ -586,20 +586,25 @@ void check_private_directory_umask(const fs::path &root) {
 }
 
 #else
-void check_unsupported_host(const fs::path &root) {
-  const auto target = root / "private-unsupported-marker";
-  require_error(ny::detail::sync_directory_utf8(root.u8string()), "private-unsupported-marker");
-  require_error(ny::detail::write_file_durable_utf8(target.u8string(), {'x'}, false), "private-unsupported-marker");
+void check_windows_host(const fs::path &root) {
+  const auto target = root / "private-windows-marker";
+  require(ny::detail::sync_directory_utf8(root.u8string()).ok, "cannot sync local NTFS directory");
+  require(ny::detail::write_file_durable_utf8(target.u8string(), {'x'}, false).ok,
+          "cannot publish durable Windows file");
+  require(read_bytes(target) == "x", "Windows durable file bytes differ");
+  const auto metadata = ny::detail::private_regular_file_utf8(target.u8string());
+  require(metadata.ok && metadata.value, "Windows publication is not private");
   FileLockRegistry registry;
-  require_error(registry.acquire(target.u8string(), true), "private-unsupported-marker");
-  require_error(registry.is_held(0), "private-unsupported-marker");
-  require_error(ny::detail::create_private_directory_utf8(target.u8string()),
-                "private-unsupported-marker");
-  require_error(ny::detail::private_regular_file_utf8(target.u8string()),
-                "private-unsupported-marker");
-  require_error(ny::detail::private_directory_utf8(target.u8string()),
-                "private-unsupported-marker");
-  require(registry.empty() && !fs::exists(target), "unsupported host mutated its namespace");
+  const auto locked = registry.acquire(target.u8string(), false);
+  require(locked.ok && registry.is_held(locked.token).value, "cannot hold private Windows file lock");
+  require(registry.release(locked.token).ok && registry.empty(), "cannot release Windows lock");
+  const auto absent = registry.is_held(0);
+  require(absent.ok && !absent.value, "unknown Windows token must have a false verdict");
+  const auto directory = root / "private-windows-directory";
+  require(ny::detail::create_private_directory_utf8(directory.u8string()).ok,
+          "cannot create private Windows directory");
+  const auto private_directory = ny::detail::private_directory_utf8(directory.u8string());
+  require(private_directory.ok && private_directory.value, "created Windows directory is not private");
 }
 #endif
 
@@ -639,7 +644,7 @@ int main() {
     check_private_metadata(owned.root);
     check_private_directory_umask(owned.root);
 #else
-    check_unsupported_host(owned.root);
+    check_windows_host(owned.root);
 #endif
     check_content_digest();
     std::cout << "durable-file-io-ok\n";

@@ -161,8 +161,14 @@ The additive [durable-files reference](durable-files.md) covers
 `write_bytes_durable`, `sync_directory`, context-owned advisory file locks and
 the `file_lock_is_held` ownership query,
 owner-only directory creation, private-entry metadata verdicts, and portable
-`sha256_hex`. The filesystem primitives are POSIX-only; Windows reports an
-explicit unsupported error. They supply filesystem barriers and nonblocking
+`sha256_hex`. The filesystem primitives have POSIX and Windows implementations;
+Windows durable publication and directory synchronization require local NTFS.
+The [Windows development campaign](../../notebook/2026-11-21-windows-durable-parity.md)
+passes the private-entry, locking and publication contracts, including installed
+Ny/Matrix VM, AOT and JIT routes against both `nilstd` and `nillib` in the
+unchanged `b564ef6` SDK. The qualification helper is pinned separately to
+`6bd3b18`; stable-release qualification remains separate. These APIs supply
+filesystem barriers and nonblocking
 single-writer coordination. They preserve existing atomic-write/stream-flush
 semantics and do not expand an older installed SDK's guarantees.
 

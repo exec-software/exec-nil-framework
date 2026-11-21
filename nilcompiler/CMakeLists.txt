@@ -92,7 +92,7 @@ foreach(nil_runtime_target IN ITEMS nilruntime nilruntime_shared)
         # Winsock; propagate it to static build-tree consumers as well as DLLs.
         # The Win32 desktop provider calls USER32 and GDI32 directly, unlike
         # the dynamically loaded GTK provider, so those travel the same way.
-        target_link_libraries(${nil_runtime_target} PUBLIC ws2_32 user32 gdi32)
+        target_link_libraries(${nil_runtime_target} PUBLIC ws2_32 user32 gdi32 advapi32)
     endif()
     if(APPLE)
         # The AppKit desktop provider calls Cocoa and CoreGraphics directly,

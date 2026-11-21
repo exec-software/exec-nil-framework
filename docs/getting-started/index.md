@@ -190,6 +190,14 @@ the SDK, and runs installed source/binary-library consumers outside the checkout
 Logs and evidence stay beside `sdk`, outside its sealed payload. A failed
 candidate is retained with `FAILED.txt`; it is not reported ready.
 
+The durable/console/global consumer checks use a fresh private execution directory
+under the process's system-temp location, so deeply nested candidate paths do not
+consume native tools' temporary-path budget. That execution root must fit within
+96 UTF-16 units; if preflight rejects it, select a shorter process `TMP`/`TEMP`
+directory. The original execution evidence is retained and an exact hash-verified
+copy is stored beside the candidate. Copy or cleanup failures fail qualification.
+This layout does not qualify general Windows long-path support.
+
 There is no SDK activation, replacement, release publication, or Lich upload in
 this workflow. Successful candidates contain eleven `.exe` tools at their root,
 `nilstd` sources, `nillib` binaries with `native/nil.lib` and `native/nil.dll`, and

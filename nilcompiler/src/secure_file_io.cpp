@@ -43,6 +43,8 @@
 #endif
 #include <windows.h>
 #include <winternl.h>
+#include "windows_private_entries.hpp"
+#include "windows_durable_publication.hpp"
 #endif
 
 namespace ny::detail {
@@ -906,8 +908,10 @@ AtomicFileWrite write_file_atomic(const char *path,
 
 AtomicFileWrite sync_directory_utf8(const std::string &path) {
 #ifdef _WIN32
-  (void)path;
-  return {false, "file.sync_directory: unsupported platform"};
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path)
+    return {false, "file.sync_directory: invalid directory path"};
+  return windows_durable_publication::sync_directory(*native_path);
 #else
   const auto native_path = path_from_utf8_string(path);
   if (!native_path || !valid_directory_entry_operand(*native_path))
@@ -930,10 +934,10 @@ AtomicFileWrite write_file_durable_utf8(const std::string &path,
                                        const std::vector<char> &bytes,
                                        bool replace) {
 #ifdef _WIN32
-  (void)path;
-  (void)bytes;
-  (void)replace;
-  return {false, "file.write_bytes_durable: unsupported platform"};
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path)
+    return {false, "file.write_bytes_durable: invalid destination path"};
+  return windows_durable_publication::write_file(*native_path, bytes, replace);
 #else
   const auto native_path = path_from_utf8_string(path);
   if (!native_path)
@@ -942,23 +946,25 @@ AtomicFileWrite write_file_durable_utf8(const std::string &path,
 #endif
 }
 
-#ifndef _WIN32
 namespace {
 
 std::atomic<std::uint64_t> next_lock_token{1};
 
+#ifndef _WIN32
 bool private_lock_file(const struct stat &status) {
   return S_ISREG(status.st_mode) && status.st_uid == ::geteuid() &&
          status.st_nlink == 1 && (status.st_mode & 07777) == 0600;
 }
+#endif
 
 } // namespace
-#endif
 
 AtomicFileWrite create_private_directory_utf8(const std::string &path) {
 #ifdef _WIN32
-  (void)path;
-  return {false, "file.create_private_directory: unsupported platform"};
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path)
+    return {false, "file.create_private_directory: invalid directory path"};
+  return windows_private_entries::create_directory(*native_path);
 #else
   const auto native_path = path_from_utf8_string(path);
   if (!native_path)
@@ -988,9 +994,10 @@ AtomicFileWrite create_private_directory_utf8(const std::string &path) {
 
 FileCheck private_regular_file_utf8(const std::string &path) {
 #ifdef _WIN32
-  (void)path;
-  return {false, false,
-          "file.is_private_regular_file: unsupported platform"};
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path)
+    return {false, false, "file.is_private_regular_file: invalid file path"};
+  return windows_private_entries::inspect_regular_file(*native_path);
 #else
   const auto native_path = path_from_utf8_string(path);
   if (!native_path)
@@ -1007,8 +1014,10 @@ FileCheck private_regular_file_utf8(const std::string &path) {
 
 FileCheck private_directory_utf8(const std::string &path) {
 #ifdef _WIN32
-  (void)path;
-  return {false, false, "file.is_private_directory: unsupported platform"};
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path)
+    return {false, false, "file.is_private_directory: invalid directory path"};
+  return windows_private_entries::inspect_directory(*native_path);
 #else
   const auto native_path = path_from_utf8_string(path);
   if (!native_path || !valid_directory_entry_operand(*native_path))
@@ -1027,9 +1036,69 @@ FileLockRegistry::~FileLockRegistry() noexcept { clear(); }
 
 FileLockResult FileLockRegistry::acquire(const std::string &path, bool create) {
 #ifdef _WIN32
-  (void)path;
-  (void)create;
-  return {false, 0, "file.acquire_file_lock: unsupported platform"};
+  const auto failure = [](const char *reason) {
+    return FileLockResult{false, 0, std::string("file.acquire_file_lock: ") + reason};
+  };
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path || !windows_private_entries::valid_path(*native_path))
+    return failure("invalid lock path");
+  if (descriptors_.size() >= 4096)
+    return failure("lock limit exceeded");
+  nil::detail::owner_security security;
+  std::error_code error;
+  if (!security.initialize(false, error))
+    return failure("cannot inspect effective identity");
+  auto attributes = security.attributes();
+  // Permit another cooperating opener to reach LockFileEx, but pin this
+  // backing entry against rename/delete while the context holds its lock.
+  UniqueWindowsHandle lock(CreateFileW(native_path->c_str(),
+      GENERIC_READ | GENERIC_WRITE | READ_CONTROL | FILE_READ_ATTRIBUTES,
+      FILE_SHARE_READ | FILE_SHARE_WRITE, create ? &attributes : nullptr,
+      create ? CREATE_NEW : OPEN_EXISTING,
+      FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr));
+  if (lock.get() == INVALID_HANDLE_VALUE)
+    return failure("cannot open lock file");
+  const auto private_entry = windows_private_entries::inspect_handle(
+      lock.get(), false, "file.acquire_file_lock", security);
+  if (!private_entry.ok || !private_entry.value)
+    return failure("lock file is not private and regular");
+  // Windows participants coordinate over byte zero (including empty files).
+  // The immediate flag also applies to synchronous handles: never wait on a
+  // foreign context's lock, and never issue an asynchronous request.
+  OVERLAPPED range{};
+  if (!LockFileEx(lock.get(), LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                  0, 1, 0, &range))
+    return failure(GetLastError() == ERROR_LOCK_VIOLATION ? "lock is busy"
+                                                        : "cannot acquire lock");
+  UniqueWindowsHandle visible(CreateFileW(native_path->c_str(),
+      READ_CONTROL | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
+      nullptr, OPEN_EXISTING,
+      FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr));
+  BY_HANDLE_FILE_INFORMATION held_info{}, visible_info{};
+  const auto visible_private = windows_private_entries::inspect_handle(
+      visible.get(), false, "file.acquire_file_lock", security);
+  const auto still_private = windows_private_entries::inspect_handle(
+      lock.get(), false, "file.acquire_file_lock", security);
+  if (!visible_private.ok || !visible_private.value || !still_private.ok ||
+      !still_private.value || !GetFileInformationByHandle(lock.get(), &held_info) ||
+      !GetFileInformationByHandle(visible.get(), &visible_info) ||
+      held_info.dwVolumeSerialNumber != visible_info.dwVolumeSerialNumber ||
+      held_info.nFileIndexHigh != visible_info.nFileIndexHigh ||
+      held_info.nFileIndexLow != visible_info.nFileIndexLow)
+    return failure("lock file changed while acquiring");
+  auto token = next_lock_token.load(std::memory_order_relaxed);
+  do {
+    if (token > static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)()))
+      return failure("lock token space exhausted");
+  } while (!next_lock_token.compare_exchange_weak(token, token + 1,
+                                                  std::memory_order_relaxed));
+  try {
+    descriptors_.emplace(static_cast<std::int64_t>(token), lock.get());
+  } catch (const std::bad_alloc &) {
+    return failure("cannot track lock");
+  }
+  lock.release();
+  return {true, static_cast<std::int64_t>(token), {}};
 #else
   const auto failure = [](const char *reason) {
     return FileLockResult{false, 0, std::string("file.acquire_file_lock: ") + reason};
@@ -1099,18 +1168,22 @@ FileLockResult FileLockRegistry::acquire(const std::string &path, bool create) {
 }
 
 FileCheck FileLockRegistry::is_held(std::int64_t token) const {
-#ifdef _WIN32
-  (void)token;
-  return {false, false, "file.file_lock_is_held: unsupported platform"};
-#else
   return {true, token > 0 && descriptors_.find(token) != descriptors_.end(), {}};
-#endif
 }
 
 AtomicFileWrite FileLockRegistry::release(std::int64_t token) {
 #ifdef _WIN32
-  (void)token;
-  return {false, "file.release_file_lock: unsupported platform"};
+  const auto found = descriptors_.find(token);
+  if (found == descriptors_.end())
+    return {false, "file.release_file_lock: invalid lock token"};
+  const HANDLE handle = found->second;
+  descriptors_.erase(found);
+  OVERLAPPED range{};
+  const BOOL unlocked = UnlockFileEx(handle, 0, 1, 0, &range);
+  const BOOL closed = CloseHandle(handle);
+  if (!unlocked || !closed)
+    return {false, "file.release_file_lock: release failed"};
+  return {true, {}};
 #else
   const auto found = descriptors_.find(token);
   if (found == descriptors_.end())
@@ -1131,7 +1204,13 @@ AtomicFileWrite FileLockRegistry::release(std::int64_t token) {
 }
 
 void FileLockRegistry::clear() noexcept {
-#ifndef _WIN32
+#ifdef _WIN32
+  for (const auto &entry : descriptors_) {
+    OVERLAPPED range{};
+    UnlockFileEx(entry.second, 0, 1, 0, &range);
+    CloseHandle(entry.second);
+  }
+#else
   for (const auto &entry : descriptors_)
     ::close(entry.second);
 #endif

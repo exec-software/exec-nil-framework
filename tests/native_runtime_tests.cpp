@@ -870,9 +870,14 @@ void check_ordinary_io_contract(bool &ok) {
 }
 
 void check_durable_io_contract(bool &ok) {
-  nyrt_context_begin(0, nullptr);
   try {
     temporary_directory temporary;
+    // Release every context-owned handle before the directory is removed,
+    // including when a fixture operation throws. Windows locks deny deletion.
+    struct context_scope {
+      context_scope() { nyrt_context_begin(0, nullptr); }
+      ~context_scope() { nyrt_context_end(); }
+    } context;
     const auto directory = temporary.path().u8string();
     const auto destination = (temporary.path() / "checkpoint.bin").u8string();
     const auto lock_path = (temporary.path() / "writer.lock").u8string();
@@ -884,16 +889,6 @@ void check_durable_io_contract(bool &ok) {
     const auto call = [&](const char *name, std::uint64_t a = 0, std::uint64_t b = 0, std::uint64_t c = 0) {
       return nyrt_io_v1(name, a, b, c, &value, &error);
     };
-#ifdef _WIN32
-    ok &= expect(call("file.sync_directory", word(directory.c_str())) == 0 && error,
-                 "unsupported durable I/O reported success");
-    ok &= expect(call("file.acquire_file_lock", word(lock_path.c_str()), 1) == 0 && error &&
-                     !std::filesystem::exists(std::filesystem::u8path(lock_path)),
-                 "unsupported locking mutated the namespace");
-    ok &= expect(call("file.file_lock_is_held", 0) == 0 && error &&
-                     std::string(error) == "file.file_lock_is_held: unsupported platform",
-                 "unsupported lock ownership query reported a verdict");
-#else
     ok &= expect(call("file.file_lock_is_held", 1) == 1 && value == 0 && !error,
                  "new native context reported an unknown token as held");
     ok &= expect(call("file.sync_directory", word(directory.c_str())) == 1 && value == 1 && !error,
@@ -952,12 +947,12 @@ void check_durable_io_contract(bool &ok) {
                  "native lock survived context teardown");
     ok &= expect(call("file.acquire_file_lock", word(lock_path.c_str()), 0) == 1 && value > abandoned,
                  "native teardown failed to close the backing descriptor");
-#endif
+    ok &= expect(call("file.release_file_lock", value) == 1 && value == 1 && !error,
+                 "native final lock release failed");
   } catch (const std::exception &exception) {
     std::cerr << "durable I/O native test setup failed: " << exception.what() << '\n';
     ok = false;
   }
-  nyrt_context_end();
 }
 
 } // namespace
