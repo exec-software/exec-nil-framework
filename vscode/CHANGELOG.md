@@ -4,6 +4,10 @@ All notable changes to the NIL Framework VS Code extension are documented here.
 
 ## 1.0.0-rc.1
 
+- Restore semantic navigation when an included file changes on disk while VS Code
+  retains an older clean model after its tab closes. Preserve dirty/open include
+  alias checks and invalidate pending results when arbitrary include tabs change.
+
 - Highlight, indent and fold explicit Matrix `begin block` / `end block`
   consider arms. The `consider` snippet now includes an explicit block so its
   body can contain nested `when` conditions; `block` remains an ordinary name
@@ -19,8 +23,7 @@ All notable changes to the NIL Framework VS Code extension are documented here.
   Refresh analysis after project edits in every supported format and recognize
   optional `projectReferences` in project configuration.
 
-- Pin the VSIX packaging tool's MSAL dependency to patched 7.1.1; the local
-  dependency audit reports no known vulnerabilities.
+- Pin the VSIX packaging tool's MSAL dependency to patched 7.1.1.
 
 - Add `.nildata` syntax highlighting, comments, indentation, and folding for the
   versioned NILData format, with strict JSON scalar and escape highlighting. Keep

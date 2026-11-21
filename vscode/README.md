@@ -360,6 +360,9 @@ successful check. The extension validates every exported source snapshot against
 captured buffers or disk before returning a destination, rechecks versions after
 asynchronous reads, and watches the reached source files. Dirty textual includes
 with other extensions cannot be overlaid and prevent use of that index.
+Clean include models cached after their tabs close defer to verified disk contents.
+Open include tabs and their aliases still require matching text; opening or closing
+those tabs invalidates pending results, including for extensions such as `.inc`.
 
 Member dispatch, fields, type uses, pattern bindings and some function-value or
 generated references do not yet provide destinations. Expanded Ny units lack

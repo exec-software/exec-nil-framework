@@ -81,6 +81,38 @@ timeouts and assertions stay unchanged; the replacement campaign must pass
 before claiming this revision's four-host runtime acceptance. This is a workflow
 correction, so the separately qualified SDK retains its `332b6f5` source identity.
 
+## Development SDK handoff and editor include caches
+
+The immutable Linux development SDK built from `332b6f5` has manifest SHA256
+`c82b532b1ef48b9c91c4ca0022f94fb25bb57d5253928cf177a7426875fd7a98`.
+Its eleven tools, nineteen modules, 84 source files and 72 HTML pages passed
+601 source tests, 1,184 installed executions, 32 additional markup executions,
+and the installed rooted-file contract. All 275 payload hashes were verified
+after relocation and consumer testing.
+
+An isolated committed Goetic snapshot passed its native checks, 24 Matrix
+fixtures, nine Node tests and 94 HTTP tests. The Goetic chat independently
+verified the physical generation and committed its next-build pin in `c229656`,
+preserving its existing application edits. No live application was restarted;
+the shared SDK default and stable/Lich publication remain unchanged.
+
+The first Mac application run passed all non-editor contracts on Apple Silicon,
+then failed the include-file restoration navigation check after 43 successful
+editor checks. Its original evidence is retained in
+[run 44858633162](https://github.com/exec-software/exec-nil-framework/actions/runs/44858633162).
+A deterministic regression reproduced a matching failure mode: semantic
+validation treated a retained clean closed-tab include model as authoritative
+even after the compiler had checked restored disk contents.
+
+Validation now defers those clean closed-tab caches to exact disk snapshots.
+Dirty include aliases still block navigation, and clean open include tabs must
+match. Arbitrary local text/diff tab membership now invalidates pending results,
+while compiler overlays and providers remain limited to supported languages.
+Ten added regression tests cover direct/alias caches, dirty/open tabs and changes
+during asynchronous reads. All 177 extension unit tests and the production build
+pass; real editor-host acceptance remains a separate check. No host assertion,
+deadline or dependency version was changed.
+
 ## Editor dependency follow-up
 
 The existing [minimatch advisory](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249)

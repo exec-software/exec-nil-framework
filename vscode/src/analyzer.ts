@@ -9,7 +9,7 @@ import { analysisInvocation, AnalysisResult, createByteRangeMapper, maxAnalysisO
   parseAnalysisOutput, serializeAnalysisWorkspace } from "./analysisModel";
 import { projectForResource } from "./projectContext";
 import { isProjectFile } from "./projectModel";
-import { analysisSourcePath, languageDocumentSelector, savedSourcePath, sourceLanguage } from "./languages";
+import { analysisSourcePath, languageDocumentSelector, savedSourcePath } from "./languages";
 import { expandConfiguredPath } from "./toolchain";
 import { configuredSdkPath, nyConfiguration, resolveConfiguredTool, toolNotFoundMessage } from "./vscodeToolchain";
 import { definitionAt, planRename, referencesAt, renamePreservesBindings, SemanticIndex, SemanticLocation, SemanticSource } from "./semanticModel";
@@ -85,13 +85,7 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
 
   constructor() {
     this.tabSources = this.openTabSources();
-    const tabMembershipChanged = () => {
-      const sources = this.openTabSources();
-      if (sources.size !== this.tabSources.size || [...sources].some(source => !this.tabSources.has(source))) {
-        this.tabSources = sources;
-        this.scheduleAll();
-      }
-    };
+    const tabMembershipChanged = () => this.updateTabSources();
     const watcher = vscode.workspace.createFileSystemWatcher("**/*.{ny,matrix,mat,nildata,json,yaml,yml}");
     const changed = (uri: vscode.Uri) => {
       if (/\.(ny|matrix|mat)$/i.test(uri.fsPath) || isProjectFile(uri.fsPath)) this.scheduleAll();
@@ -162,10 +156,20 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
 
   usesCompilerDefinitions(document: vscode.TextDocument): boolean { return this.enabled(document); }
 
+  private updateTabSources(): void {
+    const sources = this.openTabSources();
+    if (sources.size !== this.tabSources.size || [...sources].some(source => !this.tabSources.has(source))) {
+      this.tabSources = sources;
+      this.scheduleAll();
+    }
+  }
+
   private openTabSources(): Set<string> {
     const sources = new Set<string>();
     const add = (uri: vscode.Uri) => {
-      if (uri.scheme === "untitled" || (uri.scheme === "file" && sourceLanguage(uri.fsPath))) sources.add(uri.toString());
+      // Textual includes can have arbitrary extensions. Their open tabs still
+      // carry editor authority, while supported() limits compiler overlays.
+      if (uri.scheme === "untitled" || uri.scheme === "file") sources.add(uri.toString());
     };
     for (const group of vscode.window.tabGroups.all) for (const tab of group.tabs) {
       if (tab.input instanceof vscode.TabInputText) add(tab.input.uri);
@@ -577,7 +581,11 @@ export class NyAnalyzer implements vscode.Disposable, vscode.CodeActionProvider,
       const inputs = job.inputs.filter(input => input.identity === path.normalize(source.path));
       const models = observed.filter(item => item.identity === path.normalize(source.path));
       if (models.some(item => item.dirty && !inputs.some(input => input.document === item.document) && item.document.getText() !== source.text)) return false;
-      if (!inputs.length && models.some(item => item.document.isDirty || item.document.getText() !== source.text)) return false;
+      // A retained clean model without a tab is only a disk cache. As in
+      // workspaceInput/publish, its obsolete text cannot override current disk
+      // bytes; dirty or open include aliases must still agree with the snapshot.
+      if (!inputs.length && models.some(item => item.document.isDirty ||
+        (this.tabSources.has(item.document.uri.toString()) && item.document.getText() !== source.text))) return false;
       if (inputs.length) {
         if (inputs.some(input => input.text !== source.text)) return false;
       } else {
