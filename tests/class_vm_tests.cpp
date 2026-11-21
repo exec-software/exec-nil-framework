@@ -312,6 +312,50 @@ void nominal_global_alias_contract() {
   }
 }
 
+void provenance_admission_lifetime_contract() {
+  auto module = class_enum_fixture();
+  ny::validate_nil_class_contract(module);
+  // A successful admission cannot authorize a later edit at the same module
+  // address. The exact enum payload no longer agrees with its instructions.
+  module.enums.front().variants.front().associated_type = "i64";
+  bool caught = false;
+  try { ny::validate_nil_class_contract(module); }
+  catch (const std::runtime_error &) { caught = true; }
+  check(caught, "changed enum metadata is revalidated after successful admission");
+  module.enums.front().variants.front().associated_type = "Base";
+  ny::validate_nil_class_contract(module);
+
+  auto scalar = module;
+  scalar.enums.front().variants.front().associated_type = "i64";
+  check(!ny::nil_type_requires_provenance(scalar, "Container") &&
+        ny::nil_type_requires_provenance(module, "Container"),
+        "same named enum in distinct modules retains independent provenance");
+  scalar.enums.front().variants.front().associated_type = "Base";
+  check(ny::nil_type_requires_provenance(scalar, "Container"),
+        "false provenance result cannot survive a declaration edit");
+
+  ny::nil_module graph;
+  // 4095 nominal nodes plus the scalar leaf exactly reach the existing
+  // 4096-node bound. A cached valid query must not authorize a larger graph.
+  for (unsigned index = 0; index < 4095; ++index)
+    graph.structs.push_back({"Node" + std::to_string(index),
+        {{"next", index == 4094 ? "i64" : "Node" + std::to_string(index + 1)}}});
+  check(!ny::nil_type_requires_provenance(graph, "Node0"),
+        "provenance traversal accepts its exact existing node bound");
+  graph.structs.back().fields.front().second = "Overflow";
+  graph.structs.push_back({"Overflow", {{"value", "i64"}}});
+  caught = false;
+  try { (void)ny::nil_type_requires_provenance(graph, "Node0"); }
+  catch (const std::runtime_error &error) {
+    caught = std::string(error.what()).find("provenance type graph exceeds its bound") != std::string::npos;
+  }
+  check(caught, "provenance query still rejects a graph beyond 4096 nodes");
+  graph.structs.pop_back();
+  graph.structs.back().fields.front().second = "i64";
+  check(!ny::nil_type_requires_provenance(graph, "Node0"),
+        "a rejected graph does not poison a later valid admission");
+}
+
 void positives() {
   for (bool binary : {false, true}) {
     auto module = fixture(); std::unordered_map<std::string, ny::Value> constants;
@@ -451,7 +495,8 @@ void negatives() {
 }
 } // namespace
 int main() {
-  try { positives(); negatives(); class_enum_contract(); nominal_global_alias_contract(); }
+  try { positives(); negatives(); class_enum_contract(); nominal_global_alias_contract();
+        provenance_admission_lifetime_contract(); }
   catch (const std::exception &error) { std::cerr << "Unexpected exception: " << error.what() << '\n'; return 1; }
   if (failures) return 1;
   std::cout << "Class metadata, provenance, dispatch, alias and version contracts passed\n";

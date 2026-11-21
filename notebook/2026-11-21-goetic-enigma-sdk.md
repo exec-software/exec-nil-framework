@@ -2,12 +2,17 @@
 
 ## Status and question
 
-The combined SDK at `6a0563438aff61b3cb751012ae00c323f836cf13` passes all
-609 Linux source tests without skips and 1,248 installed fixed-output routes.
-Its handoff is held: the actual Goetic/Enigma consumer exposed missing class
-provenance through module globals and enum payloads. Corrections and fresh
-consumer qualification are in progress. This remains development SDK work,
-not a stable release or a live application migration.
+Clean source `2db8c9b7a13f45bd2b6a9effb1c973ed7d887ef7` produced development
+SDK `ae06ead0f5d3312deaa29c2832c9bfd6665b91be107396323954cc88022ce317`.
+All 609 Linux source tests, 1,248 installed fixed-output routes, installed
+durable/console/global checks and the real snapshot/optional-value consumers
+pass. Canonical relocation also passes markup, rooted-file and real consumer
+checks. Shared defaults and accepted consumer pins remain unchanged.
+
+Goetic's broader application suite subsequently exposed severe startup cost.
+Adoption is held while admission performance is corrected; successful value
+and persistence tests alone do not qualify application responsiveness. This
+remains development SDK work, not a stable release or a live migration.
 
 Goetic needs its qualified compiler fixes together with Enigma's durable I/O
 surface, including `nil.std.io.file_lock_is_held`. The existing Goetic SDK came
@@ -157,7 +162,41 @@ real-engine optional-value consumer must also pass in private source copies
 before a new immutable SDK is handed over. No live application or data change
 is part of this check.
 
-### Remaining boundaries
+### Admission performance
+
+Goetic reports all 26 Matrix fixtures passing, followed by an HTTP startup
+deadline failure. In a fresh synthetic legacy store, the full application
+became ready after 69.658 seconds; subsequent health requests took about four
+milliseconds. Its separate in-process fixture measured 7.068 seconds before
+main, but ten 32 KiB raw reads took only 0.000410 seconds. Redundant adapter
+copies add roughly 50 milliseconds per 32 KiB read and are a separate consumer
+optimization, not an explanation for the startup delay.
+
+The new provenance analysis repeatedly classifies instruction operands,
+including labels and constants, by scanning and canonicalizing all record and
+enum schemas. It also repeats type-closure checks and function lookups. The
+correction indexes immutable metadata within each validation invocation and
+memoizes only completed queries. Duplicate and exact-owner checks, bounded graph
+walks and per-instruction validation remain required. Parsing and VM loading
+must both continue to revalidate because embedding callers can change the
+instruction vector. Admission-only probes must never execute the application
+or access its data; before/after measurements use the same sealed bytecode.
+
+That admission-only comparison measured the same 6,946,497-byte application at
+22.1942 seconds parsing plus 23.3772 seconds loading before the change, versus
+0.2493 plus 0.1928 seconds afterward. Total measured time fell from 45.5799 to
+0.4508 seconds, about 101 times faster. The maintenance program fell from
+17.7566 to 0.3018 seconds. Instruction, function and schema counts matched
+exactly; no application instructions executed, and the old binaries were
+retained. These are admission measurements, not an HTTP-readiness claim.
+
+Twenty-eight focused contracts pass, including metadata mutation between
+admissions, same-named types in separate modules, and the exact 4096-node graph
+boundary, overflow rejection and recovery. The fresh installed SDK must still
+pass the full source/installed campaign and Goetic's original HTTP startup
+deadline before adoption. Increasing that deadline is not the performance fix.
+
+### Platform and language boundaries
 
 Durable filesystem primitives are currently POSIX-only. Windows rejection
 checks prove explicit unsupported behavior, not parity. macOS needs its own
