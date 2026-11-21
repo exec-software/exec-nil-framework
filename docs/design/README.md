@@ -54,8 +54,8 @@ not assigned architecture identifiers.
 | NIL-0025 | [Matrix desktop UI](NIL-0025-matrix-desktop-ui.md) | Implemented GTK4 on Linux, Win32 on Windows and AppKit on Intel/Apple Silicon macOS; release qualification remains separate |
 | NIL-0026 | [Evolving the language without breaking what is written](NIL-0026-language-evolution.md) | Editions implemented in the project manifest |
 | NIL-0027 | [Multiline formatted text and structured markup literals](NIL-0027-structured-markup.md) | Implemented initial multiline text and structural markup profile for Ny and Matrix; installed SDK evidence is recorded separately |
-| NIL-0028 | [Durable publication and context-owned file locks](NIL-0028-durable-files-and-locks.md) | Implemented POSIX and Windows source providers; Windows publication requires local NTFS and is undergoing qualification; installed/release qualification separate |
-| NIL-0029 | [Private directory creation, metadata verdicts, and content digests](NIL-0029-private-entries-and-digests.md) | Implemented POSIX ownership/mode and Windows owner-ACL profiles, with a portable digest; Windows implementation undergoing qualification |
+| NIL-0028 | [Durable publication and context-owned file locks](NIL-0028-durable-files-and-locks.md) | Implemented POSIX and Windows providers; local-NTFS Windows source and installed development checks pass; stable-release qualification separate |
+| NIL-0029 | [Private directory creation, metadata verdicts, and content digests](NIL-0029-private-entries-and-digests.md) | Implemented POSIX ownership/mode and Windows owner-ACL profiles, with a portable digest; Windows source and installed development checks pass |
 | NIL-0030 | [Reading a line without faulting at end of input](NIL-0030-end-of-input.md) | Implemented additive surface on every execution route; installed/release SDK qualification separate |
 | NIL-0093 | [Executable context is artifact self-description](NIL-0093-executable-context.md) | Implemented within the documented inspection profile |
 

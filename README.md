@@ -285,9 +285,11 @@ fixes with [durable files and context-owned locks](docs/standard-library/durable
 private-entry checks, SHA-256, optional console input and native hexadecimal
 random draws. The source also implements Windows private entries and context-owned
 locks; Windows durable writes and directory synchronization require local NTFS.
-Seven focused Windows suites pass, including eight Ny/Matrix interpreted and
-native routes. Installed Windows SDK qualification remains separate from the
-earlier SDK results below. The
+The `b564ef6` Windows development SDK passes 609 source tests, with two headless
+display skips, all 1,248 installed ordinary routes, and the installed durable,
+console and global-state checks. The [Windows qualification record](notebook/2026-11-21-windows-durable-parity.md)
+pins the SDK and later qualification helper separately. Desktop acceptance and
+stable-release qualification remain separate. The
 [integration notebook](notebook/2026-11-21-goetic-enigma-sdk.md) separates source
 checks, installed SDK evidence and remaining limitations.
 The interpreter also preserves imported class values through typed module

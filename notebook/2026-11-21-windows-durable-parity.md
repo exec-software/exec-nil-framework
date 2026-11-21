@@ -1,7 +1,8 @@
 # Windows durable files and lock parity
 
-Source runtime qualification passes; installed Windows SDK qualification remains
-in progress. This work does not replace
+Source runtime and installed Windows development SDK qualification pass. The
+SDK is built from `b564ef6`, with the later `6bd3b18` qualification helper recorded
+separately below. This work does not replace
 the accepted SDK, activate a new shared SDK, or declare a stable release.
 
 ## Implementation
@@ -47,7 +48,7 @@ attempts are retained; no accepted installation or existing worktree is changed.
   Configuration then passed with clean process teardown. The owner and cleanup
   deadlines were not changed.
 
-## Acceptance required
+## Acceptance contract
 
 Real Windows acceptance must cover the private/lock executable (20 contracts,
 18 invalid path operands), the publication executable (15 contracts, 16 invalid
@@ -57,10 +58,11 @@ Installed qualification must repeat the routes with both source and compiled
 standard libraries. Current-source hosted Linux, Windows and both macOS checks
 remain necessary before broad parity or SDK adoption claims.
 
-The accepted source revision remains `167ae3a6b0abb69c26e943a008ee6eb1eac8f13d`
-with documentation closeout `fd4417dbb5e7b614ee3fd7962409395a95793521` until new
-qualification is complete. Earlier 609-source/1248-installed-route and hosted
-results belong to that revision and must not be attributed to this change.
+The earlier Goetic handoff remains pinned to source
+`167ae3a6b0abb69c26e943a008ee6eb1eac8f13d`, with documentation closeout
+`fd4417dbb5e7b614ee3fd7962409395a95793521`; it is not switched by this Windows
+qualification. Its 609-source/1248-installed-route and hosted results belong to
+that revision. The new Windows evidence below has its own exact identities.
 
 ## Source qualification checkpoint
 
@@ -131,8 +133,8 @@ remain intact; ordinary-route success does not erase this failure.
 The qualifier correction uses a fresh, shallow Windows execution workspace and
 retains a verified evidence copy under the requested output directory. It does
 not change production pathname semantics, machine settings, child cleanup or
-test deadlines. Installed durable acceptance must be rerun against the exact
-unchanged SDK, recording the separate helper revision and both workspace paths.
+test deadlines. The successful installed rerun below records the unchanged
+SDK, separate helper revision and both workspace paths.
 
 ## Hosted source evidence
 
@@ -148,3 +150,39 @@ checks and all 88 real-editor checks across nine modules. Each also covers eight
 durable executions, twelve ABI and 36 library rejections, and 202 console checks.
 These are source/application results; they neither replace installed SDK records
 nor establish a stable Windows or macOS release.
+
+
+## Installed Windows qualification closeout
+
+The clean helper revision `6bd3b180ba84c1664ea359d5d73d5877acf96d3e` passes all
+21 qualifier unit tests on both Linux and Windows. Against the unchanged
+`b564ef60092d552884e6416dcdede2145ce55291` SDK, its real Windows installed run
+passes in 116.7 seconds with strict owned-process cleanup. Both `nilstd` and
+`nillib` pass:
+
+- Sixteen total Ny/Matrix text-VM, binary-VM, AOT and JIT durable executions.
+- Twenty-four ABI rejections and 72 foreign-library rejections, with unchanged
+  filesystem/ACL evidence and independent byte, owner and lock-release oracles.
+- 184 console executions/checks per library (the Windows inventory).
+- Sixteen nominal-global VM executions, four initialization rejections and four
+  native rejections, plus the existing nine-negative/three-control global checks
+  per library.
+
+The 53-unit execution root stays within the documented 96-unit budget. Its
+523 evidence files and empty directories are retained in the original workspace
+and in a separately verified copy. The outer owner confirms all 280 SDK entries
+(including the manifest) and nine external provider/tool inputs are unchanged;
+those dependency hashes also match the original SDK campaign. The original
+candidate's `FAILED.txt` is preserved: this is a separate successful installed
+qualification, not a rewrite of that failed build-script attempt.
+
+Installed qualifier report SHA-256:
+`997f0cc2fcd6ec7646adfedad0db16b4383479a698c883061c2642c2933fd96d`.
+Outer ownership/source/SDK verification report SHA-256:
+`e6b04bab355e0b77fb5b1c26b04c388638892948f7f5ce6fe31021d9c69fbec3`.
+The unchanged SDK archive SHA-256 is
+`5d60bbab2397c2f13e9839107cda4cb4567bfdf18f55d8f1dc04290a178780ba`.
+Later documentation commits close out this evidence; they are not the compiled
+SDK revision. The package is a qualified development artifact, not a stable
+release, a new desktop acceptance result or a power-cut guarantee. No shared SDK,
+Goetic installation or release deployment was activated.

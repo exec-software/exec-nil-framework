@@ -163,10 +163,12 @@ the `file_lock_is_held` ownership query,
 owner-only directory creation, private-entry metadata verdicts, and portable
 `sha256_hex`. The filesystem primitives have POSIX and Windows implementations;
 Windows durable publication and directory synchronization require local NTFS.
-The [focused Windows source campaign](../../notebook/2026-11-21-windows-durable-parity.md)
-passes the private-entry, locking and publication contracts, including Ny/Matrix
-VM, AOT and JIT routes. Installed Windows SDK and release qualification remain
-separate. These APIs supply filesystem barriers and nonblocking
+The [Windows development campaign](../../notebook/2026-11-21-windows-durable-parity.md)
+passes the private-entry, locking and publication contracts, including installed
+Ny/Matrix VM, AOT and JIT routes against both `nilstd` and `nillib` in the
+unchanged `b564ef6` SDK. The qualification helper is pinned separately to
+`6bd3b18`; stable-release qualification remains separate. These APIs supply
+filesystem barriers and nonblocking
 single-writer coordination. They preserve existing atomic-write/stream-flush
 semantics and do not expand an older installed SDK's guarantees.
 

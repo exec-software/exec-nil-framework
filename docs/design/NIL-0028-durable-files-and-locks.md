@@ -1,8 +1,9 @@
 # NIL-0028: Durable publication and context-owned file locks
 
-- **Status:** Implemented POSIX and Windows source providers. Windows runtime and
-  route qualification passes; installed/release SDK qualification remains
-  separate. Windows durable publication requires local NTFS.
+- **Status:** Implemented POSIX and Windows providers. Windows source and
+  [installed development SDK qualification](../../notebook/2026-11-21-windows-durable-parity.md)
+  pass; stable-release qualification remains separate. Windows durable
+  publication requires local NTFS.
 
 ## Motivation
 

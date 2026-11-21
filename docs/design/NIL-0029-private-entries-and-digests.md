@@ -1,8 +1,8 @@
 # NIL-0029: Private directory creation, metadata verdicts, and content digests
 
-- **Status:** Implemented POSIX and Windows source profiles, with a portable
-  digest. Windows runtime and route qualification passes; installed/release SDK
-  qualification remains separate.
+- **Status:** Implemented POSIX and Windows profiles, with a portable digest.
+  Windows source and [installed development SDK qualification](../../notebook/2026-11-21-windows-durable-parity.md)
+  pass; stable-release qualification remains separate.
 
 ## Motivation
 
@@ -92,8 +92,8 @@ Ny and Matrix fixtures exercise every surface across textual and binary VM, AOT,
 and JIT, with independent host oracles checking POSIX modes or Windows owner/ACL
 metadata. This describes validation coverage, not completed platform evidence.
 
-Windows source support is undergoing qualification; the digest is
-platform-independent. Each platform needs its own current-source execution
-evidence. As with NIL-0028, source declarations alone do not give
-an installed SDK the new provider, and release qualification is independent
-work. See the [public API reference](../standard-library/durable-files.md).
+Windows source and installed development SDK checks pass with independently
+verified owner/ACL and byte oracles; the digest is platform-independent. The
+qualification record pins the SDK and helper revisions, and does not update an
+older installation. Stable-release qualification remains independent work.
+See the [public API reference](../standard-library/durable-files.md).

@@ -3,8 +3,10 @@
 `nil.std.io` provides filesystem primitives for applications that need a
 durable checkpoint and a cooperative single-writer protocol. Ny and Matrix use
 the same runtime provider and checked results. POSIX and Windows providers are
-implemented in source and pass focused Windows runtime/route qualification;
-this reference does not declare an installed SDK or stable release qualified.
+implemented and pass source-runtime checks. The [Windows development SDK
+campaign](../../notebook/2026-11-21-windows-durable-parity.md) also passes installed
+checks against both source and binary libraries. This is not stable-release or
+power-cut qualification.
 Windows durable publication and directory synchronization require local NTFS.
 
 | Function | Result |
