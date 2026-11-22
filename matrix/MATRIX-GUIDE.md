@@ -633,6 +633,12 @@ say tour.billing::audit-level                  !!! qualified reference
 `public` exports; no modifier is private to the book. Book-level initialisers
 run in declaration order.
 
+`read a.book as alias` loads that book and binds the alias within the reading
+book; it does not require a second `read`. Qualified paragraph calls retain the
+original declaration's visibility, argument checks and generic parameters in
+both source and binary libraries. Different books may use the same alias for
+different dependencies.
+
 **Where a book lives.** A book is a NIL module, and the compiler finds one the
 same way it finds an Ny module: by looking under each `-I` include root for a
 path mirroring the book's name. `book oculus.window.geometry` lives at

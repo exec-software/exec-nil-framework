@@ -311,8 +311,7 @@ def main() -> int:
                      '    let b: text = "right";\n'
                      '    if a == b then\n        return 1;\n    end if\n'
                      '    return 0;\n}\n')
-        compare, _ = emit(args.compiler, args.assembler, root, 'compare',
-                          comparing)
+        compare, _ = emit_case('compare', comparing)
         assert compare_import in compare, (
             'a hosted program that compares text must order bytes through '
             f'libc; imports: {sorted(compare)}')
@@ -322,8 +321,7 @@ def main() -> int:
             f'unexpected: {sorted(compare - runtime_abi - {compare_import})}')
         checks += 1
 
-        free_compare, _ = emit(args.compiler, args.assembler, root,
-                               'free_compare', comparing, freestanding=True)
+        free_compare, _ = emit_case('free_compare', comparing, freestanding=True)
         assert freestanding_compare_import in free_compare, (
             'a freestanding program that compares text must order bytes '
             'through the runtime; imports: '

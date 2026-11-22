@@ -360,6 +360,9 @@ successful check. The extension validates every exported source snapshot against
 captured buffers or disk before returning a destination, rechecks versions after
 asynchronous reads, and watches the reached source files. Dirty textual includes
 with other extensions cannot be overlaid and prevent use of that index.
+Clean include models cached after their tabs close defer to verified disk contents.
+Open include tabs and their aliases still require matching text; opening or closing
+those tabs invalidates pending results, including for extensions such as `.inc`.
 
 Member dispatch, fields, type uses, pattern bindings and some function-value or
 generated references do not yet provide destinations. Expanded Ny units lack
@@ -415,6 +418,9 @@ Blank positions, unsupported member/type contexts, parse or import failures, ear
 failures, ambiguous repeated generic occurrences and binary dependencies retain
 the tolerant language-server fallback. When compiler candidates are available,
 its value bindings take precedence while language keywords and snippets remain.
+The extension combines those suggestions once per request, so independently timed
+compiler and language-server answers cannot publish duplicate bindings. Source or
+configuration changes during a request discard the combined result.
 An older SDK without the query also retains fallback completion. This is an initial
 identifier-completion profile; general incomplete-code recovery remains future work.
 

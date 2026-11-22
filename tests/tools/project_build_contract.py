@@ -163,6 +163,22 @@ def main():
             try:
                 result = subprocess.run(call, cwd=cwd, text=True, capture_output=True,
                                         encoding='utf-8', timeout=timeout, env=environment)
+            except subprocess.TimeoutExpired as error:
+                for name, output in [('stdout', error.stdout), ('stderr', error.stderr)]:
+                    limit = 32 * 1024
+                    if not output:
+                        print(f'nilbuild contract: timeout {name}: <no output>', flush=True)
+                        continue
+                    retained = output[:limit]
+                    if isinstance(retained, bytes):
+                        retained = retained.decode('utf-8', errors='replace')
+                    encoded = retained.encode('utf-8', errors='replace')
+                    truncated = len(output) > limit or len(encoded) > limit
+                    retained = encoded[:limit].decode('utf-8', errors='ignore')
+                    detail = f'truncated to {limit} UTF-8 bytes' if truncated else 'retained output'
+                    print(f'nilbuild contract: timeout {name} ({detail}):', flush=True)
+                    print(retained, flush=True)
+                raise
             finally:
                 if measured_build:
                     print(f'nilbuild contract: {command} elapsed {time.monotonic() - started:.3f}s', flush=True)

@@ -137,6 +137,8 @@ public:
   bool is_symbol_visible(const symbol *sym,
                          const std::string &from_module) const;
   const symbol *resolve_qualified_name(const std::string &qualified_path) const;
+  std::shared_ptr<ast_identifier_expr>
+  module_function_reference(const ast_member_access_expr &member) const;
   std::optional<std::string>
   resolve_imported_symbol(const std::string &name) const;
 
@@ -218,6 +220,7 @@ private:
   std::map<std::string, std::map<std::string, import_entry>>
       imports_; // importer -> {local_name -> entry}
   std::map<std::string, const ast_variable_decl *> global_declarations_;
+  std::map<const ast_function_decl *, std::string> function_declaration_names_;
   std::map<std::string, std::vector<const ast_import_decl *>> global_imports_;
   std::map<std::string, std::map<std::string, std::string>> global_namespace_aliases_;
   std::optional<std::string> resolve_source_global(const std::string &name,

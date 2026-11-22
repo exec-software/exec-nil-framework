@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import {
   LanguageClient,
   LanguageClientOptions,
+  CompletionRequest,
   RevealOutputChannelOn,
   ServerOptions
 } from "vscode-languageclient/node";
@@ -11,8 +12,7 @@ import { languageDocumentSelector } from "./languages";
 
 export class NyLanguageClientManager implements vscode.Disposable {
   constructor(
-    private readonly compilerDefinitionsEnabled: (document: vscode.TextDocument) => boolean = () => false,
-    private readonly compilerCompletions: (document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken) => Promise<vscode.CompletionList | undefined> = async () => undefined
+    private readonly compilerDefinitionsEnabled: (document: vscode.TextDocument) => boolean = () => false
   ) {}
   private client: LanguageClient | undefined;
   private readonly outputChannel = vscode.window.createOutputChannel(
@@ -59,18 +59,9 @@ export class NyLanguageClientManager implements vscode.Disposable {
       outputChannel: this.outputChannel,
       revealOutputChannelOn: RevealOutputChannelOn.Error,
       middleware: {
-        provideCompletionItem: async (document, position, context, token, next) => {
-          const [compiler, fallback] = await Promise.all([
-            this.compilerCompletions(document, position, token), next(document, position, context, token)
-          ]);
-          if (token.isCancellationRequested) return undefined;
-          if (!compiler || !fallback) return fallback;
-          const names = new Set(compiler.items.map(item => typeof item.label === "string" ? item.label : item.label.label));
-          const items = (Array.isArray(fallback) ? fallback : fallback.items).filter(item =>
-            (item.kind === vscode.CompletionItemKind.Keyword || item.kind === vscode.CompletionItemKind.Snippet || item.detail === "Matrix language") &&
-            !names.has(typeof item.label === "string" ? item.label : item.label.label));
-          return new vscode.CompletionList(items, true);
-        },
+        // NyAnalyzer is the sole completion publisher. It requests tolerant
+        // candidates directly and arbitrates them with one compiler snapshot.
+        provideCompletionItem: () => undefined,
         provideDefinition: (document, position, token, next) => this.compilerDefinitionsEnabled(document)
           ? undefined : next(document, position, token),
         provideReferences: (document, position, context, token, next) => this.compilerDefinitionsEnabled(document)
@@ -103,6 +94,24 @@ export class NyLanguageClientManager implements vscode.Disposable {
       this.outputChannel.appendLine(`Failed to start nillsp: ${message}`);
       this.outputChannel.show(true);
       void vscode.window.showErrorMessage(`NIL Framework language server failed to start: ${message}`);
+    }
+  }
+
+  public async provideCompletionItems(document: vscode.TextDocument, position: vscode.Position,
+    token: vscode.CancellationToken, context: vscode.CompletionContext): Promise<vscode.CompletionItem[] | vscode.CompletionList | undefined> {
+    const client = this.client;
+    const options = client?.initializeResult?.capabilities.completionProvider;
+    if (!client?.isRunning() || !options || token.isCancellationRequested) return undefined;
+    const current = () => this.client === client && client.isRunning() && !token.isCancellationRequested;
+    try {
+      const result = await client.sendRequest(CompletionRequest.type,
+        client.code2ProtocolConverter.asCompletionParams(document, position, context), token);
+      if (!current()) return undefined;
+      const converted = await client.protocol2CodeConverter.asCompletionResult(result, options.allCommitCharacters, token);
+      return current() ? converted : undefined;
+    } catch {
+      // A failed/stopped tolerant server must not discard a compiler answer.
+      return undefined;
     }
   }
 

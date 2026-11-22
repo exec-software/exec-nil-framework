@@ -797,6 +797,29 @@ void test_vm_entry_and_exit_queries() {
         "VM should distinguish loadable libraries from programs with main");
 }
 
+void test_checked_conversion_module_initializers() {
+  for (const std::string owner : {"nil::std::core::Result", "ny::lang::core::Result", "Result", "impostor::Result"}) {
+    const auto type = owner + "<i32,text>";
+    std::istringstream source("module conversion_initializer\nconst word = \"7\"\n"
+        "enum " + type + "\nOk: i32\nError: text\nend enum\n"
+        "PUSH_CONST_STR word\nINTEROP_CALL intrinsic convert.try_to_i32 1 " + type + "\n"
+        "IS_VARIANT Result::Ok " + type + " i32\n");
+    bool accepted = false, rejected_owner = false;
+    try {
+      std::unordered_map<std::string, ny::Value> constants;
+      const auto program = ny::parseProgram(source, constants);
+      ny::VM vm;
+      vm.loadProgram(program, constants);
+      vm.execute();
+      accepted = vm.getStack().size() == 1 && vm.getProgramExitCode() == 1;
+    } catch (const std::runtime_error &error) {
+      rejected_owner = std::string(error.what()).find("requires the standard Result ABI") != std::string::npos;
+    }
+    check(owner == "impostor::Result" ? rejected_owner && !accepted : accepted && !rejected_owner,
+          "module initializer conversion preserves exact Result owner: " + owner);
+  }
+}
+
 void test_function_arity_survives_both_nil_formats() {
   ny::nil_module module;
   ny::nil_function helper;
@@ -1969,6 +1992,7 @@ int main() {
   test_shared_opcode_mapping();
   test_unknown_opcodes_are_rejected();
   test_vm_entry_and_exit_queries();
+  test_checked_conversion_module_initializers();
   test_function_arity_survives_both_nil_formats();
   test_function_return_types_survive_both_nil_formats();
   test_vm_typed_return_contract();

@@ -260,7 +260,7 @@ def main():
                     success(result, "1\n")
                 else:
                     assert result.returncode > 0 and not result.stdout, result
-                    assert "expected a fully initialized value of exact type 'Result<i32,text>'" in result.stderr, result
+                    assert "requires the standard Result ABI" in result.stderr, result
                 checks += 1
             if args.llvm == "ON":
                 native(path, "valid", expected, binary)

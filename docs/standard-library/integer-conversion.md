@@ -50,3 +50,13 @@ run through text/binary NIL, bundles, LLVM JIT/AOT, standalone assembler/linker
 execution and installed source/binary libraries. This is a native claim for
 these checked decimal integer APIs; other `Convert` operations retain their
 separate support boundaries.
+
+Conversion intrinsic declarations must return the standard
+`nil.std.core.Result`, with the provider's exact success type and a text error.
+A user-defined enum named `Result` is a different type even when its variants
+have the same shape. Source checking and loaded-NIL validation reject that
+substitution before execution, including unchecked source emission. This rule
+also applies to the interpreter's checked floating-point and boolean conversion
+providers; it does not add native support for those providers. Legacy standard
+namespace spellings and the explicitly supported unqualified standard Result
+wire representation remain accepted.

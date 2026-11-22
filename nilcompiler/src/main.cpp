@@ -592,17 +592,24 @@ static std::string find_module_name(const std::shared_ptr<ny::ast_program> &p,
   }
 }
 
+static std::optional<std::string> declaration_import_path(const ny::ast_decl &declaration) {
+  if (declaration.kind == ny::ast_node_kind::import_decl_node)
+    return static_cast<const ny::ast_import_decl &>(declaration).module_path;
+  if (declaration.kind == ny::ast_node_kind::namespace_alias_decl_node) {
+    const auto &alias = static_cast<const ny::ast_namespace_alias_decl &>(declaration);
+    if (alias.imports_target) return alias.target_module;
+  }
+  return std::nullopt;
+}
+
 static std::vector<std::string>
 collect_import_paths(const std::shared_ptr<ny::ast_program> &p) {
   std::vector<std::string> out;
   for (const auto &d : p->declarations) {
     if (!d)
       continue;
-    if (d->kind == ny::ast_node_kind::import_decl_node) {
-      auto id = std::dynamic_pointer_cast<ny::ast_import_decl>(d);
-      if (id && !id->module_path.empty())
-        out.push_back(id->module_path);
-    }
+    if (const auto path = declaration_import_path(*d); path && !path->empty())
+      out.push_back(*path);
   }
   return out;
 }
@@ -1401,9 +1408,10 @@ static int compile_main(int argc, char *argv[], ny::analysis_session *analysis) 
         declared_modules.insert(static_cast<const ny::ast_module_decl &>(*d).name);
     bool unresolved = false;
     for (const auto &u : units) for (const auto &d : u.program->declarations) {
-      if (!d || d->kind != ny::ast_node_kind::import_decl_node) continue;
-      const auto &import = static_cast<const ny::ast_import_decl &>(*d);
-      auto target = import.module_path;
+      if (!d) continue;
+      const auto path = declaration_import_path(*d);
+      if (!path) continue;
+      auto target = *path;
       const auto alias = import_aliases.find(target);
       if (alias != import_aliases.end()) target = alias->second;
       if (!resolved_import_paths.count(target) && !declared_modules.count(target)) {

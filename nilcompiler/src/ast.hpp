@@ -541,6 +541,9 @@ struct ast_import_decl : public ast_decl {
 struct ast_namespace_alias_decl : public ast_decl {
   std::string alias;         // alias name, e.g., 'alias'
   std::string target_module; // target module path, e.g., 'long::nested::name'
+  // Matrix `read module as alias` also imports its target. Ny's standalone
+  // namespace alias only supplies a spelling for an independently loaded module.
+  bool imports_target = false;
 
   ast_namespace_alias_decl(std::string a, std::string t, bool isp = false,
                            int l = 0)
@@ -977,6 +980,9 @@ struct ast_identifier_expr : public ast_expr {
   // An empty value records ambiguous global resolution; it must not fall back
   // to a function or another spelling when checker errors are ignored.
   std::optional<std::string> resolved_global_name;
+  // Exact ordinary function declaration selected by the checker. Retain the
+  // source spelling separately for diagnostics and editor source positions.
+  std::optional<std::string> resolved_function_name;
 
   ast_identifier_expr(std::string n, int l = 0)
       : ast_expr(ast_node_kind::identifier_expr_node, l), name(std::move(n)) {}
@@ -1153,6 +1159,9 @@ struct ast_assignment_expr : public ast_expr {
 
 // Member access expression (object.member)
 struct ast_member_access_expr : public ast_expr {
+  // A module-qualified function value has no runtime receiver. The checker
+  // retains its identifier lowering while keeping the written member span.
+  std::shared_ptr<ast_identifier_expr> resolved_module_function;
   ast_expr_ptr object;
   std::string member_name;
 

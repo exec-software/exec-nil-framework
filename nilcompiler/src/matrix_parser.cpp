@@ -888,8 +888,9 @@ std::shared_ptr<ny::ast_decl> parser::parse_read() {
     const token &alias_token = peek();
     const std::string alias = nil_symbol(advance().lexeme);
     skip_terminators();
-    return named(std::make_shared<ny::ast_namespace_alias_decl>(alias, path, false,
-                                                             line), alias_token);
+    auto declaration = std::make_shared<ny::ast_namespace_alias_decl>(alias, path, false, line);
+    declaration->imports_target = true;
+    return named(std::move(declaration), alias_token);
   }
   skip_terminators();
   return std::make_shared<ny::ast_import_decl>(path, std::vector<std::string>{},
@@ -3091,9 +3092,10 @@ ny::ast_expr_ptr parser::parse_primary() {
         expected_name("after 'the paragraph'");
         return nullptr;
       }
-      const token &name_token = peek();
-      return named(std::make_shared<ny::ast_identifier_expr>(
-                       resolve_name(advance().lexeme), line), name_token);
+      // Reuse ordinary name parsing: it preserves lexical folding for bare
+      // names and the qualified owner plus final-name span for module aliases.
+      // Taking one token here silently left `::name` outside the value.
+      return parse_primary();
     }
     error(peek(), "expected 'length of' or 'paragraph' after 'the'");
     return nullptr;
