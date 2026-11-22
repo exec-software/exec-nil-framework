@@ -15,6 +15,7 @@
 #ifndef _WIN32
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -121,6 +122,18 @@ path_from_api_string(const std::string &path) {
     return std::nullopt;
   }
 }
+
+#ifndef _WIN32
+// A trailing separator makes POSIX lstat/open resolve the preceding symlink
+// as a directory before their no-follow rule applies. Keep a named final
+// component for entry inspection and directory synchronization. A pathname
+// consisting entirely of separators names the root and has no such symlink.
+bool valid_directory_entry_operand(const std::filesystem::path &path) {
+  const auto &native = path.native();
+  return !native.empty() &&
+         (native.back() != '/' || native.find_first_not_of('/') == native.npos);
+}
+#endif
 
 constexpr std::uint64_t rooted_snapshot_maximum = 512ULL * 1024 * 1024;
 
@@ -362,15 +375,20 @@ RootedFileSnapshot read_rooted_file_snapshot_utf8(const std::string &root,
   return {true, std::move(bytes), millis + fraction, {}};
 }
 
-AtomicFileWrite write_file_atomic(const std::filesystem::path &path,
-                                  const std::vector<char> &bytes,
-                                  bool replace) {
+static AtomicFileWrite write_file_atomic_posix(const std::filesystem::path &path,
+                                               const std::vector<char> &bytes,
+                                               bool replace, bool durable) {
+  const std::string operation = durable ? "file.write_bytes_durable"
+                                        : "file.write_bytes_atomic";
+  const auto failure = [&](const char *reason) {
+    return AtomicFileWrite{false, operation + ": " + reason};
+  };
   if (!valid_file_path(path))
-    return {false, "file.write_bytes_atomic: invalid destination path"};
+    return failure("invalid destination path");
   const std::filesystem::path destination = path;
   const std::filesystem::path filename = destination.filename();
   if (filename.empty() || filename == "." || filename == "..")
-    return {false, "file.write_bytes_atomic: invalid destination path"};
+    return failure("invalid destination path");
   std::filesystem::path parent = destination.parent_path();
   if (parent.empty())
     parent = ".";
@@ -378,19 +396,16 @@ AtomicFileWrite write_file_atomic(const std::filesystem::path &path,
   const int directory_flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_DIRECTORY;
   UniqueFileDescriptor directory(::open(parent.c_str(), directory_flags));
   if (directory.get() < 0)
-    return {false,
-            "file.write_bytes_atomic: cannot open destination directory"};
+    return failure("cannot open destination directory");
 
   if (replace) {
     struct stat destination_status {};
     if (::fstatat(directory.get(), filename.c_str(), &destination_status,
                   AT_SYMLINK_NOFOLLOW) == 0) {
       if (!S_ISREG(destination_status.st_mode))
-        return {false,
-                "file.write_bytes_atomic: destination is not a regular file"};
+        return failure("destination is not a regular file");
     } else if (errno != ENOENT) {
-      return {false,
-              "file.write_bytes_atomic: cannot inspect destination"};
+      return failure("cannot inspect destination");
     }
   }
 
@@ -409,11 +424,10 @@ AtomicFileWrite write_file_atomic(const std::filesystem::path &path,
       break;
     }
     if (errno != EEXIST)
-      return {false,
-              "file.write_bytes_atomic: cannot create staging file"};
+      return failure("cannot create staging file");
   }
   if (temporary.get() < 0)
-    return {false, "file.write_bytes_atomic: cannot create staging file"};
+    return failure("cannot create staging file");
 
   // openat's creation mode is filtered through the caller's umask. Enforce the
   // API's exact private-inode contract before any content becomes observable.
@@ -423,7 +437,7 @@ AtomicFileWrite write_file_atomic(const std::filesystem::path &path,
   } while (chmod_status != 0 && errno == EINTR);
   if (chmod_status != 0) {
     ::unlinkat(directory.get(), temporary_name.c_str(), 0);
-    return {false, "file.write_bytes_atomic: cannot secure staging file"};
+    return failure("cannot secure staging file");
   }
 
   // Cleanup is best effort. In particular, publication cannot be safely
@@ -441,19 +455,37 @@ AtomicFileWrite write_file_atomic(const std::filesystem::path &path,
       continue;
     if (count <= 0) {
       discard_temporary();
-      return {false, "file.write_bytes_atomic: staging write failed"};
+      return failure("staging write failed");
     }
     offset += static_cast<std::size_t>(count);
   }
-  if (::fsync(temporary.get()) != 0) {
+  int flush_status = -1;
+  do {
+    flush_status = ::fsync(temporary.get());
+  } while (durable && flush_status != 0 && errno == EINTR);
+  if (flush_status != 0) {
     discard_temporary();
-    return {false, "file.write_bytes_atomic: staging flush failed"};
+    return failure("staging flush failed");
   }
   const int temporary_descriptor = temporary.release();
   if (::close(temporary_descriptor) != 0) {
     discard_temporary();
-    return {false, "file.write_bytes_atomic: staging close failed"};
+    return failure("staging close failed");
   }
+
+  const auto finish_publication = [&]() -> AtomicFileWrite {
+    if (durable) {
+      int status = -1;
+      do {
+        status = ::fsync(directory.get());
+      } while (status != 0 && errno == EINTR);
+      // The new inode is already visible. Never undo publication or imply that
+      // the previous destination survived an uncertain durability barrier.
+      if (status != 0)
+        return failure("publication durability uncertain");
+    }
+    return {true, {}};
+  };
 
   if (!replace) {
     // linkat is an atomic no-clobber publication: every existing directory
@@ -462,13 +494,11 @@ AtomicFileWrite write_file_atomic(const std::filesystem::path &path,
                  filename.c_str(), 0) != 0) {
       const int publish_error = errno;
       discard_temporary();
-      return {false,
-              publish_error == EEXIST
-                  ? "file.write_bytes_atomic: destination already exists"
-                  : "file.write_bytes_atomic: cannot publish staging file"};
+      return failure(publish_error == EEXIST ? "destination already exists"
+                                            : "cannot publish staging file");
     }
     discard_temporary();
-    return {true, {}};
+    return finish_publication();
   }
 
   // renameat replaces the destination directory entry; it never follows a
@@ -476,9 +506,15 @@ AtomicFileWrite write_file_atomic(const std::filesystem::path &path,
   if (::renameat(directory.get(), temporary_name.c_str(), directory.get(),
                  filename.c_str()) != 0) {
     discard_temporary();
-    return {false, "file.write_bytes_atomic: cannot publish staging file"};
+    return failure("cannot publish staging file");
   }
-  return {true, {}};
+  return finish_publication();
+}
+
+AtomicFileWrite write_file_atomic(const std::filesystem::path &path,
+                                  const std::vector<char> &bytes,
+                                  bool replace) {
+  return write_file_atomic_posix(path, bytes, replace, false);
 }
 
 #else
@@ -867,6 +903,230 @@ AtomicFileWrite write_file_atomic(const char *path,
   if (path == nullptr)
     return {false, "file.write_bytes_atomic: invalid destination path"};
   return write_file_atomic(std::string(path), bytes, replace);
+}
+
+AtomicFileWrite sync_directory_utf8(const std::string &path) {
+#ifdef _WIN32
+  (void)path;
+  return {false, "file.sync_directory: unsupported platform"};
+#else
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path || !valid_directory_entry_operand(*native_path))
+    return {false, "file.sync_directory: invalid directory path"};
+  const int flags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK;
+  UniqueFileDescriptor directory(::open(native_path->c_str(), flags));
+  if (directory.get() < 0)
+    return {false, "file.sync_directory: cannot open directory"};
+  int status = -1;
+  do {
+    status = ::fsync(directory.get());
+  } while (status != 0 && errno == EINTR);
+  if (status != 0)
+    return {false, "file.sync_directory: synchronization failed"};
+  return {true, {}};
+#endif
+}
+
+AtomicFileWrite write_file_durable_utf8(const std::string &path,
+                                       const std::vector<char> &bytes,
+                                       bool replace) {
+#ifdef _WIN32
+  (void)path;
+  (void)bytes;
+  (void)replace;
+  return {false, "file.write_bytes_durable: unsupported platform"};
+#else
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path)
+    return {false, "file.write_bytes_durable: invalid destination path"};
+  return write_file_atomic_posix(*native_path, bytes, replace, true);
+#endif
+}
+
+#ifndef _WIN32
+namespace {
+
+std::atomic<std::uint64_t> next_lock_token{1};
+
+bool private_lock_file(const struct stat &status) {
+  return S_ISREG(status.st_mode) && status.st_uid == ::geteuid() &&
+         status.st_nlink == 1 && (status.st_mode & 07777) == 0600;
+}
+
+} // namespace
+#endif
+
+AtomicFileWrite create_private_directory_utf8(const std::string &path) {
+#ifdef _WIN32
+  (void)path;
+  return {false, "file.create_private_directory: unsupported platform"};
+#else
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path)
+    return {false, "file.create_private_directory: invalid directory path"};
+  // The requested mode is applied by creation. A default-permission mkdir
+  // followed by chmod would expose a writable directory in between. An
+  // existing entry is reported, never adopted, so a caller cannot be handed
+  // someone else's directory as if it had just created it.
+  if (::mkdir(native_path->c_str(), 0700) != 0) {
+    if (errno == EEXIST)
+      return {false, "file.create_private_directory: entry already exists"};
+    return {false, "file.create_private_directory: cannot create directory"};
+  }
+  return {true, {}};
+#endif
+}
+
+FileCheck private_regular_file_utf8(const std::string &path) {
+#ifdef _WIN32
+  (void)path;
+  return {false, false,
+          "file.is_private_regular_file: unsupported platform"};
+#else
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path)
+    return {false, false, "file.is_private_regular_file: invalid file path"};
+  struct stat status {};
+  // lstat, so a symlink is judged as itself and reports false rather than
+  // silently describing its target.
+  if (::lstat(native_path->c_str(), &status) != 0)
+    return {false, false,
+            "file.is_private_regular_file: cannot inspect entry"};
+  return {true, private_lock_file(status), {}};
+#endif
+}
+
+FileCheck private_directory_utf8(const std::string &path) {
+#ifdef _WIN32
+  (void)path;
+  return {false, false, "file.is_private_directory: unsupported platform"};
+#else
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path || !valid_directory_entry_operand(*native_path))
+    return {false, false, "file.is_private_directory: invalid directory path"};
+  struct stat status {};
+  if (::lstat(native_path->c_str(), &status) != 0)
+    return {false, false, "file.is_private_directory: cannot inspect entry"};
+  const bool owner_only = S_ISDIR(status.st_mode) &&
+                          status.st_uid == ::geteuid() &&
+                          (status.st_mode & 07777) == 0700;
+  return {true, owner_only, {}};
+#endif
+}
+
+FileLockRegistry::~FileLockRegistry() noexcept { clear(); }
+
+FileLockResult FileLockRegistry::acquire(const std::string &path, bool create) {
+#ifdef _WIN32
+  (void)path;
+  (void)create;
+  return {false, 0, "file.acquire_file_lock: unsupported platform"};
+#else
+  const auto failure = [](const char *reason) {
+    return FileLockResult{false, 0, std::string("file.acquire_file_lock: ") + reason};
+  };
+  const auto native_path = path_from_utf8_string(path);
+  if (!native_path || native_path->filename().empty() ||
+      native_path->filename() == "." || native_path->filename() == "..")
+    return failure("invalid lock path");
+  if (descriptors_.size() >= 4096)
+    return failure("lock limit exceeded");
+
+  int flags = O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC;
+  if (create)
+    flags |= O_CREAT | O_EXCL;
+  int descriptor = -1;
+  do {
+    descriptor = ::open(native_path->c_str(), flags, 0600);
+  } while (descriptor < 0 && errno == EINTR);
+  UniqueFileDescriptor lock(descriptor);
+  if (lock.get() < 0)
+    return failure("cannot open lock file");
+  if (create) {
+    int status = -1;
+    do {
+      status = ::fchmod(lock.get(), S_IRUSR | S_IWUSR);
+    } while (status != 0 && errno == EINTR);
+    if (status != 0)
+      return failure("cannot secure lock file");
+  }
+  struct stat held {};
+  if (::fstat(lock.get(), &held) != 0 || !private_lock_file(held))
+    return failure("lock file is not private and regular");
+
+  int status = -1;
+  do {
+    status = ::flock(lock.get(), LOCK_EX | LOCK_NB);
+  } while (status != 0 && errno == EINTR);
+  if (status != 0)
+    return failure(errno == EWOULDBLOCK || errno == EAGAIN ? "lock is busy"
+                                                         : "cannot acquire lock");
+
+  // Advisory locking is over the opened inode, not its path. Reject observed
+  // namespace replacement so cooperating callers do not knowingly lock two
+  // different files under the same name. Trusted ancestry remains required.
+  struct stat visible {};
+  if (::fstat(lock.get(), &held) != 0 || !private_lock_file(held) ||
+      ::lstat(native_path->c_str(), &visible) != 0 ||
+      !private_lock_file(visible) || held.st_dev != visible.st_dev ||
+      held.st_ino != visible.st_ino)
+    return failure("lock file changed while acquiring");
+
+  auto token = next_lock_token.load(std::memory_order_relaxed);
+  do {
+    if (token > static_cast<std::uint64_t>(
+                    (std::numeric_limits<std::int64_t>::max)()))
+      return failure("lock token space exhausted");
+  } while (!next_lock_token.compare_exchange_weak(token, token + 1,
+                                                  std::memory_order_relaxed));
+  try {
+    descriptors_.emplace(static_cast<std::int64_t>(token), lock.get());
+  } catch (const std::bad_alloc &) {
+    return failure("cannot track lock");
+  }
+  lock.release();
+  return {true, static_cast<std::int64_t>(token), {}};
+#endif
+}
+
+FileCheck FileLockRegistry::is_held(std::int64_t token) const {
+#ifdef _WIN32
+  (void)token;
+  return {false, false, "file.file_lock_is_held: unsupported platform"};
+#else
+  return {true, token > 0 && descriptors_.find(token) != descriptors_.end(), {}};
+#endif
+}
+
+AtomicFileWrite FileLockRegistry::release(std::int64_t token) {
+#ifdef _WIN32
+  (void)token;
+  return {false, "file.release_file_lock: unsupported platform"};
+#else
+  const auto found = descriptors_.find(token);
+  if (found == descriptors_.end())
+    return {false, "file.release_file_lock: invalid lock token"};
+  const int descriptor = found->second;
+  descriptors_.erase(found);
+  int status = -1;
+  do {
+    status = ::flock(descriptor, LOCK_UN);
+  } while (status != 0 && errno == EINTR);
+  // A failed close is uncertain and must not leave a reusable program token.
+  // Do not retry close after EINTR: some hosts already closed the descriptor.
+  const int closed = ::close(descriptor);
+  if (status != 0 || closed != 0)
+    return {false, "file.release_file_lock: release failed"};
+  return {true, {}};
+#endif
+}
+
+void FileLockRegistry::clear() noexcept {
+#ifndef _WIN32
+  for (const auto &entry : descriptors_)
+    ::close(entry.second);
+#endif
+  descriptors_.clear();
 }
 
 } // namespace ny::detail

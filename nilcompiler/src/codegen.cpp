@@ -7280,7 +7280,7 @@ codegen::assemble_module(const ast_program &program,
       nil_struct_def s;
       s.name = concrete_class;
       for (const auto &f : class_decl.checked_fields) {
-        s.fields.push_back({f.name, f.type_name});
+        s.fields.push_back({f.name, canonical_nil_type_name(f.type_name)});
       }
       mod->structs.push_back(s);
 
@@ -7391,7 +7391,11 @@ codegen::assemble_module(const ast_program &program,
                      ? struct_decl.name
                      : current_module + "::" + struct_decl.name;
       for (const auto &field : struct_decl.fields) {
-        def.fields.emplace_back(field.name, field.type_name);
+        // The checker may infer String inside Option/Result fields even when
+        // source spells text. Use the same recursive ABI aliases as concrete
+        // enum schemas and function signatures, preserving nominal owners.
+        def.fields.emplace_back(field.name,
+                                canonical_nil_type_name(field.type_name));
       }
       // Rendered the same way a function's are, so one spelling reaches the
       // artifact whatever the declaration is.
