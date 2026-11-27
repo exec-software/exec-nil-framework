@@ -1,4 +1,5 @@
 record-array-alias-replacement-ok
 record-array-capacity-intrinsics-copy-ok
+record-array-alias-constructors-ok
 record-array-nested-generic-fields-ok
 record-array-owned-return-growth-ok

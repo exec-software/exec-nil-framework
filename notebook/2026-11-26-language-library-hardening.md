@@ -202,3 +202,22 @@ The capability catalog adds a record-array observation group (19 groups,
 includes 86 fixtures. A fresh development candidate must be bound to clean
 source/build evidence and a complete CTest run before packaging. The prior SDK
 candidate and active SDK remain unchanged. Mainline consolidation stays last.
+
+
+The first `18608ab` full run completed with 618 passes, the same three provider
+skips and one tuple-diagnostic assertion failure. The new early element-schema
+check rejected the invalid tuple correctly but omitted its tuple context; the
+recursive diagnostic now retains that context without changing the assertion.
+
+An additional imported generic-record probe passed all eight unqualified and
+qualified text-VM/binary-VM/JIT/AOT combinations. It exposed a source alias bug:
+a generic alias constructor nested directly inside an array intrinsic retained
+its alias spelling, while assigning it to a local supplied the correct nominal
+schema. Constructor checking now resolves aliases before validating the
+underlying record/class fields and publishes the resolved identity for lowering.
+The fixture covers nested intrinsic/call/field constructors and i64/f64 fields;
+negative controls require actual type-checking diagnostics for wrong, unknown,
+missing and incorrectly scoped fields. The empty-only generic schema fixture
+uses a separate type so these added constructors cannot mask its regression.
+The full suite and SDK qualification will be repeated from the corrected clean
+revision; the first run and staged files remain preserved as failure evidence.

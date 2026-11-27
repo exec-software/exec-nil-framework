@@ -1671,7 +1671,7 @@ void VM::executeInstruction(const Instruction &instr) {
     if (const auto elements = array_tuple_elements(type)) {
       (void)validate_tuple_schema(validate_tuple_schema, type, operation, depth);
       for (const auto &element : *elements)
-        self(self, element, operation, depth + 1);
+        self(self, element, operation + " tuple element", depth + 1);
       return;
     }
     const auto open = type.find('<');

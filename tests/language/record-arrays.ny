@@ -15,6 +15,20 @@ struct EmptyArrayBox<T>
     value: T
 end struct
 
+struct AliasArrayBox<T>
+    value: T
+end struct
+
+type ArrayBoxAlias<T> = AliasArrayBox<T>
+
+struct ArrayAliasHolder
+    item: AliasArrayBox<i32>
+end struct
+
+fn read_array_alias(item: AliasArrayBox<i32>) -> i32
+    return item.value
+end fn
+
 fn require_record_array(condition: bool) -> void
     if not condition then panic("record array contract failed") end if
 end fn
@@ -89,6 +103,19 @@ fn main() -> i32
     require_record_array(filled[0].value == 19 and filled[1].value == 23)
     require_record_array(not try_copy_range<ArrayCounter>(filled, 0, filled, 2, 2))
     println("record-array-capacity-intrinsics-copy-ok")
+
+    # Alias constructors must retain the underlying schema when nested in
+    # intrinsic arguments, ordinary calls, and another record's field.
+    let alias_filled = new_with_value<ArrayBoxAlias<i32>>(2, ArrayBoxAlias<i32> { value: 61 })
+    array_set<ArrayBoxAlias<i32>>(alias_filled, 1, ArrayBoxAlias<i32> { value: 67 })
+    require_record_array(alias_filled[0].value == 61 and alias_filled[1].value == 67)
+    require_record_array(read_array_alias(ArrayBoxAlias<i32> { value: 71 }) == 71)
+    let alias_holder = ArrayAliasHolder { item: ArrayBoxAlias<i32> { value: 73 } }
+    require_record_array(alias_holder.item.value == 73)
+    let alias_wide = new_with_value<ArrayBoxAlias<i64>>(1, ArrayBoxAlias<i64> { value: 4294967296 })
+    let alias_fraction = new_with_value<ArrayBoxAlias<f64>>(1, ArrayBoxAlias<f64> { value: 1.5 })
+    require_record_array(alias_wide[0].value == 4294967296 and alias_fraction[0].value == 1.5)
+    println("record-array-alias-constructors-ok")
 
     let child = ArrayCounter { value: 29 }
     let numbers = [31, 37]

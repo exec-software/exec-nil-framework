@@ -4450,6 +4450,27 @@ void type_checker::visit(ast_struct_literal_expr &e) {
   // Parse the generic type to get base name and type args
   auto parts = parse_generic_type_string(full_type_name);
 
+  // A constructor through a source alias still constructs the exact declared
+  // record/class. Resolve the alias in its defining scope before looking up
+  // fields: otherwise aliases bypass field checks, and nested constructors
+  // retain the alias spelling in NIL when no local binding supplies context.
+  const auto constructor_name = resolve_type_name_with_imports(parts.base_name);
+  const auto *constructor_symbol =
+      symbols_.lookup(constructor_name.value_or(parts.base_name));
+  if (constructor_symbol && constructor_symbol->defining_node &&
+      constructor_symbol->defining_node->kind == ast_node_kind::type_alias_decl_node) {
+    const auto constructor_type = resolve_type(full_type_name);
+    if (!constructor_type.name.empty() && constructor_type.name.front() == '<') {
+      last_expr_type_ = constructor_type;
+      e.inferred_type = constructor_type.name;
+      return;
+    }
+    full_type_name = constructor_type.name;
+    parts = parse_generic_type_string(full_type_name);
+    e.type_name = parts.base_name;
+    e.type_args = parts.type_args;
+  }
+
   // Look up struct declaration to get field types
   // Try unqualified name first, then module-qualified
   const symbol *sym = symbols_.lookup(parts.base_name);
@@ -4650,7 +4671,7 @@ void type_checker::visit(ast_struct_literal_expr &e) {
                           "compiler.");
 
   last_expr_type_ = resolve_type(full_type_name);
-  e.inferred_type = full_type_name; // Set inferred type on the AST node
+  e.inferred_type = last_expr_type_->name;
 }
 
 void type_checker::visit(ast_while_stmt &s) {

@@ -143,6 +143,24 @@ end fn
             ("generic-nominal", "let items = [Holder<i32> { value: 3 }]\nitems.push(Holder<i64> { value: 5 })",
              "struct Holder<T>\nvalue: T\nend struct\n"),
         ])
+        alias_declarations = ("struct Holder<T>\nvalue: T\nend struct\n"
+                              "type AliasHolder<T> = Holder<T>\n")
+        source_cases.extend([
+            ("alias-wrong-field-type",
+             'let items = new_with_value<AliasHolder<i32>>(1, AliasHolder<i32> { value: "wrong" })',
+             alias_declarations),
+            ("alias-unknown-field",
+             "let items = new_with_value<AliasHolder<i32>>(1, AliasHolder<i32> { other: 3 })",
+             alias_declarations),
+            ("alias-missing-field",
+             "let items = new_with_value<AliasHolder<i32>>(1, AliasHolder<i32> {})",
+             alias_declarations),
+            ("alias-nominal-scope",
+             "let items: array<Holder<i32>> = [alias_model::PublicHolder<i32> { value: 3 }]",
+             "module alias_model\npub struct Holder<T>\nvalue: T\nend struct\n"
+             "pub type PublicHolder<T> = Holder<T>\nmodule alias_client\n"
+             "struct Holder<T>\nvalue: T\nend struct\n"),
+        ])
         for name, body, declarations in source_cases:
             path = root / (name + ".ny")
             path.write_text(source(body, declarations), encoding="utf-8", newline="\n")
