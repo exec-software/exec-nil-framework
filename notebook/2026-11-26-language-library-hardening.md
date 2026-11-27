@@ -133,6 +133,28 @@ the required variants first, preserving every metadata/debug-line assertion
 and exact output. Its focused rerun passes; the original full-run evidence is
 retained before repeating qualification against the corrected commit.
 
+## Development candidate results
+
+The clean `bb82f5d` run passes 616 CTests with the three recorded provider skips
+and no failures. Its separate SDK candidate validates 11 root-level tools,
+19 strictly checked binary STL modules, source STL, 76 documentation pages and
+279 sealed files. All 1,328 installed consumer executions pass against both
+source and binary libraries. Installed durable-I/O checks also pass.
+
+The bounded Web compatibility check compiles its full test source in four
+source/binary-STL and text/binary-NIL combinations, then passes 393 pure
+SHA-256/framing checks in each of four interpreter combinations. WebView passes
+eight synthetic-provider interpreter/JIT/AOT routes. The SDK and both repos
+remain unchanged. HTTP wire behavior and actual desktop/browser qualification
+are separate from these checks; no existing SDK was activated or replaced.
+
+GitHub's LLVM-disabled run found a registration error: the new native fault
+test requires the optional backend. CMake now registers it only with LLVM
+enabled. This follow-up changes test configuration, not the `bb82f5d` SDK's
+language/runtime/library contents. The existing candidate stays pinned to that
+tested revision; mainline consolidation and broader platform qualification
+remain open.
+
 The capability catalog now declares 18 observed groups and 36 proof fixtures;
 its validation tests pass. The installed consumer set grows by five fixtures
 to 83 (1,328 source/binary-library execution and assembler/linker runs). Final

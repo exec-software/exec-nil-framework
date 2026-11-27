@@ -1473,16 +1473,18 @@ if(BUILD_TESTING)
             )
             set_tests_properties(ny.native-array-contract PROPERTIES
                 LABELS "routes;native;rc" SKIP_RETURN_CODE 77 TIMEOUT 180)
-            add_test(
-                NAME ny.native-fault-provenance
-                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_fault_provenance.py"
-                        --interpreter $<TARGET_FILE:nilinterpreter>
-                        --assembler $<TARGET_FILE:nilassembler>
-                        --linker $<TARGET_FILE:nillinker>
-                        --runtime $<TARGET_FILE:nilruntime>
-            )
-            set_tests_properties(ny.native-fault-provenance PROPERTIES
-                LABELS "routes;native;rc" TIMEOUT 240)
+            if(NIL_ENABLE_LLVM)
+                add_test(
+                    NAME ny.native-fault-provenance
+                    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_fault_provenance.py"
+                            --interpreter $<TARGET_FILE:nilinterpreter>
+                            --assembler $<TARGET_FILE:nilassembler>
+                            --linker $<TARGET_FILE:nillinker>
+                            --runtime $<TARGET_FILE:nilruntime>
+                )
+                set_tests_properties(ny.native-fault-provenance PROPERTIES
+                    LABELS "routes;native;rc" TIMEOUT 240)
+            endif()
             add_test(
                 NAME ny.tools.native-nil-validation
                 COMMAND "${Python3_EXECUTABLE}"
