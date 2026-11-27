@@ -265,17 +265,15 @@ end fn
                 assert artifact.read_bytes() == b"preserve previous object\n"
                 checks += 1
         if args.llvm == "ON":
-            # Recursive nominal field layouts are outside this first native
-            # record-array contract, including arrays with zero elements.
+            # Empty arrays may describe an uninhabited required-self schema.
+            # Constructing an incomplete value is rejected separately above.
             path = root / "recursive-schema.nil"
             path.write_text(nil_module("NEW_ARRAY_LITERAL 0 Recursive\nPOP",
                             "struct Recursive\nchild: Recursive\nend struct\n"),
                             encoding="utf-8", newline="\n")
             artifact = root / "recursive-schema.o"
-            artifact.write_bytes(b"preserve previous object\n")
-            result = run([assembler, "-o", artifact, path], success=False)
-            assert "[NativeCodegen]" in result.stderr and "recursive" in result.stderr.lower(), result.stderr
-            assert artifact.read_bytes() == b"preserve previous object\n"
+            run([assembler, "-o", artifact, path])
+            assert artifact.is_file() and artifact.stat().st_size > 0
             checks += 1
         for runtime_tests in args.runtime_tests:
             for mode in ("identity-case", "identity-generic", "identity-namespace", "wrong-kind",

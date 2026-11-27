@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -19,7 +20,13 @@ def main() -> int:
     sentinel = b"previous object must survive rejected NIL\n"
 
     def module(body: str, signature: str = "main() -> i32") -> str:
-        return f"module native_validation\nfunction {signature}:\n{body}\nend function\n"
+        # NIL parameters also arrive on the operand stack. Consume their
+        # generated prologue so malformed fixtures reach their intended check
+        # when a provenance-sensitive signature activates loader validation.
+        parameters = signature[signature.index("(") + 1:signature.rindex(")")]
+        names = re.findall(r"(?:^|,)\s*([A-Za-z_]\w*)\s*:", parameters)
+        prologue = "".join(f"STORE_LOCAL {name}\n" for name in reversed(names))
+        return f"module native_validation\nfunction {signature}:\n{prologue}{body}\nend function\n"
 
     enum_schema = "enum Example\nSome: text\nOther: i64\nPair: (i64,text)\nNone\nend enum\n"
     floating_enum_schema = (
@@ -125,8 +132,8 @@ def main() -> int:
         "incomplete-reference-call": (
             aggregate_schema +
             module("LOAD_LOCAL value\nGET_FIELD value\nRET", "read(value: ref<Left>) -> i64") +
-            "function main() -> i32:\nNEW_STRUCT Left\nCALL read 1\nRET\nend function\n",
-            "uninitialized on an incoming path",
+            "function main() -> i32:\nNEW_STRUCT Left\nSTORE_LOCAL item\nREF_LOCAL item\nCALL read 1\nRET\nend function\n",
+            "before all fields are initialized",
         ),
         "incomplete-aggregate-return": (
             aggregate_schema +
@@ -204,7 +211,7 @@ def main() -> int:
             module("LOAD_LOCAL value\nGET_FIELD value\nRET", "read(value: ref<Right>) -> i64") +
             "function main() -> i32:\nNEW_STRUCT Left\nPUSH_CONST 1\n"
             "SET_FIELD value\nSTORE_LOCAL item\nREF_LOCAL item\nCALL read 1\nRET\nend function\n",
-            "to aggregate parameter 'value' of type 'ref<Right>'",
+            "requires its exact checked static view",
         ),
         "reference-return-nominal-mismatch": (
             aggregate_schema +
@@ -212,7 +219,7 @@ def main() -> int:
             "function main() -> i32:\nNEW_STRUCT Left\nPUSH_CONST 1\n"
             "SET_FIELD value\nSTORE_LOCAL item\nREF_LOCAL item\nCALL echo 1\n"
             "POP\nPUSH_CONST 0\nRET\nend function\n",
-            "requires aggregate type 'ref<Right>'",
+            "requires its exact checked static view",
         ),
         "nested-generic-field-mismatch": (
             "struct Box<i32>\nvalue: i32\nend struct\n"
@@ -222,11 +229,11 @@ def main() -> int:
                    "SET_FIELD value\nSET_FIELD item\nPOP\nPUSH_CONST 0\nRET"),
             "expects aggregate type 'box<i32>', got 'box<i64>'",
         ),
-        "mutually-recursive-reference-fields": (
+        "incomplete-mutually-recursive-reference-fields": (
             "struct Left\nnext: ref<Right>\nend struct\n"
             "struct Right\nnext: ref<Left>\nend struct\n" +
             module("NEW_STRUCT Left\nPOP\nPUSH_CONST 0\nRET"),
-            "is a recursive aggregate",
+            "before all fields are initialized",
         ),
         "primitive-reference-local": (
             module("PUSH_CONST 7\nSTORE_LOCAL item\nREF_LOCAL item\nPOP\nPUSH_CONST 0\nRET"),

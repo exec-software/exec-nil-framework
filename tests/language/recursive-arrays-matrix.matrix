@@ -1,0 +1,94 @@
+book recursive_arrays_matrix
+read everything from nil.std.collections
+
+recursive-node begin record
+    field total as override integer
+    field children as array of recursive-node
+end record
+
+recursive-box of type T begin record
+    field total as T
+    field children as array of recursive-box of T
+end record
+
+recursive-list begin choice
+    when Empty
+    when Next holding recursive-list
+end choice
+
+recursive-link begin choice
+    when Empty
+    when Next holding recursive-envelope
+end choice
+
+recursive-envelope begin record
+    field total as override integer
+    field link as recursive-link
+end record
+
+make-recursive-ring returns recursive-node begin paragraph
+    value first is build recursive-node with total being 17, children being []
+    value second is build recursive-node with total being 23, children being []
+    append second to first.children
+    append first to second.children
+    give first
+end paragraph
+
+main returns override integer begin paragraph
+    value root is make-recursive-ring with nothing
+    value retained is root.children at 0
+    set ((root.children at 0).children at 0).total to 31
+    say root.total
+    say retained.total
+    value rows as array of array of recursive-node is [[root], []]
+    append retained to (rows at 1)
+    set (((rows at 0) at 0).children at 0).total to 37
+    say ((rows at 1) at 0).total
+
+    value boxed is build recursive-box of number with total being (4294967296 becomes number), children being []
+    append boxed to boxed.children
+    say ((boxed.children at 0).children at 0).total
+
+    value empty as recursive-list is recursive-list.Empty
+    value first as recursive-list is recursive-list.Next holding empty
+    value second as recursive-list is recursive-list.Next holding first
+    value lists as array of recursive-list is [empty, first, second]
+    consider lists at 2
+        when recursive-list.Empty then say "wrong"
+        when recursive-list.Next holding child then
+            consider child
+                when recursive-list.Empty then say "wrong"
+                when recursive-list.Next holding tail then
+                    consider tail
+                        when recursive-list.Empty then say "recursive-enum-base-ok"
+                        when recursive-list.Next holding _ then say "wrong"
+                    end consider
+            end consider
+    end consider
+
+    value envelope is build recursive-envelope with total being 41, link being recursive-link.Empty
+    set envelope.link to (recursive-link.Next holding envelope)
+    value links as array of recursive-link is [envelope.link]
+    consider links at 0
+        when recursive-link.Empty then say "wrong"
+        when recursive-link.Next holding child then set child.total to 43
+    end consider
+    say envelope.total
+
+    variable index as override integer is 0
+    variable total as number is 0
+    repeat while index is less than 3000
+        value garbage is new-with-value of override integer with size being 512, `value` being index
+        set total to total plus ((garbage at 511) becomes number)
+        set index to index plus 1
+    end repeat
+    say total
+    say ((root.children at 0).children at 0).total
+    say retained.total
+    say (boxed.children at 0).total
+    consider envelope.link
+        when recursive-link.Empty then say "wrong"
+        when recursive-link.Next holding child then say child.total
+    end consider
+    give 0
+end paragraph

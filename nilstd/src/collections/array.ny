@@ -7,7 +7,9 @@ module nil.std.collections
 # supported native schemas, including concrete generics. Record elements share
 # mutable identity. Enum values retain their variant and payload aliases. Nested
 # arrays share child handles and may be jagged; element copies do not clone rows.
-# Direct class/reference-wrapper elements and recursive schemas remain unsupported.
+# Class elements preserve checked views/dispatch; exact aggregate references share
+# object identity. Arrays and reference wrappers remain invariant. Finite recursive
+# schemas use initialized handles; GC follows reachable cycles.
 # The f32 declarations are reserved until their ABI is defined.
 # Sizes are nonnegative i32 values. Out-of-bounds scalar reads retain their defaults;
 # invalid or uninitialized tuple/record/enum/nested-array reads fail because there

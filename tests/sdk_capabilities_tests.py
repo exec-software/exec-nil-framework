@@ -139,9 +139,9 @@ class CapabilityTests(unittest.TestCase):
         value["qualification"]["evidence"] = self.evidence
         value["qualification"]["capabilities"] = record
         self.assertEqual(qualification.qualification_errors(value, True, "a" * 40), [])
-        self.assertEqual(len(record["catalog"]["groups"]), 21)
-        self.assertEqual(len(record["evidence"]["proofs"]), 43)
-        self.assertEqual(sum(len(proof["routes"]) for proof in record["evidence"]["proofs"]), 258)
+        self.assertEqual(len(record["catalog"]["groups"]), 23)
+        self.assertEqual(len(record["evidence"]["proofs"]), 47)
+        self.assertEqual(sum(len(proof["routes"]) for proof in record["evidence"]["proofs"]), 282)
 
     def test_legacy_manifests_remain_unchanged(self):
         self.assertEqual(qualification.qualification_errors(fixture(), True, "a" * 40), [])

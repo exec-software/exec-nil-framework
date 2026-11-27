@@ -6,6 +6,7 @@
 #include "nildata.hpp"
 #include "codegen.hpp"
 #include "array_intrinsic.hpp"
+#include "binding_reference.hpp"
 #include "matrix_hag_bridge.hpp"
 #include "nil_contract.hpp"
 #include "dynamic_type.hpp"
@@ -1620,6 +1621,25 @@ void VM::executeInstruction(const Instruction &instr) {
           throw std::runtime_error("enum array requires one exact declared element schema");
     return schema;
   };
+  const auto object_array_schema = [&](const std::string &type) -> const nil_struct_def * {
+    if (!class_metadata_ || contains_binding_cell_type(type)) return nullptr;
+    const auto expected = canonical_array_type(type);
+    const bool reference = expected.rfind("ref<", 0) == 0 && expected.back() == '>';
+    const auto nominal = reference ? expected.substr(4, expected.size() - 5) : expected;
+    if (is_array_tuple_type(nominal) ||
+        (!reference && !find_nil_class(*class_metadata_, nominal))) return nullptr;
+    const nil_struct_def *schema = nullptr;
+    for (const auto &candidate : class_metadata_->structs) {
+      if (canonical_array_type(candidate.name) != nominal) continue;
+      if (schema) throw std::runtime_error("object array requires one exact declared element schema");
+      schema = &candidate;
+    }
+    if (schema)
+      for (const auto &candidate : class_metadata_->enums)
+        if (canonical_array_type(candidate.name) == nominal)
+          throw std::runtime_error("object array requires one exact declared element schema");
+    return schema;
+  };
   const auto array_default_value = [&](const HeapBlock &block) -> Value {
     if (block.element_type == "anything")
       throw std::runtime_error("anything array read is out of bounds or uninitialized");
@@ -1629,6 +1649,8 @@ void VM::executeInstruction(const Instruction &instr) {
       throw std::runtime_error("record array read is out of bounds or uninitialized");
     if (enum_array_schema(block.element_type))
       throw std::runtime_error("enum array read is out of bounds or uninitialized");
+    if (object_array_schema(block.element_type))
+      throw std::runtime_error("object array read is out of bounds or uninitialized");
     if (is_array_storage_type(block.element_type))
       throw std::runtime_error("nested array read is out of bounds or uninitialized");
     // Match intrinsic metadata normalization for supported scalar types.
@@ -1708,6 +1730,10 @@ void VM::executeInstruction(const Instruction &instr) {
         const auto arguments = array_tuple_elements("tuple<" +
             type.substr(open + 1, type.size() - open - 2) + ">");
         if (!arguments || arguments->size() != 1) reject();
+        if (container == "ref") {
+          if (!object_array_schema(type)) reject();
+          return;
+        }
         if (container != "ptr" || arguments->front() != "void")
           self(self, arguments->front(), operation, depth + 1);
         return;
@@ -1867,7 +1893,7 @@ void VM::executeInstruction(const Instruction &instr) {
     if (!schema || !object || !object->data) reject();
     const auto *actual_schema = resolve_storage_schema(class_metadata_->structs, object->type_name);
     if (find_nil_class(*class_metadata_, nominal)) {
-      validateClassValue(value, nominal);
+      validateClassValue(value, expected);
       if (!actual_schema) reject();
       schema = actual_schema;
     } else if (actual_schema != schema) reject();
@@ -1905,9 +1931,11 @@ void VM::executeInstruction(const Instruction &instr) {
         ? record_array_schema(block.element_type) : nullptr;
     const auto *enum_schema = block.type_name == "array"
         ? enum_array_schema(block.element_type) : nullptr;
+    const auto *object_schema = block.type_name == "array"
+        ? object_array_schema(block.element_type) : nullptr;
     const bool nested = block.type_name == "array" && is_array_storage_type(block.element_type);
     if (block.type_name == "array" && (is_array_tuple_type(block.element_type) ||
-        block.element_type == "anything" || record_schema || enum_schema || nested)) {
+        block.element_type == "anything" || record_schema || enum_schema || object_schema || nested)) {
       if (record_schema) {
         const auto *object = std::get_if<StructValue>(&value);
         if (!object || record_array_schema(object->type_name) != record_schema)
@@ -3240,7 +3268,7 @@ void VM::executeInstruction(const Instruction &instr) {
       }
       bool validated_element = false;
       if (metadata.size() == 5) {
-        validated_element = record_array_schema(metadata[4]) || enum_array_schema(metadata[4]) ||
+        validated_element = record_array_schema(metadata[4]) || enum_array_schema(metadata[4]) || object_array_schema(metadata[4]) ||
                             is_array_storage_type(metadata[4]);
         if (validated_element)
           validate_array_element_schema(validate_array_element_schema, metadata[4], fn_name, 0);

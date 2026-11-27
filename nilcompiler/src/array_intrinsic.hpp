@@ -119,8 +119,8 @@ struct array_intrinsic_contract {
 // Typed array intrinsics use the existing five-operand INTEROP_CALL form:
 // provider, operation, arity, exact result type, exact element type. The final
 // operand is a language type, never a guessed host FFI calling convention.
-// The caller may admit an enum, record or nested array only after validating
-// its concrete element schema with module type metadata.
+// The caller may admit an enum, record, class, object reference or nested array
+// only after validating its concrete element schema with module type metadata.
 inline array_intrinsic_contract parse_array_intrinsic(
     const std::vector<std::string> &operands, bool validated_element = false) {
   if (operands.size() != 5 || operands[0] != "intrinsic" ||

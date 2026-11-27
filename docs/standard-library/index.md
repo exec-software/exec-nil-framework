@@ -327,7 +327,7 @@ The scalar test slice covers `i32`, `i64`, `u8`, `bool`, `f64`, and NUL-free
 adds generic construction, indexed/intrinsic access and overlapping checked
 copies with exact tuple schemas. Copies preserve tuple values and contained
 reference identities. Native arrays also support exact declared non-class records,
-including concrete generic records with acyclic native schemas. Each element
+including concrete generic records with supported native schemas. Each element
 retains its record's shared mutable identity. Reads, fills and copies preserve
 that identity; replacing a slot leaves an already extracted record intact.
 Growth preserves array aliases, and garbage collection traces reachable record
@@ -351,8 +351,19 @@ The [enum fixtures](../../tests/language/enum-arrays.ny),
 consumers and [contract harness](../../tests/tools/enum_nested_array_contract.py)
 specify identity, growth, initialized storage, aliases, lifetime and rejection
 behavior. Their native schema graphs must be finite and use supported payload and
-field layouts; recursive schemas remain rejected even through array indirection.
-Direct class/reference-wrapper elements and `f32` array elements remain unsupported.
+field layouts. Recursive nominal edges use shared handles; empty arrays and
+terminating enum variants allow fully initialized construction before cycles are
+formed. Required fields remain checked before an object escapes. Native GC
+traces reachable cycles; direct cyclic-aggregate checkpoint restrictions remain.
+
+Class arrays retain checked ancestor views and virtual dispatch. Exact
+`ref<Record>` and `ref<Class>` array elements retain shared object identity.
+Fresh class literals may insert checked upcasts, but existing arrays and reference
+wrappers remain invariant. These are aggregate handles, not binding cells or
+foreign pointers. Invalid class/reference reads fail instead of returning null.
+The [class/reference fixture](../../tests/language/class-reference-arrays.ny) and
+[recursive fixture](../../tests/language/recursive-arrays.ny), with their paired
+Matrix consumers, specify these boundaries. `f32` arrays remain unsupported.
 These storage contracts do not widen the query row/projection profile or certify
 all collection methods or platform SDKs.
 
@@ -405,9 +416,9 @@ coverage. The [record-key HashMap and record-queue fixture](../../tests/language
 also covers all six routes, including collision chains, removal, aliasing, reuse
 and queue elements without a default value. Enum and nested-array storage now has
 its own exact-type, aliasing and lifetime contract above; it does not independently
-qualify every collection method for those elements. Direct class/reference-wrapper
-element layouts, recursive aggregate schemas, `f32` arrays, resizing and strided
-views with ownership rules remain separate work.
+qualify every collection method for those elements. Class/reference arrays and
+recursive schemas have separate storage proofs. `f32` arrays, resizing and
+strided views with ownership rules remain separate work.
 
 ## Stable index ordering
 

@@ -1,0 +1,80 @@
+book class_reference_arrays_matrix
+read everything from nil.std.collections
+
+Counter begin record
+    field total as override integer
+end record
+
+abstract Reader begin class
+    field total as override integer
+    public abstract read-total returns override integer
+end class
+
+OffsetReader inherits Reader begin class
+    field offset as override integer
+    public replaces read-total returns override integer begin paragraph
+        give my total plus my offset
+    end paragraph
+end class
+
+read-first receives values as array of Reader returns override integer begin paragraph
+    give (values at 0).read-total with nothing
+end paragraph
+
+make-readers receives item as OffsetReader returns array of Reader begin paragraph
+    give [item]
+end paragraph
+
+main returns override integer begin paragraph
+    value object is build OffsetReader with total being 7, offset being 2
+    value readers as array of Reader is [object]
+    value alias is readers
+    append object to readers
+    set readers at 0 to object
+    evaluate readers.set with 1, object
+    evaluate readers.reserve with 33
+    say (alias at 0).read-total with nothing
+    say (alias at 1).read-total with nothing
+    say the length of readers
+    say (readers.capacity with nothing) is at least 33
+    say read-first with values being [object]
+    value returned is make-readers with item being object
+    say (returned at 0).read-total with nothing
+    value filled is new-with-value of Reader with size being 3, `value` being object
+    evaluate array-set of Reader with arr being filled, idx being 1, `value` being object
+    value selected is get of Reader with arr being filled, idx being 1
+    say selected.read-total with nothing
+    say try-copy-range of Reader with source being filled, source-offset being 0, destination being filled, destination-offset being 1, count being 2
+    value rows as array of array of Reader is [readers, []]
+    append object to (rows at 1)
+    set ((rows at 1) at 0).total to 17
+    say object.read-total with nothing
+
+    value counter-value is build Counter with total being 23
+    value refs as array of reference to Counter is [reference to counter-value]
+    value retained is refs at 0
+    append reference to counter-value to refs
+    evaluate refs.reserve with 17
+    set (refs at 0).total to 29
+    say counter-value.total
+    say retained.total
+    value other is build Counter with total being 31
+    set refs at 0 to reference to other
+    say retained.total
+    say (refs at 0).total
+    value refs-filled is new-with-value of reference to Counter with size being 3, `value` being retained
+    evaluate array-set of reference to Counter with arr being refs-filled, idx being 1, `value` being (reference to other)
+    value found is get of reference to Counter with arr being refs-filled, idx being 1
+    say found.total
+    say try-copy-range of reference to Counter with source being refs-filled, source-offset being 0, destination being refs-filled, destination-offset being 1, count being 2
+    say (refs-filled at 1).total
+    say (refs-filled at 2).total
+    value ref-rows as array of array of reference to Counter is [refs, []]
+    append retained to (ref-rows at 1)
+    set ((ref-rows at 1) at 0).total to 37
+    say counter-value.total
+    value empty as array of reference to Counter is []
+    evaluate empty.reserve with 11
+    say the length of empty
+    give 0
+end paragraph

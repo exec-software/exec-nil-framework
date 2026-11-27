@@ -1689,7 +1689,7 @@ if(BUILD_TESTING)
             --expected-exit 0 --routes all
             --compiler-arg=--sdk-path --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
         )
-        foreach(nil_aggregate_array_fixture IN ITEMS enum-arrays nested-arrays)
+        foreach(nil_aggregate_array_fixture IN ITEMS enum-arrays nested-arrays class-reference-arrays recursive-arrays)
             add_ny_route_test(
                 ny.routes.${nil_aggregate_array_fixture}
                 --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_aggregate_array_fixture}.ny"
@@ -1704,6 +1704,21 @@ if(BUILD_TESTING)
                 --expected-exit 0 --routes all
                 --compiler-arg=--sdk-path --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
             )
+        endforeach()
+        foreach(nil_array_contract IN ITEMS class_reference recursive)
+            string(REPLACE "_" "-" nil_array_contract_name "${nil_array_contract}")
+            add_test(
+                NAME ny.${nil_array_contract_name}-array-contract
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/${nil_array_contract}_array_contract.py"
+                        --compiler $<TARGET_FILE:nilcompiler>
+                        --interpreter $<TARGET_FILE:nilinterpreter>
+                        --assembler $<TARGET_FILE:nilassembler>
+                        --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                        --llvm "${NIL_ENABLE_LLVM}"
+                        --runtime-tests $<TARGET_FILE:ny_native_runtime_tests>
+                        --runtime-tests $<TARGET_FILE:nil_shared_runtime_tests>
+            )
+            set_tests_properties(ny.${nil_array_contract_name}-array-contract PROPERTIES LABELS "native;arrays;nil" TIMEOUT 600)
         endforeach()
         add_test(
             NAME ny.enum-nested-array-contract
@@ -2659,16 +2674,16 @@ if(BUILD_TESTING)
             --routes all
         )
         add_ny_route_test(
-            ny.routes.native-rejects-recursive-struct-field
+            ny.routes.native-rejects-fabricated-recursive-value
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/native-struct-recursive-field.ny"
             --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/routes/empty.stdout"
             --expected-exit 0
             --routes llvm-jit,llvm-aot
             --compiler-arg=--no-typecheck
-            --xfail "llvm-jit=cyclic struct layouts are not supported"
-            --xfail "llvm-aot=cyclic struct layouts are not supported"
-            --xfail-stderr-contains "llvm-jit=is a recursive aggregate"
-            --xfail-stderr-contains "llvm-aot=is a recursive aggregate"
+            --xfail "llvm-jit=cannot fabricate an aggregate from a scalar"
+            --xfail "llvm-aot=cannot fabricate an aggregate from a scalar"
+            --xfail-stderr-contains "llvm-jit=requires aggregate type"
+            --xfail-stderr-contains "llvm-aot=requires aggregate type"
         )
         add_ny_route_test(
             ny.routes.rejects-incomplete-struct-literal

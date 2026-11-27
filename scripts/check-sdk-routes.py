@@ -30,6 +30,7 @@ FIXTURES = ("scalar-array-parity", "stl-array-primitives", "native-nested-refere
             "array-capacity", "queue-ring", "hashmap-buckets-scalar",
             "record-arrays", "record-arrays-matrix", "hashmap-buckets",
             "enum-arrays", "enum-arrays-matrix", "nested-arrays", "nested-arrays-matrix",
+            "class-reference-arrays", "class-reference-arrays-matrix", "recursive-arrays", "recursive-arrays-matrix",
             "definite-assignment", "definite-assignment-matrix",
             "native-global-contract", "native-time-contract", "native-scalar-fields",
             "module-global-contract", "native-managed-lifetime", "class-execution",

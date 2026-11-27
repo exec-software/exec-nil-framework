@@ -1794,7 +1794,8 @@ bool type_checker::check_assignment_type(const type_info &expected,
   // arrays retain invariant element layouts; no array handle is reinterpreted.
   if (target_tuple.base_name == "array" && target_tuple.type_args.size() == 1 &&
       (type_contains_tuple(target_tuple.type_args.front()) ||
-       target_tuple.type_args.front() == "anything" || target_tuple.type_args.front() == "bool") && value &&
+       target_tuple.type_args.front() == "anything" || target_tuple.type_args.front() == "bool" ||
+       resolve_class_symbol(target_tuple.type_args.front()) != nullptr) && value &&
       value->kind == ast_node_kind::array_literal_expr_node) {
     auto &array = static_cast<ast_array_literal_expr &>(*value);
     for (auto &element : array.elements) {
@@ -3543,6 +3544,7 @@ void type_checker::visit(ast_variable_decl &p) {
       if (context.base_name == "array" && context.type_args.size() == 1 &&
           (type_contains_tuple(context.type_args.front()) || context.type_args.front() == "anything" ||
            context.type_args.front() == "bool" ||
+           resolve_class_symbol(context.type_args.front()) != nullptr ||
            parse_generic_type_string(context.type_args.front()).base_name == "array"))
         p.initializer->inferred_type = declared.name;
     }
@@ -4233,6 +4235,7 @@ void type_checker::visit(ast_return_stmt &s) {
           parse_generic_type_string(current_function_return_type_->name);
       if ((array.elements.empty() || type_contains_tuple(current_function_return_type_->name) ||
            (context.type_args.size() == 1 && (context.type_args[0] == "anything" || context.type_args[0] == "bool" ||
+            resolve_class_symbol(context.type_args[0]) != nullptr ||
             parse_generic_type_string(context.type_args[0]).base_name == "array"))) &&
           context.base_name == "array" &&
           context.type_args.size() == 1 && context.type_args[0] != "any" &&
@@ -5834,6 +5837,7 @@ void type_checker::visit(ast_call_expr &e) {
         const auto shape = parse_generic_type_string(expected);
         if (shape.base_name == "array" && shape.type_args.size() == 1 &&
             (shape.type_args.front() == "anything" || shape.type_args.front() == "bool" ||
+             resolve_class_symbol(shape.type_args.front()) != nullptr ||
              type_contains_tuple(shape.type_args.front()) ||
              (parse_generic_type_string(shape.type_args.front()).base_name == "array" &&
               concrete_array_context(concrete_array_context, expected, 0))))
@@ -6898,9 +6902,7 @@ void type_checker::visit(ast_call_expr &e) {
           const bool storage_conversion =
               (expected.name == "u8" || expected.name == "bool") &&
               integer_storage_value(actual.name);
-          const bool compatible = tuple_storage || expected.name == "anything" || expected.name == "bool"
-              ? check_assignment_type(expected, actual, e.args.front().get())
-              : are_types_compatible(expected, actual);
+          const bool compatible = check_assignment_type(expected, actual, e.args.front().get());
           if (!storage_conversion && !compatible) {
             add_error(e.line, "Array.push element type mismatch. Expected '" +
                                   expected.name + "', got '" + actual.name + "'");
@@ -7730,6 +7732,8 @@ void type_checker::visit(ast_assignment_expr &e) {
   if (target_type &&
       !(storage_conversion && !type_contains_tuple(target_type->name) &&
                               !type_contains_tuple(val_type.name) &&
+                              resolve_class_symbol(target_type->name) == nullptr &&
+                              resolve_class_symbol(val_type.name) == nullptr &&
                               target_type->name != "anything" && val_type.name != "anything"
                            ? storage_types_compatible(*target_type, val_type)
                            : check_assignment_type(*target_type, val_type, e.value.get()))) {
@@ -8489,6 +8493,7 @@ void type_checker::visit(ast_array_literal_expr &e) {
     if (context.base_name == "array" && context.type_args.size() == 1 &&
         (type_contains_tuple(context.type_args.front()) || context.type_args.front() == "anything" ||
          context.type_args.front() == "bool" ||
+         resolve_class_symbol(context.type_args.front()) != nullptr ||
          parse_generic_type_string(context.type_args.front()).base_name == "array")) {
       const auto expected = resolve_type(context.type_args.front());
       for (auto &element : e.elements) {

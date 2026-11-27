@@ -668,7 +668,13 @@ bool class_sensitive_type(const std::string &raw, const nil_module &module,
     std::vector<std::string> pending{compact_binding_type(raw)};
     while (!pending.empty()) {
       auto type = pending.back(); pending.pop_back();
-      if (type.rfind("ref<", 0) == 0 && type.back() == '>') type = type.substr(4, type.size() - 5);
+      if (type.rfind("ref<", 0) == 0 && type.back() == '>') {
+        type = type.substr(4, type.size() - 5);
+        // Object references retain their checked wrapper identity even when
+        // the referent has no class or dynamic fields. Arrays cannot erase a
+        // ref<Record> into Record (or fabricate it from the same pointer ABI).
+        if (types->records.count(type)) return true;
+      }
       if (!visited.insert(type).second) continue;
       if (visited.size() > 4096)
         throw std::runtime_error("NIL provenance type graph exceeds its bound");
@@ -834,11 +840,13 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
   ops.reserve(function.body.size());
   bool has_faults = false;
   bool has_dynamic_operations = false;
+  bool has_object_references = false;
   for (const auto &instruction : function.body) {
     const auto opcode = decode_opcode(instruction.opname, " in function '" + function.name + "'");
     ops.push_back(opcode);
     has_faults = has_faults || is_fault_opcode(opcode);
     has_dynamic_operations = has_dynamic_operations || opcode == Opcode::BOX_ANY || opcode == Opcode::UNBOX_ANY || opcode == Opcode::IS_ANY_TYPE;
+    has_object_references = has_object_references || opcode == Opcode::REF_LOCAL;
   }
   if (!has_faults && !force_class_validation) return result;
   std::optional<provenance_type_index> local_types;
@@ -1025,6 +1033,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     };
     const auto check_array_value = [&](const std::string &element,
                                        const std::string &actual) {
+      require_complete(actual);
       check_class_argument(element, actual);
       const auto expected = stack_type(element, module);
       if (expected.rfind("#enum:", 0) == 0 && expected != actual)
@@ -1176,7 +1185,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
         fail("cannot construct an abstract class", pc);
       const auto schema = std::find_if(module.structs.begin(), module.structs.end(),
                                       [&](const auto &value) { return value.name == args[0]; });
-      if ((has_dynamic_operations || class_sensitive_type(args[0], module, provenance_types)) && schema != module.structs.end() && !schema->fields.empty()) {
+      if ((has_dynamic_operations || has_object_references || class_sensitive_type(args[0], module, provenance_types)) && schema != module.structs.end() && !schema->fields.empty()) {
         const auto construction = "!" + std::to_string(pc) + "@" + args[0];
         state.initialized_fields[construction].clear();
         state.stack.push_back(construction);
@@ -1486,14 +1495,21 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
           nested = true;
           leaf = *child;
         }
-        const auto records = provenance_types->records.find(leaf);
+        const bool reference = leaf.rfind("ref<", 0) == 0 && leaf.back() == '>';
+        const auto nominal = reference ? leaf.substr(4, leaf.size() - 5) : leaf;
+        const auto records = provenance_types->records.find(nominal);
+        const bool object = records != provenance_types->records.end() && records->second.size() == 1 &&
+            !provenance_types->enumerations.count(nominal) && !contains_binding_cell_type(leaf) &&
+            !is_array_tuple_type(nominal);
+        const bool class_or_reference = object &&
+            (reference || provenance_types->classes.count(nominal));
         const bool record = records != provenance_types->records.end() && records->second.size() == 1 &&
-            !provenance_types->enumerations.count(leaf) && !provenance_types->classes.count(leaf);
+            !reference && !provenance_types->enumerations.count(leaf) && !provenance_types->classes.count(leaf);
         const bool enumeration = exact_enum_schema(module, leaf, provenance_types) != nullptr;
-        const bool supported_leaf = record || enumeration || is_array_tuple_type(leaf) ||
+        const bool supported_leaf = record || enumeration || class_or_reference || is_array_tuple_type(leaf) ||
             leaf == "i32" || leaf == "i64" || leaf == "u8" || leaf == "bool" ||
             leaf == "f64" || leaf == "text" || leaf == "anything";
-        const auto contract = parse_array_intrinsic(args, record || enumeration || (nested && supported_leaf));
+        const auto contract = parse_array_intrinsic(args, record || enumeration || class_or_reference || (nested && supported_leaf));
         if (state.stack.size() < contract.argument_count) fail("array intrinsic requires its declared operands", pc);
         const auto start = state.stack.size() - contract.argument_count;
         const bool create = contract.operation == array_intrinsic_operation::create;
@@ -2031,8 +2047,10 @@ void validate_nil_class_provenance(const nil_module &module) {
     related.insert(klass.name);
     related.insert("ref<" + klass.name + ">");
   }
-  // Most modules have neither classes nor binding cells. Their ordinary call
-  // graphs need no provenance walk after the metadata checks above.
+  for (const auto &schema : module.structs)
+    related.insert("ref<" + schema.name + ">");
+  // Modules without classes, object references, dynamic storage or binding
+  // cells need no provenance walk after the metadata checks above.
   if (related.empty()) return;
   bool changed = true;
   while (changed) {
@@ -2068,6 +2086,7 @@ void validate_nil_class_provenance(const nil_module &module) {
     }
     for (const auto &instruction : function.body) {
       if (instruction.opname == "CLASS_UPCAST" || instruction.opname == "CALL_METHOD" ||
+          instruction.opname == "REF_LOCAL" ||
           instruction.opname == "BOX_ANY" || instruction.opname == "UNBOX_ANY" || instruction.opname == "IS_ANY_TYPE") relevant = true;
       for (const auto &argument : instruction.args)
         if (related_type(argument)) relevant = true;

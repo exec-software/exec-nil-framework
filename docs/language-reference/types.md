@@ -161,9 +161,10 @@ implied built-in map literal or interchangeable `vec<T>` syntax.
 
 Native array elements include `i32`, `i64`, `u8`, `bool`, `f64`, NUL-free text,
 `anything`, supported structural tuples, concrete non-class records, enum values
-and finite nested arrays. Element types remain exact and invariant, including
+and finite nested arrays, classes and exact `ref<Record>` / `ref<Class>`
+handles. Element types remain exact and invariant, including
 nominal generic arguments and nested array rank. Scalar out-of-range reads keep
-their defaults; tuple, record, enum, nested-array and `anything` reads fail when
+their defaults; tuple, record, class, reference, enum, nested-array and `anything` reads fail when
 out of bounds or uninitialized. Valid-value out-of-range writes do nothing.
 `push` requires a compatible element and preserves aliases when the descriptor
 grows. Use an explicit cast before pushing an integer into `array<f64>`;
@@ -174,9 +175,12 @@ identity. Enum values retain their variant when a slot is replaced; contained
 record/array handles remain shared. Nested arrays may be jagged and share child
 handles, including after an outer slot is replaced. Empty nested literals take
 their type from a checked destination. See the [tuple reference](tuples.md) and
-[checked arrays](../standard-library/index.md#checked-arrays). Direct class or
-reference-wrapper elements, recursive nominal schemas, `f32` arrays, and raw
-`ptr<f64>`/`ptr<text>` remain outside this native subset.
+[checked arrays](../standard-library/index.md#checked-arrays). Fresh class-array
+literals can insert checked element upcasts to their declared ancestor type;
+existing `array<Derived>` values cannot become `array<Base>`, and
+`ref<Derived>` cannot become `ref<Base>`. Reference elements alias objects, not
+variable binding cells. `f32` arrays and raw `ptr<f64>`/`ptr<text>` remain
+outside this native subset.
 
 ## Structs and generic enums
 
@@ -203,8 +207,12 @@ default.
 Native nested structs and `ref<Struct>` use the same shared object-handle
 behavior as the interpreter. Updating an object through a field or reference
 is visible through its other aliases. This is not by-value C struct layout,
-automatic ownership, or Rust-style borrowing. Recursive layouts remain
-unsupported. Outside an explicit binding-reference call argument, source
+automatic ownership, or Rust-style borrowing. Finite recursive nominal schemas
+use these same handles. Construct valid values through empty arrays or terminating
+enum variants before adding back-references; a required field cannot be read or
+escape construction while uninitialized. Native collection follows reachable
+cycles. This does not expand the checkpoint contract for direct cyclic aggregates.
+Outside an explicit binding-reference call argument, source
 `ref value` accepts only a local or
 parameter with a nominal struct/class type (including a concrete generic
 struct). It creates an alias to that object, not to the variable's storage:

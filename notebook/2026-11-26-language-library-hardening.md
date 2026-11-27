@@ -371,3 +371,35 @@ passes for exact `c6ac4fe`: LLVM enabled passes all 627 tests with zero skips;
 LLVM disabled passes 475 with 145 expected native-only skips and no failures;
 VS Code passes. This subsequent evidence-only notebook commit does not rebuild
 or relabel the tested SDK candidate.
+
+## Class/reference arrays and recursive schemas — 2026-11-27
+
+The next storage slice adds exact class and aggregate-reference array kinds.
+Classes retain checked ancestor views and virtual dispatch; `ref<Record>` and
+`ref<Class>` preserve exact wrapper identity and shared object aliases. Existing
+containers and reference wrappers remain invariant. The runtime addition was
+committed separately as `5f8a935` after static/shared ABI suites and 38 explicit
+rejection checks passed.
+
+Native recursive schemas are finite graphs of handles, so rejecting every
+schema back edge was unnecessary. Reachable schemas are now visited once with
+the existing bounded validation and supported-layout checks. Empty arrays and
+terminating enum variants permit initialized construction before back-references
+form object cycles. Required-field escape checks remain; no default recursive
+object is synthesized. Native GC already traces cycles. Direct cyclic aggregate
+checkpoint restrictions and the interpreter's direct-value validation depth
+limit remain separate contracts.
+
+The first integrated checks exposed generic record methods whose `ref<Self>`
+receiver had been lowered as a plain object. Explicit receiver-reference lowering
+now preserves exact provenance and evaluates call/field receivers once. Raw
+record-only reference arrays also needed `REF_LOCAL` to activate provenance
+analysis; no class declaration is required to enforce wrapper identity.
+
+The corrected focused run passes all 33 CTests, including four paired Ny/Matrix
+fixtures across all six routes, the 174-check class/reference contract, the
+49-check recursive contract and the retained 320-check enum/nested contract.
+The regression runs and failed reports are preserved under
+`class-recursive-arrays-20261127-7ah5wa2y`. No SDK was activated or relabeled.
+Full qualification follows after the separate `f32` scalar/storage work; this
+focused result does not declare a release or a new platform campaign.

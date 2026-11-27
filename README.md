@@ -254,13 +254,16 @@ Current hardening adds lexical Matrix name resolution and completion,
 and [real collection reservation, a ring queue and bucketed HashMap](docs/standard-library/index.md#collection-storage-and-lookup).
 Native arrays now support exact declared non-class records, enum/choice values,
 and nested arrays with finite, supported schemas, including concrete generics.
+Class arrays preserve checked ancestor views and virtual dispatch; arrays of
+`ref<Record>` or `ref<Class>` preserve exact shared-reference identity. Recursive
+nominal schemas can be constructed through initialized handles, empty arrays
+and terminating enum variants; required fields still need initialization.
 Record elements retain shared mutable identity; enum values retain their variant
 and payload, including contained aliases. Nested arrays share child handles and
 can be jagged. Invalid or uninitialized tuple, record, enum and nested-array reads
 fail because these types have no default value. Focused collection coverage
 includes record-key HashMap, record queues, and native HashSet/Dictionary copies.
-Direct class/reference-wrapper elements, recursive aggregate schemas, `f32`
-arrays, binary networking, callbacks and platform SDK qualification remain
+`f32` arrays, binary networking, callbacks and platform SDK qualification remain
 separate work. The [notebook](notebook/2026-11-26-language-library-hardening.md) records
 validation and the remaining sequence before mainline consolidation.
 

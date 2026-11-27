@@ -456,15 +456,13 @@ end fn
                 for name, body, schemas, enums in recursive:
                     path = encoded(name, body, binary, schemas=schemas, enums=enums)
                     artifact = root / (name + ".o")
-                    artifact.write_bytes(b"preserve previous object\n")
-                    result = run([assembler, "-o", artifact, path], success=False)
-                    assert "recursive" in result.stderr.lower(), result
-                    assert artifact.read_bytes() == b"preserve previous object\n"
+                    run([assembler, "-o", artifact, path])
+                    assert artifact.is_file() and artifact.stat().st_size > 0
                     checks += 1
 
         if args.llvm == "ON":
-            # Dynamic subclasses are reachable through the enum's Base payload.
-            # Their fields must participate in the finite native schema graph.
+            # Dynamic subclasses remain reachable through the enum's Base
+            # payload. The finite graph may contain a nominal back edge.
             for payload in ("ReviewBase", "ref<ReviewBase>"):
                 path = root / ("recursive-derived-" + ("reference" if payload.startswith("ref") else "plain") + ".ny")
                 path.write_text("""class ReviewBase
@@ -483,11 +481,10 @@ end fn
 """, encoding="utf-8", newline="\n")
                 for jit in (False, True):
                     artifact = linked_executable_path(root / (path.stem + ("-jit" if jit else "-aot")))
-                    artifact.write_bytes(b"preserve previous artifact\n")
-                    result = run([*base, "--native", *(["--jit"] if jit else []),
-                                  "-o", artifact, path], success=False)
-                    assert "recursive" in result.stderr.lower(), result
-                    assert artifact.read_bytes() == b"preserve previous artifact\n"
+                    compiled = run([*base, "--native", *(["--jit"] if jit else []),
+                                   "-o", artifact, path])
+                    result = compiled if jit else run([artifact])
+                    assert not result.stdout and not result.stderr, result
                     checks += 1
 
         # The same direct ABI rejection cases run with static and shared runtime

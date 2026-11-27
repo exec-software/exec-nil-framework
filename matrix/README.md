@@ -174,8 +174,11 @@ preserve those reachable values.
 Invalid or uninitialized raw tuple, record, choice and nested-array reads fail
 because these element types have no default value. Scalar defaults and valid-value
 out-of-bounds no-op writes retain their existing behavior; checked array operations
-make bounds explicit. Direct class/reference-wrapper elements, recursive aggregate
-schemas and `f32` array elements remain unsupported.
+make bounds explicit. Class arrays retain checked ancestor views and virtual
+dispatch; exact aggregate-reference elements share the same objects. Existing
+containers and references remain invariant. Recursive nominal schemas use
+initialized handles, empty arrays or terminating choice variants; collection
+traces reachable cycles. `f32` array elements remain unsupported.
 
 The record storage contract enables record-key HashMap and record queues, and
 native HashSet/Dictionary copy checks. The enum/nested-array fixtures specify the

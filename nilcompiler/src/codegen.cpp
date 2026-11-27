@@ -1165,7 +1165,8 @@ std::string codegen::materialize_struct_schema(const std::string &raw_type,
 
   // Register before descending so recursive nominal fields are preserved as
   // recursive metadata, not infinitely expanded or replaced with word types.
-  // Native lowering rejects unsupported nested/recursive layouts explicitly.
+  // Native lowering validates each finite nominal schema and independently
+  // proves complete initialization before constructed objects are used.
   module.structs.push_back(definition);
   for (const auto &field : definition.fields)
     materialize_struct_schema(field.second, module, line, depth + 1,
@@ -1275,6 +1276,25 @@ public:
   std::map<const ast_fault_handler *, std::string> fault_bindings;
   void emit_member_receiver(const ast_expr &receiver) {
     emit_expr(receiver);
+  }
+
+  void emit_record_method_receiver(const ast_expr &receiver,
+                                  const std::optional<std::string> &expected) {
+    const auto actual = canonical_nil_type_name(unambiguous_expression_type(receiver));
+    const auto parameter = expected ? parse_generic_type_name(*expected) : std::nullopt;
+    const auto nominal = parse_generic_type_name(actual);
+    const auto base = nominal ? nominal->base_name : actual;
+    emit_expr(receiver);
+    if (parameter && parameter->base_name == "ref" && parameter->type_args.size() == 1 &&
+        canonical_nil_type_name(parameter->type_args.front()) == actual &&
+        cg_.lookup_struct_decl(base) && !cg_.lookup_class_decl(base)) {
+      // A ref<Self> method borrows the receiver's existing object handle.
+      // Materialize that checked wrapper explicitly, including receivers from
+      // fields/calls, instead of relying on pointer-ABI type erasure at CALL.
+      const auto temporary = new_temp("record_receiver");
+      push_instr("STORE_LOCAL", {temporary}, receiver.line);
+      push_instr("REF_LOCAL", {temporary}, receiver.line);
+    }
   }
 
   void emit_checked_reference(const ast_expr &expression,
@@ -1561,6 +1581,19 @@ public:
     return cg_.lookup_struct_decl(base) != nullptr && cg_.lookup_class_decl(base) == nullptr;
   }
 
+  bool declared_array_object(const std::string &type) {
+    if (contains_binding_cell_type(type)) return false;
+    const auto parsed = parse_generic_type_name(type);
+    if (parsed && parsed->base_name == "ref") {
+      if (parsed->type_args.size() != 1) return false;
+      const auto &referent = parsed->type_args.front();
+      const auto nominal = parse_generic_type_name(referent);
+      const auto base = nominal ? nominal->base_name : referent;
+      return cg_.lookup_struct_decl(base) != nullptr || cg_.lookup_class_decl(base) != nullptr;
+    }
+    return cg_.lookup_class_decl(parsed ? parsed->base_name : type) != nullptr;
+  }
+
   bool validated_array_element(const std::string &type, unsigned depth = 0) {
     if (depth >= 64) return false;
     const auto parsed = parse_generic_type_name(type);
@@ -1569,7 +1602,8 @@ public:
     const auto scalar = canonical_array_type(type);
     return scalar == "i32" || scalar == "i64" || scalar == "u8" ||
         scalar == "bool" || scalar == "f64" || scalar == "text" || scalar == "anything" ||
-        is_array_tuple_type(type) || declared_array_record(type) || is_declared_enum_type(cg_, type);
+        is_array_tuple_type(type) || declared_array_record(type) || declared_array_object(type) ||
+        is_declared_enum_type(cg_, type);
   }
 
   void materialize_array_element_schema(const std::string &type, int line,
@@ -1584,7 +1618,7 @@ public:
       materialize_array_element_schema(parsed->type_args.front(), line, depth + 1);
       return;
     }
-    if (is_array_tuple_type(type) || declared_array_record(type))
+    if (is_array_tuple_type(type) || declared_array_record(type) || declared_array_object(type))
       cg_.materialize_struct_schema(type, mod_, line, 0, true);
     // Generic enum schemas are materialized after all function bodies and
     // specializations exist, including empty array instruction metadata.
@@ -4433,7 +4467,14 @@ public:
                   spec_name += "__" + ma.member_name;
                   for (const auto &ta : type_args)
                     spec_name += "__" + cg_.sanitize_identifier(ta);
-                  emit_expr(*ma.object);
+                  auto receiver_substitutions = substitutions;
+                  receiver_substitutions["Self"] = receiver_type;
+                  for (std::size_t index = 0; index < impl->generic_params.size() && index < type_args.size(); ++index)
+                    receiver_substitutions[impl->generic_params[index].name] = type_args[index];
+                  const auto expected_receiver = method->params.empty() || !method->params.front().type_name
+                      ? std::nullopt : std::optional<std::string>(substitute_nil_type_name(
+                          *method->params.front().type_name, receiver_substitutions));
+                  emit_record_method_receiver(*ma.object, expected_receiver);
                   for (const auto &arg : ce.args)
                     emit_expr(*arg);
                   if (ny::is_debug_enabled()) {
@@ -4504,7 +4545,13 @@ public:
             std::string mangled_name = sanitized_type + "__" + ma.member_name;
 
             // Emit receiver (self) as first argument
-            emit_expr(*ma.object);
+            const auto *method = cg_.lookup_function_decl(base_receiver + "::" + ma.member_name);
+            auto receiver_substitutions = substitutions;
+            receiver_substitutions["Self"] = receiver_type;
+            const auto expected_receiver = !method || method->params.empty() || !method->params.front().type_name
+                ? std::nullopt : std::optional<std::string>(substitute_nil_type_name(
+                    *method->params.front().type_name, receiver_substitutions));
+            emit_record_method_receiver(*ma.object, expected_receiver);
             // Built-in mutation destinations supply constructor context just
             // like a typed index assignment. Preserve concrete array handles.
             const auto array_element = array_element_type_name(receiver_type);

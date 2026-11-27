@@ -207,11 +207,18 @@ foreign/stale child handles, wrong widths/types/depths and transitive reclamatio
 Qualification results remain tied to the tested source revision and host; adding
 these fixtures does not itself establish a completed platform campaign.
 
-**Next step / acceptance:** F07 remains open for direct class/reference-wrapper
-elements, recursive aggregate schemas and `f32` array elements. Supported schemas
-must be finite and use supported native field/payload layouts; recursive graphs
-remain rejected even through array indirection. Handles inside a record or enum
-do not imply direct `array<ref<T>>` support. Keep unsupported shapes diagnosed
+**Implemented class/reference and recursive slice:** Direct class arrays retain
+checked ancestor views and virtual dispatch. Exact `ref<Record>` / `ref<Class>`
+elements retain shared object identity; arrays and reference wrappers remain
+invariant. Fresh class literals may apply checked element upcasts. Invalid reads
+have no fabricated default. Finite recursive nominal schemas use initialized
+handles, empty arrays and terminating enum variants; GC follows reachable cycles.
+Required-field construction checks remain in force, as do checkpoint restrictions
+for direct cyclic aggregates. Paired class/reference and recursive Ny/Matrix
+fixtures specify these storage boundaries.
+
+**Next step / acceptance:** F07 remains open for `f32` array elements. Supported
+schemas must be finite and use supported native field/payload layouts. Keep unsupported shapes diagnosed
 explicitly and establish each new layout's identity, initialization, copy and
 lifetime contract. These focused results do not certify all collection methods,
 project queries or platform SDKs.
@@ -704,7 +711,7 @@ on the native routes. The ordering below favors the 3D validation consumer.
 
 | Priority | Gap | Evidence and proposed scope |
 | --- | --- | --- |
-| 1 | Native application-data storage | F07 now implements exact declared non-class records, enum/choice elements and nested arrays with finite supported schemas, including concrete generics and shared child identities. Direct class/reference-wrapper elements, recursive schemas and `f32` arrays remain unsupported; each needs compiler/runtime contracts rather than only STL declarations. |
+| 1 | Native application-data storage | F07 now implements exact declared non-class records, enum/choice elements and nested arrays with finite supported schemas, including concrete generics and shared child identities. Class/reference elements and initialized recursive nominal schemas now have separate F07 storage contracts. `f32` arrays remain unsupported and need a scalar contract as well as array storage. |
 | 2 | Predictable buffers | [`vec.with_capacity`](../../nilstd/src/collections/vector.ny) now reserves real backing storage without changing logical length; `capacity()` reports reserved slots. Resizing, fresh clone/subrange and append-range operations, and checked slices/views remain gaps. A type-checker recognition of `resize` is not an implemented library contract. |
 | 3 | Collections that scale | [`HashMap`](../../nilstd/src/collections/hash_map.ny) now uses buckets and collision chains; [`queue`](../../nilstd/src/collections/queue.ny) uses a ring buffer with O(1) dequeue and amortized O(1) enqueue. Focused fixtures cover growth, collisions, wraparound and aliases. [`map`](../../nilstd/src/collections/map.ny) still uses linear storage; a deque API and measured performance benchmarks remain work. HashMap removal remains O(n), and collisions can make lookup linear. |
 | 4 | Strict serialization | The former NyData parser could return partially parsed objects/lists at EOF, skip child errors, and return a first value without validating the remaining input. Add checked parsing, source locations, input/depth limits, and malformed-input fixtures. The old experimental JSON module also lacked Unicode correctness. Superseded by F67 and the shared NILData engine. |
@@ -1765,9 +1772,9 @@ Out-of-range tuple reads and uninitialized tuple slots fail explicitly. There
 is no synthetic default tuple. Out-of-range writes remain no-ops, and existing
 scalar-array read defaults are unchanged. F07 subsequently adds direct declared
 record and choice elements plus nested arrays under explicit identity,
-initialization and lifetime contracts. Direct class/reference-wrapper elements,
-recursive schemas and `f32` arrays remain excluded; tuple support alone does not
-establish a general aggregate-array ABI.
+initialization and lifetime contracts. Class/reference and recursive-schema
+contracts are also recorded in F07; `f32` arrays remain excluded. Tuple support
+alone does not establish a general aggregate-array ABI.
 
 **Coverage:** Paired Ny/Matrix tuple-array fixtures and
 `tests/tools/tuple_array_contract.py` specify source and binary execution,
@@ -2683,8 +2690,8 @@ mutation, and methods across the standard execution routes.
 **Earlier storage limitation:** An independent discovery probe also confirmed
 that native arrays of nominal records were outside the scalar-array profile,
 both as locals and aggregate fields. F07 now adds explicit record, choice and
-nested-array layout and GC contracts. Direct class/reference-wrapper elements
-and recursive schemas remain open. Enigma
+nested-array layout and GC contracts, with separate class/reference and
+initialized recursive-schema support. Enigma
 uses a bounded typed report batch with primitive columns and checked element
 access; its durable interchange still returns report objects.
 

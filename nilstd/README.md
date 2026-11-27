@@ -165,8 +165,12 @@ Nested arrays retain shared child handles and may be jagged; they do not clone
 rows. Growth and collection preserve reachable child arrays and payload values.
 Raw tuple/record/enum/nested-array reads outside the array or from uninitialized
 storage fail instead of fabricating a default; scalar defaults remain unchanged.
-Direct class/reference-wrapper elements, recursive aggregate schemas and `f32`
-array elements remain unsupported. Ny and Matrix consumer fixtures specify the
+Class elements retain checked ancestor views and virtual dispatch; exact
+aggregate-reference elements retain shared identity. Arrays and reference wrappers
+remain invariant. Recursive nominal schemas can use fully initialized handles,
+empty arrays and terminating enum variants; GC follows reachable cycles. Invalid
+class/reference reads also fail. `f32` array elements remain unsupported.
+Ny and Matrix consumer fixtures specify the
 shared APIs; storage support alone does not qualify every collection method,
 query shape or platform SDK. See the
 [checked-array contract](../docs/standard-library/index.md#checked-arrays)

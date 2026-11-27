@@ -439,6 +439,10 @@ find_native_record_array_definition(const nil_module &mod, const std::string &ty
 
 static const nil_enum_def *
 find_native_enum_array_definition(const nil_module &mod, const std::string &type);
+static const nil_struct_def *
+find_native_class_array_definition(const nil_module &mod, const std::string &type);
+static const nil_struct_def *
+find_native_reference_array_definition(const nil_module &mod, const std::string &type);
 static std::optional<std::string>
 native_generic_argument(const std::string &type, const std::string &name);
 
@@ -470,6 +474,10 @@ native_array_kind_for_element(const nil_module &mod, const std::string &type,
     return NYRT_ARRAY_RECORD;
   if (find_native_enum_array_definition(mod, type))
     return NYRT_ARRAY_ENUM;
+  if (find_native_class_array_definition(mod, type))
+    return NYRT_ARRAY_CLASS;
+  if (find_native_reference_array_definition(mod, type))
+    return NYRT_ARRAY_REFERENCE;
   return std::nullopt;
 }
 
@@ -544,11 +552,17 @@ static std::string native_array_element_identity(const nil_module &mod,
     return compact_nil_type(record->name);
   if (const auto *enumeration = find_native_enum_array_definition(mod, type))
     return compact_nil_type(enumeration->name);
+  if (const auto *klass = find_native_class_array_definition(mod, type))
+    return compact_nil_type(klass->name);
+  if (const auto *referent = find_native_reference_array_definition(mod, type))
+    return "ref<" + compact_nil_type(referent->name) + ">";
   return canonical_array_type(type);
 }
 
 static bool native_array_requires_descriptor(std::uint32_t kind) {
-  return kind == NYRT_ARRAY_RECORD || kind == NYRT_ARRAY_ENUM || kind == NYRT_ARRAY_NESTED;
+  return kind == NYRT_ARRAY_RECORD || kind == NYRT_ARRAY_ENUM ||
+         kind == NYRT_ARRAY_NESTED || kind == NYRT_ARRAY_CLASS ||
+         kind == NYRT_ARRAY_REFERENCE;
 }
 
 static native_handle_kind
@@ -719,6 +733,34 @@ find_native_enum_array_definition(const nil_module &mod, const std::string &type
       find_nil_class(mod, definition->name)) return nullptr;
   for (const auto &record : mod.structs)
     if (compact_nil_type(record.name) == compact_nil_type(definition->name)) return nullptr;
+  return definition;
+}
+
+// Array metadata is already a resolved nominal type. Class views and object
+// references have the shared object ABI, but retain distinct invariant element
+// descriptors; a reference is never a binding cell or an arbitrary pointer.
+static const nil_struct_def *
+find_native_class_array_definition(const nil_module &mod, const std::string &type) {
+  if (is_pointer_like_nil_type(type) || contains_binding_cell_type(type)) return nullptr;
+  const auto *definition = find_nil_struct_definition(mod, type);
+  if (!definition || compact_nil_type(definition->name) != compact_nil_type(type) ||
+      !find_nil_class(mod, definition->name)) return nullptr;
+  for (const auto &enumeration : mod.enums)
+    if (compact_nil_type(enumeration.name) == compact_nil_type(definition->name)) return nullptr;
+  return definition;
+}
+
+static const nil_struct_def *
+find_native_reference_array_definition(const nil_module &mod, const std::string &type) {
+  if (contains_binding_cell_type(type)) return nullptr;
+  const auto referent = native_generic_argument(type, "ref");
+  if (!referent || is_pointer_like_nil_type(*referent) || is_array_tuple_type(*referent))
+    return nullptr;
+  const auto *definition = find_nil_struct_definition(mod, *referent);
+  if (!definition || compact_nil_type(definition->name) != compact_nil_type(*referent))
+    return nullptr;
+  for (const auto &enumeration : mod.enums)
+    if (compact_nil_type(enumeration.name) == compact_nil_type(definition->name)) return nullptr;
   return definition;
 }
 
@@ -2048,6 +2090,26 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       }
       return impl_->builder->CreatePtrToInt(value, i64_type, "nil.array.record.bits");
     }
+    if (const auto *klass = find_native_class_array_definition(mod, element_type)) {
+      if (!value->getType()->isPointerTy() ||
+          find_native_class_array_definition(mod, impl_->nilType(value)) != klass) {
+        std::cerr << "[NativeCodegen] " << operation
+                  << " requires the exact checked class view '" << element_type << "'\n";
+        return nullptr;
+      }
+      return impl_->builder->CreatePtrToInt(value, i64_type, "nil.array.class.bits");
+    }
+    if (const auto *referent = find_native_reference_array_definition(mod, element_type)) {
+      if (!value->getType()->isPointerTy() ||
+          find_native_reference_array_definition(mod, impl_->nilType(value)) != referent ||
+          native_array_element_identity(mod, impl_->nilType(value)) !=
+              native_array_element_identity(mod, element_type)) {
+        std::cerr << "[NativeCodegen] " << operation
+                  << " requires an exact object reference of type '" << element_type << "'\n";
+        return nullptr;
+      }
+      return impl_->builder->CreatePtrToInt(value, i64_type, "nil.array.reference.bits");
+    }
     if (is_array_tuple_type(element_type)) {
       if (!value->getType()->isPointerTy() ||
           canonical_array_type(impl_->nilType(value)) != canonical_array_type(element_type) ||
@@ -2118,7 +2180,8 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
   auto native_array_loaded_value =
       [&](llvm::Value *word, const std::string &element_type) -> llvm::Value * {
     const auto kind = native_array_kind_for_element(mod, element_type);
-    if (kind == NYRT_ARRAY_TUPLE || kind == NYRT_ARRAY_ANYTHING || kind == NYRT_ARRAY_RECORD || kind == NYRT_ARRAY_NESTED)
+    if (kind == NYRT_ARRAY_TUPLE || kind == NYRT_ARRAY_ANYTHING || kind == NYRT_ARRAY_RECORD ||
+        kind == NYRT_ARRAY_NESTED || kind == NYRT_ARRAY_CLASS || kind == NYRT_ARRAY_REFERENCE)
       return impl_->builder->CreateIntToPtr(
           word, llvm::PointerType::getUnqual(ctx), "ny.array.tuple.value");
     if (kind == NYRT_ARRAY_F64)
@@ -2549,61 +2612,19 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
   if (!valid_tuple_schemas)
     return false;
 
-  // Acyclic nested objects are supported. Keep recursive schema shapes closed
-  // until nullable/recursive initialization has a defined language contract.
-  // Peel leaves iteratively so malformed deeply nested schemas cannot consume
-  // the compiler's C++ call stack.
-  std::unordered_map<const nil_struct_def *, std::size_t> pending_dependencies;
-  std::unordered_map<const nil_struct_def *,
-                     std::vector<const nil_struct_def *>> dependent_structs;
-  std::deque<const nil_struct_def *> ready_structs;
-  for (const auto *definition : struct_worklist) {
-    auto &pending = pending_dependencies[definition];
-    for (const auto &[field_name, field_type] : definition->fields) {
-      (void)field_name;
-      // An array is a handle, but its aggregate element schema contributes
-      // a dependency. Recursive aggregate graphs keep the existing rejection.
-      auto dependency_type = field_type;
-      for (unsigned depth = 0; depth < 64; ++depth) {
-        const auto element = native_generic_argument(dependency_type, "array");
-        if (!element) break;
-        dependency_type = *element;
-      }
-      if (const auto *nested = find_native_aggregate_definition(mod, dependency_type)) {
-        ++pending;
-        dependent_structs[nested].push_back(definition);
-      }
-    }
-    if (pending == 0)
-      ready_structs.push_back(definition);
-  }
-  std::size_t completed_structs = 0;
-  while (!ready_structs.empty()) {
-    const auto *definition = ready_structs.front();
-    ready_structs.pop_front();
-    ++completed_structs;
-    for (const auto *dependent : dependent_structs[definition]) {
-      if (--pending_dependencies[dependent] == 0)
-        ready_structs.push_back(dependent);
-    }
-  }
-  if (completed_structs != struct_worklist.size()) {
-    for (const auto *definition : struct_worklist) {
-      if (pending_dependencies[definition] != 0) {
-        std::cerr << "[NativeCodegen] native struct schema '" << definition->name
-                  << "' is a recursive aggregate or depends on one; native "
-                     "recursive struct initialization is not implemented\n";
-        break;
-      }
-    }
-    return false;
-  }
-
-  // Enum/nested element arrays need finite, concrete reachable schemas even
-  // when empty. Follow both records and enum payloads through array/ref handles;
-  // an indirection must not hide an unsupported recursive initialization graph.
-  std::unordered_map<std::string, std::vector<std::string>> array_schema_edges;
+  // Recursive schemas are finite nominal graphs, not recursively embedded
+  // LLVM layouts: aggregates/arrays use pointers and enums use handle words.
+  // Validate each reachable schema once. A back edge is valid metadata, while
+  // the construction proof below still forbids using an incomplete object.
+  // Empty arrays and terminating enum variants establish initialized roots;
+  // subsequent mutation can link those roots into an object cycle.
+  std::unordered_set<std::string> validated_array_schemas;
   std::vector<std::string> array_schema_work = extended_array_layout_roots;
+  for (const auto *definition : struct_worklist)
+    array_schema_work.push_back(definition->name);
+  for (const auto &type : visited_layout_types)
+    if (find_nil_enum_definition(mod, type))
+      array_schema_work.push_back(type);
   // Payload metadata retains the existing unique nominal-name resolution;
   // exact array element names are checked separately by the storage classifier.
   const auto array_schema_key = [&](std::string type) {
@@ -2626,17 +2647,18 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       type = *child;
     }
     const auto key = array_schema_key(type);
-    if (key.empty() || array_schema_edges.count(key)) continue;
-    if (array_schema_edges.size() >= 4096) {
+    if (key.empty() || validated_array_schemas.count(key)) continue;
+    if (validated_array_schemas.size() >= 4096) {
       std::cerr << "[NativeCodegen] array element schema graph exceeds its bound\n";
       return false;
     }
+    validated_array_schemas.insert(key);
     std::vector<std::string> children;
     if (const auto *record = find_native_aggregate_definition(mod, type)) {
       for (const auto &field : record->fields) children.push_back(field.second);
       // An ancestor payload can hold any concrete descendant. Include those
       // layouts just as the reachable-struct pass does, so a derived field
-      // cannot hide a recursive enum/record graph behind a base-class view.
+      // cannot hide an unsupported field layout behind a base-class view.
       if (find_nil_class(mod, record->name))
         for (const auto &dynamic_class : mod.classes)
           if (dynamic_class.name != record->name && !dynamic_class.is_abstract &&
@@ -2664,33 +2686,11 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         }
       }
     }
-    auto &edges = array_schema_edges[key];
     for (const auto &child : children) {
       const auto dependency = array_schema_key(child);
-      if (!dependency.empty()) {
-        edges.push_back(dependency);
+      if (!dependency.empty() && !validated_array_schemas.count(dependency))
         array_schema_work.push_back(child);
-      }
     }
-  }
-  std::unordered_map<std::string, std::size_t> array_schema_pending;
-  std::unordered_map<std::string, std::vector<std::string>> array_schema_dependents;
-  std::deque<std::string> array_schema_ready;
-  for (const auto &[key, edges] : array_schema_edges) {
-    array_schema_pending[key] = edges.size();
-    if (edges.empty()) array_schema_ready.push_back(key);
-    for (const auto &dependency : edges) array_schema_dependents[dependency].push_back(key);
-  }
-  std::size_t array_schema_completed = 0;
-  while (!array_schema_ready.empty()) {
-    const auto key = array_schema_ready.front(); array_schema_ready.pop_front();
-    ++array_schema_completed;
-    for (const auto &dependent : array_schema_dependents[key])
-      if (--array_schema_pending[dependent] == 0) array_schema_ready.push_back(dependent);
-  }
-  if (array_schema_completed != array_schema_edges.size()) {
-    std::cerr << "[NativeCodegen] array element schema is a recursive aggregate or depends on one\n";
-    return false;
   }
 
   for (const auto &definition : mod.structs) {
@@ -2774,7 +2774,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                 << "' field '" << field_name
                 << "' has unsupported or opaque type '" << field_type
                 << "'; native fields currently accept i32, i64, bool, u8, f64, "
-                   "known enums, acyclic structs, text, scalar arrays, and "
+                   "known enums, structs, text, supported arrays, and "
                    "ptr<i32/i64/bool/u8>\n";
       return false;
     }
@@ -4036,6 +4036,8 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                 native_handle_kind_for_nil_type(mod, value_type) == native_handle_kind::anything ||
                 is_array_tuple_type(value_type) ||
                 find_native_record_array_definition(mod, value_type) ||
+                find_native_class_array_definition(mod, value_type) ||
+                find_native_reference_array_definition(mod, value_type) ||
                 native_array_kind_for_element(mod, value_type) == NYRT_ARRAY_NESTED)
                    ? !val_arg->getType()->isPointerTy()
                    : !val_arg->getType()->isIntegerTy()) ||
@@ -4154,6 +4156,8 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                 native_handle_kind_for_nil_type(mod, fn.return_type) == native_handle_kind::anything ||
                 is_array_tuple_type(fn.return_type) ||
                 find_native_record_array_definition(mod, fn.return_type) ||
+                find_native_class_array_definition(mod, fn.return_type) ||
+                find_native_reference_array_definition(mod, fn.return_type) ||
                 native_array_kind_for_element(mod, fn.return_type) == NYRT_ARRAY_NESTED)
                    ? !impl_->current_function->getReturnType()->isPointerTy()
                    : !impl_->current_function->getReturnType()->isIntegerTy())) {
@@ -4176,7 +4180,9 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
               {arr_arg,
                llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)),
                impl_->coerceToI64(idx_arg)});
-          if (*kind == NYRT_ARRAY_TEXT || *kind == NYRT_ARRAY_TUPLE || *kind == NYRT_ARRAY_ANYTHING || *kind == NYRT_ARRAY_RECORD || *kind == NYRT_ARRAY_NESTED)
+          if (*kind == NYRT_ARRAY_TEXT || *kind == NYRT_ARRAY_TUPLE || *kind == NYRT_ARRAY_ANYTHING ||
+              *kind == NYRT_ARRAY_RECORD || *kind == NYRT_ARRAY_NESTED ||
+              *kind == NYRT_ARRAY_CLASS || *kind == NYRT_ARRAY_REFERENCE)
             value = native_array_loaded_value(value, *element_type);
           else
             value = impl_->castInteger(value,
@@ -4215,6 +4221,8 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                 native_handle_kind_for_nil_type(mod, value_type) == native_handle_kind::anything ||
                 is_array_tuple_type(value_type) ||
                 find_native_record_array_definition(mod, value_type) ||
+                find_native_class_array_definition(mod, value_type) ||
+                find_native_reference_array_definition(mod, value_type) ||
                 native_array_kind_for_element(mod, value_type) == NYRT_ARRAY_NESTED)
                    ? !val_arg->getType()->isPointerTy()
                    : !val_arg->getType()->isIntegerTy()) ||

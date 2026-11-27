@@ -35,6 +35,18 @@
       "limitations": ["Container nesting is bounded and element types are invariant; direct class/reference elements, recursive nominal schemas and unsupported scalar widths remain outside this contract.", "Nested reads have no fabricated child: invalid reads fail. Copying an outer array shares children. These fixtures do not establish a deep-copy operation, all combinations, throughput, memory bounds or platform parity."]
     },
     {
+      "id": "class-reference-arrays",
+      "observed": "Ny and Matrix class/reference arrays preserve exact element views and shared object identity through indexed access, mutation, replacement, growth and generic primitives. Class elements retain checked ancestor views and virtual dispatch; reference wrappers retain their exact nominal referent.",
+      "tests": ["ny.routes.class-reference-arrays", "ny.routes.class-reference-arrays-matrix"],
+      "limitations": ["Arrays and reference wrappers remain invariant. Fresh class literals can receive checked element upcasts; existing containers cannot be widened. Generic classes, binding-cell elements and a foreign object ABI are outside this contract.", "Invalid reads have no fabricated default. These fixtures do not qualify every collection method, sustained allocation bounds or platform SDK."]
+    },
+    {
+      "id": "recursive-array-schemas",
+      "observed": "Ny and Matrix fixtures construct initialized recursive nominal schemas through empty arrays and terminating enum variants, preserve shared cycles through mutation, and retain reachable objects during collection.",
+      "tests": ["ny.routes.recursive-arrays", "ny.routes.recursive-arrays-matrix"],
+      "limitations": ["Schema graphs remain bounded and every reachable field/payload must have a supported layout. Required fields must be initialized before values escape; recursive declarations do not manufacture default objects.", "This does not expand checkpoint support for direct cyclic aggregates, promise arbitrary value-validation depth, provide deep copies or certify platform SDKs."]
+    },
+    {
       "id": "scalar-arithmetic",
       "observed": "Scalar arithmetic and comparisons at live-array handle addresses agree across the six execution routes for the contract and collision fixtures.",
       "tests": ["ny.routes.scalar-arithmetic-contract", "ny.routes.scalar-array-handle-collision"],
@@ -132,6 +144,10 @@
     }
   ],
   "proofs": [
+    {"test": "ny.routes.class-reference-arrays", "fixture": "class-reference-arrays", "stdlib": true},
+    {"test": "ny.routes.class-reference-arrays-matrix", "fixture": "class-reference-arrays-matrix", "stdlib": true},
+    {"test": "ny.routes.recursive-arrays", "fixture": "recursive-arrays", "stdlib": true},
+    {"test": "ny.routes.recursive-arrays-matrix", "fixture": "recursive-arrays-matrix", "stdlib": true},
     {"test": "ny.routes.enum-arrays", "fixture": "enum-arrays", "stdlib": true},
     {"test": "ny.routes.enum-arrays-matrix", "fixture": "enum-arrays-matrix", "stdlib": true},
     {"test": "ny.routes.nested-arrays", "fixture": "nested-arrays", "stdlib": true},
