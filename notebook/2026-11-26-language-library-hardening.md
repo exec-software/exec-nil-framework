@@ -221,3 +221,37 @@ missing and incorrectly scoped fields. The empty-only generic schema fixture
 uses a separate type so these added constructors cannot mask its regression.
 The full suite and SDK qualification will be repeated from the corrected clean
 revision; the first run and staged files remain preserved as failure evidence.
+
+
+## Verified record-array development candidate
+
+The corrected clean revision `95d7194a993a60c99ee63feea0539360594fe7ee`
+passes 619 of 622 local CTests with zero failures. The three skips are the
+PostgreSQL client/provider and graphical-display dependencies unavailable on
+this host. The focused record-array contract now passes 119 checks; imported
+unqualified, qualified and explicitly aliased generic-record probes pass all
+12 text/binary-VM/JIT/AOT combinations. The candidate is development-qualified,
+not a stable release or a new Windows/macOS parity claim.
+
+Packaging validates 11 root-level tools, 19 strictly checked binary library
+modules, the source standard library, 76 documentation pages and 279 sealed
+files. Its observed capability record is verified for 19 groups and 39 proof
+fixtures. All 1,376 installed consumer executions pass: 86 fixtures against
+source and binary libraries, with six execution routes plus text/binary NIL
+through the standalone assembler/linker. Installed durable-I/O checks pass.
+
+Bounded compatibility checks compile the full Web test source in four
+source/binary-STL and text/binary-NIL combinations, pass 393 pure SHA-256/framing
+assertions in each of four combinations, and pass eight synthetic WebView
+interpreter/JIT/AOT routes. SDK, provider and repository pins remain unchanged;
+the checks open no server or desktop windows. The active SDK and earlier
+candidate are unchanged. The new candidate remains pinned to `95d7194`; this
+notebook's subsequent evidence-only commit does not rebuild or relabel it.
+
+
+[GitHub Source validation](https://github.com/exec-software/exec-nil-framework/actions/runs/45929987474)
+passed for exact `95d7194`: LLVM enabled passes all 622 tests with zero skips;
+LLVM disabled passes 470 with 145 expected native-only skips and zero failures;
+VS Code passes. Both configurations verify actual backend selection. This
+remote evidence does not change the locally packaged candidate's development
+qualification or substitute for Windows/macOS installed-consumer checks.
