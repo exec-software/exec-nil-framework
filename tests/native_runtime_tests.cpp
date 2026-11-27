@@ -608,6 +608,104 @@ void check_enum_nested_array_contract(bool &ok) {
                "nested tuple arrays rejected their compiler-proven tuple layout");
 }
 
+void check_class_reference_array_contract(bool &ok) {
+  const auto bits = [](const void *value) {
+    return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(value));
+  };
+  const auto create = [](std::uint32_t kind, const std::string &type,
+                         std::int64_t length, std::uint64_t initial) {
+    return nyrt_typed_array_v1_new(kind, type.data(), type.size(), length, initial);
+  };
+  for (const auto kind : {NYRT_ARRAY_CLASS, NYRT_ARRAY_REFERENCE}) {
+    const std::string type = kind == NYRT_ARRAY_CLASS
+        ? "catalog::Base<i32>" : "ref<catalog::Record<i32>>";
+    const std::string rows_type = "array<" + type + ">";
+    ok &= expect(nyrt_array_new(kind, 0) == nullptr &&
+                     nyrt_array_new_with_value(kind, 1, 1) == nullptr &&
+                     nyrt_buffer_new(kind, 1) == nullptr &&
+                     create(kind, "", 0, 0) == nullptr &&
+                     create(kind, type, -1, 0) == nullptr,
+                 "class/reference array admitted an untyped/raw buffer constructor or invalid metadata");
+    for (const auto invalid : {"i32", "array<i32>", "ptr<i32>", "tuple<i32>",
+                               "ref<i32>", "ref<array<i32>>", "ref<ref<catalog::Base>>",
+                               "ref<catalog::Base,Other>", "ref<>", "ref<catalog::Base>trailing"})
+      ok &= expect(create(kind, invalid, 0, 0) == nullptr,
+                   "class/reference array accepted a scalar/container descriptor");
+    if (kind == NYRT_ARRAY_CLASS) {
+      for (const auto malformed : {"catalog::Base<>", "catalog::Base<i32,>", "catalog::Base<i32>tail"})
+        ok &= expect(create(kind, malformed, 0, 0) == nullptr,
+                     "class array accepted malformed generic metadata");
+    } else {
+      ok &= expect(create(kind, "catalog::Record<i32>", 0, 0) == nullptr,
+                   "reference array erased its invariant wrapper descriptor");
+    }
+
+    std::uint64_t root = 0, retained = 0;
+    const void *slots[] = {&root, &retained};
+    nyrt_roots_enter(slots, 2);
+    nyrt_collect();
+    auto *text = nyrt_i64_to_text(271828);
+    auto *numbers = nyrt_array_new_with_value(NYRT_ARRAY_I32, 1, 23);
+    auto *object = static_cast<std::uint64_t *>(nyrt_alloc(24));
+    if (!expect(text && numbers && object, "could not allocate class/reference object graph")) {
+      ok = false; nyrt_roots_leave(slots); return;
+    }
+    object[0] = bits(text); object[1] = bits(numbers); object[2] = 31;
+    std::string descriptor = type;
+    auto *array = create(kind, descriptor, 2, bits(object));
+    descriptor.assign(descriptor.size(), 'x');
+    auto *rows = array ? create(NYRT_ARRAY_NESTED, rows_type, 1, bits(array)) : nullptr;
+    if (!expect(array && rows, "could not allocate class/reference arrays")) {
+      ok = false; nyrt_roots_leave(slots); return;
+    }
+    root = bits(rows);
+    ok &= expect(nyrt_typed_array_v1_require(array, kind, type.data(), type.size()) == array &&
+                     nyrt_array_reserve(array, kind, 64) == 1 &&
+                     nyrt_array_length(array, kind) == 2,
+                 "class/reference descriptor was borrowed or reserve changed length");
+    for (int index = 0; index < 80; ++index)
+      ok &= expect(nyrt_array_push(array, kind, bits(object)) == 1,
+                   "class/reference array growth failed");
+    object[2] = 37;
+    nyrt_collect();
+    ok &= expect(nyrt_managed_objects() == 5 &&
+                     nyrt_array_get(rows, NYRT_ARRAY_NESTED, 0) == bits(array) &&
+                     nyrt_array_get(array, kind, 81) == bits(object) && object[2] == 37 &&
+                     nyrt_array_get(numbers, NYRT_ARRAY_I32, 0) == 23 &&
+                     nyrt_array_set(array, kind, -1, bits(object)) == 0 &&
+                     nyrt_array_set(array, kind, 82, bits(object)) == 0 &&
+                     nyrt_array_length(array, kind) == 82,
+                 "class/reference growth, tracing or bounds changed object identity");
+    ok &= expect_text(reinterpret_cast<const char *>(static_cast<std::uintptr_t>(object[0])),
+                       "271828", "class/reference tracing lost managed text");
+    retained = bits(object);
+    auto *replacement = static_cast<std::uint64_t *>(nyrt_alloc(24));
+    if (!expect(replacement != nullptr, "could not allocate replacement referent")) {
+      ok = false; nyrt_roots_leave(slots); return;
+    }
+    replacement[2] = 41;
+    for (int index = 0; index < 82; ++index)
+      ok &= expect(nyrt_array_set(array, kind, index, bits(replacement)) == 1,
+                   "class/reference replacement failed");
+    nyrt_collect();
+    ok &= expect(nyrt_managed_objects() == 6 && object[2] == 37 &&
+                     nyrt_array_get(array, kind, 0) == bits(replacement),
+                 "class/reference replacement lost an independently retained alias");
+    retained = 0; nyrt_collect();
+    ok &= expect(nyrt_managed_objects() == 3,
+                 "replaced class/reference referent graph survived without roots");
+    root = 0; nyrt_collect();
+    ok &= expect(nyrt_managed_objects() == 0,
+                 "unrooted class/reference array graph survived collection");
+    nyrt_roots_leave(slots);
+    auto *empty = create(kind, type, 0, 0);
+    ok &= expect(empty && nyrt_array_length(empty, kind) == 0 &&
+                     nyrt_array_reserve(empty, kind, 16) == 1 &&
+                     nyrt_array_length(empty, kind) == 0,
+                 "empty class/reference array required a fabricated default object");
+  }
+}
+
 int typed_array_failure_case(const std::string &mode) {
   nyrt_context_begin(0, nullptr);
   const auto bits = [](const void *value) {
@@ -622,6 +720,25 @@ int typed_array_failure_case(const std::string &mode) {
   };
   void *enums = create(NYRT_ARRAY_ENUM, "catalog::Choice<i32>", 0, 0);
   void *nested = create(NYRT_ARRAY_NESTED, "array<i32>", 0, 0);
+  for (const auto kind : {NYRT_ARRAY_CLASS, NYRT_ARRAY_REFERENCE}) {
+    const std::string prefix = kind == NYRT_ARRAY_CLASS ? "class" : "reference";
+    if (mode.rfind(prefix + "-", 0) != 0) continue;
+    const std::string type = kind == NYRT_ARRAY_CLASS ? "catalog::Base" : "ref<catalog::Record<i32>>";
+    auto *array = create(kind, type, 0, 0);
+    if (mode == prefix + "-null") create(kind, type, 1, 0);
+    else if (mode == prefix + "-oob") nyrt_array_get(array, kind, -1);
+    else if (mode == prefix + "-identity") require(array, kind, type + "Other");
+    else if (mode == prefix + "-null-push") nyrt_array_push(array, kind, 0);
+    else if (mode == prefix + "-null-set") nyrt_array_set(array, kind, 0, 0);
+    else if (mode == prefix + "-wrong-kind") require(array, NYRT_ARRAY_RECORD, type);
+    else if (mode == prefix + "-foreign") require(reinterpret_cast<void *>(std::uintptr_t{1}), kind, type);
+    else if (mode == prefix + "-context") {
+      nyrt_context_end(); nyrt_context_begin(0, nullptr);
+      require(array, kind, type);
+    } else return 2;
+    std::cerr << "class/reference array failure case unexpectedly succeeded\n";
+    return 0;
+  }
   if (mode == "enum-identity-case") require(enums, NYRT_ARRAY_ENUM, "catalog::choice<i32>");
   else if (mode == "enum-identity-generic") require(enums, NYRT_ARRAY_ENUM, "catalog::Choice<i64>");
   else if (mode == "enum-wrong-kind") require(enums, NYRT_ARRAY_RECORD, "catalog::Choice<i32>");
@@ -640,6 +757,15 @@ int typed_array_failure_case(const std::string &mode) {
   } else if (mode == "nested-wrong-enum") {
     auto *rows = create(NYRT_ARRAY_NESTED, "array<catalog::Choice<i32>>", 0, 0);
     nyrt_array_push(rows, NYRT_ARRAY_NESTED, bits(create(NYRT_ARRAY_ENUM, "catalog::Choice<i64>", 0, 0)));
+  } else if (mode == "nested-wrong-class") {
+    auto *rows = create(NYRT_ARRAY_NESTED, "array<catalog::Base>", 0, 0);
+    nyrt_array_push(rows, NYRT_ARRAY_NESTED, bits(create(NYRT_ARRAY_CLASS, "catalog::Derived", 0, 0)));
+  } else if (mode == "nested-wrong-reference") {
+    auto *rows = create(NYRT_ARRAY_NESTED, "array<ref<catalog::Record<i32>>>", 0, 0);
+    nyrt_array_push(rows, NYRT_ARRAY_NESTED, bits(create(NYRT_ARRAY_REFERENCE, "ref<catalog::Record<i64>>", 0, 0)));
+  } else if (mode == "nested-reference-erasure") {
+    auto *rows = create(NYRT_ARRAY_NESTED, "array<ref<catalog::Record<i32>>>", 0, 0);
+    nyrt_array_push(rows, NYRT_ARRAY_NESTED, bits(create(NYRT_ARRAY_RECORD, "catalog::Record<i32>", 0, 0)));
   } else if (mode == "nested-wrong-depth") {
     auto *rows = create(NYRT_ARRAY_NESTED, "array<array<i32>>", 0, 0);
     nyrt_array_push(rows, NYRT_ARRAY_NESTED, bits(nyrt_array_new(NYRT_ARRAY_I32, 0)));
@@ -1295,6 +1421,7 @@ int main(int argc, char **argv) {
   check_tuple_array_contract(ok);
   check_record_array_contract(ok);
   check_enum_nested_array_contract(ok);
+  check_class_reference_array_contract(ok);
 
   auto *owned = static_cast<unsigned char *>(nyrt_alloc(8));
   ok &= expect(owned != nullptr, "could not allocate context-owned storage");

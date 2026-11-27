@@ -24,6 +24,8 @@ enum nyrt_array_kind : std::uint32_t {
   NYRT_ARRAY_RECORD = 9,
   NYRT_ARRAY_ENUM = 10,
   NYRT_ARRAY_NESTED = 11,
+  NYRT_ARRAY_CLASS = 12,
+  NYRT_ARRAY_REFERENCE = 13,
 };
 
 // Versioned UI ABI. Success is 1, failure 0. Text outputs are copied into
@@ -215,14 +217,16 @@ void *nyrt_record_array_v1_new(const char *type, std::uint64_t type_length,
                                std::uint64_t initial) noexcept;
 void *nyrt_record_array_v1_require(const void *array, const char *type,
                                    std::uint64_t type_length) noexcept;
-// Additive typed-handle array ABI for RECORD, ENUM and NESTED element kinds.
+// Additive typed-handle array ABI for RECORD, ENUM, NESTED, CLASS and REFERENCE.
 // The descriptor identifies the canonical element type: a concrete nominal
-// schema for records/enums, or array<T> for nested elements. As with the record
+// schema for records/enums/classes, ref<Nominal> for reference wrappers, or
+// array<T> for nested elements. Reference wrappers are invariant and do not
+// describe scalar binding cells or other container handles. As with the record
 // wrappers, compiler proof establishes initialized nominal/tuple schemas; this
 // runtime does not infer them from payload bits. Nested words additionally must
 // name live arrays in this context, with matching scalar kind or owned element
 // descriptor. Legacy tuple children retain their compiler-proven shape.
-// No enum or nested default exists. Empty creation may pass zero; nonempty
+// No nominal/reference/nested default exists. Empty creation may pass zero; nonempty
 // creation requires an initializer. Enum variants are immutable objects whose
 // contained record/array handles retain identity; nested arrays share children.
 void *nyrt_typed_array_v1_new(std::uint32_t kind, const char *type,

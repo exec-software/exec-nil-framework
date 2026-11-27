@@ -33,6 +33,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -187,6 +188,8 @@ std::uint64_t stride_for_kind(std::uint32_t kind) noexcept {
   case NYRT_ARRAY_RECORD:
   case NYRT_ARRAY_ENUM:
   case NYRT_ARRAY_NESTED:
+  case NYRT_ARRAY_CLASS:
+  case NYRT_ARRAY_REFERENCE:
     return sizeof(std::int64_t);
   case NYRT_ARRAY_BOOL:
   case NYRT_ARRAY_U8:
@@ -247,7 +250,47 @@ std::uint64_t maximum_array_capacity(std::uint64_t stride) noexcept {
 
 bool typed_array_kind(std::uint32_t kind) noexcept {
   return kind == NYRT_ARRAY_RECORD || kind == NYRT_ARRAY_ENUM ||
-         kind == NYRT_ARRAY_NESTED;
+         kind == NYRT_ARRAY_NESTED || kind == NYRT_ARRAY_CLASS ||
+         kind == NYRT_ARRAY_REFERENCE;
+}
+
+// New class/reference descriptors name nominal objects only. This is a shape
+// check, not schema registration: the compiler still proves the declaration,
+// initialized object, inheritance view and absence of scalar binding cells.
+bool nominal_array_identity(std::string_view type) noexcept {
+  const auto open = type.find('<');
+  const auto base = type.substr(0, open);
+  for (const auto reserved : {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+       "isize", "usize", "f32", "f64", "float", "double", "int", "bool", "boolean", "flag",
+       "char", "text", "string", "String", "str", "void", "any", "anything", "array", "tuple",
+       "ptr", "ref", "mut_ref", "slice", "owned", "borrow", "borrow_mut", "fn", "__local"})
+    if (base == reserved) return false;
+  std::size_t cursor = 0;
+  const auto parse = [&](const auto &self, unsigned depth) -> bool {
+    if (depth >= 64) return false;
+    const auto begin = cursor;
+    while (cursor < type.size() && type[cursor] != '<' && type[cursor] != '>' && type[cursor] != ',') {
+      const auto ch = static_cast<unsigned char>(type[cursor++]);
+      if (!std::isalnum(ch) && ch != '_' && ch != ':' && ch != '.' && ch != '-') return false;
+    }
+    if (cursor == begin) return false;
+    if (cursor == type.size() || type[cursor] != '<') return true;
+    ++cursor;
+    if (!self(self, depth + 1)) return false;
+    while (cursor < type.size() && type[cursor] == ',') {
+      ++cursor;
+      if (!self(self, depth + 1)) return false;
+    }
+    if (cursor == type.size() || type[cursor] != '>') return false;
+    ++cursor;
+    return true;
+  };
+  return parse(parse, 0) && cursor == type.size();
+}
+
+bool reference_array_identity(std::string_view type) noexcept {
+  return type.size() > 5 && type.substr(0, 4) == "ref<" && type.back() == '>' &&
+         nominal_array_identity(type.substr(4, type.size() - 5));
 }
 
 // The compiler supplies canonical types. Bound the nested container spelling
@@ -542,6 +585,10 @@ void validate_array_value(std::uint32_t kind, std::uint64_t value) noexcept {
     nyrt_fail("NIL native runtime error: enum array requires a fully initialized variant\n");
   if (kind == NYRT_ARRAY_NESTED && value == 0)
     nyrt_fail("NIL native runtime error: nested array requires a live child array\n");
+  if (kind == NYRT_ARRAY_CLASS && value == 0)
+    nyrt_fail("NIL native runtime error: class array requires a fully initialized object\n");
+  if (kind == NYRT_ARRAY_REFERENCE && value == 0)
+    nyrt_fail("NIL native runtime error: reference array requires a fully initialized nominal referent\n");
 }
 
 void validate_nested_array_value(std::string_view type, std::uint64_t value) noexcept {
@@ -573,6 +620,8 @@ void validate_nested_array_value(std::string_view type, std::uint64_t value) noe
   case NYRT_ARRAY_RECORD:
   case NYRT_ARRAY_ENUM:
   case NYRT_ARRAY_NESTED:
+  case NYRT_ARRAY_CLASS:
+  case NYRT_ARRAY_REFERENCE:
     matches = expected == std::string_view(child->element_type.get(), child->element_type_size);
     break;
   default: break;
@@ -637,6 +686,8 @@ std::uint64_t load_value(const nyrt_array &array,
   case NYRT_ARRAY_RECORD:
   case NYRT_ARRAY_ENUM:
   case NYRT_ARRAY_NESTED:
+  case NYRT_ARRAY_CLASS:
+  case NYRT_ARRAY_REFERENCE:
     return static_cast<const std::uint64_t *>(array.data)[index];
   case NYRT_ARRAY_BOOL:
   case NYRT_ARRAY_U8:
@@ -675,6 +726,8 @@ void store_value(nyrt_array &array, std::uint64_t index,
   case NYRT_ARRAY_RECORD:
   case NYRT_ARRAY_ENUM:
   case NYRT_ARRAY_NESTED:
+  case NYRT_ARRAY_CLASS:
+  case NYRT_ARRAY_REFERENCE:
     // f64 is an IEEE bit pattern; text is a context/static-lifetime address.
     // Neither is an integer conversion, nor does array growth own/free text.
     static_cast<std::uint64_t *>(array.data)[index] = value;
@@ -1470,6 +1523,8 @@ void nyrt_collect() noexcept {
             item.array->kind == NYRT_ARRAY_RECORD ||
             item.array->kind == NYRT_ARRAY_ENUM ||
             item.array->kind == NYRT_ARRAY_NESTED ||
+            item.array->kind == NYRT_ARRAY_CLASS ||
+            item.array->kind == NYRT_ARRAY_REFERENCE ||
             item.array->kind == NYRT_ARRAY_ANYTHING)
           scan(item.array->data, item.array->length * item.array->stride);
       } else {
@@ -1683,6 +1738,10 @@ void *nyrt_typed_array_v1_new(std::uint32_t kind, const char *type,
   const auto descriptor = std::string_view(type, static_cast<std::size_t>(type_length));
   if (kind == NYRT_ARRAY_NESTED && !nested_array_identity(descriptor))
     return nullptr;
+  if (kind == NYRT_ARRAY_CLASS && !nominal_array_identity(descriptor))
+    return nullptr;
+  if (kind == NYRT_ARRAY_REFERENCE && !reference_array_identity(descriptor))
+    return nullptr;
   if (length > 0 || initial != 0) {
     validate_array_value(kind, initial);
     if (kind == NYRT_ARRAY_NESTED)
@@ -1731,6 +1790,10 @@ std::uint64_t nyrt_array_get(const void *value, std::uint32_t expected_kind,
       nyrt_fail("NIL native runtime error: enum array read is out of bounds or has an invalid handle\n");
     if (expected_kind == NYRT_ARRAY_NESTED)
       nyrt_fail("NIL native runtime error: nested array read is out of bounds or has an invalid handle\n");
+    if (expected_kind == NYRT_ARRAY_CLASS)
+      nyrt_fail("NIL native runtime error: class array read is out of bounds or has an invalid handle\n");
+    if (expected_kind == NYRT_ARRAY_REFERENCE)
+      nyrt_fail("NIL native runtime error: reference array read is out of bounds or has an invalid handle\n");
     return 0;
   }
   const auto result = load_value(*array, static_cast<std::uint64_t>(index));
