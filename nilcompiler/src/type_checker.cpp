@@ -62,11 +62,12 @@ static std::optional<std::string> module_context(const std::string &name) {
 static std::optional<std::string> promoted_scalar_join(const std::string &left,
                                                        const std::string &right) {
   const auto numeric = [](const std::string &type) {
-    return type == "i32" || type == "i64" || type == "u8" || type == "f64";
+    return type == "i32" || type == "i64" || type == "u8" || type == "f32" || type == "f64";
   };
   if (!numeric(left) || !numeric(right))
     return std::nullopt;
   return left == "f64" || right == "f64" ? "f64" :
+         left == "f32" || right == "f32" ? "f32" :
          left == "i64" || right == "i64" ? "i64" :
          left == "i32" || right == "i32" ? "i32" : "u8";
 }
@@ -636,6 +637,7 @@ bool type_checker::check(ast_program &program) {
     for (auto *handler : checked_fault_handlers_) handler->fault_checked = false;
     for (auto *raise : checked_raises_) raise->fault_checked = false;
     for (auto *value : checked_class_conversions_) value->checked_class_upcast.reset();
+    for (auto *value : checked_scalar_conversions_) value->checked_scalar_destination.reset();
     for (auto *value : checked_any_boxes_) {
       value->checked_any_box_type.reset();
       value->rejected_dynamic_operation = "anything boxing requires successful type checking";
@@ -1734,10 +1736,24 @@ bool type_checker::check_assignment_type(const type_info &expected,
                                          ast_expr *value) {
   if (value) {
     value->checked_class_upcast.reset();
+    value->checked_scalar_destination.reset();
     value->checked_any_box_type.reset();
   }
   const auto target = resolve_type(expected.name).name;
   const auto source = resolve_type(actual.name).name;
+  const auto numeric_storage = [](const std::string &type) {
+    return type == "i32" || type == "i64" || type == "u8" || type == "f32" || type == "f64";
+  };
+  // An f32 destination is a rounding boundary. Whole arrays remain invariant;
+  // only individual scalar values can narrow, and widening f32 to f64 is exact.
+  if ((target == "f32" && numeric_storage(source)) ||
+      (target == "f64" && source == "f32")) {
+    if (value) {
+      value->checked_scalar_destination = target;
+      checked_scalar_conversions_.push_back(value);
+    }
+    return true;
+  }
   if (value && value->kind == ast_node_kind::call_expr_node &&
       !check_dynamic_enum_payload(static_cast<ast_call_expr &>(*value), target)) return false;
   if (target == "anything") {
@@ -1795,6 +1811,7 @@ bool type_checker::check_assignment_type(const type_info &expected,
   if (target_tuple.base_name == "array" && target_tuple.type_args.size() == 1 &&
       (type_contains_tuple(target_tuple.type_args.front()) ||
        target_tuple.type_args.front() == "anything" || target_tuple.type_args.front() == "bool" ||
+       target_tuple.type_args.front() == "f32" || target_tuple.type_args.front() == "f64" ||
        resolve_class_symbol(target_tuple.type_args.front()) != nullptr) && value &&
       value->kind == ast_node_kind::array_literal_expr_node) {
     auto &array = static_cast<ast_array_literal_expr &>(*value);
@@ -3544,6 +3561,7 @@ void type_checker::visit(ast_variable_decl &p) {
       if (context.base_name == "array" && context.type_args.size() == 1 &&
           (type_contains_tuple(context.type_args.front()) || context.type_args.front() == "anything" ||
            context.type_args.front() == "bool" ||
+           context.type_args.front() == "f32" || context.type_args.front() == "f64" ||
            resolve_class_symbol(context.type_args.front()) != nullptr ||
            parse_generic_type_string(context.type_args.front()).base_name == "array"))
         p.initializer->inferred_type = declared.name;
@@ -3609,7 +3627,7 @@ void type_checker::visit(ast_variable_decl &p) {
   // This enables codegen to determine type arguments for generic calls
   const auto scalar_type = [](const std::string &type) {
     return type == "i32" || type == "i64" || type == "u8" ||
-           type == "bool" || type == "f64";
+           type == "bool" || type == "f32" || type == "f64";
   };
   const auto canonical_variable_type = resolve_type(var_type_name).name;
   // Lowering must see the same nominal identities as the checked binding.
@@ -4235,6 +4253,7 @@ void type_checker::visit(ast_return_stmt &s) {
           parse_generic_type_string(current_function_return_type_->name);
       if ((array.elements.empty() || type_contains_tuple(current_function_return_type_->name) ||
            (context.type_args.size() == 1 && (context.type_args[0] == "anything" || context.type_args[0] == "bool" ||
+            context.type_args[0] == "f32" || context.type_args[0] == "f64" ||
             resolve_class_symbol(context.type_args[0]) != nullptr ||
             parse_generic_type_string(context.type_args[0]).base_name == "array"))) &&
           context.base_name == "array" &&
@@ -5837,6 +5856,7 @@ void type_checker::visit(ast_call_expr &e) {
         const auto shape = parse_generic_type_string(expected);
         if (shape.base_name == "array" && shape.type_args.size() == 1 &&
             (shape.type_args.front() == "anything" || shape.type_args.front() == "bool" ||
+             shape.type_args.front() == "f32" || shape.type_args.front() == "f64" ||
              resolve_class_symbol(shape.type_args.front()) != nullptr ||
              type_contains_tuple(shape.type_args.front()) ||
              (parse_generic_type_string(shape.type_args.front()).base_name == "array" &&
@@ -7077,6 +7097,8 @@ void type_checker::visit(ast_call_expr &e) {
         // Option<T>.map<U>(fn(T) -> U) infers U from the callback result after
         // T has been supplied by the concrete receiver.
         const auto method_inference_errors = diagnostics_.size();
+        std::vector<std::pair<ast_expr *, std::string>> inferred_variant_values;
+        std::vector<std::pair<ast_expr *, std::string>> inferred_variant_payloads;
         if (!s->generic_params.empty() && !e.type_args.empty()) {
           if (e.type_args.size() > s->generic_params.size())
             add_error(e.line, "Method '" + method_name + "' expects " +
@@ -7086,13 +7108,15 @@ void type_checker::visit(ast_call_expr &e) {
           for (std::size_t index = 0;
                index < s->generic_params.size() && index < e.type_args.size(); ++index)
             substitutions[s->generic_params[index].name] = e.type_args[index];
-        } else if (!s->generic_params.empty()) {
+        }
+        if (!s->generic_params.empty()) {
           std::set<std::string> method_parameters;
           for (const auto &parameter : s->generic_params)
             method_parameters.insert(parameter.name);
           std::function<void(const std::string &, const std::string &)> infer_method;
           infer_method = [&](const std::string &expected_name, const std::string &actual_name) {
             if (method_parameters.count(expected_name)) {
+              if (!e.type_args.empty()) return; // Explicit arguments are destinations, not inference evidence.
               if (actual_name == "any" || actual_name == "<unknown>") return;
               const auto actual = resolve_type(actual_name).name;
               const auto found = substitutions.find(expected_name);
@@ -7118,16 +7142,99 @@ void type_checker::visit(ast_call_expr &e) {
             for (std::size_t index = 0; index < expected.type_args.size(); ++index)
               infer_method(expected.type_args[index], actual.type_args[index]);
           };
+          // A fresh enum constructor can still have an open/unknown result
+          // before a destination supplies its generic arguments. Infer those
+          // arguments from its payload, not from the unresolved result type.
+          std::function<void(const std::string &, ast_expr &, unsigned)> infer_value;
+          infer_value = [&](const std::string &expected_name, ast_expr &value, unsigned depth) {
+            if (depth >= 64) return;
+            infer_method(expected_name, value.inferred_type.value_or("<unknown>"));
+            const ast_call_expr *constructor = nullptr;
+            const ast_member_access_expr *variant_member = nullptr;
+            if (value.kind == ast_node_kind::call_expr_node) {
+              constructor = &static_cast<const ast_call_expr &>(value);
+              if (constructor->callee && constructor->callee->kind == ast_node_kind::member_access_expr_node)
+                variant_member = &static_cast<const ast_member_access_expr &>(*constructor->callee);
+            } else if (value.kind == ast_node_kind::member_access_expr_node) {
+              variant_member = &static_cast<const ast_member_access_expr &>(value);
+            }
+            if (!variant_member) return;
+            const auto &member = *variant_member;
+            if (!member.object || member.object->kind != ast_node_kind::identifier_expr_node) return;
+            const auto &identifier = static_cast<const ast_identifier_expr &>(*member.object);
+            if (const auto *binding = symbols_.lookup_non_global(identifier.name);
+                binding && binding->kind != symbol_kind::type_symbol) return;
+            const auto *owner = resolve_pattern_type_symbol(identifier.name);
+            const auto expected = parse_generic_type_string(resolve_type(expected_name).name);
+            if (!owner || !owner->defining_node || owner->name != expected.base_name ||
+                owner->defining_node->kind != ast_node_kind::enum_decl_node) return;
+            const auto &enumeration = static_cast<const ast_enum_decl &>(*owner->defining_node);
+            if (expected.type_args.size() != enumeration.generic_params.size()) return;
+            const auto variant = std::find_if(enumeration.variants.begin(), enumeration.variants.end(),
+                [&](const ast_enum_variant &candidate) { return candidate.name == member.member_name; });
+            if (variant == enumeration.variants.end()) return;
+            std::map<std::string, std::string> payload_substitutions;
+            for (std::size_t index = 0; index < expected.type_args.size(); ++index)
+              payload_substitutions[enumeration.generic_params[index].name] = expected.type_args[index];
+            std::vector<std::string> fields;
+            if (variant->associated_type) {
+              const auto payload = instantiate_generic_type(*variant->associated_type, payload_substitutions);
+              fields = payload.size() >= 2 && payload.front() == '(' && payload.back() == ')'
+                  ? parse_generic_type_string("tuple<" + payload.substr(1, payload.size() - 2) + ">").type_args
+                  : std::vector<std::string>{payload};
+            }
+            const auto provided = constructor ? constructor->args.size() : 0U;
+            if (fields.size() != provided) {
+              add_error(value.line, "Enum variant '" + member.member_name + "' expects " +
+                  std::to_string(fields.size()) + " payload arguments, got " + std::to_string(provided));
+              return;
+            }
+            for (std::size_t index = 0; index < fields.size(); ++index) {
+              if (!constructor->args[index]) return;
+              infer_value(fields[index], *constructor->args[index], depth + 1);
+              inferred_variant_payloads.emplace_back(constructor->args[index].get(), fields[index]);
+            }
+            inferred_variant_values.emplace_back(&value, expected_name);
+          };
           const auto receiver_substitutions = substitutions;
           const std::size_t offset = has_receiver_parameter ? 1U : 0U;
           for (std::size_t index = 0; index < e.args.size() && index + offset < s->params.size(); ++index)
-            if (s->params[index + offset].type_name)
-              infer_method(instantiate_generic_type(*s->params[index + offset].type_name,
-                                                   receiver_substitutions), arg_types[index].name);
+            if (s->params[index + offset].type_name && e.args[index])
+              infer_value(instantiate_generic_type(*s->params[index + offset].type_name,
+                                                   receiver_substitutions), *e.args[index], 0);
         }
-        if (diagnostics_.size() == method_inference_errors)
+        // Retain the method's own concrete arguments for monomorphization.
+        // Receiver arguments alone cannot specialize Option<T>.map<U>:
+        // otherwise its serialized callback and result still contain U.
+        if (!s->generic_params.empty() && diagnostics_.size() == method_inference_errors) {
+          std::vector<std::string> method_type_arguments;
+          for (const auto &parameter : s->generic_params) {
+            const auto found = substitutions.find(parameter.name);
+            if (found == substitutions.end()) {
+              add_error(e.line, "Could not infer generic type '" + parameter.name +
+                  "' for method '" + method_name + "'");
+              continue;
+            }
+            method_type_arguments.push_back(found->second);
+          }
+          if (method_type_arguments.size() == s->generic_params.size()) {
+            validate_generic_args(s->generic_params, method_type_arguments, e.line);
+            e.type_args = std::move(method_type_arguments);
+          }
+        }
+        if (diagnostics_.size() == method_inference_errors) {
+          for (const auto &[value, expected] : inferred_variant_values)
+            value->inferred_type = resolve_type(instantiate_generic_type(expected, substitutions)).name;
+          for (const auto &[value, expected] : inferred_variant_payloads)
+            if (!check_assignment_type(resolve_type(instantiate_generic_type(expected, substitutions)),
+                                       resolve_type(value->inferred_type.value_or("<unknown>")), value))
+              add_error(value->line, "Enum constructor payload has incompatible type in generic method argument");
+          for (std::size_t index = 0; index < e.args.size(); ++index)
+            if (e.args[index] && e.args[index]->inferred_type)
+              arg_types[index] = resolve_type(*e.args[index]->inferred_type);
           apply_argument_array_context(*s, substitutions,
                                        has_receiver_parameter ? 1U : 0U);
+        }
 
         if (s->type_name) {
           std::string inst_ret =
@@ -7231,7 +7338,7 @@ void type_checker::visit(ast_binary_expr &e) {
     return type == "i32" || type == "i64" || type == "u8";
   };
   const auto numeric = [&](const std::string &type) {
-    return integer(type) || type == "f64";
+    return integer(type) || type == "f32" || type == "f64";
   };
   if ((arithmetic || bitwise) &&
       (left_type.name == "bool" || right_type.name == "bool")) {
@@ -7254,11 +7361,19 @@ void type_checker::visit(ast_binary_expr &e) {
     std::string type = left_type.name;
     if (e.op != token_kind::less_less && e.op != token_kind::greater_greater) {
       type = left_type.name == "f64" || right_type.name == "f64" ? "f64" :
+             left_type.name == "f32" || right_type.name == "f32" ? "f32" :
              left_type.name == "i64" || right_type.name == "i64" ? "i64" :
              left_type.name == "i32" || right_type.name == "i32" ? "i32" : "u8";
     }
     last_expr_type_ = resolve_type(type);
     e.inferred_type = type;
+    return;
+  }
+
+  if (is_comparison && numeric(left_type.name) && numeric(right_type.name) &&
+      (left_type.name == "f32" || right_type.name == "f32")) {
+    last_expr_type_ = type_bool;
+    e.inferred_type = "bool";
     return;
   }
 
@@ -7311,12 +7426,12 @@ void type_checker::visit(ast_cast_expr &e) {
       add_error(e.line, "Boolean numeric values must be exactly 0 or 1");
   const auto scalar = [](const std::string &name) {
     return name == "bool" || name == "i32" || name == "i64" ||
-           name == "u8" || name == "f64";
+           name == "u8" || name == "f32" || name == "f64";
   };
   const auto unavailable_scalar = [](const std::string &name) {
     return name == "i8" || name == "i16" || name == "u16" ||
            name == "u32" || name == "u64" || name == "isize" ||
-           name == "usize" || name == "char" || name == "f32" ||
+           name == "usize" || name == "char" ||
            name == "float" || name == "double";
   };
   const std::function<bool(const std::string &)> known_identity_type =
@@ -7336,7 +7451,7 @@ void type_checker::visit(ast_cast_expr &e) {
   if (unavailable_scalar(target.name) || unavailable_scalar(source.name)) {
     add_error(e.line, "Unsupported scalar cast from '" + source.name +
                           "' to '" + target.name +
-                          "'; supported scalar types are bool, i32, i64, u8, f64");
+                          "'; supported scalar types are bool, i32, i64, u8, f32, f64");
   } else if (source.name.rfind("fn(", 0) == 0 && scalar(target.name)) {
     add_error(e.line, "Cannot cast a function value to scalar type '" +
                           target.name + "'");
@@ -7734,6 +7849,7 @@ void type_checker::visit(ast_assignment_expr &e) {
                               !type_contains_tuple(val_type.name) &&
                               resolve_class_symbol(target_type->name) == nullptr &&
                               resolve_class_symbol(val_type.name) == nullptr &&
+                              target_type->name != "f32" && val_type.name != "f32" &&
                               target_type->name != "anything" && val_type.name != "anything"
                            ? storage_types_compatible(*target_type, val_type)
                            : check_assignment_type(*target_type, val_type, e.value.get()))) {
@@ -8493,6 +8609,7 @@ void type_checker::visit(ast_array_literal_expr &e) {
     if (context.base_name == "array" && context.type_args.size() == 1 &&
         (type_contains_tuple(context.type_args.front()) || context.type_args.front() == "anything" ||
          context.type_args.front() == "bool" ||
+         context.type_args.front() == "f32" || context.type_args.front() == "f64" ||
          resolve_class_symbol(context.type_args.front()) != nullptr ||
          parse_generic_type_string(context.type_args.front()).base_name == "array")) {
       const auto expected = resolve_type(context.type_args.front());
@@ -10448,7 +10565,7 @@ void type_checker::validate_scalar_text_calls() {
       diagnostic_source_scope source_scope(diagnostic_source_file_, edge.source_file);
       add_error(edge.line, "Function '" + edge.callee->name +
           "' interpolates generic type '" + parameter + "', but this call supplies '" +
-          type + "'; expected text, bool, i32, i64, u8 or f64; call an explicit formatter for other types");
+          type + "'; expected text, bool, i32, i64, u8, f32 or f64; call an explicit formatter for other types");
     }
   }
 }
@@ -10467,7 +10584,7 @@ void type_checker::visit(ast_interpolated_string_expr &e) {
       if (!supports_scalar_text(type) && !(symbol && symbol->is_generic_parameter))
         add_error(part.expression->line,
             "Cannot interpolate value of type '" + type +
-            "'; expected text, bool, i32, i64, u8 or f64; "
+            "'; expected text, bool, i32, i64, u8, f32 or f64; "
             "call an explicit formatter for other types");
     }
   }

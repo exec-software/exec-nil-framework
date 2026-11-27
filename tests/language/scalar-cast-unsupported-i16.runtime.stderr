@@ -1,0 +1,1 @@
+NIL interpreter runtime error: CAST: unsupported scalar target 'i16'; supported targets are bool, i32, i64, u8, f32, f64

@@ -17,11 +17,12 @@ const vocabulary_entry vocabulary[] = {
     {"String", "text"},   {"i64", "number"},  {"f64", "floating"},
     {"bool", "boolean"},  {"void", "nothing"},
     {"i32", "override integer"}, {"u8", "override byte"},
+    {"f32", "override single"},
     // Widths NIL rejects. If one ever reaches a message, name it as the
     // reserved word rather than as a type the reader could use.
     {"i8", "a reserved width"},   {"i16", "a reserved width"},
     {"u16", "a reserved width"},  {"u32", "a reserved width"},
-    {"u64", "a reserved width"},  {"f32", "a reserved width"},
+    {"u64", "a reserved width"},
 };
 
 bool word_char(unsigned char c) {

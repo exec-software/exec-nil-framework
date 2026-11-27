@@ -108,7 +108,7 @@ def main() -> None:
                 success(run([*base, "--native", "--output", executable, path]))
                 rejection(run([executable]), diagnostic)
 
-        for width in ("f32", "u64"):
+        for width in ("i16", "u64"):
             path = source("unsupported_" + width, "1 as " + width)
             diagnostic = "CAST: unsupported scalar target '" + width + "'"
             source_diagnostic = "Unsupported scalar cast from"

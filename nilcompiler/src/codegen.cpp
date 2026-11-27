@@ -1601,7 +1601,7 @@ public:
       return validated_array_element(parsed->type_args.front(), depth + 1);
     const auto scalar = canonical_array_type(type);
     return scalar == "i32" || scalar == "i64" || scalar == "u8" ||
-        scalar == "bool" || scalar == "f64" || scalar == "text" || scalar == "anything" ||
+        scalar == "bool" || scalar == "f32" || scalar == "f64" || scalar == "text" || scalar == "anything" ||
         is_array_tuple_type(type) || declared_array_record(type) || declared_array_object(type) ||
         is_declared_enum_type(cg_, type);
   }
@@ -1784,7 +1784,7 @@ public:
     const bool integer_only = opcode == "BIT_AND" || opcode == "BIT_OR" ||
         opcode == "BIT_XOR" || opcode == "SHL" || opcode == "SHR";
     if (type != "i32" && type != "i64" && type != "u8" &&
-        !(type == "f64" && !integer_only)) {
+        !((type == "f32" || type == "f64") && !integer_only)) {
       static const std::set<std::string> scalar_names = {
           "bool", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
           "isize", "usize", "f32", "f64"};
@@ -1794,7 +1794,7 @@ public:
                                         : " operands must be numeric scalars");
       cg_.reject_codegen_construct(expression.line,
           diagnostic,
-          "use i32, i64, u8, or f64 arithmetic; cast booleans explicitly");
+          "use i32, i64, u8, f32, or f64 arithmetic; cast booleans explicitly");
       return;
     }
     push_instr(opcode, {type}, expression.line);
@@ -3305,6 +3305,14 @@ public:
       return;
     }
     emit_expr_impl(e, e.checked_any_box_type ? e.checked_any_box_type : contextual_type);
+    if (e.checked_scalar_destination)
+      emit_scalar_boundary(substitute_nil_type_name(*e.checked_scalar_destination, substitutions), e.line);
+    if (contextual_type && !e.checked_any_box_type) {
+      const auto destination = canonical_nil_type_name(substitute_nil_type_name(*contextual_type, substitutions));
+      const auto source = canonical_nil_type_name(unambiguous_expression_type(e));
+      if (destination == "f32" || (destination == "f64" && source == "f32"))
+        emit_scalar_boundary(destination, e.line);
+    }
     if (e.checked_class_upcast)
       push_instr("CLASS_UPCAST", {*e.checked_class_upcast}, e.line);
     if (e.checked_any_box_type) {
@@ -3808,8 +3816,21 @@ public:
         break;
       }
 
+      const bool comparison = bin.op == token_kind::double_equal || bin.op == token_kind::not_equal ||
+          bin.op == token_kind::less || bin.op == token_kind::less_equal ||
+          bin.op == token_kind::greater || bin.op == token_kind::greater_equal;
+      const auto left_type = unambiguous_expression_type(*bin.left);
+      const auto right_type = unambiguous_expression_type(*bin.right);
+      const auto numeric = [](const std::string &type) {
+        return type == "i32" || type == "i64" || type == "u8" || type == "f32" || type == "f64";
+      };
+      const bool f32_comparison = comparison && numeric(left_type) && numeric(right_type) &&
+          (left_type == "f32" || right_type == "f32");
+      const std::string comparison_type = left_type == "f64" || right_type == "f64" ? "f64" : "f32";
       emit_expr(*bin.left);
+      if (f32_comparison) emit_scalar_boundary(comparison_type, bin.line);
       emit_expr(*bin.right);
+      if (f32_comparison) emit_scalar_boundary(comparison_type, bin.line);
       const bool pointer_lhs = bin.left->inferred_type &&
                                bin.left->inferred_type->rfind("ptr<", 0) == 0;
       std::string opname;
@@ -4459,6 +4480,14 @@ public:
                       cg_.lookup_generic_impl(base_part, ma.member_name)) {
                 if (auto *method =
                         cg_.lookup_impl_method(impl, ma.member_name)) {
+                  if (ce.type_args.size() != method->generic_params.size()) {
+                    cg_.reject_codegen_construct(ce.line,
+                        "generic method '" + ma.member_name + "' has no exact type arguments",
+                        "provide explicit method type arguments or enable type checking to infer them");
+                    break;
+                  }
+                  for (const auto &argument : ce.type_args)
+                    type_args.push_back(substitute_nil_type_name(argument, substitutions));
                   cg_.queue_impl_method_specialization(
                       base_part, ma.member_name, type_args, impl, method);
                   // Build name using specialization format:
@@ -4561,7 +4590,7 @@ public:
                   (ma.member_name == "push" && index == 0) ||
                   (ma.member_name == "set" && index == 1);
               if (array_element && element_argument)
-                argument_context = is_declared_enum_type(cg_, *array_element)
+                argument_context = is_declared_enum_type(cg_, *array_element) || *array_element == "f32" || *array_element == "f64"
                     ? array_element : array_literal_context(*ce.args[index], *array_element);
               emit_expr(*ce.args[index], argument_context);
             }
@@ -4814,7 +4843,7 @@ public:
             // generic typed-array intrinsics. A concrete array<i32> argument
             // must still retain its actual ABI under --no-typecheck when a
             // callee requires array<i64>.
-            if (is_declared_enum_type(cg_, expected))
+            if (is_declared_enum_type(cg_, expected) || expected == "f32" || expected == "f64")
               argument_context = expected;
             else
               argument_context = array_literal_context(*ce.args[index], expected);
@@ -5361,7 +5390,7 @@ public:
       // enough runtime type metadata to prove such identity in a CAST opcode.
       // Keep scalar casts: they also canonicalize physical storage widths.
       if (ce.checked_identity && source == target && target != "bool" && target != "i32" &&
-          target != "i64" && target != "u8" && target != "f64" &&
+          target != "i64" && target != "u8" && target != "f32" && target != "f64" &&
           ce.inferred_type.has_value())
         break;
       push_instr("CAST", {target}, ce.line);
@@ -5937,8 +5966,8 @@ public:
         push_instr(assertion.method == "true" ? "JMP_IF" : "JMP_IF_NOT", {pass}, e.line);
       } else {
         const bool numeric = types[0] != "String" && types[0] != "text" && types[0] != "bool";
-        const auto common = (types[0] == "f32" || types[0] == "f64" ||
-                             types[1] == "f32" || types[1] == "f64") ? "f64" : "i64";
+        const auto common = types[0] == "f64" || types[1] == "f64" ? "f64" :
+                            types[0] == "f32" || types[1] == "f32" ? "f32" : "i64";
         for (std::size_t index = 0; index < 2; ++index) {
           push_instr("LOAD_LOCAL", {slots[index]}, e.line);
           if (numeric) push_instr("CAST", {common}, e.line);
@@ -7301,37 +7330,43 @@ codegen::assemble_module(const ast_program &program,
             fn.body.push_back(load);
           }
 
-          // INTEROP_CALL "intrinsic" "name" argc ret_type
-          nil_instruction call;
-          call.opname = "INTEROP_CALL";
-          call.args.push_back("intrinsic");
-          call.args.push_back(intrinsic_name);
-          call.args.push_back(std::to_string(fn_decl.params.size()));
+          // Array wrappers share the same exact five-operand contract as
+          // direct intrinsic calls. Their result is a typed handle/scalar,
+          // never an FFI-sized i64 inferred from its physical representation.
+          if (!em.emit_array_intrinsic(fn_decl, intrinsic_name, {},
+                                       fn_decl.params.size(), fn_decl.line)) {
+            // INTEROP_CALL "intrinsic" "name" argc ret_type
+            nil_instruction call;
+            call.opname = "INTEROP_CALL";
+            call.args.push_back("intrinsic");
+            call.args.push_back(intrinsic_name);
+            call.args.push_back(std::to_string(fn_decl.params.size()));
 
-          std::string ret_type_str = "void";
-          if (intrinsic_name.rfind("regex.", 0) == 0 ||
-              intrinsic_name.rfind("nildata.", 0) == 0 ||
-              intrinsic_name.rfind("ui.v1.", 0) == 0 ||
-              intrinsic_name.rfind("webview.v1.", 0) == 0) {
-            ret_type_str = canonical_nil_type_name(fn.return_type);
-          } else if (is_declared_enum_type(*this, fn.return_type)) {
-            ret_type_str = canonical_nil_type_name(fn.return_type);
-          } else if (fn_decl.return_type.has_value()) {
-            ret_type_str = *fn_decl.return_type;
-            size_t sz = get_native_size(
-                *this, ret_type_str); // Need `get_native_size` visibility?
-            // get_native_size might be a static helper not in class.
-            // Previous code at line 1797 used it. It seems available.
-            if (sz > 0 && sz <= 8)
-              ret_type_str = "i64";
-            else if (sz > 8)
-              ret_type_str =
-                  "struct:" + std::to_string(sz) + ":" + ret_type_str;
+            std::string ret_type_str = "void";
+            if (intrinsic_name.rfind("regex.", 0) == 0 ||
+                intrinsic_name.rfind("nildata.", 0) == 0 ||
+                intrinsic_name.rfind("ui.v1.", 0) == 0 ||
+                intrinsic_name.rfind("webview.v1.", 0) == 0) {
+              ret_type_str = canonical_nil_type_name(fn.return_type);
+            } else if (is_declared_enum_type(*this, fn.return_type)) {
+              ret_type_str = canonical_nil_type_name(fn.return_type);
+            } else if (fn_decl.return_type.has_value()) {
+              ret_type_str = *fn_decl.return_type;
+              size_t sz = get_native_size(
+                  *this, ret_type_str); // Need `get_native_size` visibility?
+              // get_native_size might be a static helper not in class.
+              // Previous code at line 1797 used it. It seems available.
+              if (sz > 0 && sz <= 8)
+                ret_type_str = "i64";
+              else if (sz > 8)
+                ret_type_str =
+                    "struct:" + std::to_string(sz) + ":" + ret_type_str;
+            }
+            call.args.push_back(ret_type_str);
+
+            call.debug_line = fn_decl.line;
+            fn.body.push_back(call);
           }
-          call.args.push_back(ret_type_str);
-
-          call.debug_line = fn_decl.line;
-          fn.body.push_back(call);
 
           // RET
           nil_instruction ret;
@@ -7880,7 +7915,7 @@ codegen::assemble_module(const ast_program &program,
       if (instruction.opname != "STORE_LOCAL" || instruction.args.size() != 1 ||
           instruction.args.front() != name) { has_prologue = false; break; }
       if (type == "i32" || type == "i64" || type == "u8" || type == "bool" ||
-          type == "f64") {
+          type == "f32" || type == "f64") {
         conversions.push_back({"LOAD_LOCAL", {name}, function.source_line});
         conversions.push_back({"CAST", {type}, function.source_line});
         conversions.push_back({"STORE_LOCAL", {name}, function.source_line});

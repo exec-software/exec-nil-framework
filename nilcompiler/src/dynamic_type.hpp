@@ -29,6 +29,24 @@ inline std::string canonical_dynamic_type(std::string_view written) {
   return result;
 }
 
+// Match the primitive token, not a user type such as f32_counter or pkg::f32.
+// Metadata can contain nested arrays, tuples, callable signatures or CSV FFI
+// parameter lists, so checking only the outer spelling is insufficient.
+inline bool contains_binary32_type(std::string_view written) {
+  const auto type = canonical_dynamic_type(written);
+  for (std::size_t i = 0; i < type.size();) {
+    if (!std::isalnum(static_cast<unsigned char>(type[i])) && type[i] != '_') {
+      ++i;
+      continue;
+    }
+    const auto begin = i;
+    while (i < type.size() && (std::isalnum(static_cast<unsigned char>(type[i])) ||
+                              type[i] == '_' || type[i] == ':')) ++i;
+    if (type.substr(begin, i - begin) == "f32") return true;
+  }
+  return false;
+}
+
 // Shape exclusion only. Consumers must additionally prove their concrete
 // schemas and source-value provenance. A box cannot extend a borrow's lifetime
 // or turn an erased word into a pointer, class, or callable.

@@ -272,33 +272,41 @@ can type-check but still fails if it reads before initialization.
 
 ## Native arrays and aggregate references
 
-Native arrays are runtime descriptors with exact element kinds for `i32`,
-`i64`, `bool`, `u8`, `f64`, NUL-free `text`, and supported structural tuples.
-`f64` values retain their bits; text and tuple elements hold traced pointers.
-Tuple metadata preserves the exact ordered `@nil_tuple` schema, including
-nominal type names. Function and field boundaries preserve array element
-identity. Scalar out-of-range reads yield the element's zero value; tuple reads
-fail on an invalid index or uninitialized element rather than fabricating a
-default tuple. Out-of-range writes are no-ops. Arrays of records, enums and
-nested arrays remain unsupported natively.
+Native arrays are runtime descriptors with exact element kinds for supported
+scalars, text, tuples, records, enums, nested arrays, classes and nominal
+aggregate-reference wrappers. Typed descriptors preserve exact nominal and
+nested element identity. Values retain shared handles; nested rows may be
+jagged. Finite recursive schemas are valid metadata, while required fields
+must be initialized before an object escapes. GC traces reachable cycles.
+
+Native `f32` arrays store binary32 bits in four-byte slots; runtime calls pass
+those bits as zero-extended words. Interpreter arrays, ordinary function words
+and aggregate fields carry exact widened binary32 values in the existing
+binary64 carrier. Explicit `CAST f32` establishes that width;
+a numerically representable `f64` alone is not an `f32` provenance proof.
+Scalar out-of-range reads preserve their defaults; aggregate, reference, nested
+and dynamic reads fail without fabricating a value. Valid-value out-of-range
+writes remain no-ops.
 
 The public STL array primitives lower to
 `INTEROP_CALL intrinsic operation arity result_type element_type`, where
 `operation` is `array.new_with_value`, `array.get`, `array.set`, or
-`array.length` (the fixed `u8` variants are also supported). The final operand
+`array.length` (the fixed `u8` and `f32` variants are also supported). The final operand
 is exact element metadata, not an FFI calling convention. Constructors return
 `array<T>`, getters return `T`, setters return `void`, and length returns `i32`.
 Size and index arguments use the `i32` contract; constructors reject negative
 sizes and raw NIL values outside that range instead of truncating or clamping.
 The historical four-operand `array.length 1 i64` form remains readable.
-Declared `f32` helpers and unsupported aggregate-element constructors reject
-explicitly. Tuple constructors, getters and setters require matching schemas.
+Constructors, getters and setters require matching element schemas; unsupported
+widths and opaque element shapes reject explicitly.
 
 Nested struct fields hold nominally typed object handles, matching the VM's
 reference semantics. `ref<Struct>` and aggregate-only `REF_LOCAL` preserve that
 object identity across calls, returns, fields, and local aliases. They are not
 raw pointer reinterpretations, scalar stack references, or a borrow/lifetime
-checker. Recursive layouts and references to unsupported targets fail closed.
+checker. Finite recursive schemas use these same handles; references to
+unsupported targets still fail closed. Recursive metadata does not bypass
+required-field initialization or manufacture a referent.
 Explicit scalar/text binding-reference parameters use a separate compiler-owned
 cell schema and nonescaping call contract described in
 [NIL-0019](../design/NIL-0019-binding-reference-parameters.md). They reuse typed

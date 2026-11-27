@@ -35,7 +35,10 @@ ny::nil_module sample_module() {
   function.is_test = true;
   function.annotations = {"@test", "@ai_context(\"preserve context\")"};
   function.source_line = 37;
-  function.body = {{"PUSH_CONST", {"7"}, 41}, {"RET", {}, 42}};
+  // The signature's callback is also an incoming operand. Keep the reader
+  // round-trip fixture executable under exact operand/provenance validation.
+  function.body = {{"STORE_LOCAL", {"callback"}, 40},
+                   {"PUSH_CONST", {"7"}, 41}, {"RET", {}, 42}};
   module.functions.push_back(std::move(function));
   return module;
 }
@@ -73,8 +76,8 @@ void test_text_module_round_trip() {
     check(function.is_inline && function.is_test &&
               function.annotations.size() == 3,
           "text reader should retain emitted function annotations");
-    check(function.body.size() == 2 && function.body[0].debug_line == 41 &&
-              function.body[1].debug_line == 42,
+    check(function.body.size() == 3 && function.body[0].debug_line == 40 &&
+              function.body[1].debug_line == 41 && function.body[2].debug_line == 42,
           "text reader should retain instructions and debug lines");
   }
 }
@@ -125,8 +128,9 @@ void test_binary_executable_round_trip() {
             parsed->functions[0].params == expected.functions[0].params &&
             parsed->functions[0].generic_params.empty() &&
             parsed->functions[0].return_type == "i32" &&
-            parsed->functions[0].body.size() == 2 &&
-            parsed->functions[0].body[0].debug_line == 41,
+            parsed->functions[0].body.size() == 3 &&
+            parsed->functions[0].body[0].debug_line == 40 &&
+            parsed->functions[0].body[1].debug_line == 41,
         "binary executable reader should retain function records");
   check(parsed->structs.size() == 1 &&
             parsed->structs[0].fields == expected.structs[0].fields &&
@@ -167,7 +171,7 @@ void test_legacy_binary_executable() {
   const auto parsed = ny::parseBinaryNilModule(stream);
   check(parsed->functions.size() == 1 &&
             parsed->functions[0].return_type == "i32" &&
-            parsed->functions[0].body.size() == 2 &&
+            parsed->functions[0].body.size() == 3 &&
             parsed->structs.empty() && parsed->enums.empty() &&
             parsed->functions[0].annotations.empty(),
         "legacy v1 remains readable without inventing omitted metadata");

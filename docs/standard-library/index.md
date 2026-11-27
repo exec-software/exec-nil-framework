@@ -363,7 +363,12 @@ wrappers remain invariant. These are aggregate handles, not binding cells or
 foreign pointers. Invalid class/reference reads fail instead of returning null.
 The [class/reference fixture](../../tests/language/class-reference-arrays.ny) and
 [recursive fixture](../../tests/language/recursive-arrays.ny), with their paired
-Matrix consumers, specify these boundaries. `f32` arrays remain unsupported.
+Matrix consumers, specify these boundaries. Native binary32 `f32` arrays use
+four-byte storage; interpreter arrays retain exact widened binary32 carriers.
+Both preserve exact element identity. Typed `new_f32`, `get_f32` and `set_f32` share
+the generic primitive contract; scalar conversions round to nearest, ties to even.
+Defaults are positive floating zero. See [scalar types](../language-reference/types.md)
+for arithmetic, overflow, NaN and foreign-ABI limits.
 These storage contracts do not widen the query row/projection profile or certify
 all collection methods or platform SDKs.
 
@@ -417,7 +422,7 @@ also covers all six routes, including collision chains, removal, aliasing, reuse
 and queue elements without a default value. Enum and nested-array storage now has
 its own exact-type, aliasing and lifetime contract above; it does not independently
 qualify every collection method for those elements. Class/reference arrays and
-recursive schemas have separate storage proofs. `f32` arrays, resizing and
+recursive schemas and `f32` arrays have separate storage proofs. Resizing and
 strided views with ownership rules remain separate work.
 
 ## Stable index ordering

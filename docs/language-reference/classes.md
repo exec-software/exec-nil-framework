@@ -61,8 +61,10 @@ obligations. Override signatures and visibility remain checked.
 Ancestor conversions are available at explicit typed local, assignment,
 argument, return and field boundaries. Downcasts and unrelated conversions
 reject. Mixed-class inferred conditional, match or array element joins do not
-infer a common ancestor: establish an explicit ancestor-typed value first.
-Generic containers, pointers and references remain invariant.
+infer a common ancestor. A fresh array literal with an expected `array<Base>`
+type can insert checked upcasts for its derived elements; otherwise establish
+an explicit ancestor-typed value first. Existing containers, pointers and
+references remain invariant.
 
 An explicitly reference-shaped receiver (`self: ref<Self>`) requires the
 corresponding reference receiver. Calling an inherited method adapts self only
@@ -97,8 +99,9 @@ aggregate globals remain unsupported.
 
 Generic class execution, generic method execution, first-class bound methods,
 trait objects, dynamic loading, ownership/borrowing, automatic destructors and
-native aggregate globals are not supplied by this contract. Broader
-class-bearing array storage also remains outside this contract.
+native aggregate globals are not supplied by this contract. Class arrays and
+exact `ref<Class>` arrays preserve checked static views and shared object
+identity under the [checked-array contract](../standard-library/index.md#checked-arrays).
 The `class-polymorphism` pipeline fixture checks ordinary and reference
 receivers, aliases, typed boundaries, multiple inheritance, collection and
 faults alongside targeted source and malformed-NIL tests.

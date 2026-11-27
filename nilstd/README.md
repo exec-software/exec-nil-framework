@@ -169,7 +169,8 @@ Class elements retain checked ancestor views and virtual dispatch; exact
 aggregate-reference elements retain shared identity. Arrays and reference wrappers
 remain invariant. Recursive nominal schemas can use fully initialized handles,
 empty arrays and terminating enum variants; GC follows reachable cycles. Invalid
-class/reference reads also fail. `f32` array elements remain unsupported.
+class/reference reads also fail. Binary32 (`f32`) scalars and arrays use explicit
+rounding and four-byte array storage, including `new_f32`, `get_f32` and `set_f32`.
 Ny and Matrix consumer fixtures specify the
 shared APIs; storage support alone does not qualify every collection method,
 query shape or platform SDK. See the

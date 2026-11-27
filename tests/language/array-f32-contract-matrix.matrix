@@ -1,0 +1,56 @@
+book array_f32_contract_matrix
+read everything from nil.std.collections
+
+Sample begin record
+    field amount as override single
+end record
+
+round-value receives amount as override single returns override single begin paragraph
+    give amount
+end paragraph
+
+round-result returns override single begin paragraph
+    give 16777217.0
+end paragraph
+
+main returns override integer begin paragraph
+    variable rounded as override single is 16777217.0
+    say rounded becomes number
+    set rounded to 16777219.0
+    say rounded becomes number
+    say (round-value with amount being 16777217.0) becomes number
+    say (round-result with nothing) becomes number
+    value unit as override single is 1.0
+    value half-step as override single is 0.000000059604644775390625
+    say (unit plus half-step) becomes floating
+    value wide as override single is 16777216.0
+    say ((wide plus unit) minus wide) becomes floating
+    say (wide plus 1.0) minus wide
+    say wide equals (16777217 becomes number)
+
+    value values as array of override single is [16777217.0, negative 0.0]
+    value alias is values
+    set alias at 0 to 16777219.0
+    append 16777217.0 to alias
+    evaluate values.reserve with 64
+    say (values at 0) becomes number
+    say formatted "{values at 1}"
+    say (values at 2) becomes number
+    say the length of values
+    value filled is new-f32 with size being 2, `value` being 16777217.0
+    evaluate set-f32 with arr being filled, idx being 1, `value` being 16777219.0
+    say (get-f32 with arr being filled, idx being 1) becomes number
+    value generic is new-with-value of override single with size being 2, `value` being 16777217.0
+    evaluate array-set of override single with arr being generic, idx being 0, `value` being negative 0.0
+    say formatted "{get of override single with arr being generic, idx being 0}"
+    value rows as array of array of override single is [values, []]
+    append 1.401298464324817e-45 to (rows at 1)
+    say (((rows at 1) at 0) becomes floating) equals 1.401298464324817e-45
+    value object is build Sample with amount being 16777217.0
+    say object.amount becomes number
+    value pair as tuple of (override single, text) is (16777219.0, "kept")
+    say pair.0 becomes number
+    say formatted "single={unit}"
+    say "f32 Matrix contract"
+    give 0
+end paragraph

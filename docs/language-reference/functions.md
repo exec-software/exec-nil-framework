@@ -40,16 +40,17 @@ fn factorial(value: i32) -> i32
 end fn
 ```
 
-Supported native function boundaries currently include integer and boolean
-words, `f64`, named/concrete generic enums, text, `array<i32/i64/u8/bool/f64/text>`,
-arrays of supported structural tuples, `ptr<i32/i64/u8/bool>`, and validated
-concrete struct layouts. Generic struct
-schemas are materialized for supported field layouts, including `f64`/`u8`
-fields, nested struct handles and `ref<Struct>`. These references preserve shared object identity;
-they are not references to the caller's variable binding. The explicit scalar
-binding-reference parameter mode below has a separate, nonescaping contract.
-Slices, unsupported scalar widths, and recursive layouts remain fail-closed in
-the native backend.
+Supported native function boundaries include `i32`, `i64`, `u8`, `bool`,
+`f32`, `f64`, text, named/concrete generic enums, validated struct/class handles
+and arrays of the [supported element types](types.md#arrays-and-pointers).
+Raw pointer support remains limited to `ptr<i32/i64/u8/bool>`. Generic struct
+schemas are materialized for supported field layouts, including nested object
+handles and exact `ref<Struct>` / `ref<Class>` handles. These references preserve
+shared object identity; they are not references to the caller's variable binding.
+Finite recursive schemas use the same handles and still require initialized
+fields before values escape. The explicit scalar binding-reference parameter
+mode below has a separate, nonescaping contract. Slices, unsupported scalar widths
+and unsupported field layouts remain fail-closed in the native backend.
 
 ### Mutable parameters
 

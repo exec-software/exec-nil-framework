@@ -140,6 +140,7 @@ def check_schema_equality(compiler, directory, workdir):
 DIAGNOSTIC_EXPECTATIONS = {
     "type-name-collision.matrix": "is already the name of a type",
     "bare-machine-type.matrix": "is a machine type and needs",
+    "bare-single.matrix": "write 'override single'",
     "reserved-machine-type.matrix": "is reserved but not available",
     "extension-collision.matrix": "by two implementations",
     "ownership-as-expression.matrix": "is a statement, not a value",

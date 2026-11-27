@@ -6,6 +6,7 @@
 #include "nildata.hpp"
 #include "codegen.hpp"
 #include "array_intrinsic.hpp"
+#include "binary32.hpp"
 #include "binding_reference.hpp"
 #include "matrix_hag_bridge.hpp"
 #include "nil_contract.hpp"
@@ -305,23 +306,37 @@ static Value scalar_arithmetic(const Instruction &instruction,
     type = std::holds_alternative<double>(left) ||
                (!unary && std::holds_alternative<double>(right)) ? "f64" : "i64";
   if (type != "i32" && type != "i64" && type != "u8" &&
-      !(type == "f64" && !bitwise))
+      !((type == "f64" || type == "f32") && !bitwise))
     throw std::runtime_error("Unsupported scalar arithmetic type '" + type + "'");
-  if (type == "f64") {
+  if (type == "f64" || type == "f32") {
+    const auto operand = [&](const Value &value, double &result) {
+      if (type != "f32") return numeric_value(value, result);
+      if (const auto *integer = std::get_if<int64_t>(&value)) {
+        result = binary32_round_i64(*integer);
+        return true;
+      }
+      if (const auto *floating = std::get_if<double>(&value)) {
+        result = binary32_round(*floating);
+        return true;
+      }
+      return false;
+    };
     double a = 0.0, b = 0.0;
-    if (!numeric_value(left, a) || (!unary && !numeric_value(right, b)))
+    if (!operand(left, a) || (!unary && !operand(right, b)))
       throw std::runtime_error("Arithmetic operands must be numeric scalars");
     if ((op == Opcode::DIV || op == Opcode::MOD) && b == 0.0)
       throw std::runtime_error(op == Opcode::DIV ? "Division by zero" : "Modulo by zero");
+    double result = 0.0;
     switch (op) {
-    case Opcode::ADD: return a + b;
-    case Opcode::SUB: return a - b;
-    case Opcode::MUL: return a * b;
-    case Opcode::DIV: return a / b;
-    case Opcode::MOD: return std::fmod(a, b);
-    case Opcode::NEG: return -a;
+    case Opcode::ADD: result = a + b; break;
+    case Opcode::SUB: result = a - b; break;
+    case Opcode::MUL: result = a * b; break;
+    case Opcode::DIV: result = a / b; break;
+    case Opcode::MOD: result = std::fmod(a, b); break;
+    case Opcode::NEG: result = -a; break;
     default: throw std::runtime_error("Invalid floating arithmetic operation");
     }
+    return type == "f32" ? binary32_round(result) : result;
   }
   if (!std::holds_alternative<int64_t>(left) ||
       (!unary && !std::holds_alternative<int64_t>(right)))
@@ -1659,7 +1674,7 @@ void VM::executeInstruction(const Instruction &instr) {
     const auto element = canonical_array_scalar(block.element_type);
     if (element == "text")
       return std::string{};
-    if (element == "f64")
+    if (element == "f64" || element == "f32")
       return 0.0;
     return int64_t(0);
   };
@@ -1802,8 +1817,9 @@ void VM::executeInstruction(const Instruction &instr) {
       if (!std::holds_alternative<std::string>(value)) reject();
       return;
     }
-    if (expected == "f64") {
-      if (!std::holds_alternative<double>(value)) reject();
+    if (expected == "f64" || expected == "f32") {
+      const auto *floating = std::get_if<double>(&value);
+      if (!floating || (expected == "f32" && !binary32_is_canonical(*floating))) reject();
       return;
     }
     if (expected == "i32" || expected == "i64" || expected == "u8" || expected == "bool") {
@@ -1961,9 +1977,11 @@ void VM::executeInstruction(const Instruction &instr) {
     }
     const std::string storage_type = canonical_array_scalar(
         block.type_name == "array" ? block.element_type : block.type_name);
-    if (storage_type == "f64") {
-      if (!std::holds_alternative<double>(value))
-        throw std::runtime_error(operation + ": expected an f64 value");
+    if (storage_type == "f64" || storage_type == "f32") {
+      const auto *floating = std::get_if<double>(&value);
+      if (!floating || (storage_type == "f32" && !binary32_is_canonical(*floating)))
+        throw std::runtime_error(operation + (storage_type == "f64"
+            ? ": expected an f64 value" : ": expected an exact f32 value"));
       return value;
     }
     if (storage_type == "text") {
@@ -2021,6 +2039,8 @@ void VM::executeInstruction(const Instruction &instr) {
     const auto *integer = std::get_if<int64_t>(&value);
     bool valid = type == "text" ? std::holds_alternative<std::string>(value)
                  : type == "f64" ? std::holds_alternative<double>(value)
+                 : type == "f32" ? (std::holds_alternative<double>(value) &&
+                                      binary32_is_canonical(std::get<double>(value)))
                  : integer != nullptr;
     if (valid && integer) {
       valid = (type != "bool" || (*integer == 0 || *integer == 1)) &&
@@ -3010,6 +3030,10 @@ void VM::executeInstruction(const Instruction &instr) {
     // INTEROP_CALL lib_name fn_name arg_count
     // Dynamically dispatch to native function
     std::string lib_name = instr.args[0];
+    if (lib_name != "intrinsic" && instr.args.size() >= 4 &&
+        (contains_binary32_type(instr.args[3]) ||
+         (instr.args.size() >= 5 && contains_binary32_type(instr.args[4]))))
+      throw std::runtime_error("INTEROP_CALL: f32 foreign-call ABI is unsupported");
     std::string fn_name = instr.args[1];
     // `host` means a symbol the consumer supplies at link time, which exists
     // only in a native object. Refuse it here rather than letting the dynamic
@@ -8050,7 +8074,9 @@ void VM::executeInstruction(const Instruction &instr) {
       pushStack(type == "bool" ? std::string(*integer ? "true" : "false")
                                : scalar_text(*integer));
     } else if (const auto *floating = std::get_if<double>(&a);
-               floating && (type.empty() || type == "f64")) {
+               floating && (type.empty() || type == "f64" || type == "f32")) {
+      if (type == "f32" && !binary32_is_canonical(*floating))
+        throw std::runtime_error("TO_STRING operand does not match its f32 source type");
       pushStack(scalar_text(*floating));
     } else if (std::holds_alternative<std::string>(a) &&
                (type.empty() || type == "text")) {
@@ -8074,10 +8100,10 @@ void VM::executeInstruction(const Instruction &instr) {
         target_type == "u16" || target_type == "u32" ||
         target_type == "u64" || target_type == "isize" ||
         target_type == "usize" || target_type == "char" ||
-        target_type == "f32" || target_type == "float" ||
+        target_type == "float" ||
         target_type == "double") {
       throw std::runtime_error("CAST: unsupported scalar target '" + target_type +
-                               "'; supported targets are bool, i32, i64, u8, f64");
+                               "'; supported targets are bool, i32, i64, u8, f32, f64");
     }
     const auto floating_integer_word = [](double value) -> int64_t {
       // INT64_MAX rounds up to 2^63 as a double, so the upper comparison must
@@ -8123,7 +8149,19 @@ void VM::executeInstruction(const Instruction &instr) {
       const int64_t integer = integer_word();
       pushStack(target_type == "i32" ? signed_low_word(integer) : integer);
     }
-    // f32 conversion remains unavailable until its rounding/ABI is coherent.
+    else if (target_type == "f32") {
+      if (const auto *integer = std::get_if<int64_t>(&v))
+        pushStack(binary32_round_i64(*integer));
+      else if (const auto *floating = std::get_if<double>(&v))
+        pushStack(binary32_round(*floating));
+      else if (const auto *text = std::get_if<std::string>(&v)) {
+        const auto parsed = parse_finite_f64(*text);
+        if (!parsed)
+          throw std::runtime_error("CAST: text is not a complete finite f32 value");
+        pushStack(binary32_round(*parsed));
+      } else
+        throw std::runtime_error("CAST: value cannot be converted to 'f32'");
+    }
     else if (target_type == "f64") {
       if (std::holds_alternative<double>(v)) {
         pushStack(v); // Already double
@@ -8193,6 +8231,8 @@ void VM::executeInstruction(const Instruction &instr) {
   // Memory opcodes
   case Opcode::OWN_ALLOC:
   case Opcode::ALLOC: {
+    if (!instr.args.empty() && contains_binary32_type(instr.args[0]))
+      throw std::runtime_error("ALLOC: f32 raw-pointer storage is unsupported");
     // ALLOC type_name: pop size from stack, allocate heap block, push pointer
     std::string type_name = instr.args.empty() ? "any" : instr.args[0];
     int64_t count = 1;
@@ -8543,6 +8583,11 @@ void VM::validateClassValue(const Value &value, const std::string &expected) con
     const auto *integer = std::get_if<int64_t>(&value);
     if (!integer || (*integer != 0 && *integer != 1))
       throw std::runtime_error("boolean values must be exactly 0 or 1");
+  }
+  if (expected == "f32") {
+    const auto *floating = std::get_if<double>(&value);
+    if (!floating || !binary32_is_canonical(*floating))
+      throw std::runtime_error("f32 value must have its exact canonical binary32 representation");
   }
   if (!class_metadata_) return;
   auto nominal = expected;

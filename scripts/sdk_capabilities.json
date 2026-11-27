@@ -47,6 +47,12 @@
       "limitations": ["Schema graphs remain bounded and every reachable field/payload must have a supported layout. Required fields must be initialized before values escape; recursive declarations do not manufacture default objects.", "This does not expand checkpoint support for direct cyclic aggregates, promise arbitrary value-validation depth, provide deep copies or certify platform SDKs."]
     },
     {
+      "id": "binary32-scalars-and-arrays",
+      "observed": "Binary32 scalar and array fixtures agree across six routes for typed boundary conversions, per-operation rounding, mixed promotion, generic calls, globals, aggregate fields/payloads, dynamic boxes, nested arrays, shared storage and typed STL primitives. Ny and Matrix use the same storage contract.",
+      "tests": ["ny.routes.scalar-f32-contract", "ny.routes.array-f32-contract", "ny.routes.array-f32-contract-matrix"],
+      "limitations": ["Native arrays store four-byte IEEE binary32 elements; interpreter arrays and ordinary function/aggregate carriers retain exact widened binary32 values. Conversion rounds to nearest ties to even; NaNs are canonicalized without a payload/sign guarantee.", "This does not add a foreign C float ABI, f32 raw pointers, scalar binding references, parallel-map workers or new query row shapes. These fixtures do not establish every numeric combination, performance bounds or platform SDK qualification."]
+    },
+    {
       "id": "scalar-arithmetic",
       "observed": "Scalar arithmetic and comparisons at live-array handle addresses agree across the six execution routes for the contract and collision fixtures.",
       "tests": ["ny.routes.scalar-arithmetic-contract", "ny.routes.scalar-array-handle-collision"],
@@ -144,6 +150,9 @@
     }
   ],
   "proofs": [
+    {"test": "ny.routes.scalar-f32-contract", "fixture": "scalar-f32-contract", "stdlib": true},
+    {"test": "ny.routes.array-f32-contract", "fixture": "array-f32-contract", "stdlib": true},
+    {"test": "ny.routes.array-f32-contract-matrix", "fixture": "array-f32-contract-matrix", "stdlib": true},
     {"test": "ny.routes.class-reference-arrays", "fixture": "class-reference-arrays", "stdlib": true},
     {"test": "ny.routes.class-reference-arrays-matrix", "fixture": "class-reference-arrays-matrix", "stdlib": true},
     {"test": "ny.routes.recursive-arrays", "fixture": "recursive-arrays", "stdlib": true},

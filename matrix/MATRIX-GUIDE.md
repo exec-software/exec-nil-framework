@@ -185,13 +185,19 @@ There are no character literals. A one-letter text value is `"a"`.
 | `override integer` | signed 32-bit |
 | `override long` | signed 64-bit |
 | `override byte` | unsigned 8-bit, wrapping |
+| `override single` | IEEE binary32 |
 | `override double` | IEEE double |
 
 A machine type is **not legal bare**. `as byte` is an error; `as override byte`
 is the spelling. Every drop to an exact width is marked, so you can find them
 all with one search.
 
-`short`, `unsigned`, `decimal`, `single` and `letter` are reserved and
+`override single` rounds numeric storage boundaries and arithmetic results to
+binary32 using round-to-nearest, ties-to-even. Mixed numeric operations promote
+through double, single, long, integer and byte. Its arrays retain an exact
+element type; assigning an existing single array to a double array is rejected.
+
+`short`, `unsigned`, `decimal` and `letter` are reserved and
 rejected — the runtime has no 16-bit, no unsigned beyond byte, no fixed point
 and no character type. Encoding and one-letter text belong to the library.
 
@@ -781,8 +787,8 @@ per type. An extension on a primitive is global to the program.
 Deliberately unspelled, because the runtime cannot execute them: field
 defaults, overload sets, capturing closures, dynamic contract objects, generic
 class execution, downcasts, automatic destructors, postfix `?`, default
-contract method bodies, supertraits, associated types, `i16`/`u16`/`u32`/`u64`/
-`f32` arithmetic, async, channels and task handles.
+contract method bodies, supertraits, associated types, `i16`/`u16`/`u32`/`u64`
+arithmetic, async, channels and task handles.
 
 Reserved but unimplemented: `chapter` (a third namespace level), `forever` as a
 `static` modifier, and `requires` for declaring a book's authorities.

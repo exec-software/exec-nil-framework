@@ -129,11 +129,11 @@ inline array_intrinsic_contract parse_array_intrinsic(
   const auto &name = operands[1];
   const std::string element = canonical_array_type(operands[4]);
   if (element != "i32" && element != "i64" && element != "u8" &&
-      element != "bool" && element != "f64" && element != "text" && element != "anything" &&
+      element != "bool" && element != "f32" && element != "f64" && element != "text" && element != "anything" &&
       !is_array_tuple_type(element) && !validated_element)
     throw std::runtime_error("array intrinsic has unsupported element type '" + element + "'");
   if ((name.find("_u8") != std::string::npos && element != "u8") ||
-      name.find("_f32") != std::string::npos)
+      (name.find("_f32") != std::string::npos && element != "f32"))
     throw std::runtime_error("array intrinsic element metadata disagrees with its operation");
   const auto operation = name.rfind("array.new", 0) == 0
       ? array_intrinsic_operation::create

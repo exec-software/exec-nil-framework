@@ -2,7 +2,7 @@ module nil.std.collections
 
 # Runtime-backed array primitives. Intrinsic declarations intentionally have
 # no fallback body; their annotations provide the implementation.
-# Element kinds include i32, i64, u8, bool, f64, text, and supported structural
+# Element kinds include i32, i64, u8, bool, f32, f64, text, and supported structural
 # tuples, exact declared non-class records, enums and nested arrays with finite,
 # supported native schemas, including concrete generics. Record elements share
 # mutable identity. Enum values retain their variant and payload aliases. Nested
@@ -10,7 +10,8 @@ module nil.std.collections
 # Class elements preserve checked views/dispatch; exact aggregate references share
 # object identity. Arrays and reference wrappers remain invariant. Finite recursive
 # schemas use initialized handles; GC follows reachable cycles.
-# The f32 declarations are reserved until their ABI is defined.
+# f32 arrays use four-byte IEEE binary32 storage and nearest/ties-even rounding.
+# Scalar function values retain an exact widened carrier; no foreign float ABI is implied.
 # Sizes are nonnegative i32 values. Out-of-bounds scalar reads retain their defaults;
 # invalid or uninitialized tuple/record/enum/nested-array reads fail because there
 # is no default value. Valid-value writes outside the array are no-ops, matching

@@ -365,6 +365,9 @@ struct ast_expr : public ast_node {
   // Proven directional class conversion at an explicitly typed boundary.
   // It must never be inferred from a codegen contextual type alone.
   std::optional<std::string> checked_class_upcast;
+  // A scalar destination is a conversion boundary, not the expression's
+  // evaluation width. Retain it separately for callable/method arguments too.
+  std::optional<std::string> checked_scalar_destination;
   // A typed boundary may box a concrete value without changing the type of
   // its expression. Only the checker may establish this source descriptor.
   std::optional<std::string> checked_any_box_type;

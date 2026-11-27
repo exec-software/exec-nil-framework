@@ -12,14 +12,15 @@ scalar contract; the release profile remains a separate qualification decision.
 | `i32` / `int` | Signed 32-bit integer |
 | `i64` | Signed 64-bit integer |
 | `u8` | Unsigned byte |
+| `f32` | IEEE binary32 floating point, rounded at typed boundaries and after each operation |
 | `f64` | Double-precision floating point |
 | `bool` / `boolean` / `flag` | `true` / `yes` or `false` / `no`; not an arithmetic operand |
 | `anything` | Initialized dynamic value with a checked concrete type |
 | `text` / `String` | Text value; not an integer or pointer |
 | `void` | No result from a function |
 
-Other recognized spellings, including `i8`, `i16`, `u16`, `u32`, `u64`, and
-`f32`, do **not** yet have a consistent cross-route scalar implementation.
+Other recognized spellings, including `i8`, `i16`, `u16`, `u32`, and `u64`,
+do **not** yet have a consistent cross-route scalar implementation.
 Scalar casts to these targets fail explicitly. Do not use their acceptance in
 a declaration as evidence of supported arithmetic or layout. `char`, general
 references, and arbitrary foreign types also need independent qualification.
@@ -50,7 +51,7 @@ inference and contextual typing.
 ### Arithmetic and conversions
 
 Integer addition, subtraction, multiplication, and unary negation wrap at the
-resolved width. Mixed arithmetic promotes in the order `f64`, `i64`, `i32`,
+resolved width. Mixed arithmetic promotes in the order `f64`, `f32`, `i64`, `i32`,
 `u8`. Shifts use the left operand's width and reject negative counts or counts
 greater than or equal to that width. Signed right shifts preserve the sign;
 `u8` right shifts insert zeroes. Bitwise operators require integer operands.
@@ -59,7 +60,7 @@ Integer division truncates toward zero. Division and remainder reject zero
 divisors and signed minimum divided by minus one. These checks prevent host
 undefined behavior; they are not recoverable Ny exceptions.
 
-`as` supports scalar targets `bool`, `i32`, `i64`, `u8`, and `f64`:
+`as` supports scalar targets `bool`, `i32`, `i64`, `u8`, `f32`, and `f64`:
 
 - Numeric-to-boolean conversion accepts only `0` and `1` (including `0.0`,
   `-0.0`, and `1.0`). Other numbers, NaN, and infinity are errors.
@@ -67,6 +68,25 @@ undefined behavior; they are not recoverable Ny exceptions.
 - Floating-to-integer conversion first requires a finite value in
   `[-2^63, 2^63)`, truncates toward zero to `i64`, then narrows if requested.
   Out-of-range values and NaN fail; they are not silently clamped.
+
+`f32` conversion rounds to nearest, ties to even. Widening to `f64` is exact;
+narrowing overflow produces signed infinity, and underflow preserves signed zero.
+NaNs are canonicalized without preserving payload or sign. Integer-to-`f32`
+conversion rounds directly, avoiding an intermediate `f64` rounding. Typed
+initializers, assignments, arguments, returns and array/aggregate stores apply
+the destination conversion. Arithmetic first converts operands to the promoted
+type, then rounds each `f32` result; an outer `f64` destination cannot recover
+precision already lost in an inner `f32` expression. Division and remainder by
+zero retain the existing runtime error contract.
+
+Native arrays physically store four bytes per `f32` element. Interpreter arrays,
+ordinary calls and aggregate fields use a widened carrier containing the exact
+binary32 value; this is not a foreign C `float` ABI. Raw `ptr<f32>`, scalar
+binding references, parallel-map workers and expanded query profiles remain
+separate unsupported boundaries.
+Matrix spells this width `override single`; its default `floating` remains `f64`.
+The paired scalar/array `f32` fixtures specify these behaviors across execution
+routes, including generic calls, dynamic boxes and signed-zero preservation.
 
 See the executable `scalar-arithmetic-contract.ny` and
 `scalar-cast-contract.ny` fixtures in `tests/language/` for boundary examples.
@@ -76,11 +96,13 @@ The interpreted routes also support explicit text conversions:
 - Text to integer requires a complete signed decimal `i64`, then applies the
   same narrowing rules for `i32` or `u8`.
 - Text to `f64` requires a complete finite number. Whitespace, trailing junk,
-  overflow, and nonfinite values are rejected.
+  overflow, and nonfinite values are rejected. Text to `f32` uses that finite
+  binary64 parser, then applies binary32 rounding; it may overflow to infinity
+  at the narrower width.
 - Text to `bool` accepts case-insensitive `true`, `1`, `yes`, `on`, `false`,
   `0`, `no`, or `off`; other text is an error, not truthiness.
 - Scalar to text retains decimal integer formatting, `0`/`1` for booleans,
-  and six fractional digits for `f64`.
+  and six fractional digits for `f32` and `f64`.
 
 Native ordinary `as` supports the same text-to-boolean spellings and rejects
 unrecognized text. Other text/scalar casts remain unavailable on the native
@@ -159,13 +181,13 @@ array, tuple, and native-call layouts have narrower contracts than a general
 C-compatible ABI. Standard-library collections are separate APIs, not an
 implied built-in map literal or interchangeable `vec<T>` syntax.
 
-Native array elements include `i32`, `i64`, `u8`, `bool`, `f64`, NUL-free text,
+Native array elements include `i32`, `i64`, `u8`, `bool`, `f32`, `f64`, NUL-free text,
 `anything`, supported structural tuples, concrete non-class records, enum values
 and finite nested arrays, classes and exact `ref<Record>` / `ref<Class>`
-handles. Element types remain exact and invariant, including
-nominal generic arguments and nested array rank. Scalar out-of-range reads keep
-their defaults; tuple, record, class, reference, enum, nested-array and `anything` reads fail when
-out of bounds or uninitialized. Valid-value out-of-range writes do nothing.
+handles. Element types remain exact and invariant, including nominal generic
+arguments and nested array rank. Scalar out-of-range reads keep their defaults;
+tuple, record, class, reference, enum, nested-array and `anything` reads fail
+when out of bounds or uninitialized. Valid-value out-of-range writes do nothing.
 `push` requires a compatible element and preserves aliases when the descriptor
 grows. Use an explicit cast before pushing an integer into `array<f64>`;
 storage does not reinterpret its bits.
@@ -179,7 +201,7 @@ their type from a checked destination. See the [tuple reference](tuples.md) and
 literals can insert checked element upcasts to their declared ancestor type;
 existing `array<Derived>` values cannot become `array<Base>`, and
 `ref<Derived>` cannot become `ref<Base>`. Reference elements alias objects, not
-variable binding cells. `f32` arrays and raw `ptr<f64>`/`ptr<text>` remain
+variable binding cells. Raw `ptr<f32>`/`ptr<f64>`/`ptr<text>` remain
 outside this native subset.
 
 ## Structs and generic enums

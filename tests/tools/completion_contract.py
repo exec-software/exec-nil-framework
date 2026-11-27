@@ -191,6 +191,10 @@ def main():
                           'main returns override integer begin paragraph\ngive sam|\nend paragraph\n')
         assert set(items(query(imported_scope, name='imported_scope.matrix',
                                dependencies={'helper.ny': ny_dependency}))) == {'sample_public'}
+        single = ('book single-completion\ncompute receives sample-value as override single '
+                  'returns override single begin paragraph\ngive sam|\nend paragraph\n')
+        found = items(query(single, name='single.matrix'))
+        assert found['sample-value']['type'] == 'override single', found
 
         # Parse/import/earlier-checker failures and unsupported positions must
         # remain explicit nulls. Member completion requires a checked receiver.

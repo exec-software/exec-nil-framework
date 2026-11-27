@@ -25,6 +25,7 @@ and encoding, width and precision are not among the program's concerns.
 | `override integer` | `i32` | signed 32-bit |
 | `override long` | `i64` | signed 64-bit |
 | `override byte` | `u8` | unsigned 8-bit, wrapping |
+| `override single` | `f32` | IEEE binary32 |
 | `override double` | `f64` | IEEE double |
 
 A machine type is **not legal in a bare type position**. `as byte` is an
@@ -39,6 +40,7 @@ value count  as number           is 42          !!! i64; the normal case
 value pixel  as override byte    is 255         !!! u8, deliberately
 value mask   as override long    is 0xFFFFFFFF  !!! exact width for bit work
 value ratio  as floating         is 0.5         !!! f64
+value sample as override single  is 16777217.0  !!! f32; rounds to 16777216
 ```
 
 ### Floating literals
@@ -55,6 +57,19 @@ Overflow and nonzero literals that round to zero are rejected in compilation
 and editor analysis. Exact zero may have any exponent magnitude. `0x1E3`
 remains a hexadecimal integer. See the shared
 [floating literal contract](../../docs/language-reference/expressions.md#float-literals).
+
+An `override single` destination rounds a numeric value to binary32 using
+round-to-nearest, ties-to-even. This applies to bindings, fields, arguments,
+returns and array elements. Arithmetic rounds each operand and result to the
+resolved width; mixed operands promote in the order `floating`, `override
+single`, `number`, `override integer`, `override byte`. Widening a single to
+`floating` is exact. Existing array handles retain their element type, so
+`array of override single` cannot become `array of floating` through assignment.
+Signed zero, subnormal values and infinities are preserved by the shared
+interpreter/native value contract. NaNs are canonicalized without retaining
+their payload or sign. External native calls, scalar binding
+references, parallel workers and query/markup scalar profiles still require
+their separately supported types.
 
 ### Boolean and dynamic values
 
@@ -83,14 +98,14 @@ ownership restrictions, runtime validation, and native callable limitations.
 
 ### Reserved and rejected
 
-`short`, `unsigned`, `decimal`, `single` and `letter` are reserved words that
+`short`, `unsigned`, `decimal` and `letter` are reserved words that
 **fail with a specific diagnostic** rather than parsing as identifiers. Each is
 a type Matrix would like to offer and NIL cannot carry:
 
 - `unsigned` — NIL's only unsigned type is `u8`. `u16`, `u32` and `u64` have
   no cross-route scalar implementation and their casts fail explicitly.
 - `decimal` — there is no fixed-point type in NIL at all.
-- `short`, `single` — `i16` and `f32` are in the same rejected set as above.
+- `short` — `i16` is in the same rejected set as above.
 - `letter` — there is no `char` in NIL, and `char` is listed as needing
   independent qualification. See below for where it goes instead.
 
@@ -119,8 +134,11 @@ Tuples use `tuple of (number, text)` and can be stored in
 element retains the exact ordered tuple type; whole-element writes do not make
 tuple slots mutable. Reading outside a tuple array is an error rather than a
 synthetic tuple value. Scalar-array read defaults remain unchanged. Native
-arrays of records, choices and nested arrays remain unsupported. See the
-[tuple contract](../../docs/language-reference/tuples.md#arrays-of-tuples).
+arrays also support records, choices, classes, aggregate references and nested
+arrays with exact finite supported schemas. These retain shared contained
+handles and reject invalid reads rather than fabricating an element. See the
+[tuple contract](../../docs/language-reference/tuples.md#arrays-of-tuples) and
+[checked arrays](../../docs/standard-library/index.md#checked-arrays).
 
 **`main` is a special case.** The NIL entry contract is `main() -> i32`.
 Matrix writes `main returns number` and the lowering emits `i32` for that one

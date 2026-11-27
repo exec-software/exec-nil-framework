@@ -425,6 +425,11 @@ static std::string normalize_nil_type(std::string type) {
   return type;
 }
 
+static bool native_floating_type(const std::string &type) {
+  const auto normalized = normalize_nil_type(type);
+  return normalized == "f32" || normalized == "f64";
+}
+
 static bool is_native_word_element_type(const std::string &type) {
   const std::string normalized = normalize_nil_type(type);
   // Native arrays are stable runtime descriptors. The descriptor carries the
@@ -462,6 +467,8 @@ native_array_kind_for_element(const nil_module &mod, const std::string &type,
     return NYRT_ARRAY_BOOL;
   if (normalized == "u8")
     return NYRT_ARRAY_U8;
+  if (normalized == "f32")
+    return NYRT_ARRAY_F32;
   if (normalized == "f64")
     return NYRT_ARRAY_F64;
   if (normalized == "anything")
@@ -1402,6 +1409,22 @@ struct NativeCodegen::Impl {
     return nullptr;
   }
 
+  llvm::Value *roundToF32(llvm::Value *value) {
+    if (!value) return nullptr;
+    auto *word = llvm::Type::getInt64Ty(*context);
+    auto *carrier = llvm::Type::getDoubleTy(*context);
+    // Ordinary function words contain widened-double bits. Numeric integer
+    // inputs instead round directly, avoiding i64 -> f64 -> f32 double rounding.
+    if (value->getType()->isIntegerTy() && native_floating_type(nilType(value)))
+      value = builder->CreateBitCast(value, carrier, "nil.f32.carrier");
+    const bool integer = value->getType()->isIntegerTy();
+    auto runtime = module->getOrInsertFunction(
+        integer ? "nyrt_f32_v1_from_i64" : "nyrt_f32_v1_from_f64",
+        llvm::FunctionType::get(carrier, {integer ? word : carrier}, false));
+    return builder->CreateCall(runtime,
+        {integer ? coerceToI64(value) : coerceToDouble(value)}, "nil.f32.rounded");
+  }
+
   // Ensure both operands have the same type for numeric operations. Mixed
   // integer/floating expressions use f64, matching the interpreter's numeric
   // promotion rules.
@@ -2120,6 +2143,19 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       }
       return impl_->builder->CreatePtrToInt(value, i64_type, "ny.array.tuple.bits");
     }
+    if (normalized == "f32") {
+      if (normalize_nil_type(impl_->nilType(value)) != "f32" ||
+          (!value->getType()->isDoubleTy() && !value->getType()->isIntegerTy(64))) {
+        std::cerr << "[NativeCodegen] " << operation
+                  << " requires an exact f32 element\n";
+        return nullptr;
+      }
+      if (value->getType()->isIntegerTy(64))
+        value = impl_->builder->CreateBitCast(value, llvm::Type::getDoubleTy(ctx));
+      auto runtime = impl_->module->getOrInsertFunction("nyrt_f32_v1_pack",
+          llvm::FunctionType::get(i64_type, {llvm::Type::getDoubleTy(ctx)}, false));
+      return impl_->builder->CreateCall(runtime, {value}, "nil.array.f32.bits");
+    }
     if (normalized == "f64") {
       if (normalize_nil_type(impl_->nilType(value)) != "f64") {
         std::cerr << "[NativeCodegen] " << operation
@@ -2143,7 +2179,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
     }
     if (!value->getType()->isIntegerTy() ||
         !native_value_is_numeric_scalar(value) ||
-        normalize_nil_type(impl_->nilType(value)) == "f64") {
+        native_floating_type(impl_->nilType(value))) {
       std::cerr << "[NativeCodegen] " << operation
                 << " requires an integer element for '" << element_type << "'\n";
       return nullptr;
@@ -2184,6 +2220,12 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         kind == NYRT_ARRAY_NESTED || kind == NYRT_ARRAY_CLASS || kind == NYRT_ARRAY_REFERENCE)
       return impl_->builder->CreateIntToPtr(
           word, llvm::PointerType::getUnqual(ctx), "ny.array.tuple.value");
+    if (kind == NYRT_ARRAY_F32) {
+      auto runtime = impl_->module->getOrInsertFunction("nyrt_f32_v1_unpack",
+          llvm::FunctionType::get(llvm::Type::getDoubleTy(ctx),
+              {llvm::Type::getInt64Ty(ctx)}, false));
+      return impl_->builder->CreateCall(runtime, {word}, "nil.array.f32.value");
+    }
     if (kind == NYRT_ARRAY_F64)
       return impl_->builder->CreateBitCast(
           word, llvm::Type::getDoubleTy(ctx), "ny.array.f64.value");
@@ -2207,8 +2249,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
            kind == native_handle_kind::integer_pointer ||
            is_native_aggregate_nil_type(mod, type) ||
            find_nil_enum_definition(mod, type) != nullptr ||
-           (is_native_scalar_abi_type(type) &&
-            normalize_nil_type(type) != "f32");
+           is_native_scalar_abi_type(type);
   };
 
   auto native_enum_payload_compatible =
@@ -2226,9 +2267,9 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
     if (kind != native_handle_kind::none)
       return value->getType()->isPointerTy() &&
              native_handle_types_compatible(mod, actual, expected);
-    if (normalize_nil_type(expected) == "f64")
+    if (native_floating_type(expected))
       return value->getType()->isDoubleTy() &&
-             normalize_nil_type(actual) == "f64";
+             normalize_nil_type(actual) == normalize_nil_type(expected);
     return value->getType()->isIntegerTy() &&
            native_value_is_numeric_scalar(value);
   };
@@ -2296,7 +2337,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
             impl_->builder->CreateTrunc(payload, llvm::Type::getInt64Ty(ctx));
       }
     } else if (payload->getType()->isDoubleTy() &&
-               normalize_nil_type(payload_type) == "f64") {
+               native_floating_type(payload_type)) {
       payload_word =
           impl_->builder->CreateBitCast(payload, llvm::Type::getInt64Ty(ctx));
     } else {
@@ -2475,7 +2516,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       const auto &type = impl_->global_nil_types.at(name);
       llvm::Type *storage_type = type == "text" || type == "anything"
           ? static_cast<llvm::Type *>(llvm::PointerType::getUnqual(ctx))
-          : type == "f64" ? llvm::Type::getDoubleTy(ctx)
+          : native_floating_type(type) ? llvm::Type::getDoubleTy(ctx)
                            : llvm::Type::getInt64Ty(ctx);
       auto *storage = new llvm::GlobalVariable(
           *impl_->module, storage_type, false,
@@ -2765,7 +2806,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         field_llvm_types.push_back(llvm::Type::getInt64Ty(ctx));
         continue;
       }
-      if (scalar_type == "f64") {
+      if (native_floating_type(scalar_type)) {
         field_llvm_types.push_back(llvm::Type::getDoubleTy(ctx));
         continue;
       }
@@ -2773,7 +2814,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       std::cerr << "[NativeCodegen] native struct schema '" << definition.name
                 << "' field '" << field_name
                 << "' has unsupported or opaque type '" << field_type
-                << "'; native fields currently accept i32, i64, bool, u8, f64, "
+                << "'; native fields currently accept i32, i64, bool, u8, f32, f64, "
                    "known enums, structs, text, supported arrays, and "
                    "ptr<i32/i64/bool/u8>\n";
       return false;
@@ -2961,7 +3002,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         // f64 crosses the established Ny word ABI as exact bits, but local
         // computations and stores retain a real double representation.
         llvm::Value *local_value = &arg;
-        if (normalize_nil_type(p_type) == "f64")
+        if (native_floating_type(p_type))
           local_value = impl_->builder->CreateBitCast(
               &arg, llvm::Type::getDoubleTy(ctx), "ny.parameter.f64");
         auto *alloca =
@@ -2985,7 +3026,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       for (auto &arg : impl_->current_function->args()) {
         const auto type = impl_->nilType(&arg);
         llvm::Value *value = &arg;
-        if (type == "f64")
+        if (native_floating_type(type))
           value = impl_->builder->CreateBitCast(
               value, llvm::Type::getDoubleTy(ctx), "ny.parameter.stack.f64");
         impl_->pushValue(value, type);
@@ -3080,6 +3121,19 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       // after parsing the complete annotation so substring matches can never
       // admit trailing tokens or a different annotation kind.
       const std::string ann = dispatch_name + "(\"" + dispatch_provider + "\")";
+      if (dispatch_name == "@intrinsic" && is_array_intrinsic(dispatch_provider) &&
+          (dispatch_provider.find("_f32") != std::string::npos ||
+           dispatch_provider.find("_u8") != std::string::npos)) {
+        const auto element = native_generic_argument(
+            dispatch_provider.rfind("array.new", 0) == 0 ? fn.return_type :
+                fn.params.empty() ? std::string{} : nil_parameter_type(fn.params.front()), "array");
+        const auto expected = dispatch_provider.find("_f32") != std::string::npos ? "f32" : "u8";
+        if (!element || canonical_array_type(*element) != expected) {
+          std::cerr << "[NativeCodegen] array intrinsic element metadata disagrees with its operation in '"
+                    << fn.name << "'\n";
+          return false;
+        }
+      }
       const bool std_sys =
           ann.find("@interop(\"std_sys\")") != std::string::npos ||
           ann.find("@interop(std_sys)") != std::string::npos;
@@ -4180,7 +4234,10 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
               {arr_arg,
                llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)),
                impl_->coerceToI64(idx_arg)});
-          if (*kind == NYRT_ARRAY_TEXT || *kind == NYRT_ARRAY_TUPLE || *kind == NYRT_ARRAY_ANYTHING ||
+          if (*kind == NYRT_ARRAY_F32) {
+            value = native_array_loaded_value(value, *element_type);
+            value = impl_->builder->CreateBitCast(value, impl_->current_function->getReturnType());
+          } else if (*kind == NYRT_ARRAY_TEXT || *kind == NYRT_ARRAY_TUPLE || *kind == NYRT_ARRAY_ANYTHING ||
               *kind == NYRT_ARRAY_RECORD || *kind == NYRT_ARRAY_NESTED ||
               *kind == NYRT_ARRAY_CLASS || *kind == NYRT_ARRAY_REFERENCE)
             value = native_array_loaded_value(value, *element_type);
@@ -5104,18 +5161,18 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                (rhs && rhs->getType()->isFloatingPointTy()) ? "f64" : "i64")
             : minstr.args.front();
         if (type != "i32" && type != "i64" && type != "u8" &&
-            !(type == "f64" && !bitwise)) {
+            !(native_floating_type(type) && !bitwise)) {
           std::cerr << "[NativeCodegen] unsupported scalar arithmetic type '"
                     << type << "' in function '" << fn.name << "'\n";
           return false;
         }
-        const bool floating = type == "f64";
+        const bool floating = native_floating_type(type);
         const bool unsigned_integer = type == "u8";
         const unsigned width = type == "i32" ? 32 : unsigned_integer ? 8 : 64;
         llvm::Value *shift_count = nullptr;
         if (floating) {
-          lhs = impl_->coerceToDouble(lhs);
-          if (rhs) rhs = impl_->coerceToDouble(rhs);
+          lhs = type == "f32" ? impl_->roundToF32(lhs) : impl_->coerceToDouble(lhs);
+          if (rhs) rhs = type == "f32" ? impl_->roundToF32(rhs) : impl_->coerceToDouble(rhs);
         } else {
           if (!lhs->getType()->isIntegerTy() ||
               (rhs && !rhs->getType()->isIntegerTy())) {
@@ -5200,6 +5257,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         // itself at eight bits, then restore that canonical representation.
         if (unsigned_integer)
           result = impl_->builder->CreateZExt(result, llvm::Type::getInt64Ty(ctx));
+        if (type == "f32") result = impl_->roundToF32(result);
         impl_->pushValue(result, type);
         break;
       }
@@ -5669,12 +5727,13 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
             const std::string expected_nil_type =
                 nil_parameter_type(nil_callee->params[index]);
             const std::string actual_nil_type = impl_->nilType(value);
-            if (normalize_nil_type(expected_nil_type) == "f64") {
-              if (normalize_nil_type(actual_nil_type) != "f64" ||
+            if (native_floating_type(expected_nil_type)) {
+              if (normalize_nil_type(actual_nil_type) != normalize_nil_type(expected_nil_type) ||
                   (!value->getType()->isDoubleTy() &&
                    !value->getType()->isIntegerTy(64))) {
                 std::cerr << "[NativeCodegen] CALL to '" << callee_name
-                          << "' requires an exact f64 argument\n";
+                          << "' requires an exact " << normalize_nil_type(expected_nil_type)
+                          << " argument\n";
                 return false;
               }
               args[index] = value->getType()->isDoubleTy()
@@ -5683,9 +5742,10 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                   : value;
               continue;
             }
-            if (normalize_nil_type(actual_nil_type) == "f64") {
+            if (native_floating_type(actual_nil_type)) {
               std::cerr << "[NativeCodegen] CALL to '" << callee_name
-                        << "' cannot pass f64 to parameter '" << expected_nil_type
+                        << "' cannot pass " << normalize_nil_type(actual_nil_type)
+                        << " to parameter '" << expected_nil_type
                         << "'\n";
               return false;
             }
@@ -5795,7 +5855,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           if (!check_call_fault(i)) return false;
           if (!callee->getReturnType()->isVoidTy()) {
             llvm::Value *value = ret;
-            if (normalize_nil_type(nil_callee->return_type) == "f64")
+            if (native_floating_type(nil_callee->return_type))
               value = impl_->builder->CreateBitCast(
                   value, llvm::Type::getDoubleTy(ctx), "ny.call.f64.value");
             impl_->pushValue(value, nil_callee->return_type);
@@ -5852,8 +5912,8 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           auto *value = arguments[n];
           const auto &expected = declaration.method->parameter_types[n - 1];
           const auto actual = impl_->nilType(value);
-          if (normalize_nil_type(expected) == "f64") {
-            if (normalize_nil_type(actual) != "f64" ||
+          if (native_floating_type(expected)) {
+            if (normalize_nil_type(actual) != normalize_nil_type(expected) ||
                 (!value->getType()->isDoubleTy() && !value->getType()->isIntegerTy(64)))
               return false;
             if (value->getType()->isDoubleTy())
@@ -5920,7 +5980,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         impl_->builder->SetInsertPoint(merge);
         if (result) {
           llvm::Value *value = result;
-          if (normalize_nil_type(declaration.method->return_type) == "f64")
+          if (native_floating_type(declaration.method->return_type))
             value = impl_->builder->CreateBitCast(value, llvm::Type::getDoubleTy(ctx),
                                                    "ny.virtual.result.f64");
           impl_->pushValue(value, declaration.method->return_type);
@@ -6141,13 +6201,13 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                       << "'\n";
             return false;
           }
-        } else if (expected_type == "f64") {
-          if (normalize_nil_type(actual_type) != "f64" ||
+        } else if (native_floating_type(expected_type)) {
+          if (normalize_nil_type(actual_type) != expected_type ||
               (!field_value->getType()->isDoubleTy() &&
                !field_value->getType()->isIntegerTy(64))) {
             std::cerr << "[NativeCodegen] SET_FIELD '" << minstr.args[0]
                       << "' in function '" << fn.name
-                      << "' requires an exact f64 field value, got '"
+                      << "' requires an exact " << expected_type << " field value, got '"
                       << (actual_type.empty() ? std::string("untyped value")
                                               : actual_type)
                       << "'\n";
@@ -6159,7 +6219,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         } else {
           if (!field_value->getType()->isIntegerTy() ||
               !native_value_is_numeric_scalar(field_value) ||
-              normalize_nil_type(actual_type) == "f64") {
+              native_floating_type(actual_type)) {
             std::cerr << "[NativeCodegen] SET_FIELD '" << minstr.args[0]
                       << "' in function '" << fn.name
                       << "' expects scalar word type '" << expected_type
@@ -6477,7 +6537,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
             if (kind == native_handle_kind::text || kind == native_handle_kind::scalar_array ||
                 kind == native_handle_kind::integer_pointer || is_native_aggregate_nil_type(mod, descriptor))
               payload = impl_->builder->CreateIntToPtr(payload, pointer_type);
-            else if (descriptor == "f64")
+            else if (native_floating_type(descriptor))
               payload = impl_->builder->CreateBitCast(payload, llvm::Type::getDoubleTy(ctx));
             impl_->pushValue(payload, descriptor);
           }
@@ -6514,7 +6574,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
             target_handle_kind == native_handle_kind::anything ||
             target_handle_kind == native_handle_kind::scalar_array ||
             target_handle_kind == native_handle_kind::integer_pointer;
-        const bool target_is_float = normalized_target == "f64";
+        const bool target_is_float = native_floating_type(normalized_target);
         const std::string source_type = impl_->nilType(val);
         const auto *target_enum =
             find_nil_enum_definition(mod, target_type);
@@ -6594,7 +6654,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
               !target_is_float) {
             std::cerr << "[NativeCodegen] CAST: unsupported scalar target '"
                       << target_type
-                      << "'; supported targets are bool, i32, i64, u8, f64\n";
+                      << "'; supported targets are bool, i32, i64, u8, f32, f64\n";
             return false;
           }
 
@@ -6618,6 +6678,10 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
             }
             impl_->pushValue(boolean, "bool");
           } else if (target_is_float) {
+            if (normalized_target == "f32") {
+              impl_->pushValue(impl_->roundToF32(val), "f32");
+              break;
+            }
             llvm::Type *dest_llvm_ty = llvm::Type::getDoubleTy(ctx);
             if (src_ty->isIntegerTy(1)) {
               impl_->pushValue(impl_->builder->CreateUIToFP(val, dest_llvm_ty),
@@ -7184,7 +7248,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                is_native_aggregate_nil_type(mod, payload_type)) {
             field_val = impl_->builder->CreateIntToPtr(
                 field_val, llvm::PointerType::getUnqual(ctx));
-          } else if (normalize_nil_type(payload_type) == "f64") {
+          } else if (native_floating_type(payload_type)) {
             field_val = impl_->builder->CreateBitCast(
                 field_val, llvm::Type::getDoubleTy(ctx));
           }
@@ -7978,20 +8042,22 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
               return_handle_kind == native_handle_kind::integer_pointer;
           if (ret_val) {
             const std::string actual_nil_type = impl_->nilType(ret_val);
-            if (normalize_nil_type(fn.return_type) == "f64") {
-              if (normalize_nil_type(actual_nil_type) != "f64" ||
+            if (native_floating_type(fn.return_type)) {
+              if (normalize_nil_type(actual_nil_type) != normalize_nil_type(fn.return_type) ||
                   (!ret_val->getType()->isDoubleTy() &&
                    !ret_val->getType()->isIntegerTy(64))) {
                 std::cerr << "[NativeCodegen] function '" << fn.name
-                          << "' requires an exact f64 return value\n";
+                          << "' requires an exact " << normalize_nil_type(fn.return_type)
+                          << " return value\n";
                 return false;
               }
               if (ret_val->getType()->isDoubleTy())
                 ret_val = impl_->builder->CreateBitCast(
                     ret_val, llvm::Type::getInt64Ty(ctx), "ny.return.f64.bits");
-            } else if (normalize_nil_type(actual_nil_type) == "f64") {
+            } else if (native_floating_type(actual_nil_type)) {
               std::cerr << "[NativeCodegen] function '" << fn.name
-                        << "' cannot return f64 through its '" << fn.return_type
+                        << "' cannot return " << normalize_nil_type(actual_nil_type)
+                        << " through its '" << fn.return_type
                         << "' signature\n";
               return false;
             } else if (returns_aggregate) {
@@ -8139,6 +8205,14 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
             }
             const auto expected_nil_type =
                 impl_->local_nil_types.find(var_name);
+            if (expected_nil_type != impl_->local_nil_types.end() &&
+                (normalize_nil_type(expected_nil_type->second) == "f32" ||
+                 normalize_nil_type(value_nil_type) == "f32") &&
+                normalize_nil_type(expected_nil_type->second) != normalize_nil_type(value_nil_type)) {
+              std::cerr << "[NativeCodegen] STORE_LOCAL for '" << var_name
+                        << "' cannot change established f32 storage width without an explicit conversion\n";
+              return false;
+            }
             if (val->getType()->isPointerTy() &&
                 expected_nil_type != impl_->local_nil_types.end() &&
                 !expected_nil_type->second.empty() &&
@@ -8267,8 +8341,9 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         const bool valid = typed_handle
             ? value && value->getType()->isPointerTy() &&
                   normalize_nil_type(impl_->nilType(value)) == type
-            : type == "f64"
+            : native_floating_type(type)
                 ? native_value_is_numeric_scalar(value) &&
+                      normalize_nil_type(impl_->nilType(value)) == type &&
                       value->getType()->isDoubleTy()
                 : !type.empty()
                     ? native_value_is_numeric_scalar(value) &&
@@ -8289,7 +8364,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                     << "' requires typed NIL global metadata\n";
           return false;
         }
-        auto *stored_value = typed_handle || type == "f64"
+        auto *stored_value = typed_handle || native_floating_type(type)
                                  ? value : impl_->coerceToI64(value);
         if (!stored_value) {
           std::cerr << "[NativeCodegen] Error: Cannot store global '"
@@ -8974,7 +9049,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         }
         llvm::Type *argument_type = nullptr;
         const char *symbol = nullptr;
-        if (type == "f64" && value->getType()->isDoubleTy()) {
+        if (native_floating_type(type) && value->getType()->isDoubleTy()) {
           argument_type = llvm::Type::getDoubleTy(ctx);
           symbol = "nyrt_text_f64";
         } else if (integer_type(type) && value->getType()->isIntegerTy()) {
@@ -9826,6 +9901,10 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_text_bool", &nyrt_text_bool);
   expose_runtime_symbol("nyrt_bool_i64", &nyrt_bool_i64);
   expose_runtime_symbol("nyrt_bool_f64", &nyrt_bool_f64);
+  expose_runtime_symbol("nyrt_f32_v1_from_f64", &nyrt_f32_v1_from_f64);
+  expose_runtime_symbol("nyrt_f32_v1_from_i64", &nyrt_f32_v1_from_i64);
+  expose_runtime_symbol("nyrt_f32_v1_pack", &nyrt_f32_v1_pack);
+  expose_runtime_symbol("nyrt_f32_v1_unpack", &nyrt_f32_v1_unpack);
   expose_runtime_symbol("nyrt_bool_text", &nyrt_bool_text);
   expose_runtime_symbol("nyrt_any_v1_box", &nyrt_any_v1_box);
   expose_runtime_symbol("nyrt_any_v1_unbox", &nyrt_any_v1_unbox);

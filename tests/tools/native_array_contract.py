@@ -174,10 +174,10 @@ def main() -> int:
                            "CALL array__push 2", "requires an exact f64 element"),
         "wrong-text-push": ("NEW_ARRAY_LITERAL 0 text\nPUSH_CONST 1\n"
                             "CALL array__push 2", "requires an exact text element"),
-        "nested-unsupported-width": ("NEW_ARRAY_LITERAL 0 array<f32>\nPOP",
+        "nested-unsupported-width": ("NEW_ARRAY_LITERAL 0 array<i16>\nPOP",
                          "pointer-valued array elements are not implemented"),
-        "unsupported-width": ("NEW_ARRAY_LITERAL 0 f32\nPOP",
-                              "floating-point array elements are not implemented"),
+        "unsupported-width": ("NEW_ARRAY_LITERAL 0 i16\nPOP",
+                              "has no supported native scalar layout"),
         "direct-result-mismatch": (
             "PUSH_CONST 1\nPUSH_CONST 1.25\n"
             "INTEROP_CALL intrinsic array.new_with_value 2 i64 f64\nPOP",
@@ -192,7 +192,7 @@ def main() -> int:
             "array intrinsic element metadata disagrees"),
         "direct-unsupported-kind": (
             "PUSH_CONST 1\nPUSH_CONST 1.25\n"
-            "INTEROP_CALL intrinsic array.new_f32 2 array<f32> f32\nPOP",
+            "INTEROP_CALL intrinsic array.new_with_value 2 array<i16> i16\nPOP",
             "array intrinsic has unsupported element type"),
         "direct-forged-handle": (
             "PUSH_CONST 1\nPUSH_CONST 0\n"

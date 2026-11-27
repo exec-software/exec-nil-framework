@@ -412,10 +412,19 @@ void validate_instruction(Opcode opcode, const std::string &name,
   if ((arithmetic || bitwise) && !arguments.empty()) {
     const auto &type = arguments.front();
     if (type != "i32" && type != "i64" && type != "u8" &&
-        !(arithmetic && type == "f64"))
+        !(arithmetic && (type == "f64" || type == "f32")))
       throw std::runtime_error("NIL opcode '" + name +
           "' has unsupported scalar arithmetic type '" + type + "'" + context);
   }
+
+  if (opcode == Opcode::ALLOC && !arguments.empty() && contains_binary32_type(arguments[0]))
+    throw std::runtime_error("NIL f32 raw-pointer storage is unsupported" + context);
+
+  if (opcode == Opcode::INTEROP_CALL && arguments.size() >= 4 &&
+      arguments[0] != "intrinsic" &&
+      (contains_binary32_type(arguments[3]) ||
+       (arguments.size() >= 5 && contains_binary32_type(arguments[4]))))
+    throw std::runtime_error("NIL f32 foreign-call ABI is unsupported" + context);
 
   if (opcode == Opcode::INLINE_ASM &&
       ((arguments[0] != "x86_64" && arguments[0] != "aarch64") || arguments[1].empty() ||
@@ -803,6 +812,7 @@ std::string fault_stack_type(const std::string &type, const nil_module &module,
   if (fault_callable_signature(type)) return "#callable:" + compact_binding_type(type);
   if (type == "i32" || type == "i64" || type == "u8" || type == "bool") return "#word";
   if (type == "f64") return "#float";
+  if (type == "f32") return "#float32";
   if (type == "text") return "#text";
   if (type.rfind("ref<", 0) == 0 && type.back() == '>')
     for (const auto &schema : module.structs)
@@ -891,7 +901,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       if (contains_binding_cell_type(type)) fail("binding-reference cells cannot be fault payloads", pc);
       if (find_nil_class(module, type)) fail("classes cannot be fault payloads", pc);
       if (type == "void" || type == "any" || type == "anything" || type == "bool" || type == "i32" ||
-          type == "i64" || type == "u8" || type == "f64" || type == "text" ||
+          type == "i64" || type == "u8" || type == "f32" || type == "f64" || type == "text" ||
           type.front() == '*' || type.front() == '&' || type.back() == ']')
         fail("fault type must be a concrete nominal struct, not a scalar, pointer, or array", pc);
       const auto count = std::count_if(module.structs.begin(), module.structs.end(),
@@ -1008,6 +1018,8 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     const auto check_class_argument = [&](const std::string &expected, const std::string &actual) {
       const auto checked = stack_type(expected, module);
       if (actual == "#owned") fail("affine owned storage cannot escape through a call or aggregate", pc);
+      if ((checked == "#float32" || actual == "#float32") && checked != actual)
+        fail("f32 argument or storage requires its exact proven scalar type", pc);
       if (checked == "#anything" && actual != checked)
         fail("anything storage requires an explicitly boxed value", pc);
       if (actual == "#anything" && checked != actual)
@@ -1149,7 +1161,12 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     }
     case Opcode::STORE_LOCAL: {
       if (state.stack.empty()) fail("store requires an operand", pc);
-      const auto type = state.stack.back(); pop(1); state.locals[args[0]] = type; break;
+      const auto type = state.stack.back();
+      const auto previous = state.locals.find(args[0]);
+      if (previous != state.locals.end() &&
+          (previous->second == "#float32" || type == "#float32") && previous->second != type)
+        fail("f32 local assignment requires its exact established scalar type", pc);
+      pop(1); state.locals[args[0]] = type; break;
     }
     case Opcode::REF_LOCAL: {
       const auto local = state.locals.find(args[0]);
@@ -1508,7 +1525,7 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
         const bool enumeration = exact_enum_schema(module, leaf, provenance_types) != nullptr;
         const bool supported_leaf = record || enumeration || class_or_reference || is_array_tuple_type(leaf) ||
             leaf == "i32" || leaf == "i64" || leaf == "u8" || leaf == "bool" ||
-            leaf == "f64" || leaf == "text" || leaf == "anything";
+            leaf == "f32" || leaf == "f64" || leaf == "text" || leaf == "anything";
         const auto contract = parse_array_intrinsic(args, record || enumeration || class_or_reference || (nested && supported_leaf));
         if (state.stack.size() < contract.argument_count) fail("array intrinsic requires its declared operands", pc);
         const auto start = state.stack.size() - contract.argument_count;
@@ -1579,7 +1596,10 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
           ? stack_type(owner.substr(11, owner.size() - 12), module) : "?";
       pop(1); state.stack.push_back(type); break;
     }
-    case Opcode::TO_STRING: reject_class_operands(1); pop(1); state.stack.push_back("#text"); break;
+    case Opcode::TO_STRING:
+      reject_class_operands(1);
+      if (!args.empty() && args[0] == "f32") check_class_argument("f32", state.stack.back());
+      pop(1); state.stack.push_back("#text"); break;
     case Opcode::STR_CONCAT: reject_class_operands(2); pop(2); state.stack.push_back("#text"); break;
     case Opcode::LEN: case Opcode::STRLEN:
       if (opcode == Opcode::LEN && !state.stack.empty() && state.stack.back().rfind("#typed:array<", 0) == 0)
@@ -1827,13 +1847,14 @@ void validate_nil_dynamic_type(const nil_module &module, const std::string &raw,
     if (!visited.insert(type).second) continue;
     if (visited.size() > 4096 || !dynamic_type_syntax_supported(type, true)) fail(type);
     if (type == "anything" || type == "bool" || type == "i32" || type == "i64" ||
-        type == "u8" || type == "f64" || type == "text") continue;
+        type == "u8" || type == "f32" || type == "f64" || type == "text") continue;
     if (const auto signature = fault_callable_signature(type)) {
       pending.insert(pending.end(), signature->first.begin(), signature->first.end());
       if (signature->second != "void") pending.push_back(signature->second);
       continue;
     }
     if (type.rfind("ptr<", 0) == 0 || type.rfind("array<", 0) == 0) {
+      if (type.rfind("ptr<", 0) == 0 && contains_binary32_type(type)) fail(type);
       const auto open = type.find('<');
       pending.push_back(type.substr(open + 1, type.size() - open - 2));
       continue;
@@ -2049,8 +2070,29 @@ void validate_nil_class_provenance(const nil_module &module) {
   }
   for (const auto &schema : module.structs)
     related.insert("ref<" + schema.name + ">");
-  // Modules without classes, object references, dynamic storage or binding
-  // cells need no provenance walk after the metadata checks above.
+  // f32 shares the VM's double carrier with f64, but its NIL identity must
+  // remain exact at typed storage boundaries, including canonical values such
+  // as 1.5 that happen to be representable in both widths. Keep this additional
+  // analysis scoped to modules that actually mention the new scalar type.
+  bool binary32_operations = false;
+  for (const auto &function : module.functions) {
+    binary32_operations = binary32_operations || contains_binary32_type(function.return_type);
+    for (const auto &parameter : function.params) {
+      const auto colon = parameter.find(':');
+      if (colon != std::string::npos)
+        binary32_operations = binary32_operations || contains_binary32_type(parameter.substr(colon + 1));
+    }
+    for (const auto &instruction : function.body)
+      for (const auto &argument : instruction.args)
+        binary32_operations = binary32_operations || contains_binary32_type(argument);
+  }
+  for (const auto &schema : module.structs)
+    for (const auto &field : schema.fields)
+      binary32_operations = binary32_operations || contains_binary32_type(field.second);
+  for (const auto &enumeration : module.enums)
+    for (const auto &variant : enumeration.variants)
+      binary32_operations = binary32_operations || contains_binary32_type(variant.associated_type);
+  if (binary32_operations) related.insert("f32");
   if (related.empty()) return;
   bool changed = true;
   while (changed) {
@@ -2059,6 +2101,7 @@ void validate_nil_class_provenance(const nil_module &module) {
       if (!related.count(enumeration.name) && std::any_of(enumeration.variants.begin(), enumeration.variants.end(),
           [&](const auto &variant) {
             return related.count(compact_binding_type(variant.associated_type)) != 0 ||
+                contains_binary32_type(variant.associated_type) ||
                 class_sensitive_type(variant.associated_type, module, &types) ||
                 (dynamic_operations && variant.associated_type.find("anything") != std::string::npos);
           }))
@@ -2067,13 +2110,15 @@ void validate_nil_class_provenance(const nil_module &module) {
       if (!related.count(schema.name) && std::any_of(schema.fields.begin(), schema.fields.end(),
               [&](const auto &field) {
                 return related.count(compact_binding_type(field.second)) != 0 ||
+                    contains_binary32_type(field.second) ||
                     class_sensitive_type(field.second, module, &types) || fault_callable_signature(field.second).has_value();
               }))
         changed = related.insert(schema.name).second || changed;
   }
   const auto related_type = [&](const std::string &raw) {
     const auto type = compact_binding_type(raw);
-    return related.count(type) != 0 || class_sensitive_type(type, module, &types) ||
+    return related.count(type) != 0 || contains_binary32_type(type) ||
+        class_sensitive_type(type, module, &types) ||
         (dynamic_operations && type.find("anything") != std::string::npos) || contains_binding_cell_type(type) ||
         fault_callable_signature(type).has_value();
   };
@@ -2192,7 +2237,10 @@ static void attach_class_metadata(std::vector<Instruction> &program, nil_module 
   // modules that declare no classes at all.
   if (!program.empty() && (!metadata.classes.empty() || !metadata.structs.empty() ||
                            !metadata.enums.empty() || std::any_of(program.begin(), program.end(), [](const auto &instruction) {
-                             return instruction.op == Opcode::BOX_ANY || instruction.op == Opcode::UNBOX_ANY || instruction.op == Opcode::IS_ANY_TYPE;
+                             return instruction.op == Opcode::BOX_ANY || instruction.op == Opcode::UNBOX_ANY || instruction.op == Opcode::IS_ANY_TYPE ||
+                                 contains_binary32_type(instruction.function_return_type) ||
+                                 std::any_of(instruction.function_parameter_types.begin(), instruction.function_parameter_types.end(), contains_binary32_type) ||
+                                 std::any_of(instruction.args.begin(), instruction.args.end(), contains_binary32_type);
                            })))
     program.front().module_metadata = std::make_shared<const nil_module>(std::move(metadata));
 }

@@ -61,6 +61,7 @@ const char *machine_nil_type(kw word) {
   case kw::integer: return "i32";
   case kw::long_:   return "i64";
   case kw::byte:    return "u8";
+  case kw::single:  return "f32";
   case kw::double_: return "f64";
   default:          return nullptr;
   }
@@ -77,8 +78,6 @@ const char *rejected_machine_reason(kw word) {
     return "NIL has no fixed-point type";
   case kw::short_:
     return "i16 has no cross-route implementation";
-  case kw::single:
-    return "f32 has no cross-route implementation";
   case kw::letter:
     return "NIL has no character type; a one-letter text value is just text, "
            "and letter handling belongs to the standard library";
@@ -104,7 +103,7 @@ static void apply_declared_element_type(const std::optional<std::string> &declar
       declared->substr(6, declared->size() - 7);
   // Only scalar elements: an aggregate element is not a cast target.
   if (element != "i32" && element != "i64" && element != "u8" &&
-      element != "f64" && element != "bool")
+      element != "f32" && element != "f64" && element != "bool")
     return;
   auto &literal = static_cast<ny::ast_array_literal_expr &>(*initializer);
   for (auto &item : literal.elements) {
@@ -545,6 +544,7 @@ bool parser::report_foreign_keyword(const token &at) {
       {"i32", "'override integer' -- 'i32' is the Ny spelling"},
       {"i64", "'number', or 'override long' -- 'i64' is the Ny spelling"},
       {"u8", "'override byte' -- 'u8' is the Ny spelling"},
+      {"f32", "'override single' -- 'f32' is the Ny spelling"},
       {"f64", "'floating', or 'override double' -- 'f64' is the Ny spelling"},
       {"uint", "unsigned widths beyond 'override byte' are not available"},
       {"float", "'floating'"},
@@ -679,7 +679,7 @@ std::optional<std::string> parser::parse_type() {
             std::string("'") + machine.lexeme + "' is reserved but not "
             "available: " + reason,
             "use 'number', 'floating', or an available override type: "
-            "integer, long, byte, double");
+            "integer, long, byte, single, double");
       advance();
       return std::nullopt;
     }
@@ -688,7 +688,7 @@ std::optional<std::string> parser::parse_type() {
       return std::string(nil);
     }
     error(machine, "'override' must be followed by a machine type",
-          "the available machine types are integer, long, byte and double");
+          "the available machine types are integer, long, byte, single and double");
     return std::nullopt;
   }
 
@@ -703,7 +703,7 @@ std::optional<std::string> parser::parse_type() {
           "'override'",
           std::string("write 'override ") + start.lexeme + "', or use the "
           "ergonomic type: " +
-              (std::string(nil) == "f64" ? "floating" : "number"));
+              ((std::string(nil) == "f32" || std::string(nil) == "f64") ? "floating" : "number"));
     advance();
     return std::string(nil); // continue with the intended type
   }

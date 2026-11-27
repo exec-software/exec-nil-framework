@@ -63,10 +63,11 @@ end impl
 Bounds constrain which concrete types can instantiate generic code. Matching
 generic implementations must respect the actual type arguments and their
 bounds, not just the number of arguments. Native layout restrictions still
-apply independently: a valid trait implementation does not by itself make
-recursive layouts, scalar references, or nested array elements available on
-the native route. Concrete nested structs and `ref<Struct>` handles are
-supported within the [verified type subset](types.md).
+apply independently: a valid trait implementation does not by itself make an
+unsupported field layout or scalar reference available on the native route.
+Concrete nested structs, aggregate references, nested arrays and finite
+recursive schemas follow the [verified type subset](types.md), including its
+initialization requirements and invariant container types.
 
 Associated functions without a `self` parameter can also be called through a
 bounded type parameter, such as `T.default()` when `T: Default`. The checker

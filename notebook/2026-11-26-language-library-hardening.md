@@ -403,3 +403,43 @@ The regression runs and failed reports are preserved under
 `class-recursive-arrays-20261127-7ah5wa2y`. No SDK was activated or relabeled.
 Full qualification follows after the separate `f32` scalar/storage work; this
 focused result does not declare a release or a new platform campaign.
+
+## Binary32 scalars, storage and generic method metadata
+
+`f32` now has a deterministic binary32 conversion contract shared by the
+interpreter and native runtime. Conversion rounds to nearest, ties to even;
+integer conversion avoids an intermediate double rounding. Signed zero,
+subnormals and infinities retain their defined values, while NaNs are canonical
+without a payload/sign promise. The runtime and conversion controls were
+committed separately as `4260691` after 25 focused checks passed.
+
+Native arrays store four-byte binary32 elements. Ordinary function words and
+aggregate scalar fields retain exact widened-double carriers with distinct
+`f32` metadata; the interpreter retains widened values in its existing storage.
+Typed scalar boundaries and arithmetic round consistently, and mixed numeric
+promotion chooses `f64`, then `f32`, then the existing integer widths. Array
+handles remain invariant. Matrix spells this width `override single`, including
+diagnostics, completion and VS Code highlighting.
+
+The implementation covers fields, enum payloads, globals, generics, dynamic
+boxes, nested arrays and typed STL wrappers. It does not expand foreign C float
+ABI support, raw floating pointers, scalar binding references, parallel workers
+or query row shapes. Function values and text-to-number casts retain their
+documented interpreter-only boundaries.
+
+All 40 focused CTests pass, including three new six-route fixtures and a
+137-check binary32 contract covering imported source/binary modules, exact NIL
+boundaries, annotated wrappers, overlapping copies and runtime rejection paths.
+The VS Code suite passes 213 tests. Failed intermediate reports remain in the
+same evidence directory alongside the corrected runs.
+
+The preceding GitHub campaign exposed an older generic-method specialization
+defect: receiver arguments were retained but method-level result arguments were
+lost, leaving `Option.map` signatures with an unresolved `U`. Lowering now keeps
+both sets of arguments. Fresh enum constructor arguments also supply payload
+evidence for `Option.zip` inference without weakening existing handle identity.
+Explicit method arguments also contextualize fresh payloadless variants;
+constructor arity is checked before lowering. Regressions distinguish these
+fresh values from incompatible existing enum handles.
+The two originally failing tests pass locally after these fixes; full committed
+source and installed-SDK qualification follow separately.

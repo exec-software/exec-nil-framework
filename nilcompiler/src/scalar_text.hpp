@@ -18,7 +18,7 @@ inline std::string scalar_text_type(std::string_view type) {
 
 inline bool supports_scalar_text(std::string_view type) {
   return type == "bool" || type == "i32" || type == "int" ||
-         type == "i64" || type == "u8" || type == "f64" ||
+         type == "i64" || type == "u8" || type == "f32" || type == "f64" ||
          type == "text" || type == "String" || type == "string";
 }
 

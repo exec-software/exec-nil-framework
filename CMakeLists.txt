@@ -520,6 +520,11 @@ if(BUILD_TESTING)
     target_compile_features(ny_inline_asm_contract_tests PRIVATE cxx_std_17)
     add_test(NAME inline-assembly.contract COMMAND $<TARGET_FILE:ny_inline_asm_contract_tests>)
 
+    add_executable(nil_binary32_tests tests/binary32_tests.cpp)
+    target_include_directories(nil_binary32_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/nilcompiler/src")
+    target_compile_features(nil_binary32_tests PRIVATE cxx_std_17)
+    add_test(NAME nil.binary32-conversion COMMAND $<TARGET_FILE:nil_binary32_tests>)
+
     add_executable(ny_native_runtime_tests tests/native_runtime_tests.cpp)
     target_link_libraries(ny_native_runtime_tests PRIVATE nilruntime)
     target_include_directories(
@@ -1705,6 +1710,33 @@ if(BUILD_TESTING)
                 --compiler-arg=--sdk-path --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
             )
         endforeach()
+        foreach(nil_f32_fixture IN ITEMS scalar-f32-contract array-f32-contract)
+            add_ny_route_test(
+                ny.routes.${nil_f32_fixture}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_f32_fixture}.ny"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_f32_fixture}.stdout"
+                --expected-exit 0 --routes all
+                --compiler-arg=--sdk-path --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+            )
+        endforeach()
+        add_ny_route_test(
+            ny.routes.array-f32-contract-matrix
+            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/array-f32-contract-matrix.matrix"
+            --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/array-f32-contract-matrix.stdout"
+            --expected-exit 0 --routes all
+            --compiler-arg=--sdk-path --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+        )
+        add_test(NAME ny.f32-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/f32_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler>
+                --interpreter $<TARGET_FILE:nilinterpreter>
+                --assembler $<TARGET_FILE:nilassembler>
+                --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                --llvm "${NIL_ENABLE_LLVM}"
+                --runtime-tests $<TARGET_FILE:ny_native_runtime_tests>
+                --runtime-tests $<TARGET_FILE:nil_shared_runtime_tests>
+        )
+        set_tests_properties(ny.f32-contract PROPERTIES LABELS "native;arrays;scalar;nil" TIMEOUT 600)
         foreach(nil_array_contract IN ITEMS class_reference recursive)
             string(REPLACE "_" "-" nil_array_contract_name "${nil_array_contract}")
             add_test(
@@ -2265,7 +2297,7 @@ if(BUILD_TESTING)
                 --routes llvm-jit,llvm-aot
             )
         endforeach()
-        foreach(ny_cast_width IN ITEMS f32 u64)
+        foreach(ny_cast_width IN ITEMS i16 u64)
             add_ny_route_test(
                 ny.routes.scalar-cast-unsupported-${ny_cast_width}
                 --compiler-arg=--no-typecheck

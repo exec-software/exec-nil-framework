@@ -110,12 +110,12 @@ enum class kw {
   // the machine-representation escape hatch
   override,
   // machine types, legal only after 'override'
-  integer, long_, byte, double_,
+  integer, long_, byte, single, double_,
   // machine types reserved but REJECTED: NIL has no cross-route
   // implementation for them (see docs/language-reference/types.md). Reserved
   // so that adding them later is additive and misuse is diagnosed precisely
   // rather than parsed as an identifier.
-  short_, unsigned_, decimal, single, letter,
+  short_, unsigned_, decimal, letter,
   not_a_keyword
 };
 

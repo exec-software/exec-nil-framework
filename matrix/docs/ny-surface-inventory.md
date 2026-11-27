@@ -87,20 +87,21 @@ semantic weight.
 | `@name(value, key=value)` | same `@` spelling, or `note name with value, key being value` | scalar metadata; parenthesized forms may span lines |
 | `@doc(summary="...")` | same `@` spelling, or `note doc with summary being "..."` | retained metadata; no automatic decorator execution |
 | `@include`, macros, conditional directives | same directive spellings | shared preprocessor; Matrix literals/annotation regions protected; source-edit locations conservative after transformation |
-| `i32` / `int` | `integer` | executed |
-| `i64` | `long` | executed |
-| `u8` | `byte` | executed, wrapping (modulo 256) |
-| `f64` | `real` | executed |
+| `i32` / `int` | `override integer` | executed |
+| `i64` | `number` / `override long` | executed |
+| `u8` | `override byte` | executed, wrapping (modulo 256) |
+| `f32` | `override single` | binary32 storage, casts and arithmetic on interpreter/native routes |
+| `f64` | `floating` / `override double` | executed |
 | `bool` | `boolean` | executed, not an arithmetic operand |
 | `text` / `String` | `text` | executed, byte-indexed and NUL-free on native |
 | `void` | `nothing` | executed |
-| `i8`,`i16`,`u16`,`u32`,`u64`,`f32` | no spelling | **rejected** — no consistent cross-route scalar implementation |
+| `i8`,`i16`,`u16`,`u32`,`u64` | no spelling | **rejected** — no consistent cross-route scalar implementation |
 | `char` | no spelling | needs independent qualification |
 | `any` | no spelling | erasure/recovery is rejected |
 
 Decimal integer literals infer `i32` or `i64` by range; 32-bit hexadecimal masks
 retain `i32` inference. Floating literals infer `f64`. Matrix keeps Ny's
-promotion order `f64`, `i64`, `i32`, `u8` and wrapping integer arithmetic at
+promotion order `f64`, `f32`, `i64`, `i32`, `u8` and wrapping integer arithmetic at
 the resolved width. See the shared [literal-width decision](../../docs/design/NIL-0007-integer-literal-widths.md).
 
 ### Conversions
@@ -124,13 +125,13 @@ about whether a value changed representation.
 
 | Ny | Matrix | Route state |
 | --- | --- | --- |
-| `array<i32>` | `array of integer` | executed for `integer`, `long`, `byte`, `boolean`, `real`, NUL-free `text` |
+| `array<i32>` | `array of override integer` | executed for supported scalars, NUL-free text and the aggregate element types below |
 | `[1, 2, 3]` | `[1, 2, 3]` | executed |
 | `values[0]` | `values at 0` | executed |
 | `values[1] = 7` | `set values at 1 to 7` | executed |
 | `values.len()` | `the length of values` | executed |
 | `values.push(x)` | `append x to values` | executed |
-| nested arrays | no spelling | unsupported on native |
+| `array<array<T>>` | `array of array of <type>` | executed on VM/native routes; exact nested types, jagged rows and shared child handles |
 | `ptr<T>` | `pointer to <type>` | executed for `integer`, `long`, `byte`, `boolean` |
 | `allocate<i32>(2)` | `allocate values as pointer to integer sized 2` | executed |
 | `deallocate(p)` | `release values` | executed |
@@ -139,11 +140,14 @@ about whether a value changed representation.
 | `*alias` on `ref<T>` | no spelling | rejected in Ny |
 | `owned<T>` | `owned array of <type>` | executed for `integer`, `long`, `byte` |
 | `borrow<T>` / `borrow_mut<T>` | `shared view of <type>` / `exclusive view of <type>` | executed |
-| `(T, U)`, `(a, b)`, `let (a,b) = value` | `tuple of (T, U)`, `(a, b)`, `value (a,b) is result` | shared immutable tuple slots and typed tuple arrays on VM/native routes; record/enum/nested-array element arrays remain excluded natively |
+| `(T, U)`, `(a, b)`, `let (a,b) = value` | `tuple of (T, U)`, `(a, b)`, `value (a,b) is result` | shared immutable tuple slots and typed tuple arrays on VM/native routes |
+| record, enum, class and aggregate-reference array elements | `array of <type>` | executed on VM/native routes for supported finite schemas; exact element identity and shared contained handles |
 
-Out-of-range typed array reads yield the element's zero value and out-of-range
-writes are a no-op. Matrix keeps that, because changing it would change NIL
-semantics, not Matrix's.
+Out-of-range scalar array reads retain their defaults. Tuple, record, enum,
+class, reference, nested-array and `anything` reads fail when out of bounds or
+uninitialized. Valid-value out-of-range writes are a no-op. Matrix shares these
+[checked-array semantics](../../docs/standard-library/index.md#checked-arrays)
+with Ny.
 
 `len` and `push` are not library functions. They are compiler builtins
 recognised on an array receiver (`type_checker.cpp` accepts `len`/`length`/
@@ -336,8 +340,10 @@ A method whose receiver must be a reference says so in a clause rather than by
 declaring a parameter, because the receiver is not an ordinary argument.
 
 Mixed-class conditional, `consider` or array element joins do not infer a
-common ancestor in Matrix either: an explicit ancestor-typed value is required
-first, as in Ny.
+common ancestor in Matrix either. A fresh literal with an expected
+`array of Base` type can insert checked ancestor conversions for its elements;
+otherwise establish an explicit ancestor-typed value first, as in Ny. Existing
+arrays and reference wrappers remain invariant.
 
 ---
 
@@ -540,7 +546,7 @@ capturing closures · native indirect calls · dynamic trait objects · generic
 class execution · generic method execution · first-class bound methods ·
 downcasts · reference and container covariance · automatic destructors ·
 postfix `?` · default trait method bodies · supertraits · associated types ·
-scalar `ref` creation · nested array elements · `i8`/`i16`/`u16`/`u32`/`u64`/`f32`
+scalar `ref` creation · `i8`/`i16`/`u16`/`u32`/`u64`
 arithmetic · `any` erasure · standalone range values · inclusive ranges ·
 `do` blocks as expressions · async, channels and task handles · cross-thread
 fault propagation · foreign exception interoperability · subprocess execution ·

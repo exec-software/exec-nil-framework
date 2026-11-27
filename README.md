@@ -263,7 +263,8 @@ and payload, including contained aliases. Nested arrays share child handles and
 can be jagged. Invalid or uninitialized tuple, record, enum and nested-array reads
 fail because these types have no default value. Focused collection coverage
 includes record-key HashMap, record queues, and native HashSet/Dictionary copies.
-`f32` arrays, binary networking, callbacks and platform SDK qualification remain
+Binary32 (`f32`) scalars and arrays now have explicit rounding, storage and
+function-boundary contracts. Binary networking, callbacks and platform SDK qualification remain
 separate work. The [notebook](notebook/2026-11-26-language-library-hardening.md) records
 validation and the remaining sequence before mainline consolidation.
 

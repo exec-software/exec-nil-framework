@@ -35,7 +35,7 @@ The existing text and binary NIL metadata carry these schemas and public
 function signatures. There is no heterogeneous array layout, tag-erased
 argument pack, or frontend-specific tuple ABI. Native field validation still
 rejects element layouts it does not implement. This preserves the framework's
-existing acyclic aggregate-handle representation and does not promise C struct
+existing aggregate-handle representation and does not promise C struct
 layout or a C multi-return calling convention.
 
 Tuple match patterns recursively load typed fields. Tuple-array loop

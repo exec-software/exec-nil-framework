@@ -1515,7 +1515,7 @@ void test_scalar_text_contract() {
       check(rejected, "Boolean text conversion rejects values other than zero and one");
     }
   }
-  for (const auto *type : {"array<i32>", "ptr<i32>", "f32", "u64"}) {
+  for (const auto *type : {"array<i32>", "ptr<i32>", "i16", "u64"}) {
     ny::nil_module module;
     module.functions.push_back(make_function("main", "text",
         {{"PUSH_CONST", {"1"}, 1}, {"TO_STRING", {type}, 2}, {"RET", {}, 3}}));
@@ -1571,7 +1571,7 @@ void test_vm_scalar_cast_boundaries() {
   for (const std::string &target :
        {std::string("i8"), std::string("i16"), std::string("u16"),
         std::string("u32"), std::string("u64"), std::string("isize"),
-        std::string("usize"), std::string("char"), std::string("f32")}) {
+        std::string("usize"), std::string("char")}) {
     ny::nil_module module;
     module.functions.push_back(make_function(
         "main", target,
@@ -1592,6 +1592,32 @@ void test_vm_scalar_cast_boundaries() {
                           target + " does not silently preserve a scalar word");
     }
   }
+  for (const bool binary : {false, true}) {
+    ny::nil_module module;
+    module.functions.push_back(make_function("main", "f64",
+        {{"PUSH_CONST", {"16777217"}, 1}, {"CAST", {"f32"}, 2},
+         {"CAST", {"f64"}, 3}, {"RET", {}, 4}}));
+    std::unordered_map<std::string, ny::Value> constants;
+    ny::VM vm;
+    vm.loadProgram(parse_module(module, binary, constants), constants);
+    vm.execute();
+    check(vm.getStack().size() == 1 &&
+              std::get<double>(vm.getStack().back()) == 16777216.0,
+          "f32 conversion rounds to binary32 and widens exactly through f64");
+
+    module.functions.front().body = {
+        {"PUSH_CONST", {"1.5"}, 1}, {"NEW_ARRAY_LITERAL", {"1", "f32"}, 2},
+        {"POP", {}, 3}, {"PUSH_CONST", {"0.0"}, 4}, {"RET", {}, 5}};
+    bool rejected = false;
+    try {
+      (void)parse_module(module, binary, constants);
+    } catch (const std::runtime_error &error) {
+      rejected = std::string(error.what()).find("f32 argument or storage requires its exact proven scalar type") !=
+                 std::string::npos;
+    }
+    check(rejected, "f64 value cannot claim f32 array identity even when exactly representable");
+  }
+
 }
 
 void test_textual_quoted_operands_round_trip_as_one_argument() {

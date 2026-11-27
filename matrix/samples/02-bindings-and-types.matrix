@@ -18,7 +18,8 @@ main returns number begin paragraph
     set total to total plus 1
 
     !!! Every scalar type Matrix spells. There is deliberately no spelling
-    !!! for i8, i16, u16, u32, u64 or f32: Ny rejects their arithmetic.
+    !!! for i8, i16, u16, u32 or u64: Ny rejects their arithmetic.
+    !!! Use "override single" for binary32 storage and arithmetic.
     value count    as number is 42
     value population as number  is 10000000000
     value flag     as override byte    is 255 becomes override byte

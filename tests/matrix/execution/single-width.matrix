@@ -1,0 +1,11 @@
+book single_width
+
+main returns number begin paragraph
+    variable amount as override single is 16777217.0
+    say amount becomes number
+    set amount to 16777219.0
+    say amount becomes number
+    value samples as array of override single is [16777217.0]
+    say (samples at 0) becomes number
+    give 0
+end paragraph

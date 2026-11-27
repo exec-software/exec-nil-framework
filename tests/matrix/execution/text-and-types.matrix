@@ -11,6 +11,7 @@
 !!!     override integer   i32
 !!!     override long      i64
 !!!     override byte      u8   (wrapping)
+!!!     override single    f32  (round-to-nearest, ties-to-even)
 !!!     override double    f64
 !!!
 !!! A machine type is NOT legal in a bare type position. "as byte" is an
@@ -18,7 +19,7 @@
 !!! keyword -- the default path is ergonomic, and every drop to an exact
 !!! width is marked and greppable.
 !!!
-!!! "short", "unsigned", "decimal", "single" and "letter" are reserved and
+!!! "short", "unsigned", "decimal" and "letter" are reserved and
 !!! REJECTED with a specific message, because NIL cannot carry them: its only
 !!! unsigned type is byte, it has no fixed-point type, and it has no char.
 !!! Encoding and one-letter text belong to the standard library, not here.

@@ -178,7 +178,8 @@ make bounds explicit. Class arrays retain checked ancestor views and virtual
 dispatch; exact aggregate-reference elements share the same objects. Existing
 containers and references remain invariant. Recursive nominal schemas use
 initialized handles, empty arrays or terminating choice variants; collection
-traces reachable cycles. `f32` array elements remain unsupported.
+traces reachable cycles. `override single` provides binary32 scalars and arrays
+with explicit rounding and four-byte element storage; `floating` remains binary64.
 
 The record storage contract enables record-key HashMap and record queues, and
 native HashSet/Dictionary copy checks. The enum/nested-array fixtures specify the

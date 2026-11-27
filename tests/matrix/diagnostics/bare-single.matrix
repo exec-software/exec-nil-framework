@@ -1,0 +1,6 @@
+book bad.single_width
+
+main returns number begin paragraph
+    value amount as single is 1.0
+    give 0
+end paragraph

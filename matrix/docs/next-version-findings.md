@@ -150,7 +150,7 @@ checks are a specific copy/bounds proof, not blanket collection certification.
 
 ### F07 — Aggregate and nested array layouts limit native collections
 
-**Status:** Partially implemented; other native element layouts remain open.
+**Status:** Implemented for the supported native storage profile; qualification is revision-bound.
 
 **Original evidence:** Native HashSet compilation rejected the `items` field of
 `vec<map_entry<i32,bool>>` because `array<map_entry<i32,bool>>` lacked a supported
@@ -217,8 +217,16 @@ Required-field construction checks remain in force, as do checkpoint restriction
 for direct cyclic aggregates. Paired class/reference and recursive Ny/Matrix
 fixtures specify these storage boundaries.
 
-**Next step / acceptance:** F07 remains open for `f32` array elements. Supported
-schemas must be finite and use supported native field/payload layouts. Keep unsupported shapes diagnosed
+**Implemented binary32 slice:** `f32` scalar conversions, arithmetic and arrays
+share a nearest/ties-even contract. Native arrays use four-byte elements;
+interpreter arrays, ordinary function and aggregate carriers preserve the exact
+widened binary32 value.
+Ny and Matrix (`override single`) fixtures cover storage, calls and arithmetic.
+
+**Next step / acceptance:** Keep these focused contracts and six-route fixtures
+green. Supported schemas must be finite and use supported field/payload layouts.
+Foreign float ABI, raw floating pointers, binding references, parallel workers
+and new query profiles require separate contracts. Keep unsupported shapes diagnosed
 explicitly and establish each new layout's identity, initialization, copy and
 lifetime contract. These focused results do not certify all collection methods,
 project queries or platform SDKs.
@@ -711,7 +719,7 @@ on the native routes. The ordering below favors the 3D validation consumer.
 
 | Priority | Gap | Evidence and proposed scope |
 | --- | --- | --- |
-| 1 | Native application-data storage | F07 now implements exact declared non-class records, enum/choice elements and nested arrays with finite supported schemas, including concrete generics and shared child identities. Class/reference elements and initialized recursive nominal schemas now have separate F07 storage contracts. `f32` arrays remain unsupported and need a scalar contract as well as array storage. |
+| 1 | Native application-data storage | F07 now implements exact declared non-class records, enum/choice elements and nested arrays with finite supported schemas, including concrete generics and shared child identities. Class/reference elements and initialized recursive nominal schemas now have separate F07 storage contracts. `f32` now has scalar conversion/arithmetic and four-byte native array storage contracts; foreign ABI and other opt-in numeric boundaries remain separate. |
 | 2 | Predictable buffers | [`vec.with_capacity`](../../nilstd/src/collections/vector.ny) now reserves real backing storage without changing logical length; `capacity()` reports reserved slots. Resizing, fresh clone/subrange and append-range operations, and checked slices/views remain gaps. A type-checker recognition of `resize` is not an implemented library contract. |
 | 3 | Collections that scale | [`HashMap`](../../nilstd/src/collections/hash_map.ny) now uses buckets and collision chains; [`queue`](../../nilstd/src/collections/queue.ny) uses a ring buffer with O(1) dequeue and amortized O(1) enqueue. Focused fixtures cover growth, collisions, wraparound and aliases. [`map`](../../nilstd/src/collections/map.ny) still uses linear storage; a deque API and measured performance benchmarks remain work. HashMap removal remains O(n), and collisions can make lookup linear. |
 | 4 | Strict serialization | The former NyData parser could return partially parsed objects/lists at EOF, skip child errors, and return a first value without validating the remaining input. Add checked parsing, source locations, input/depth limits, and malformed-input fixtures. The old experimental JSON module also lacked Unicode correctness. Superseded by F67 and the shared NILData engine. |
@@ -1773,8 +1781,7 @@ is no synthetic default tuple. Out-of-range writes remain no-ops, and existing
 scalar-array read defaults are unchanged. F07 subsequently adds direct declared
 record and choice elements plus nested arrays under explicit identity,
 initialization and lifetime contracts. Class/reference and recursive-schema
-contracts are also recorded in F07; `f32` arrays remain excluded. Tuple support
-alone does not establish a general aggregate-array ABI.
+and binary32 contracts are also recorded in F07. Tuple support alone does not establish a general aggregate-array ABI.
 
 **Coverage:** Paired Ny/Matrix tuple-array fixtures and
 `tests/tools/tuple_array_contract.py` specify source and binary execution,

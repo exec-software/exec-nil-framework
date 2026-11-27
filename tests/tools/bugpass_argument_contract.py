@@ -182,7 +182,13 @@ say items at 0''', matrix_declarations, 'matrix')
 
         mapped = source('valid-generic-method',
             'let item: Option<i32> = Option.Some(7)\nprintln(item.map(add_one).unwrap())\n'
-            'println(item.map<text>(label).unwrap())',
+            'println(item.map<text>(label).unwrap())\n'
+            'println(item.zip(Option.Some("seven")).unwrap().second)\n'
+            'println(item.zip<text>(Option.Some("explicit")).unwrap().second)\n'
+            'println(item.zip<text>(Option.None).is_none())\n'
+            'println(item.zip<text>(Option.None()).is_none())\n'
+            'let absent: Option<text> = Option.None\n'
+            'println(item.zip<text>(absent).is_none())',
             'import nil.std.core.*\n' + declarations)
         analysis = run([compiler, '--no-stdlib', '--sdk-path', args.stdlib.resolve(), '--analyze', mapped])
         assert analysis.returncode == 0 and json.loads(analysis.stdout)['success'], analysis
@@ -191,8 +197,19 @@ say items at 0''', matrix_declarations, 'matrix')
             output = root / ('mapped-' + suffix + '.nil')
             result = run([compiler, '--no-stdlib', '--sdk-path', args.stdlib.resolve(), '--no-bundle', *flags, '-o', output, mapped])
             assert result.returncode == 0, result
+            if suffix == 'text':
+                signatures = [line for line in output.read_text().splitlines()
+                              if line.startswith('function Option__map__')]
+                assert len(signatures) == 2, signatures
+                assert any('fn(i32) -> i32' in line and 'Option<i32>' in line for line in signatures), signatures
+                assert any('fn(i32) -> text' in line and 'Option<text>' in line for line in signatures), signatures
+                assert all('-> U' not in line and '<U>' not in line for line in signatures), signatures
+                main = output.read_text().split('function main ->', 1)[1].split('end function', 1)[0]
+                unit_values = [line for line in main.splitlines() if 'NEW_VARIANT  Option::None 0' in line]
+                assert len(unit_values) == 3 and all('Option<text> void' in line for line in unit_values), unit_values
+                checks += 1
             result = run([interpreter, output])
-            assert result.returncode == 0 and result.stdout == '8\nhello\n', result
+            assert result.returncode == 0 and result.stdout == '8\nhello\nseven\nexplicit\n1\n1\n1\n', result
             checks += 1
 
         if not args.positive_only:
@@ -202,6 +219,18 @@ say items at 0''', matrix_declarations, 'matrix')
             rejected('explicit-method-extra-types',
                 'let item: Option<i32> = Option.Some(7)\nprintln(item.map<i32, text>(add_one).unwrap())',
                 'import nil.std.core.*\n' + declarations, diagnostic='type argument')
+            rejected('explicit-method-constructor-wrong-payload',
+                'let item: Option<i32> = Option.Some(7)\nprintln(item.zip<text>(Option.Some(42)).unwrap().second)',
+                'import nil.std.core.*\n' + declarations)
+            rejected('explicit-method-existing-enum-invariance',
+                'let item: Option<i32> = Option.Some(7)\nlet absent: Option<i32> = Option.None\n'
+                'println(item.zip<text>(absent).is_none())',
+                'import nil.std.core.*\n' + declarations)
+            for name, value in [('payload-extra', 'Option.Some("a", "b")'),
+                                ('unit-extra', 'Option.None(1)')]:
+                rejected('explicit-method-' + name,
+                    'let item: Option<i32> = Option.Some(7)\nprintln(item.zip<text>(' + value + ').is_none())',
+                    'import nil.std.core.*\n' + declarations, diagnostic='payload arguments')
             rejected('nongeneric-method-types',
                 'let box: Box<text> = Box<text> { item: "old" }\nprintln(box.replace<i32>(42))',
                 declarations, diagnostic='not generic')

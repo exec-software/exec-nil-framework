@@ -300,6 +300,17 @@ test("Matrix scopes imports, named calls, and precise type overrides", async () 
   assertScope(grammar, "value result is READ-SENSOR with SENSOR-ID being 2", "READ-SENSOR", "entity.name.function.call");
   assertScope(grammar, "value result is READ-SENSOR with SENSOR-ID being 2", "SENSOR-ID", "variable.parameter.argument");
   assertScope(grammar, "value data as owned array of override byte is []", "byte", "storage.type.builtin");
+  for (const spelling of ["override single", "OvErRiDe\tSiNgLe"]) {
+    const line = `value sample as array of ${spelling} is []`;
+    assertScope(grammar, line, spelling.split(/\s+/)[0]!, "storage.modifier");
+    assertScope(grammar, line, spelling.split(/\s+/)[1]!, "storage.type.builtin");
+  }
+  assertScope(grammar, "value invalid as single is 1.0", "single", "invalid.illegal.missing-override");
+  for (const name of ["single-value", "override-single", "`single`"]) {
+    const line = "say " + name;
+    const scopes = scopesAt(grammar.tokenizeLine(line, INITIAL), line, name === "`single`" ? "single" : name);
+    assert.equal(scopes.some(scope => scope.startsWith("invalid.illegal.")), false, line);
+  }
   assertScope(grammar, "value count as override long is 0xFFFFFFFF", "override", "storage.modifier");
   assertScope(grammar, "value count as override long is 0xFFFFFFFF", "0xFFFFFFFF", "constant.numeric.hex");
   assertScope(grammar, "value invalid as override short is 1", "short", "invalid.illegal.unsupported-type");

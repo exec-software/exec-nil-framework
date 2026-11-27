@@ -250,6 +250,7 @@ private:
                              ast_expr *value);
   bool class_method_is_virtual(const symbol &receiver, const std::string &name);
   std::vector<ast_expr *> checked_class_conversions_;
+  std::vector<ast_expr *> checked_scalar_conversions_;
   std::set<std::string> checking_dynamic_types_;
   bool checking_tuple_binding_ = false;
   std::vector<ast_expr *> checked_any_boxes_;

@@ -287,11 +287,14 @@ implementation.** It first specified a runtime arena: parallel scalar arrays
 holding a node tree, because §3.5 argued for a tree over text. Building it
 turned up two things.
 
-The first is that the obvious implementation does not execute. A `node` record
-holding `array of node` children fails: native arrays of records, choices and
-nested arrays are unsupported (MATRIX-GUIDE §17) and an array of class handles
-compiles and then fails at run time (§16). An arena of parallel scalar and text
-arrays does work on both routes, so the plan was sound.
+The first was a limitation at the time of that decision: a `node` record holding
+`array of node` children did not execute natively, and class-handle arrays also
+failed at run time. An arena of parallel scalar and text arrays worked on both
+routes. Those storage restrictions are now historical: native arrays support
+records, choices, classes and nested arrays, including initialized finite
+recursive schemas under the [checked-array contract](../standard-library/index.md#checked-arrays).
+This newer storage support does not change markup's compiled-serialization
+representation or add a runtime document tree.
 
 The second is that it buys almost nothing here. Of §3.5's four reasons for a
 tree, three do not need one at run time:

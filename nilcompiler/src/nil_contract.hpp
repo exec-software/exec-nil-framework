@@ -49,7 +49,7 @@ inline bool binary_nil_annotates_types(std::uint32_t flags) {
 // this contract does not change the binary section layout or version.
 inline bool is_typed_global_storage_type(std::string_view type) {
   return type == "text" || type == "bool" || type == "u8" ||
-         type == "i32" || type == "i64" || type == "f64" || type == "anything";
+         type == "i32" || type == "i64" || type == "f32" || type == "f64" || type == "anything";
 }
 
 // The interpreter also accepts exact declared nominal aggregate identities.
