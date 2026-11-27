@@ -443,3 +443,11 @@ constructor arity is checked before lowering. Regressions distinguish these
 fresh values from incompatible existing enum handles.
 The two originally failing tests pass locally after these fixes; full committed
 source and installed-SDK qualification follow separately.
+
+The first full binary32 run at `87600ac` completed all 638 registered tests:
+631 passed, four failed exact diagnostic comparisons and three skipped for the
+existing PostgreSQL/display dependencies. Exact array wrapper validation now
+reports an invalid declaration at its own source line as well as the call site.
+All four negative fixtures still reject with no artifact; their two shared
+expected-output files now include the declaration diagnostic. The failed full
+report is retained, and the corrected revision requires a new complete run.
