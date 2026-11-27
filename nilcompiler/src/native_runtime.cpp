@@ -13,6 +13,7 @@
 #include "pattern_engine.hpp"
 #include "nildata.hpp"
 #include "scalar_text.hpp"
+#include "binary32.hpp"
 
 #include "entropy_support.hpp"
 #include "secure_file_io.hpp"
@@ -179,6 +180,7 @@ void account_managed_bytes(std::size_t bytes) noexcept {
 std::uint64_t stride_for_kind(std::uint32_t kind) noexcept {
   switch (kind) {
   case NYRT_ARRAY_I32:
+  case NYRT_ARRAY_F32:
     return sizeof(std::int32_t);
   case NYRT_ARRAY_I64:
   case NYRT_ARRAY_F64:
@@ -575,6 +577,8 @@ const nyrt_any_box &checked_dynamic_box(const void *box) noexcept {
 }
 
 void validate_array_value(std::uint32_t kind, std::uint64_t value) noexcept {
+  if (kind == NYRT_ARRAY_F32 && value > std::numeric_limits<std::uint32_t>::max())
+    nyrt_fail("NIL native runtime error: f32 array word has nonzero high bits\n");
   if (kind == NYRT_ARRAY_BOOL && value > 1)
     nyrt_fail("NIL native runtime error: boolean requires 0 or 1\n");
   if (kind == NYRT_ARRAY_ANYTHING)
@@ -610,6 +614,7 @@ void validate_nested_array_value(std::string_view type, std::uint64_t value) noe
   case NYRT_ARRAY_U8: matches = expected == "u8"; break;
   case NYRT_ARRAY_BOOL: matches = expected == "bool"; break;
   case NYRT_ARRAY_F64: matches = expected == "f64"; break;
+  case NYRT_ARRAY_F32: matches = expected == "f32"; break;
   case NYRT_ARRAY_TEXT: matches = expected == "text"; break;
   case NYRT_ARRAY_ANYTHING: matches = expected == "anything"; break;
   case NYRT_ARRAY_TUPLE:
@@ -679,6 +684,8 @@ std::uint64_t load_value(const nyrt_array &array,
   case NYRT_ARRAY_I64:
     return static_cast<std::uint64_t>(
         static_cast<const std::int64_t *>(array.data)[index]);
+  case NYRT_ARRAY_F32:
+    return static_cast<const std::uint32_t *>(array.data)[index];
   case NYRT_ARRAY_F64:
   case NYRT_ARRAY_TEXT:
   case NYRT_ARRAY_TUPLE:
@@ -718,6 +725,10 @@ void store_value(nyrt_array &array, std::uint64_t index,
   case NYRT_ARRAY_BOOL:
     validate_array_value(array.kind, value);
     static_cast<std::uint8_t *>(array.data)[index] = static_cast<std::uint8_t>(value);
+    break;
+  case NYRT_ARRAY_F32:
+    validate_array_value(array.kind, value);
+    static_cast<std::uint32_t *>(array.data)[index] = static_cast<std::uint32_t>(value);
     break;
   case NYRT_ARRAY_F64:
   case NYRT_ARRAY_TEXT:
@@ -1154,6 +1165,24 @@ const char *nyrt_text_f64(double value) noexcept {
   nyrt_fail("NIL native runtime error: floating-point formatting failed\n");
 }
 
+double nyrt_f32_v1_from_f64(double value) noexcept {
+  return ny::binary32_round(value);
+}
+
+double nyrt_f32_v1_from_i64(std::int64_t value) noexcept {
+  return ny::binary32_round_i64(value);
+}
+
+std::uint64_t nyrt_f32_v1_pack(double value) noexcept {
+  return ny::binary32_from_f64(value);
+}
+
+double nyrt_f32_v1_unpack(std::uint64_t word) noexcept {
+  if (word > std::numeric_limits<std::uint32_t>::max())
+    nyrt_fail("NIL native runtime error: f32 array word has nonzero high bits\n");
+  return ny::binary32_to_f64(static_cast<std::uint32_t>(word));
+}
+
 const char *nyrt_text_bool(std::int64_t value) noexcept {
   return nyrt_bool_i64(value) == 0 ? "false" : "true";
 }
@@ -1193,13 +1222,16 @@ void *nyrt_any_v1_box(const char *type, std::uint64_t length,
   try {
     const auto descriptor = checked_dynamic_descriptor(type, length);
     if (descriptor == "bool") (void)nyrt_bool_i64(static_cast<std::int64_t>(payload));
+    if (descriptor == "f32" &&
+        !ny::binary32_is_canonical(ny::binary32_detail::carrier_from_bits(payload)))
+      nyrt_fail("NIL native runtime error: anything f32 payload is not a canonical widened binary32 value\n");
     if ((descriptor == "u8" && payload > 255) ||
         (descriptor == "i32" &&
          (static_cast<std::int64_t>(payload) < std::numeric_limits<std::int32_t>::min() ||
           static_cast<std::int64_t>(payload) > std::numeric_limits<std::int32_t>::max())))
       nyrt_fail("NIL native runtime error: anything scalar payload does not match its declared type\n");
     const bool scalar = descriptor == "bool" || descriptor == "i32" ||
-        descriptor == "i64" || descriptor == "u8" || descriptor == "f64";
+        descriptor == "i64" || descriptor == "u8" || descriptor == "f64" || descriptor == "f32";
     if (!scalar && descriptor.rfind("ptr<", 0) != 0 && payload == 0)
       nyrt_fail("NIL native runtime error: anything requires an initialized value; absent handles cannot be boxed\n");
     if (descriptor.rfind("fn(", 0) == 0)

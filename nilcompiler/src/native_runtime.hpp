@@ -26,6 +26,9 @@ enum nyrt_array_kind : std::uint32_t {
   NYRT_ARRAY_NESTED = 11,
   NYRT_ARRAY_CLASS = 12,
   NYRT_ARRAY_REFERENCE = 13,
+  // IEEE binary32 bits in four-byte storage. Array words carry zero-extended
+  // binary32 bits; ordinary scalar function/box words retain widened f64 bits.
+  NYRT_ARRAY_F32 = 14,
 };
 
 // Versioned UI ABI. Success is 1, failure 0. Text outputs are copied into
@@ -114,6 +117,14 @@ const char *nyrt_text_substr(const char *text, std::int64_t start,
 // Compiler formatting helpers return context-owned, locale-independent text.
 const char *nyrt_text_i64(std::int64_t value) noexcept;
 const char *nyrt_text_f64(double value) noexcept;
+// Internal binary32 adapters, independent of the host floating rounding mode.
+// Computation carriers are exact widened binary32 values. Array packing rounds
+// to nearest/ties-even; unpacking rejects words with nonzero high 32 bits.
+// NaNs become one quiet NaN. These functions do not define a foreign float ABI.
+double nyrt_f32_v1_from_f64(double value) noexcept;
+double nyrt_f32_v1_from_i64(std::int64_t value) noexcept;
+std::uint64_t nyrt_f32_v1_pack(double value) noexcept;
+double nyrt_f32_v1_unpack(std::uint64_t word) noexcept;
 const char *nyrt_text_bool(std::int64_t value) noexcept;
 std::int64_t nyrt_bool_i64(std::int64_t value) noexcept;
 std::int64_t nyrt_bool_f64(double value) noexcept;

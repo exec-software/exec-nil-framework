@@ -1,6 +1,7 @@
 #include "native_runtime.hpp"
 #include "integer_conversion.hpp"
 #include "array_intrinsic.hpp"
+#include "binary32.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -180,6 +181,108 @@ void check_scalar_formatting(bool &ok) {
                     "-inf", "negative infinity formatting failed");
   ok &= expect_text(nyrt_text_f64(std::numeric_limits<double>::quiet_NaN()),
                     "nan", "NaN formatting failed");
+}
+
+void check_binary32_runtime_contract(bool &ok) {
+  ok &= expect(nyrt_f32_v1_from_f64(16777217.0) == 16777216.0 &&
+                   nyrt_f32_v1_from_f64(16777219.0) == 16777220.0 &&
+                   nyrt_f32_v1_from_i64(4611686293305294849LL) == 4611686568183201792.0,
+               "f32 runtime conversion lost nearest-even or direct integer rounding");
+  ok &= expect(nyrt_f32_v1_pack(1.25) == 0x3fa00000U &&
+                   nyrt_f32_v1_unpack(0x3fa00000U) == 1.25 &&
+                   nyrt_f32_v1_pack(-0.0) == 0x80000000U &&
+                   ny::binary32_detail::carrier_bits(nyrt_f32_v1_unpack(0x80000000U)) ==
+                       0x8000000000000000ULL,
+               "f32 runtime confused array words with widened scalar carrier words");
+  for (const auto word : {0U, 0x80000000U, 1U, 0x00800000U, 0x7f7fffffU,
+                          0x7f800000U, 0xff800000U, 0x7fc00000U}) {
+    const auto widened = nyrt_f32_v1_unpack(word);
+    const auto payload = ny::binary32_detail::carrier_bits(widened);
+    auto *boxed = nyrt_any_v1_box("f32", 3, payload);
+    ok &= expect(boxed && nyrt_any_v1_is_type(boxed, "f32", 3) == 1 &&
+                     nyrt_any_v1_is_type(boxed, "f64", 3) == 0 &&
+                     nyrt_any_v1_unbox(boxed, "f32", 3) == payload &&
+                     nyrt_f32_v1_pack(widened) == word,
+                 "f32 dynamic boxing changed exact type, signed zero or canonical scalar bits");
+  }
+  ok &= expect(nyrt_f32_v1_pack(0x1p-150) == 0 &&
+                   nyrt_f32_v1_pack(-0x1p-150) == 0x80000000U &&
+                   nyrt_f32_v1_pack(0x1.ffffffp127) == 0x7f800000U &&
+                   nyrt_f32_v1_pack(nyrt_f32_v1_unpack(0xff800001U)) == 0x7fc00000U,
+               "f32 runtime special-value policy disagrees with scalar conversion");
+
+  auto *array = nyrt_array_new_with_value(NYRT_ARRAY_F32, 2, nyrt_f32_v1_pack(1.25));
+  if (!expect(array != nullptr, "could not allocate f32 array")) { ok = false; return; }
+  const auto before = nyrt_managed_bytes();
+  ok &= expect(nyrt_array_reserve(array, NYRT_ARRAY_F32, 128) == 1 &&
+                   nyrt_managed_bytes() - before == (128 - 2) * 4 &&
+                   nyrt_array_length(array, NYRT_ARRAY_F32) == 2,
+               "f32 array reserve did not use four-byte payload storage");
+  for (int index = 0; index < 160; ++index)
+    ok &= expect(nyrt_array_push(array, NYRT_ARRAY_F32, nyrt_f32_v1_pack(index + 0.25)) == 1,
+                 "f32 array growth failed");
+  ok &= expect(nyrt_array_set(array, NYRT_ARRAY_F32, 0, 0x80000000U) == 1 &&
+                   nyrt_array_get(array, NYRT_ARRAY_F32, 0) == 0x80000000U &&
+                   nyrt_f32_v1_unpack(nyrt_array_get(array, NYRT_ARRAY_F32, 161)) == 159.25 &&
+                   nyrt_array_length(array, NYRT_ARRAY_F64) == -1 &&
+                   nyrt_array_set(array, NYRT_ARRAY_F64, 0, 0) == 0 &&
+                   nyrt_array_set(array, NYRT_ARRAY_F32, -1, 0) == 0 &&
+                   nyrt_array_set(array, NYRT_ARRAY_F32, 162, 0) == 0 &&
+                   nyrt_array_get(array, NYRT_ARRAY_F32, -1) == 0 &&
+                   nyrt_array_get(array, NYRT_ARRAY_F32, 162) == 0 &&
+                   nyrt_array_length(array, NYRT_ARRAY_F32) == 162 &&
+                   nyrt_buffer_new(NYRT_ARRAY_F32, 1) == nullptr,
+               "f32 array confused width, signed zero, bounds or unsupported raw-pointer storage");
+  auto *zeros = nyrt_array_new(NYRT_ARRAY_F32, 2);
+  ok &= expect(zeros && nyrt_array_get(zeros, NYRT_ARRAY_F32, 0) == 0 &&
+                   nyrt_array_get(zeros, NYRT_ARRAY_F32, 1) == 0,
+               "f32 default array storage was not positive zero");
+  const auto bits = [](const void *value) {
+    return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(value));
+  };
+  const std::string type = "array<f32>";
+  auto *rows = nyrt_typed_array_v1_new(NYRT_ARRAY_NESTED, type.data(), type.size(), 2, bits(array));
+  if (!expect(rows != nullptr, "could not allocate nested f32 rows")) { ok = false; return; }
+  std::uint64_t root = bits(rows);
+  const void *slots[] = {&root};
+  nyrt_roots_enter(slots, 1); nyrt_collect();
+  ok &= expect(nyrt_managed_objects() == 2 &&
+                   nyrt_array_get(rows, NYRT_ARRAY_NESTED, 1) == bits(array) &&
+                   nyrt_array_get(array, NYRT_ARRAY_F32, 0) == 0x80000000U,
+               "nested f32 array tracing changed child identity or scalar bits");
+  root = 0; nyrt_collect();
+  ok &= expect(nyrt_managed_objects() == 0,
+               "unrooted f32 array descriptors survived collection");
+  nyrt_roots_leave(slots);
+}
+
+int binary32_failure_case(const std::string &mode) {
+  nyrt_context_begin(0, nullptr);
+  constexpr auto invalid = std::uint64_t{1} << 32;
+  if (mode == "unpack-high-bits") nyrt_f32_v1_unpack(invalid);
+  else if (mode == "array-new-high-bits") nyrt_array_new_with_value(NYRT_ARRAY_F32, 1, invalid);
+  else if (mode == "array-set-high-bits") nyrt_array_set(nyrt_array_new(NYRT_ARRAY_F32, 0), NYRT_ARRAY_F32, -1, invalid);
+  else if (mode == "array-push-high-bits") nyrt_array_push(nyrt_array_new(NYRT_ARRAY_F32, 0), NYRT_ARRAY_F32, invalid);
+  else if (mode == "box-unrounded") nyrt_any_v1_box("f32", 3, ny::binary32_detail::carrier_bits(16777217.0));
+  else if (mode == "box-array-word") nyrt_any_v1_box("f32", 3, 0x3f800000U);
+  else if (mode == "box-noncanonical-nan") nyrt_any_v1_box("f32", 3, 0x7ff8000000000001ULL);
+  else if (mode == "box-width-mismatch") {
+    auto *box = nyrt_any_v1_box("f32", 3, ny::binary32_detail::carrier_bits(1.0));
+    nyrt_any_v1_unbox(box, "f64", 3);
+  } else if (mode == "nested-wrong-width") {
+    auto *child = nyrt_array_new(NYRT_ARRAY_F64, 0);
+    const std::string type = "array<f32>";
+    nyrt_typed_array_v1_new(NYRT_ARRAY_NESTED, type.data(), type.size(), 1,
+        static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(child)));
+  } else if (mode == "parallel-input") {
+    nyrt_parallel_map_v1(nyrt_array_new(NYRT_ARRAY_F32, 0), NYRT_ARRAY_F32,
+        NYRT_ARRAY_I64, +[](std::uint64_t value) { return value; });
+  } else if (mode == "parallel-output") {
+    nyrt_parallel_map_v1(nyrt_array_new(NYRT_ARRAY_I64, 0), NYRT_ARRAY_I64,
+        NYRT_ARRAY_F32, +[](std::uint64_t value) { return value; });
+  } else return 2;
+  std::cerr << "f32 failure case unexpectedly succeeded\n";
+  return 0;
 }
 
 void check_array_contract(bool &ok) {
@@ -1368,6 +1471,8 @@ void check_durable_io_contract(bool &ok) {
 } // namespace
 
 int main(int argc, char **argv) {
+  if (argc == 3 && std::string(argv[1]) == "--f32-failure")
+    return binary32_failure_case(argv[2]);
   if (argc == 3 && std::string(argv[1]) == "--record-array-failure")
     return record_array_failure_case(argv[2]);
   if (argc == 3 && std::string(argv[1]) == "--typed-array-failure")
@@ -1422,6 +1527,7 @@ int main(int argc, char **argv) {
   check_record_array_contract(ok);
   check_enum_nested_array_contract(ok);
   check_class_reference_array_contract(ok);
+  check_binary32_runtime_contract(ok);
 
   auto *owned = static_cast<unsigned char *>(nyrt_alloc(8));
   ok &= expect(owned != nullptr, "could not allocate context-owned storage");
