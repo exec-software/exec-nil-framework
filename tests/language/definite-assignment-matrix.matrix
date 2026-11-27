@@ -1,0 +1,17 @@
+book definite_assignment_matrix
+
+choose receives flag as boolean returns text begin paragraph
+    variable selected as text is "initial"
+    when flag then
+        set selected to "yes"
+    otherwise
+        set selected to "no"
+    end when
+    give selected
+end paragraph
+
+main returns number begin paragraph
+    say choose with true
+    say choose with false
+    give 0
+end paragraph

@@ -338,9 +338,36 @@ copies still panic with the existing collection-specific messages before any
 write. This fixes the extreme-offset overflow identified by the independent
 3D validation project. Its copied SDK remains a historical test subject.
 
-Further array work remains: real vector reservation/resizing, strided buffer
-views with ownership rules, and native record/enum/nested-array element layouts.
-None is implied by these helpers.
+### Collection storage and lookup
+
+`vec<T>.with_capacity(n)` now reserves backing-array storage while keeping the
+logical length at zero. `capacity()` reports real reserved slots. Clearing a
+vector retains that storage for reuse. Array reservation is available directly
+through [`array.reserve` and `array.capacity`](../language-reference/types.md#arrays-and-pointers).
+
+`queue<T>` uses a shared ring buffer: dequeue is O(1), enqueue is amortized O(1),
+and growth preserves FIFO order and aliases. The first enqueue into a queue
+with reserved capacity initializes its slots with that item, taking O(capacity)
+work without requiring a default value for `T`. `remove` and `copy_to` visit
+active elements in FIFO order. Removed or cleared values can remain referenced
+in unused slots until overwritten or the storage is reclaimed; this is not
+prompt element destruction.
+
+`HashMap<K, V>` uses cached hashes, buckets and collision chains for lookup and
+insertion. Growth rebuilds the bucket index; equal keys replace their values.
+The public dense key/value order remains insertion order, so removal shifts
+entries and rebuilds the index in O(n). Collisions can still make lookup linear;
+this is not an adversarial-input hash table or a measured throughput guarantee.
+Use map methods to mutate it: direct writes to its public storage fields bypass
+the bucket index and do not preserve the map's invariants. Keys must retain
+stable hash and equality behavior while stored.
+
+The `array-capacity`, `queue-ring` and `hashmap-buckets-scalar` fixtures exercise
+capacity, aliasing, growth, wraparound, collisions, minimum-i64 hashes, removal
+and reuse across all six execution routes. The Matrix queue has matching route
+coverage. Record-key maps and queues without a default element have interpreter
+and bundle coverage only. Native record/enum/nested-array layouts, resizing and
+strided views with ownership rules remain separate work.
 
 ## Stable index ordering
 

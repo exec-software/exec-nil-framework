@@ -627,7 +627,9 @@ escapes at their source location instead of silently changing literal content.
 
 ### F21 — Uninitialized Ny locals fail after source checking
 
-**Status:** Open diagnostic-timing gap; observed for Ny text locals.
+**Status:** Source diagnostic implemented on the November 26 hardening branch;
+broader validation and SDK/platform qualification are recorded in the
+[hardening notebook](../../notebook/2026-11-26-language-library-hardening.md).
 
 **Evidence:** `let blank: text` followed by `println(blank)` compiles to textual
 NIL with an uninitialized `LOAD_LOCAL`. Execution reports `Local not found`,
@@ -639,10 +641,11 @@ Matrix requires an initializer and rejects the corresponding declaration with
 `expected 'is' before the value, found 'say'`; the Ny probe does not establish
 an equivalent Matrix runtime gap.
 
-**Next step / acceptance:** Diagnose a local read before definite assignment
-during source checking, with the declaration and failing read identified.
-Preserve valid declaration-then-assignment code and test branches, loops,
-and both frontends before making a broader definite-assignment guarantee.
+**Implementation:** A shared lexical must-analysis diagnoses the read during
+source checking and identifies its declaration line. Focused source/analyzer
+rejections and Ny/Matrix execution controls cover branches, loops, early exits,
+short-circuiting and fault/recover paths. Direct NIL still has independent
+native admission checks. This does not infer effects of calls or alias writes.
 
 ## STL completeness audit — 2026-10-15
 
@@ -2651,7 +2654,9 @@ rejected by the ordinary-I/O ABI checks.
 
 ### F93 — A later local binding can rename an imported choice constructor
 
-**Status:** Open Matrix name-resolution defect; application workaround only.
+**Status:** Fixed on the November 26 hardening branch, with lexical parser,
+completion and six-route execution regressions. Platform SDK qualification
+remains separate from this source fix.
 
 **Observed:** While building Enigma's durable client, a local binding named
 `result` in one paragraph changed `Result.Error` construction in an earlier,
@@ -2682,9 +2687,15 @@ local spelling `result`, including in another paragraph. This is broader than
 a same-scope shadowing rule: merely declaring the later local changes the
 earlier constructor's emitted identity.
 
-**Workaround and boundary:** Renaming the local to `gathered` restores the
+**Historical workaround and boundary:** Renaming the local to `gathered` restores the
 Result constructor and the isolated program executes correctly. Enigma uses
 that source workaround. Avoid local or parameter names differing only in case
 from imported type names within a page until resolution becomes lexical or
 reports the collision before code generation. No compiler behavior, loader
-provenance check, or ABI rule was relaxed, and no failing CI fixture was added.
+provenance check, or ABI rule was relaxed in that application workaround.
+
+The compiler now pre-scans only module declarations. Locals and parameters use
+lexical scopes with activation after the initializer, and completion resolves
+names at its cursor position. The retained baseline reproduces the old unknown
+`Error` call; `matrix.routes.lexical-name-scopes` now executes the constructor,
+nested shadowing and restored outer bindings across all six routes.

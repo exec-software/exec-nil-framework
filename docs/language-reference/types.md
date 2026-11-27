@@ -135,6 +135,15 @@ regardless of element order. For example, `[1, 2147483648]` and
 elements. Array types remain invariant: an `array<i64>` cannot be passed as
 `array<i32>` through an implicit element conversion.
 
+`values.capacity()` returns the number of reserved element slots as `i32`.
+`values.reserve(minimum)` accepts an `i32`, `i64` or `u8` minimum from zero
+through 2,147,483,647. Reservation does not construct elements, change `len()`
+or replace the shared array handle; aliases observe the same capacity. The
+runtime may reserve more than requested. A smaller request does not shrink
+storage. Invalid ranges and allocation failures fail without changing existing
+contents. These methods are available on interpreted arrays and on the native
+array element layouts listed below.
+
 Typed pointers use `ptr<T>`. Allocation and deallocation are explicit:
 
 ```ny

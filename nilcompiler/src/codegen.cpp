@@ -2795,10 +2795,12 @@ public:
         return true;
       };
 
-      for (size_t i = 0; i < match_s.arms.size(); ++i) {
+      const std::size_t arm_count = match_s.checked_exhaustive
+          ? match_s.checked_exhaustive_arm + 1 : match_s.arms.size();
+      for (size_t i = 0; i < arm_count; ++i) {
         const auto &arm = match_s.arms[i];
         lexical_scope scope(*this);
-        std::string label_next = (i + 1 < match_s.arms.size())
+        std::string label_next = (i + 1 < arm_count)
                                      ? new_label("L_match_case")
                                      : label_end;
 
@@ -2826,11 +2828,15 @@ public:
 
         bool is_wildcard =
             (arm.pattern.kind == ast_pattern_kind::wildcard_pattern);
+        // All earlier arms have failed and semantic checking proved that this
+        // unguarded arm covers every remaining value of the exact target type.
+        const bool final_proven_arm = match_s.checked_exhaustive && i + 1 == arm_count;
 
         // If the pattern is not a simple wildcard, check the matcher
         if (!is_wildcard) {
           switch (arm.pattern.kind) {
           case ast_pattern_kind::literal_pattern: {
+            if (final_proven_arm) break;
             // Load target, push literal, compare for equality
             push_instr("LOAD_LOCAL", {tmp_target}, match_s.line);
             if (arm.pattern.literal_kind == ast_node_kind::number_literal_node) {
@@ -2887,9 +2893,11 @@ public:
             std::string variant_fqn =
                 canonicalize_variant_name(arm.pattern.name);
 
-            push_instr("LOAD_LOCAL", {tmp_target}, match_s.line);
-            emit_is_variant(variant_fqn, match_enum_type, match_s.line);
-            push_instr("JMP_IF_NOT", {label_next}, match_s.line);
+            if (!final_proven_arm) {
+              push_instr("LOAD_LOCAL", {tmp_target}, match_s.line);
+              emit_is_variant(variant_fqn, match_enum_type, match_s.line);
+              push_instr("JMP_IF_NOT", {label_next}, match_s.line);
+            }
 
             // Bind subpatterns
             if (!arm.pattern.subpatterns.empty()) {
@@ -2928,7 +2936,7 @@ public:
         push_instr("JMP", {label_end}, match_s.line);
 
         // Emit label for next case (if not last)
-        if (i + 1 < match_s.arms.size()) {
+        if (i + 1 < arm_count) {
           push_instr("LABEL", {label_next}, match_s.line);
         }
       }
@@ -3121,7 +3129,7 @@ public:
       static const std::set<std::string> void_builtins = {
           "println", "panic", "ny__lang__core__panic", "free", "write_i32",
           "core__print", "console__write", "console__writeln",
-          "console__sys_write", "array__push", "array__set"};
+          "console__sys_write", "array__push", "array__set", "array__reserve"};
       if (void_builtins.count(callee))
         return false;
       static const std::set<std::string> value_builtins = {
@@ -3131,7 +3139,7 @@ public:
           "String__to_lower", "String__trim", "String__contains",
           "String__starts_with", "String__ends_with", "String__find",
           "String__substring", "String__substr", "String__replace",
-          "array__len", "array__length", "array__get"};
+          "array__len", "array__length", "array__get", "array__capacity"};
       if (value_builtins.count(callee))
         return true;
       for (const auto &function : mod_.functions) {

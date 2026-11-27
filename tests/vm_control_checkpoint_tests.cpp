@@ -256,6 +256,37 @@ void nested_frame_checkpoint() {
           "completed execution checkpoint lost its terminal state");
 }
 
+void reserved_array_checkpoint(bool binary) {
+  ny::nil_module module;
+  module.module_name = "checkpoint_capacity";
+  module.functions.push_back(function("main", {
+      {"NEW_ARRAY_LITERAL", {"0", "i32"}}, {"STORE_LOCAL", {"array"}},
+      {"LOAD_LOCAL", {"array"}}, {"PUSH_CONST", {"4096"}},
+      {"CALL", {"array__reserve", "2"}},
+      {"LOAD_LOCAL", {"array"}}, {"CALL", {"array__capacity", "1"}},
+      {"STORE_GLOBAL", {"before"}},
+      {"LOAD_LOCAL", {"array"}}, {"PUSH_CONST", {"8192"}},
+      {"CALL", {"array__reserve", "2"}},
+      {"LOAD_LOCAL", {"array"}}, {"CALL", {"array__capacity", "1"}},
+      {"STORE_GLOBAL", {"after"}}, {"PUSH_CONST", {"0"}}, {"RET", {}}
+  }));
+  ny::VM vm;
+  load(vm, module, binary);
+  vm.resetExecution("main");
+  until(vm, [](const auto &instruction) {
+    return instruction.op == ny::Opcode::CALL && instruction.args[0] == "array__capacity";
+  });
+  rejected([&] { vm.createCheckpoint(4096); }, "byte limit");
+  const auto snapshot = vm.createCheckpoint();
+  require(snapshot.retainedBytes() > 4096, "checkpoint did not account reserved array storage");
+  for (unsigned repeat = 0; repeat < 3; ++repeat) {
+    vm.restoreCheckpoint(snapshot);
+    vm.execute(false);
+    require(number(vm.getGlobal("before")) == 4096 && number(vm.getGlobal("after")) == 8192,
+            "checkpoint lost or shared a later array reservation");
+  }
+}
+
 void heap_and_owned_checkpoint(bool binary) {
   ny::nil_module module;
   module.module_name = "checkpoint_owned";
@@ -546,6 +577,7 @@ int main() try {
   owner_thread_pause();
   nested_frame_checkpoint();
   for (const bool binary : {false, true}) {
+    reserved_array_checkpoint(binary);
     heap_and_owned_checkpoint(binary);
     fault_checkpoint(binary);
   }

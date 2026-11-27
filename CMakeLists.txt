@@ -1465,6 +1465,7 @@ if(BUILD_TESTING)
             add_test(
                 NAME ny.native-array-contract
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_array_contract.py"
+                        --compiler $<TARGET_FILE:nilcompiler>
                         --interpreter $<TARGET_FILE:nilinterpreter>
                         --assembler $<TARGET_FILE:nilassembler>
                         --linker $<TARGET_FILE:nillinker>
@@ -1472,6 +1473,16 @@ if(BUILD_TESTING)
             )
             set_tests_properties(ny.native-array-contract PROPERTIES
                 LABELS "routes;native;rc" SKIP_RETURN_CODE 77 TIMEOUT 180)
+            add_test(
+                NAME ny.native-fault-provenance
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_fault_provenance.py"
+                        --interpreter $<TARGET_FILE:nilinterpreter>
+                        --assembler $<TARGET_FILE:nilassembler>
+                        --linker $<TARGET_FILE:nillinker>
+                        --runtime $<TARGET_FILE:nilruntime>
+            )
+            set_tests_properties(ny.native-fault-provenance PROPERTIES
+                LABELS "routes;native;rc" TIMEOUT 240)
             add_test(
                 NAME ny.tools.native-nil-validation
                 COMMAND "${Python3_EXECUTABLE}"
@@ -1659,6 +1670,58 @@ if(BUILD_TESTING)
                     SKIP_RETURN_CODE 77
             )
         endfunction()
+
+        foreach(nil_collection_fixture IN ITEMS array-capacity queue-ring hashmap-buckets-scalar)
+            add_ny_route_test(
+                ny.routes.${nil_collection_fixture}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_collection_fixture}.ny"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_collection_fixture}.stdout"
+                --expected-exit 0 --routes all
+                --compiler-arg=--sdk-path --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+            )
+        endforeach()
+        # Nominal record elements remain outside the native array profile.
+        add_ny_route_test(
+            ny.routes.hashmap-buckets-records
+            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/hashmap-buckets.ny"
+            --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/hashmap-buckets.stdout"
+            --expected-exit 0 --routes text-interpreter,binary-interpreter,bundle-text,bundle-binary
+            --compiler-arg=--sdk-path --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+        )
+        add_ny_route_test(
+            matrix.routes.queue-ring
+            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/execution/queue-ring.matrix"
+            --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/execution/queue-ring.expected"
+            --expected-exit 0 --routes all
+            --compiler-arg=--sdk-path --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+        )
+        foreach(nil_assignment_frontend IN ITEMS ny matrix)
+            if(nil_assignment_frontend STREQUAL "matrix")
+                set(nil_assignment_fixture definite-assignment-matrix)
+            else()
+                set(nil_assignment_fixture definite-assignment)
+            endif()
+            add_ny_route_test(
+                ny.routes.${nil_assignment_fixture}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_assignment_fixture}.${nil_assignment_frontend}"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_assignment_fixture}.stdout"
+                --expected-exit 0 --routes all
+            )
+        endforeach()
+        add_test(NAME tools.definite-assignment
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/definite_assignment_contract.py"
+                --compiler $<TARGET_FILE:nilcompiler>
+                --interpreter $<TARGET_FILE:nilinterpreter>
+                --assembler $<TARGET_FILE:nilassembler>
+                --llvm "${NIL_ENABLE_LLVM}")
+        set_tests_properties(tools.definite-assignment PROPERTIES LABELS "compiler;tools" TIMEOUT 300)
+        add_ny_route_test(
+            matrix.routes.lexical-name-scopes
+            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/routes/lexical-name-scopes.matrix"
+            --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/matrix/routes/lexical-name-scopes.stdout"
+            --expected-exit 0 --routes all
+            --compiler-arg=--sdk-path --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+        )
 
         # Matrix stage 6: faults, ownership, parallelism, time and assembly on
         # the execution routes. The samples are the normative corpus, so the

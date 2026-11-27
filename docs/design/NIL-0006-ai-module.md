@@ -93,8 +93,11 @@ and validates before swapping state; the saved checkpoint can be reused.
 The first profile is deliberately **deterministic VM execution only**:
 
 - It rejects programs containing interop, console, time, inline-assembly or
-  parallel instructions, and builtin/dynamic calls. This is a whole-program
-  restriction, even when the excluded instruction has not executed yet.
+  parallel instructions, and builtin/dynamic calls except `array__capacity`
+  and `array__reserve`. Those two operate only on copied VM array storage;
+  reserved capacity is preserved and included in the retained-storage budget.
+  This is a whole-program restriction, even when the excluded instruction
+  has not executed yet.
 - Foreign function values, boxed values and cyclic aggregate graphs are rejected.
 - Open file handles and active/requested memory profiling are rejected.
 - Capture is limited to 16 MiB of accounted retained storage, 65,536 value

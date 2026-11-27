@@ -160,6 +160,10 @@ public:
   resolve_type_name_with_imports(const std::string &type_name) const;
 
 private:
+  // Expression matches also support ordinary value comparisons. Preserve the
+  // resolved binding patterns for the later definite-assignment pass.
+  std::map<const ast_expr *, ast_pattern> assignment_patterns_;
+  std::vector<bool *> checked_matches_;
   bool inline_test_ = false;
   std::vector<bool *> checked_tests_;
   void check_test_annotations(const std::vector<ast_annotation> &annotations, int line);

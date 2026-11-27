@@ -198,6 +198,14 @@ void *nyrt_array_new_with_value(std::uint32_t kind, std::int64_t length,
                                 std::uint64_t value) noexcept;
 std::int64_t nyrt_array_length(const void *array,
                                std::uint32_t expected_kind) noexcept;
+// Additive capacity operations preserve the descriptor, length and elements.
+// Reserve accepts an absolute minimum capacity in the language's i32 range;
+// failure leaves the original allocation intact. Capacity returns -1 for an
+// invalid context-owned descriptor or kind.
+std::int64_t nyrt_array_capacity(const void *array,
+                                 std::uint32_t expected_kind) noexcept;
+std::int32_t nyrt_array_reserve(void *array, std::uint32_t expected_kind,
+                                std::int64_t minimum_capacity) noexcept;
 std::uint64_t nyrt_array_get(const void *array, std::uint32_t expected_kind,
                              std::int64_t index) noexcept;
 std::int32_t nyrt_array_set(void *array, std::uint32_t expected_kind,

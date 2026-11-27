@@ -293,7 +293,16 @@ def main() -> int:
         "extra-return-value": (module("PUSH_CONST 1\nPUSH_CONST 2\nRET"), "invalid RET stack"),
         "void-return-value": (module("PUSH_CONST 1\nRET", "main() -> void"), "invalid RET stack"),
         "missing-return": (module("PUSH_CONST 0"), "falls through without RET"),
-        "conditional-fallthrough": (module("PUSH_CONST 1\nJMP_IF_NOT last\nPUSH_CONST 0\nRET\nLABEL last"), "falls through without RET"),
+        "conditional-fallthrough": (
+            module("LOAD_LOCAL flag\nJMP_IF_NOT last\nPUSH_CONST 0\nRET\nLABEL last",
+                   "helper(flag: i32) -> i32") +
+            "function main() -> i32:\nPUSH_CONST 1\nCALL helper 1\nRET\nend function\n",
+            "falls through without RET",
+        ),
+        "constant-reachable-fallthrough": (
+            module("PUSH_CONST 0\nJMP_IF_NOT last\nPUSH_CONST 0\nRET\nLABEL last"),
+            "falls through without RET",
+        ),
         "scalar-helper-return": (
             module("RET", "helper() -> i32")
             + "function main() -> i32:\nCALL helper 0\nRET\nend function\n",
@@ -481,6 +490,9 @@ def main() -> int:
             if process.returncode:
                 raise AssertionError(f"{name}: valid scalar field was rejected: {process.stderr}")
         for name, body in {
+            "constant-unreachable-fallthrough": (
+                "PUSH_CONST 1\nJMP_IF_NOT last\nPUSH_CONST 0\nRET\nLABEL last"
+            ),
             "explicit-float-to-integer-store": (
                 "PUSH_CONST 0\nCAST i32\nSTORE_LOCAL value\n"
                 "PUSH_CONST 7.5\nCAST i32\nSTORE_LOCAL value\nLOAD_LOCAL value\nRET"

@@ -4,6 +4,7 @@
  * See the LICENSE file in the project root for license terms.
  */
 #include "type_checker.hpp"
+#include "definite_assignment.hpp"
 #include "diagnostics.hpp"
 #include "dynamic_type.hpp"
 #include "checked_conversion_intrinsic.hpp"
@@ -584,6 +585,9 @@ bool type_checker::check(ast_program &program) {
   *this = type_checker(collect_semantics_, completion_request_, signature_request_);
   program.accept(*this);
   validate_scalar_text_calls();
+  for (const auto &diagnostic : detail::check_definite_assignment(program, assignment_patterns_))
+    diagnostics_.push_back({diagnostic.line, diagnostic.message,
+                            diagnostic.source_file, diagnostic.hint});
   auto ownership = check_ownership(program);
   for (const auto &diagnostic : ownership.diagnostics)
     add_error(diagnostic.line, diagnostic.message);
@@ -601,6 +605,7 @@ bool type_checker::check(ast_program &program) {
     // --no-typecheck is diagnostic continuation, not permission to fabricate
     // a fault ABI or bypass opaque-token and cleanup proofs.
     for (auto *proof : checked_switches_) *proof = false;
+    for (auto *proof : checked_matches_) *proof = false;
     for (auto *proof : checked_tests_) *proof = false;
     for (auto *attempt : checked_attempts_) attempt->fault_checked = false;
     for (auto *handler : checked_fault_handlers_) handler->fault_checked = false;
@@ -2125,6 +2130,10 @@ type_checker::resolve_member_type(const type_info &struct_type,
       base == "core::vec") {
     if (mem == "len" || mem == "length" || mem == "size")
       return std::string("i32");
+    if (base == "array" && member_name == "capacity")
+      return std::string("i32");
+    if (base == "array" && member_name == "reserve")
+      return std::string("void");
     if (mem == "push" || mem == "add") {
       return std::string("void");
     }
@@ -2161,6 +2170,8 @@ type_checker::resolve_member_type(const type_info &struct_type,
 
   // Strings: length -> i32, substr -> String, predicates -> bool
   if (base == "string" || base == "text" || base == "core::string") {
+    if (mem == "capacity" || mem == "reserve")
+      return std::nullopt;
     if (mem == "len" || mem == "length" || mem == "size")
       return std::string("i32");
     if (mem == "substr" || mem == "substring" || mem == "concat" ||
@@ -5218,6 +5229,9 @@ void type_checker::visit(ast_switch_expr &e) {
 }
 
 void type_checker::visit(ast_match_stmt &s) {
+  s.checked_exhaustive = false;
+  s.checked_exhaustive_arm = 0;
+  checked_matches_.push_back(&s.checked_exhaustive);
   const auto tuple_errors_before = diagnostics_.size();
   // Evaluate the match target first; this establishes a type that arms may
   // use for variable bindings when none are explicitly deduced from patterns.
@@ -5281,7 +5295,40 @@ void type_checker::visit(ast_match_stmt &s) {
   if (s.target && parse_generic_type_string(target_type.name).base_name == "tuple" &&
       diagnostics_.size() != tuple_errors_before)
     s.target->rejected_tuple_operation = "Invalid tuple pattern or tuple match body";
-
+  if (diagnostics_.size() != tuple_errors_before) return;
+  const auto canonical = resolve_type(target_type.name).name;
+  const auto parts = parse_generic_type_string(canonical);
+  const symbol *owner = resolve_pattern_type_symbol(parts.base_name);
+  const ast_enum_decl *enumeration = owner && owner->defining_node &&
+      owner->defining_node->kind == ast_node_kind::enum_decl_node
+      ? static_cast<const ast_enum_decl *>(owner->defining_node) : nullptr;
+  std::set<std::string> covered;
+  bool true_arm = false, false_arm = false;
+  std::function<bool(const ast_pattern &)> irrefutable = [&](const ast_pattern &pattern) {
+    return pattern.kind == ast_pattern_kind::wildcard_pattern ||
+        pattern.kind == ast_pattern_kind::variable_pattern ||
+        (pattern.kind == ast_pattern_kind::constructor_pattern && pattern.name.empty() &&
+         std::all_of(pattern.subpatterns.begin(), pattern.subpatterns.end(), irrefutable));
+  };
+  for (std::size_t index = 0; index < s.arms.size(); ++index) {
+    const auto &arm = s.arms[index];
+    if (arm.guard) continue;
+    const auto &pattern = arm.pattern;
+    if (irrefutable(pattern)) s.checked_exhaustive = true;
+    if (canonical == "bool" && pattern.kind == ast_pattern_kind::literal_pattern &&
+        pattern.literal_kind == ast_node_kind::boolean_literal_node) {
+      true_arm = true_arm || pattern.literal_value == "true";
+      false_arm = false_arm || pattern.literal_value == "false";
+    }
+    if (enumeration && pattern.kind == ast_pattern_kind::constructor_pattern &&
+        std::all_of(pattern.subpatterns.begin(), pattern.subpatterns.end(), irrefutable)) {
+      for (const auto &variant : enumeration->variants)
+        if (pattern.name == owner->name + "::" + variant.name) covered.insert(variant.name);
+    }
+    s.checked_exhaustive = s.checked_exhaustive || (true_arm && false_arm) ||
+        (enumeration && !enumeration->variants.empty() && covered.size() == enumeration->variants.size());
+    if (s.checked_exhaustive) { s.checked_exhaustive_arm = index; break; }
+  }
 }
 
 bool type_checker::check_runtime_primitive(ast_call_expr &e) {
@@ -6672,6 +6719,18 @@ void type_checker::visit(ast_call_expr &e) {
         e.inferred_type = last_expr_type_->name;
         return;
       }
+      if (builtin_array && (method_name == "capacity" || method_name == "reserve")) {
+        builtin_arity(method_name == "capacity" ? 0 : 1);
+        if (method_name == "reserve" && !arg_types.empty()) {
+          const auto capacity = resolve_type(arg_types.front().name).name;
+          if (capacity != "i32" && capacity != "i64" && capacity != "u8")
+            add_error(e.line, "Array.reserve capacity must be an integer, got '" + capacity + "'");
+        }
+        last_expr_type_ = method_name == "capacity" ? type_i32 : type_void;
+        ma->inferred_type = last_expr_type_->name;
+        e.inferred_type = last_expr_type_->name;
+        return;
+      }
       if (builtin_array && (method_name == "get" || method_name == "set")) {
         builtin_arity(method_name == "get" ? 1 : 2);
         if (!arg_types.empty()) {
@@ -8055,6 +8114,8 @@ void type_checker::visit(ast_match_expr &e) {
         static_cast<const ast_identifier_expr &>(*c.pattern).name == "_";
     const bool enum_pattern = pattern.kind == ast_pattern_kind::constructor_pattern;
     const bool value_pattern = !wildcard && !enum_pattern;
+    if (!value_pattern && c.pattern)
+      assignment_patterns_[c.pattern.get()] = pattern;
     std::optional<type_info> pattern_type;
     if (value_pattern && c.pattern) {
       // Non-enum expression patterns compare against ordinary values. They

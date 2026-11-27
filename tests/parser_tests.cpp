@@ -734,6 +734,73 @@ void test_integer_literal_ranges_and_unchecked_arrays() {
   }
 }
 
+void test_later_guarded_and_tuple_match_arms() {
+  const auto parsed_match = [](const std::string &source) {
+    ny::parser parser("fn inspect(value: i32) -> i32\n" + source +
+                      "\nreturn 0\nend fn\n");
+    const auto program = parser.parse_program();
+    check(program && !parser.has_errors(), "later guarded/tuple match arm fixture parses");
+    if (!program || parser.has_errors() || program->declarations.size() != 1)
+      return std::shared_ptr<ny::ast_match_stmt>{};
+    const auto function = std::dynamic_pointer_cast<ny::ast_function_decl>(program->declarations[0]);
+    const auto body = function ? std::dynamic_pointer_cast<ny::ast_block_stmt>(function->body) : nullptr;
+    return body && !body->statements.empty()
+        ? std::dynamic_pointer_cast<ny::ast_match_stmt>(body->statements.front()) : nullptr;
+  };
+
+  const auto guarded = parsed_match(
+      "match value\n0 -> return 10\n"
+      "-1 when value < 0 -> return 20\n"
+      "selected when selected > 0 -> return 30\n"
+      "_ when true -> return 40\nend match");
+  check(guarded && guarded->arms.size() == 4 && !guarded->arms[0].guard &&
+            guarded->arms[1].guard && guarded->arms[2].guard && guarded->arms[3].guard &&
+            guarded->arms[1].pattern.literal_value == "-1",
+        "later signed, binding, and wildcard arms retain their guards");
+  if (guarded && guarded->arms.size() == 4) {
+    const auto first = std::dynamic_pointer_cast<ny::ast_return_stmt>(guarded->arms[0].body);
+    check(first && first->value && first->value->kind == ny::ast_node_kind::number_literal_node,
+          "a guarded negative pattern is not subtracted from the preceding return");
+  }
+
+  const auto constructor = parsed_match(
+      "match value {\nChoice.Idle -> return 0\n"
+      "Choice.Ready(amount) when amount > 0 -> return amount\n"
+      "_ -> return -1\n}");
+  check(constructor && constructor->arms.size() == 3 && constructor->arms[1].guard &&
+            constructor->arms[1].pattern.name == "Choice.Ready" &&
+            constructor->arms[1].pattern.subpatterns.size() == 1,
+        "later qualified constructor guards work in brace-delimited matches");
+
+  const auto tuples = parsed_match(
+      "match value\n(0, (0, 0)) -> println(0)\n"
+      "((value + 2))\nprintln((value + 3))\n"
+      "(first, (second, third)) when first > 0 -> return second\n"
+      "(_, (_, _)) -> return 3\nend match");
+  check(tuples && tuples->arms.size() == 3 && tuples->arms[1].guard &&
+            tuples->arms[1].pattern.name.empty() &&
+            tuples->arms[1].pattern.subpatterns.size() == 2 &&
+            tuples->arms[1].pattern.subpatterns[1].subpatterns.size() == 2 &&
+            !tuples->arms[2].guard,
+        "later nested tuple patterns are recognized with and without guards");
+  if (tuples && tuples->arms.size() == 3) {
+    const auto body = std::dynamic_pointer_cast<ny::ast_block_stmt>(tuples->arms[0].body);
+    const auto grouped = body && body->statements.size() == 3
+        ? std::dynamic_pointer_cast<ny::ast_expr_stmt>(body->statements[1]) : nullptr;
+    const auto sum = grouped
+        ? std::dynamic_pointer_cast<ny::ast_binary_expr>(grouped->expression) : nullptr;
+    check(sum && sum->op == ny::token_kind::plus,
+          "ordinary grouped expressions and calls remain in the preceding arm body");
+  }
+
+  for (const auto *invalid_guard : {"_ when -> return 1", "_ when true return 1"}) {
+    ny::parser parser("fn main() -> i32\nmatch 0\n0 -> return 0\n" +
+                      std::string(invalid_guard) + "\nend match\nreturn 0\nend fn\n");
+    parser.parse_program();
+    check(parser.has_errors(), "guard lookahead does not accept malformed guards or missing arrows");
+  }
+}
+
 void test_matrix_generic_parameter_separators() {
   matrix::parser parser(
       "book parameter-types\n"
@@ -865,6 +932,7 @@ int main() {
   test_scientific_numeric_literals();
   test_floating_literal_environment();
   test_integer_literal_ranges_and_unchecked_arrays();
+  test_later_guarded_and_tuple_match_arms();
   if (failures != 0)
     return 1;
 

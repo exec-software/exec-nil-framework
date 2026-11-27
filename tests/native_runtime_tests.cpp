@@ -201,6 +201,21 @@ void check_array_contract(bool &ok) {
 
   void *bytes = make_bytes({0, 127, 128, 255});
   ok &= expect(bytes != nullptr, "could not allocate byte array");
+  ok &= expect(nyrt_array_capacity(forged, NYRT_ARRAY_U8) == -1 &&
+                   nyrt_array_reserve(forged, NYRT_ARRAY_U8, 64) == 0 &&
+                   nyrt_array_reserve(bytes, NYRT_ARRAY_I32, 64) == 0,
+               "array capacity accepted a forged descriptor or wrong kind");
+  ok &= expect(nyrt_array_reserve(bytes, NYRT_ARRAY_U8, 64) == 1 &&
+                   nyrt_array_capacity(bytes, NYRT_ARRAY_U8) >= 64 &&
+                   nyrt_array_length(bytes, NYRT_ARRAY_U8) == 4,
+               "reservation did not provide capacity while preserving length");
+  const auto reserved = nyrt_array_capacity(bytes, NYRT_ARRAY_U8);
+  ok &= expect(nyrt_array_reserve(bytes, NYRT_ARRAY_U8, 0) == 1 &&
+                   nyrt_array_reserve(bytes, NYRT_ARRAY_U8, -1) == 0 &&
+                   nyrt_array_reserve(bytes, NYRT_ARRAY_U8,
+                       static_cast<std::int64_t>(std::numeric_limits<std::int32_t>::max()) + 1) == 0 &&
+                   nyrt_array_capacity(bytes, NYRT_ARRAY_U8) == reserved,
+               "invalid/no-op reservation changed capacity");
   ok &= expect_bytes(bytes, {0, 127, 128, 255},
                      "u8 edge values did not round trip");
   ok &= expect(nyrt_array_length(bytes, NYRT_ARRAY_I32) == -1 &&

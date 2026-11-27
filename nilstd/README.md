@@ -204,6 +204,12 @@ extreme-offset defect from the independent validation SDK without changing its
 historical copy. Scalar list/queue/stack copies have VM and native coverage;
 hash_set/dictionary internals still require aggregate-array native support.
 
+Vector construction now reserves real backing storage. Queue uses a ring buffer,
+and HashMap uses buckets with collision chains while retaining dense insertion
+order. Scalar fixtures cover all six execution routes; record collections keep
+their interpreter-only boundary. See [collection storage and lookup](../docs/standard-library/index.md#collection-storage-and-lookup)
+for complexity, retained references and remaining native-layout work.
+
 The checked-byte subset adds `Convert.try_hex_to_bytes` and 16 bounded endian
 read/write functions under `nil.std.io`. These are implemented in Ny, with
 range and window validation in the library rather than hidden in native

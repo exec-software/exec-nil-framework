@@ -5,6 +5,18 @@
   "routes": ["text-interpreter", "binary-interpreter", "bundle-text", "bundle-binary", "llvm-jit", "llvm-aot"],
   "groups": [
     {
+      "id": "local-definite-assignment",
+      "observed": "Ny and Matrix assignment fixtures agree across six routes for initialized locals, branch joins, literal constant branches, early exits and loop/fault cleanup controls.",
+      "tests": ["ny.routes.definite-assignment", "ny.routes.definite-assignment-matrix"],
+      "limitations": ["These positive fixtures do not prove arbitrary control flow; rejection diagnostics and malformed NIL admission have separate focused contracts.", "The analysis is lexical and conservative, without interprocedural effects or general condition solving. Global initialization remains a separate contract."]
+    },
+    {
+      "id": "collection-storage-and-lookup",
+      "observed": "Scalar collection fixtures agree across six routes for real array/vector reservation, alias-preserving growth, FIFO ring wraparound and reuse, bucket collisions, negative hashes, replacement and ordered removal.",
+      "tests": ["ny.routes.array-capacity", "ny.routes.queue-ring", "ny.routes.hashmap-buckets-scalar"],
+      "limitations": ["Native record/enum/nested-array element layouts are outside this proof; record collections have separate interpreter tests.", "Queue slots can retain removed values; initial queue slot materialization is O(capacity). Dense ordered HashMap removal is O(n), and worst-case collision chains remain linear. These fixtures establish results, not throughput or memory bounds."]
+    },
+    {
       "id": "scalar-arithmetic",
       "observed": "Scalar arithmetic and comparisons at live-array handle addresses agree across the six execution routes for the contract and collision fixtures.",
       "tests": ["ny.routes.scalar-arithmetic-contract", "ny.routes.scalar-array-handle-collision"],
@@ -102,6 +114,11 @@
     }
   ],
   "proofs": [
+    {"test": "ny.routes.definite-assignment", "fixture": "definite-assignment", "stdlib": false},
+    {"test": "ny.routes.definite-assignment-matrix", "fixture": "definite-assignment-matrix", "stdlib": false},
+    {"test": "ny.routes.array-capacity", "fixture": "array-capacity", "stdlib": true},
+    {"test": "ny.routes.queue-ring", "fixture": "queue-ring", "stdlib": true},
+    {"test": "ny.routes.hashmap-buckets-scalar", "fixture": "hashmap-buckets-scalar", "stdlib": true},
     {"test": "ny.routes.scalar-arithmetic-contract", "fixture": "scalar-arithmetic-contract", "stdlib": false},
     {"test": "ny.routes.scalar-array-handle-collision", "fixture": "scalar-array-handle-collision", "stdlib": false},
     {"test": "ny.routes.scalar-array-parity", "fixture": "scalar-array-parity", "stdlib": false},

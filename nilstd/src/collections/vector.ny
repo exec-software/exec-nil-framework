@@ -23,10 +23,11 @@ impl<T> vec<T>
         return vec<T> { items: [], length_cell: [0] }
     end fn
 
-    # Capacity is advisory for the current growable-array runtime. Keeping this
-    # constructor makes callers independent of the eventual allocator policy.
+    # Reserve real backing storage without constructing T or changing length.
     pub fn with_capacity(capacity: i32) -> vec<T>
-        return vec<T> { items: [], length_cell: [0] }
+        let mut result: vec<T> = vec<T>.new()
+        result.items.reserve(capacity)
+        return result
     end fn
 
     pub fn from(elements: array<T>) -> vec<T>
@@ -44,7 +45,7 @@ impl<T> vec<T>
     end fn
 
     pub fn capacity(self) -> i32
-        return self.items.len()
+        return self.items.capacity()
     end fn
 
     pub fn is_empty(self) -> bool

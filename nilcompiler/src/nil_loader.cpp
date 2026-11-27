@@ -1283,6 +1283,23 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       exception_edge(state);
       const auto count = static_cast<std::size_t>(std::stoull(args[1]));
       if (state.stack.size() < count) fail("call argument underflow", pc);
+      // Capacity adapters may inspect/reserve storage for any proven array,
+      // including class-bearing arrays, without exposing or fabricating an
+      // element. They cannot accept a forged pointer or synthesize provenance.
+      if ((args[0] == "array__reserve" || args[0] == "array__capacity") &&
+          !provenance_types->functions.count(args[0]) && !state.locals.count(args[0])) {
+        const bool reserving = args[0] == "array__reserve";
+        if (count != (reserving ? 2U : 1U))
+          fail("array capacity method has an invalid argument count", pc);
+        const auto start = state.stack.size() - count;
+        if (state.stack[start].rfind("#typed:array<", 0) != 0)
+          fail("array capacity method requires a proven typed array", pc);
+        if (reserving && !integer_category(state.stack[start + 1]))
+          fail("array reserve capacity requires an integer", pc);
+        pop(count);
+        if (!reserving) state.stack.push_back(stack_type("i32", module));
+        break;
+      }
       // Source array methods retain their historical direct-call adapters.
       // Permit boxed elements only through a proven array<anything> receiver,
       // never by relaxing the general external-call provenance boundary.
@@ -1529,6 +1546,160 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
   return result;
 }
 
+// Admission intentionally visits each ENTER landing even if its protected body
+// cannot raise. Those synthetic edges must not become runtime type evidence.
+// Keep a separate, conservative may-analysis over actual fault-producing
+// instructions. Runtime branches take both edges; calls can raise any type.
+// This pass only supplies optional optimization facts, never admission rights.
+void analyze_actual_fault_types(const nil_function &function,
+                                nil_fault_analysis &validated) {
+  using types = std::optional<std::set<std::string>>; // nullopt means unknown.
+  struct state {
+    types pending = std::set<std::string>{};
+    std::map<std::string, types> saved;
+  };
+  constexpr std::size_t maximum_exact_types = 64;
+  const auto merge_types = [&](types &destination, const types &source) {
+    if (!destination) return false;
+    if (!source) { destination.reset(); return true; }
+    const auto before = destination->size();
+    destination->insert(source->begin(), source->end());
+    if (destination->size() > maximum_exact_types) destination.reset();
+    return !destination || destination->size() != before;
+  };
+  if (function.body.empty() || validated.instructions.empty() ||
+      !validated.instructions.front().reachable) return;
+  std::vector<Opcode> opcodes;
+  std::unordered_map<std::string, std::size_t> labels;
+  for (std::size_t pc = 0; pc < function.body.size(); ++pc) {
+    const auto &instruction = function.body[pc];
+    opcodes.push_back(decode_opcode(instruction.opname, " in validated fault function"));
+    if (opcodes.back() == Opcode::LABEL) labels.emplace(instruction.args[0], pc);
+  }
+  std::vector<std::optional<state>> incoming(function.body.size());
+  std::deque<std::size_t> queue{0};
+  incoming[0] = state{};
+  // Proof is optional. An unusually connected CFG may fall back to dynamic
+  // matching instead of spending unbounded work on an optimization.
+  constexpr std::size_t maximum_visits = 1000000;
+  std::size_t visits_left = function.body.size() > maximum_visits / 128
+      ? maximum_visits : function.body.size() * 128;
+  bool complete = true;
+  const auto enqueue = [&](std::size_t destination, const state &value) {
+    if (destination >= incoming.size() || !validated.instructions[destination].reachable) {
+      // Some providers have terminal behavior recognized by admission (for
+      // example the builtin panic). Unknown effects cannot invent successors
+      // or make otherwise-valid NIL fail this optional proof pass.
+      complete = false;
+      return;
+    }
+    if (!incoming[destination]) {
+      incoming[destination] = value;
+      queue.push_back(destination);
+      return;
+    }
+    auto &previous = *incoming[destination];
+    bool changed = merge_types(previous.pending, value.pending);
+    for (const auto &[slot, fault_types] : value.saved) {
+      const auto found = previous.saved.find(slot);
+      if (found == previous.saved.end()) {
+        // Shape validation normally makes this impossible. Retain no exact
+        // fact if an embedder ever supplies a broader instruction contract.
+        previous.saved.emplace(slot, std::nullopt);
+        changed = true;
+      } else changed = merge_types(found->second, fault_types) || changed;
+    }
+    for (auto &[slot, fault_types] : previous.saved)
+      if (!value.saved.count(slot) && fault_types) {
+        fault_types.reset(); changed = true;
+      }
+    if (changed) queue.push_back(destination);
+  };
+  while (complete && !queue.empty()) {
+    if (visits_left-- == 0) return;
+    const auto pc = queue.front(); queue.pop_front();
+    auto value = *incoming[pc];
+    const auto &instruction = function.body[pc];
+    const auto &args = instruction.args;
+    const auto &shape = validated.instructions[pc];
+    const auto fault_edge = [&](const types &fault_types) {
+      if (shape.regions.empty()) return;
+      const auto &region = shape.regions.back();
+      auto exceptional = value;
+      for (auto slot = exceptional.saved.begin(); slot != exceptional.saved.end();)
+        if (std::find(region.saved_slots.begin(), region.saved_slots.end(), slot->first) ==
+            region.saved_slots.end()) slot = exceptional.saved.erase(slot);
+        else ++slot;
+      exceptional.pending = fault_types;
+      enqueue(region.dispatch_pc, exceptional);
+    };
+    const auto saved_types = [&](const std::string &slot) -> types {
+      const auto found = value.saved.find(slot);
+      return found == value.saved.end() ? types{} : found->second;
+    };
+    switch (opcodes[pc]) {
+    case Opcode::FAULT_RAISE:
+      fault_edge(std::set<std::string>{args[0]});
+      continue;
+    case Opcode::FAULT_RESUME: {
+      const auto resumed = saved_types(args[0]);
+      value.saved.erase(args[0]);
+      fault_edge(resumed);
+      continue;
+    }
+    case Opcode::FAULT_RETHROW:
+      fault_edge(saved_types(args[0]));
+      continue;
+    case Opcode::FAULT_SAVE:
+      value.saved[args[0]] = value.pending;
+      value.pending = std::set<std::string>{};
+      break;
+    case Opcode::FAULT_DROP:
+      value.saved.erase(args[0]);
+      break;
+    case Opcode::CALL: case Opcode::CALL_METHOD: case Opcode::INTEROP_CALL:
+    case Opcode::PARALLEL_MAP:
+      fault_edge(std::nullopt);
+      break;
+    case Opcode::RET:
+      continue;
+    case Opcode::JMP:
+      enqueue(labels.at(args[0]), value);
+      continue;
+    case Opcode::JMP_IF: case Opcode::JMP_IF_NOT:
+      // Source literal booleans lower to exactly this adjacent pair. Every
+      // jump/dispatch target is a LABEL, so no edge can enter this branch
+      // instruction without executing its preceding PUSH_CONST. Do not infer
+      // conditions through locals, labels, casts, or computed expressions.
+      if (pc && opcodes[pc - 1] == Opcode::PUSH_CONST) {
+        const auto &literal = function.body[pc - 1].args[0];
+        if (literal == "0" || literal == "1") {
+          const bool taken = (literal == "1") == (opcodes[pc] == Opcode::JMP_IF);
+          enqueue(taken ? labels.at(args[0]) : pc + 1, value);
+          continue;
+        }
+      }
+      enqueue(labels.at(args[0]), value);
+      break;
+    default:
+      break;
+    }
+    enqueue(pc + 1, value);
+  }
+  if (!complete) return;
+  // Publish after the fixed point: a later incoming edge may widen an exact
+  // fault to several types or to unknown. Empty/unreachable sets prove nothing.
+  for (std::size_t pc = 0; pc < opcodes.size(); ++pc) {
+    if (opcodes[pc] != Opcode::FAULT_MATCH || !incoming[pc]) continue;
+    const auto &args = function.body[pc].args;
+    const auto saved = incoming[pc]->saved.find(args[0]);
+    if (saved == incoming[pc]->saved.end() || !saved->second || saved->second->empty()) continue;
+    const auto &known = *saved->second;
+    if (!known.count(args[1])) validated.instructions[pc].known_fault_match = false;
+    else if (known.size() == 1) validated.instructions[pc].known_fault_match = true;
+  }
+}
+
 } // namespace
 
 bool nil_type_requires_provenance(const nil_module &module, const std::string &type) {
@@ -1587,7 +1758,9 @@ void validate_nil_dynamic_type(const nil_module &module, const std::string &raw,
 
 nil_fault_analysis analyze_nil_fault_function(const nil_function &function,
                                               const nil_module &module) {
-  return analyze_fault_body(function, module, true);
+  auto result = analyze_fault_body(function, module, true);
+  analyze_actual_fault_types(function, result);
+  return result;
 }
 
 void finalize_nil_switch_returns(nil_module &module) {

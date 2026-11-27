@@ -27,6 +27,8 @@ from sdk_capabilities import check_names, command_argv
 ROUTES = ("text-interpreter", "binary-interpreter", "bundle-text", "bundle-binary",
           "llvm-jit", "llvm-aot")
 FIXTURES = ("scalar-array-parity", "stl-array-primitives", "native-nested-reference",
+            "array-capacity", "queue-ring", "hashmap-buckets-scalar",
+            "definite-assignment", "definite-assignment-matrix",
             "native-global-contract", "native-time-contract", "native-scalar-fields",
             "module-global-contract", "native-managed-lifetime", "class-execution",
             "fault-control-flow", "fault-nominal-identity", "fault-managed-lifetime",

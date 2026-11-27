@@ -249,6 +249,14 @@ such as `say formatted "value={5}"`; it works on interpreted and native routes.
 
 ## Project status
 
+Current hardening adds lexical Matrix name resolution and completion,
+[definite-assignment diagnostics](docs/language-reference/statements.md#definite-assignment),
+and [real collection reservation, a ring queue and bucketed HashMap](docs/standard-library/index.md#collection-storage-and-lookup).
+These changes extend focused execution contracts; native aggregate arrays,
+binary networking, callbacks and platform SDK qualification remain separate
+work. The [notebook](notebook/2026-11-26-language-library-hardening.md) records
+validation and the remaining sequence before mainline consolidation.
+
 The current version is **1.0.0-rc.1**. Development coverage spans Linux x86_64,
 Windows x86_64, Intel macOS and Apple Silicon macOS. The earlier platform
 qualification campaign verified relocated development SDKs on all four hosts:

@@ -391,14 +391,14 @@ builtin_call_arity(const std::string &name) {
       name == "String__to_uppercase" || name == "String__to_upper" ||
       name == "String__to_lowercase" || name == "String__to_lower" ||
       name == "String__trim" || name == "array__len" ||
-      name == "array__length" || name == "__ritual_len" ||
+      name == "array__length" || name == "array__capacity" || name == "__ritual_len" ||
       name == "__ritual_iter" || name == "__ritual_next" ||
       name == "__ritual_is_done" || name == "__ritual_value") {
     return BuiltinCallArity{1, 1};
   }
   if (name == "String__contains" || name == "String__starts_with" ||
       name == "String__ends_with" || name == "array__push" ||
-      name == "array__get" || name == "__ritual_index" ||
+      name == "array__get" || name == "array__reserve" || name == "__ritual_index" ||
       name == "__ritual_tuple_get") {
     return BuiltinCallArity{2, 2};
   }
@@ -1148,7 +1148,12 @@ void VM::validateCheckpointAdmission() const {
       throw std::runtime_error(
           "VM checkpoint profile excludes interop, console, time, native and parallel instructions");
     case Opcode::CALL:
-      if (instruction.args.empty() || !hasFunction(instruction.args.front()))
+      // These two builtins only inspect/change VM-owned array storage, which
+      // is copied below. Other builtins still require an explicit effect review.
+      if (instruction.args.empty() ||
+          (!hasFunction(instruction.args.front()) &&
+           instruction.args.front() != "array__capacity" &&
+           instruction.args.front() != "array__reserve"))
         throw std::runtime_error(
             "VM checkpoint profile excludes builtin and dynamic CALL targets");
       break;
@@ -1354,8 +1359,12 @@ std::shared_ptr<VM::CheckpointState> VM::cloneCheckpointState(
     copied.element_type = clone.text(block.element_type);
     copied.element_count = block.element_count;
     copied.marked = block.marked;
-    clone.items(block.data.size(), sizeof(Value));
-    copied.data.reserve(block.data.size());
+    // Array capacity is observable language state. Preserve reservations when
+    // snapshotting/restoring, and charge their storage before allocating it.
+    const auto copied_capacity = block.type_name == "array"
+        ? block.data.capacity() : block.data.size();
+    clone.items(copied_capacity, sizeof(Value));
+    copied.data.reserve(copied_capacity);
     for (const auto &value : block.data)
       copied.data.push_back(clone.value(value));
     clone.charge(block.byte_data.size());
@@ -2345,6 +2354,30 @@ void VM::executeInstruction(const Instruction &instr) {
         }
       }
       pushStack(s);
+      break;
+    }
+    // Capacity never materializes elements, changes length, or replaces a
+    // stable array handle. Unlike legacy adapters, malformed inputs fail.
+    if (fn_name == "array__reserve" || fn_name == "array__capacity") {
+      std::vector<Value> args;
+      for (int i = 0; i < arg_count; ++i) args.push_back(popStack());
+      std::reverse(args.begin(), args.end());
+      const auto *handle = std::get_if<ArrayHandle>(&args.at(0));
+      const auto found = handle ? heap_.find(handle->address) : heap_.end();
+      if (found == heap_.end() || found->second.type_name != "array")
+        throw std::runtime_error("array capacity operation requires a typed array handle");
+      auto &data = found->second.data;
+      if (fn_name == "array__reserve") {
+        const auto *minimum = std::get_if<std::int64_t>(&args.at(1));
+        if (!minimum || *minimum < 0 ||
+            *minimum > std::numeric_limits<std::int32_t>::max())
+          throw std::runtime_error("array.reserve capacity must be between 0 and 2147483647");
+        data.reserve(static_cast<std::size_t>(*minimum));
+      } else {
+        if (data.capacity() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
+          throw std::runtime_error("array capacity exceeds the i32 range");
+        pushStack(static_cast<std::int64_t>(data.capacity()));
+      }
       break;
     }
     // array__push(self: array<T> handle, elem: T) -> void

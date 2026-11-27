@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check exact native scalar-array metadata and intrinsic transport."""
+"""Check scalar-array typing, capacity guards, metadata, and intrinsic transport."""
 
 from __future__ import annotations
 
@@ -25,17 +25,76 @@ def module(body: str, declarations: str = "") -> str:
             + '\nPUSH_CONST 0\nRET\nend function\n')
 
 
+def source_contract(compiler: str, interpreter: str | None, directory: Path) -> int:
+    invalid = {
+        "capacity-integer-receiver": ("let values: i32 = 3", "values.capacity()",
+                                      "has no member 'capacity'"),
+        "reserve-integer-receiver": ("let values: i32 = 3", "values.reserve(8)",
+                                     "has no member 'reserve'"),
+        "capacity-text-receiver": ('let values: text = "text"', "values.capacity()",
+                                   "has no member 'capacity'"),
+        "reserve-text-receiver": ('let values: text = "text"', "values.reserve(8)",
+                                  "has no member 'reserve'"),
+        "capacity-extra-argument": ("let values: array<i32> = []", "values.capacity(1)",
+                                    "'array.capacity' expects 0 arguments, got 1"),
+        "reserve-missing-argument": ("let values: array<i32> = []", "values.reserve()",
+                                    "'array.reserve' expects 1 arguments, got 0"),
+        "reserve-extra-argument": ("let values: array<i32> = []", "values.reserve(1, 2)",
+                                  "'array.reserve' expects 1 arguments, got 2"),
+        "reserve-float": ("let values: array<i32> = []", "values.reserve(1.5)",
+                           "Array.reserve capacity must be an integer"),
+        "reserve-bool": ("let values: array<i32> = []", "values.reserve(true)",
+                          "Array.reserve capacity must be an integer"),
+        "reserve-text": ("let values: array<i32> = []", 'values.reserve("8")',
+                          "Array.reserve capacity must be an integer"),
+        "capacity-type-argument": ("let values: array<i32> = []", "values.capacity<i32>()",
+                                   "'array.capacity' does not accept type arguments"),
+        "reserve-type-argument": ("let values: array<i32> = []", "values.reserve<i32>(8)",
+                                  "'array.reserve' does not accept type arguments"),
+    }
+    source, output = directory / "capacity.ny", directory / "capacity.nil"
+    base = [compiler, "--quiet", "--no-stdlib", "--no-bundle"]
+    for name, (declaration, expression, diagnostic) in invalid.items():
+        source.write_text(f"fn main() -> i32\n{declaration}\n{expression}\nreturn 0\nend fn\n",
+                          encoding="utf-8", newline='\n')
+        for flags in ([], ["--emit-binary-nil"]):
+            sentinel = b"preserve existing NIL\n"
+            output.write_bytes(sentinel)
+            result = run([*base, *flags, "-o", str(output), str(source)])
+            if result.returncode <= 0 or diagnostic not in result.stderr:
+                raise AssertionError(f"{name}: missing source rejection ({flags}): {result}")
+            if output.read_bytes() != sentinel:
+                raise AssertionError(f"{name}: damaged existing NIL")
+    source.write_text(
+        "fn main() -> i32\nlet values: array<i32> = [7]\n"
+        "values.reserve(8)\nvalues.reserve(16 as i64)\nvalues.reserve(32 as u8)\n"
+        "let capacity: i32 = values.capacity()\n"
+        "println(capacity >= 32 and values.len() == 1 and values[0] == 7)\n"
+        "return 0\nend fn\n", encoding="utf-8", newline='\n')
+    for flags in ([], ["--emit-binary-nil"]):
+        result = run([*base, *flags, "-o", str(output), str(source)])
+        if result.returncode or result.stderr:
+            raise AssertionError(f"capacity source control failed ({flags}): {result}")
+        if interpreter:
+            result = run([interpreter, str(output)])
+            if result.returncode or result.stdout != "1\n" or result.stderr:
+                raise AssertionError(f"capacity source VM control failed ({flags}): {result}")
+    return len(invalid)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--assembler", type=Path, required=True)
     parser.add_argument("--linker", type=Path, required=True)
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--interpreter", type=Path)
+    parser.add_argument("--compiler", type=Path)
     args = parser.parse_args()
     assembler = str(args.assembler.resolve(strict=True))
     linker = str(args.linker.resolve(strict=True))
     runtime = str(args.runtime.resolve(strict=True))
     interpreter = str(args.interpreter.resolve(strict=True)) if args.interpreter else None
+    compiler = str(args.compiler.resolve(strict=True)) if args.compiler else None
     invalid = {
         "method-set-wrong-f64": (
             "NEW_ARRAY_LITERAL 0 f64\nPUSH_CONST 0\nPUSH_CONST 1\nCALL array__set 3",
@@ -58,6 +117,35 @@ def main() -> int:
             "NEW_ARRAY_LITERAL 0 i32\nPUSH_CONST 0\nCALL array__set 2", "expected 3"),
         "method-length-wrong-count": (
             "NEW_ARRAY_LITERAL 0 i32\nPUSH_CONST 0\nCALL array__length 2\nPOP", "expected 1"),
+        "capacity-forged-handle": (
+            "PUSH_CONST 1\nCALL array__capacity 1\nPOP", "requires a supported typed array"),
+        "capacity-pointer": (
+            "PUSH_CONST 1\nALLOC i32\nCALL array__capacity 1\nPOP",
+            "requires a supported typed array"),
+        "capacity-text": (
+            "PUSH_CONST_STR word\nCALL array__capacity 1\nPOP", "requires a supported typed array"),
+        "capacity-missing-receiver": ("CALL array__capacity 0\nPOP", "expected 1"),
+        "capacity-wrong-count": (
+            "NEW_ARRAY_LITERAL 0 i32\nPUSH_CONST 1\nCALL array__capacity 2\nPOP", "expected 1"),
+        "reserve-forged-handle": (
+            "PUSH_CONST 1\nPUSH_CONST 8\nCALL array__reserve 2", "requires a supported typed array"),
+        "reserve-pointer": (
+            "PUSH_CONST 1\nALLOC i32\nPUSH_CONST 8\nCALL array__reserve 2",
+            "requires a supported typed array"),
+        "reserve-text": (
+            "PUSH_CONST_STR word\nPUSH_CONST 8\nCALL array__reserve 2",
+            "requires a supported typed array"),
+        "reserve-missing-count": ("NEW_ARRAY_LITERAL 0 i32\nCALL array__reserve 1", "expected 2"),
+        "reserve-extra-count": (
+            "NEW_ARRAY_LITERAL 0 i32\nPUSH_CONST 8\nPUSH_CONST 8\nCALL array__reserve 3", "expected 2"),
+        "reserve-float-count": (
+            "NEW_ARRAY_LITERAL 0 i32\nPUSH_CONST 1.5\nCALL array__reserve 2", "and an integer capacity"),
+        "reserve-text-count": (
+            "NEW_ARRAY_LITERAL 0 i32\nPUSH_CONST_STR word\nCALL array__reserve 2", "and an integer capacity"),
+        "reserve-pointer-count": (
+            "NEW_ARRAY_LITERAL 0 i32\nPUSH_CONST 1\nALLOC i32\nCALL array__reserve 2", "and an integer capacity"),
+        "reserve-bool-count": (
+            "NEW_ARRAY_LITERAL 0 i32\nPUSH_CONST 1\nCAST bool\nCALL array__reserve 2", "integer capacity"),
         "text-substr-wrong-count": (
             "PUSH_CONST_STR word\nPUSH_CONST 0\nCALL String__substr 2\nPOP", "expected 3"),
         "text-substr-forged-text": (
@@ -166,6 +254,31 @@ def main() -> int:
         'LOAD_LOCAL texts\nPUSH_CONST 1\nINTEROP_CALL intrinsic array.get 2 text text\nCALL println 1\n'
         'LOAD_LOCAL texts\nINTEROP_CALL intrinsic array.length 1 i64\nCALL println 1')
     direct_expected = "2\n1\n1\nowned text\n2\n"
+    capacity_control = module(
+        'PUSH_CONST 7\nNEW_ARRAY_LITERAL 1 i32\nSTORE_LOCAL values\n'
+        'LOAD_LOCAL values\nSTORE_LOCAL alias\n'
+        'LOAD_LOCAL values\nPUSH_CONST 64\nCALL array__reserve 2\n'
+        'LOAD_LOCAL values\nCALL array__capacity 1\nSTORE_LOCAL capacity\n'
+        'LOAD_LOCAL capacity\nPUSH_CONST 64\nCMP_GE\nCALL println 1\n'
+        'LOAD_LOCAL alias\nCALL array__capacity 1\nLOAD_LOCAL capacity\nCMP_EQ\nCALL println 1\n'
+        'LOAD_LOCAL values\nPUSH_CONST 3\nCALL array__reserve 2\n'
+        'LOAD_LOCAL values\nCALL array__capacity 1\nLOAD_LOCAL capacity\nCMP_EQ\nCALL println 1\n'
+        'LOAD_LOCAL values\nCALL array__length 1\nPUSH_CONST 1\nCMP_EQ\nCALL println 1\n'
+        'LOAD_LOCAL values\nPUSH_CONST 11\nCALL array__push 2\n'
+        'LOAD_LOCAL alias\nCALL array__capacity 1\nLOAD_LOCAL capacity\nCMP_EQ\nCALL println 1\n'
+        'LOAD_LOCAL alias\nPUSH_CONST 0\nCALL array__get 2\nPUSH_CONST 7\nCMP_EQ\nCALL println 1\n'
+        'LOAD_LOCAL alias\nPUSH_CONST 1\nCALL array__get 2\nPUSH_CONST 11\nCMP_EQ\nCALL println 1\n'
+        'NEW_ARRAY_LITERAL 0 text\nSTORE_LOCAL texts\n'
+        'LOAD_LOCAL texts\nPUSH_CONST 32\nCALL array__reserve 2\n'
+        'LOAD_LOCAL texts\nCALL array__length 1\nPUSH_CONST 0\nCMP_EQ\nCALL println 1\n'
+        'LOAD_LOCAL texts\nPUSH_CONST_STR word\nCALL array__push 2\n'
+        'LOAD_LOCAL texts\nPUSH_CONST 128\nCALL array__reserve 2\n'
+        'LOAD_LOCAL texts\nPUSH_CONST 0\nCALL array__get 2\nCALL println 1')
+    capacity_expected = "1\n" * 8 + "owned text\n"
+    capacity_runtime_errors = {
+        "reserve-negative": "NEW_ARRAY_LITERAL 0 i32\nPUSH_CONST -1\nCALL array__reserve 2",
+        "reserve-overwide": "NEW_ARRAY_LITERAL 0 i32\nPUSH_CONST 2147483648\nCALL array__reserve 2",
+    }
     runtime_errors = {
         "negative-size": ("PUSH_CONST -1\nPUSH_CONST 1.25\n"
                           "INTEROP_CALL intrinsic array.new_with_value 2 array<f64> f64\nPOP",
@@ -179,8 +292,35 @@ def main() -> int:
     }
     with tempfile.TemporaryDirectory(prefix="ny-native-array-") as temporary:
         directory = Path(temporary)
+        source_rejections = source_contract(compiler, interpreter, directory) if compiler else 0
         source, output = directory / "probe.nil", directory / "probe.o"
         if interpreter:
+            for name, (body, diagnostic) in invalid.items():
+                # The raw VM erases bool to int64_t; source typing and native
+                # NIL metadata cover bool rejection without pretending the VM
+                # retains a distinction it does not have.
+                if not name.startswith(("capacity-", "reserve-")) or name == "reserve-bool-count":
+                    continue
+                if "expected " not in diagnostic:
+                    diagnostic = ("array.reserve capacity must be between 0 and 2147483647"
+                                  if name in ("reserve-float-count", "reserve-text-count", "reserve-pointer-count")
+                                  else "array capacity operation requires a typed array handle")
+                else:
+                    diagnostic = diagnostic.replace("expected ", "expects ")
+                source.write_text(module(body), encoding="utf-8", newline='\n')
+                result = run([interpreter, str(source)])
+                if result.returncode <= 0 or result.stdout or diagnostic not in result.stderr:
+                    raise AssertionError(f"{name}: interpreter accepted invalid capacity ABI: {result}")
+            for name, body in capacity_runtime_errors.items():
+                source.write_text(module(body), encoding="utf-8", newline='\n')
+                result = run([interpreter, str(source)])
+                if (result.returncode <= 0 or result.stdout or
+                        "array.reserve capacity must be between 0 and 2147483647" not in result.stderr):
+                    raise AssertionError(f"{name}: interpreter reservation guard failed: {result}")
+            source.write_text(capacity_control, encoding="utf-8", newline='\n')
+            result = run([interpreter, str(source)])
+            if result.returncode or result.stdout != capacity_expected or result.stderr:
+                raise AssertionError(f"capacity interpreter control failed: {result}")
             for name, (body, diagnostic) in {**invalid, **runtime_errors}.items():
                 if not name.startswith("direct-") and name not in runtime_errors:
                     continue
@@ -227,7 +367,10 @@ def main() -> int:
         expected = "1\n1\n1\nowned text\nowned text\n2\n\n"
         if result.returncode or result.stdout != expected or result.stderr:
             raise AssertionError(f"intrinsic control result mismatch: {result}")
-        for name, (body, diagnostic) in runtime_errors.items():
+        native_runtime_errors = {**runtime_errors, **{
+            name: (body, "NIL native runtime error: array reservation failed")
+            for name, body in capacity_runtime_errors.items()}}
+        for name, (body, diagnostic) in native_runtime_errors.items():
             source.write_text(module(body), encoding="utf-8", newline='\n')
             result = run([assembler, "-o", str(output), str(source)])
             if result.returncode:
@@ -248,7 +391,18 @@ def main() -> int:
         result = run([str(executable)])
         if result.returncode or result.stdout != direct_expected or result.stderr:
             raise AssertionError(f"direct native control failed: {result}")
-    print(f"native scalar arrays: {len(invalid)} rejected shapes, intrinsic transport passed")
+        source.write_text(capacity_control, encoding="utf-8", newline='\n')
+        result = run([assembler, "-o", str(output), str(source)])
+        if result.returncode:
+            raise AssertionError(f"capacity control assembly failed: {result.stderr}")
+        result = run([linker, "--runtime", runtime, "-o", str(executable), str(output)])
+        if result.returncode:
+            raise AssertionError(f"capacity control link failed: {result.stderr}")
+        result = run([str(executable)])
+        if result.returncode or result.stdout != capacity_expected or result.stderr:
+            raise AssertionError(f"capacity native control failed: {result}")
+    print(f"native scalar arrays: {len(invalid)} rejected NIL shapes, "
+          f"{source_rejections} rejected source shapes, capacity and intrinsic controls passed")
     return 0
 
 

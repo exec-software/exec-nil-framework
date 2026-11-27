@@ -22,6 +22,35 @@ counter = counter + 1
 const MAX_SIZE = 100
 ```
 
+### Definite assignment
+
+A local binding may omit its initializer, but every reachable path must assign
+it before a read. This is checked before either backend runs, including in
+Matrix source. Diagnostics identify the read and the declaration line.
+
+```ny
+let mut result: i32
+if ready then
+    result = 1
+else
+    result = 2
+end if
+println(result)
+```
+
+An unknown-condition loop may run zero times. A loop body therefore does not
+by itself initialize a value used afterward. Early returns, breaks, continue,
+short-circuit expressions and typed fault/recover paths participate in the
+analysis. Literal `true`/`false` conditions are recognized; arbitrary computed
+conditions and effects of calls or alias writes are not inferred. Taking an
+address or reading through an array/record receiver requires that binding to
+be initialized. Global initialization follows its separate module contract.
+
+Unguarded arms covering both booleans, every variant of the checked enum type,
+or an irrefutable tuple pattern can establish complete match coverage. Guarded
+and incomplete matches still need a path that initializes the value. Later
+guarded and tuple arms are supported, as well as the first arm.
+
 ## Assignment
 
 ```ny

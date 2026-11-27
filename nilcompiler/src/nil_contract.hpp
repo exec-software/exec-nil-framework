@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -159,6 +160,9 @@ struct nil_fault_instruction_state {
   std::size_t stack_height = 0;
   std::vector<nil_fault_region> regions;
   std::vector<std::string> saved_slots;
+  // Derived from actual fault sources after admission validation, never from
+  // the synthetic landing edges used to validate otherwise-dead handlers.
+  std::optional<bool> known_fault_match;
 };
 struct nil_fault_analysis {
   // States immediately before each instruction; indexes match function.body.

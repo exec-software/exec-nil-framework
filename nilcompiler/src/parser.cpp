@@ -4379,13 +4379,14 @@ ast_pattern parser::parse_pattern() {
 }
 
 // Look ahead from the current position to determine if what follows is the
-// start of a new match arm, i.e., `<pattern> ->`.
+// start of a new match arm, i.e., `<pattern> [when <guard>] ->`.
 //
-// A pattern in Ny has one of these shapes (all ending in `->` at depth 0):
+// A pattern in Ny has one of these shapes (followed by `->` or `when`):
 //   identifier ->
 //   identifier :: identifier ->
 //   identifier :: identifier ( payload ) ->
 //   identifier ( payload ) ->
+//   ( pattern, pattern, ... ) ->
 //   _ ->
 //   number_literal ->
 //   string_literal ->
@@ -4424,10 +4425,11 @@ bool parser::is_match_arm_start() const {
       break;
   }
 
-  // First token must be an identifier (variant, `_`, bare name) or literal.
+  // First token must be an identifier, literal, or parenthesized tuple.
+  const bool tuple_pattern = first.kind == token_kind::left_paren;
   const bool negative_number = first.kind == token_kind::minus &&
       i + 1 < tokens_.size() && tokens_[i + 1].kind == token_kind::number_literal;
-  bool first_ok = (negative_number || first.kind == token_kind::identifier ||
+  bool first_ok = (tuple_pattern || negative_number || first.kind == token_kind::identifier ||
                    first.kind == token_kind::number_literal ||
                    first.kind == token_kind::true_kw ||
                    first.kind == token_kind::false_kw ||
@@ -4436,8 +4438,10 @@ bool parser::is_match_arm_start() const {
   if (!first_ok)
     return false;
 
-  i++; // consume the identifier / literal
-  if (negative_number) ++i;
+  if (!tuple_pattern) {
+    i++; // consume the identifier / literal
+    if (negative_number) ++i;
+  }
 
   // Skip optional `:: qualifier` or `.qualifier` sequences
   while (i + 1 < tokens_.size() &&
@@ -4447,7 +4451,9 @@ bool parser::is_match_arm_start() const {
     i += 2;
   }
 
-  // Skip optional payload `( ... )`.
+  // Skip a tuple pattern or optional constructor payload `( ... )`. Stop at
+  // its closing parenthesis; an ordinary grouped expression in an arm body
+  // must never borrow the arrow from a later arm.
   if (i < tokens_.size() && tokens_[i].kind == token_kind::left_paren) {
     int depth = 1;
     i++;
@@ -4462,8 +4468,10 @@ bool parser::is_match_arm_start() const {
     }
   }
 
-  // The token immediately after the pattern shape must be `->`.
-  return (i < tokens_.size() && tokens_[i].kind == token_kind::arrow);
+  // A guard starts the new arm too. The real parser validates its expression
+  // and required arrow; lookahead does not scan through arbitrary guard code.
+  return i < tokens_.size() && (tokens_[i].kind == token_kind::arrow ||
+                                tokens_[i].kind == token_kind::when_kw);
 }
 
 // Parse a statement-level match: `match <expr> { ... }` or the line-style

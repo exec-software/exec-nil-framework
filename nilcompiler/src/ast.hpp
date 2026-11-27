@@ -1295,6 +1295,9 @@ struct ast_match_arm {
 struct ast_match_stmt : public ast_stmt {
   ast_expr_ptr target;
   std::vector<ast_match_arm> arms;
+  // Semantic proof over the resolved bool/enum/tuple identity, never spelling.
+  bool checked_exhaustive = false;
+  std::size_t checked_exhaustive_arm = 0;
 
   ast_match_stmt(ast_expr_ptr t, std::vector<ast_match_arm> a, int ln = 0)
       : ast_stmt(ast_node_kind::match_stmt_node, ln), target(std::move(t)),

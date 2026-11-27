@@ -1573,6 +1573,24 @@ std::uint64_t nyrt_array_get(const void *value, std::uint32_t expected_kind,
   return result;
 }
 
+std::int64_t nyrt_array_capacity(const void *value,
+                                 std::uint32_t expected_kind) noexcept {
+  const auto *array = checked_array(value, expected_kind);
+  if (array == nullptr || array->capacity > static_cast<std::uint64_t>(
+          std::numeric_limits<std::int32_t>::max()))
+    return -1;
+  return static_cast<std::int64_t>(array->capacity);
+}
+
+std::int32_t nyrt_array_reserve(void *value, std::uint32_t expected_kind,
+                                std::int64_t minimum_capacity) noexcept {
+  auto *array = checked_array(value, expected_kind);
+  if (array == nullptr || minimum_capacity < 0 ||
+      minimum_capacity > std::numeric_limits<std::int32_t>::max())
+    return 0;
+  return reserve(*array, static_cast<std::uint64_t>(minimum_capacity)) ? 1 : 0;
+}
+
 std::int32_t nyrt_array_set(void *value, std::uint32_t expected_kind,
                             std::int64_t index, std::uint64_t item) noexcept {
   validate_array_value(expected_kind, item);

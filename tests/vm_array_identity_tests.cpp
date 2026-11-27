@@ -149,6 +149,14 @@ void propagation() {
 }
 
 void malformed_operations() {
+  reject({{Opcode::PUSH_CONST, {"1"}}, {Opcode::CALL, {"array__capacity", "1"}}},
+      "array capacity operation requires a typed array handle");
+  reject({{Opcode::NEW_ARRAY_LITERAL, {"0", "i32"}}, {Opcode::PUSH_CONST, {"-1"}},
+      {Opcode::CALL, {"array__reserve", "2"}}},
+      "array.reserve capacity must be between 0 and 2147483647");
+  reject({{Opcode::NEW_ARRAY_LITERAL, {"0", "i32"}}, {Opcode::PUSH_CONST, {"2147483648"}},
+      {Opcode::CALL, {"array__reserve", "2"}}},
+      "array.reserve capacity must be between 0 and 2147483647");
   reject({{Opcode::NEW_ARRAY_LITERAL, {"0", "i64"}}, {Opcode::CAST, {"i64"}}},
          "CAST: value cannot be converted to 'i64'");
   integer(execute({{Opcode::NEW_ARRAY_LITERAL, {"0", "i64"}},

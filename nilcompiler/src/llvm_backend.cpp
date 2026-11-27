@@ -786,11 +786,12 @@ native_builtin_argument_count(const nil_module &mod, const std::string &name) {
   }
   if (name == "println" || name == "alloc" || name == "free" ||
       name == "read_i32" || name == "panic" || name == "ny__lang__core__panic" ||
-      name == "array__len" || name == "array__length" ||
+      name == "array__len" || name == "array__length" || name == "array__capacity" ||
       name == "String__len" || name == "String__length") {
     return 1;
   }
-  if (name == "write_i32" || name == "array__push" || name == "array__get")
+  if (name == "write_i32" || name == "array__push" || name == "array__get" ||
+      name == "array__reserve")
     return 2;
   if (name == "array__set" || name == "String__substr")
     return 3;
@@ -4988,6 +4989,11 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         auto *type = impl_->builder->CreateGlobalString(schema->name);
         auto *length = llvm::ConstantInt::get(fault_word, schema->name.size());
         if (op == Opcode::FAULT_MATCH) {
+          const auto known = fault_analysis.instructions[i].known_fault_match;
+          if (known) {
+            impl_->pushValue(llvm::ConstantInt::get(llvm::Type::getInt1Ty(ctx), *known), "bool");
+            break;
+          }
           auto *matched = impl_->builder->CreateCall(fault_helper("nyrt_fault_v1_match",
               fault_i32, {fault_word, fault_pointer, fault_word}),
               {fault_slot(minstr.args[0]), type, length});
@@ -5277,6 +5283,51 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
             val = impl_->builder->CreateLoad(llvm::Type::getInt32Ty(ctx), ptr);
           }
           impl_->pushValue(val, "i32");
+        } else if (is_legacy_builtin &&
+                   (callee_name == "array__reserve" || callee_name == "array__capacity")) {
+          const bool reserving = callee_name == "array__reserve";
+          auto *minimum = reserving ? impl_->popValue() : nullptr;
+          auto *array = impl_->popValue();
+          auto *kind = array ? array_kind_constant(impl_->nilType(array)) : nullptr;
+          if (!array || !array->getType()->isPointerTy() || !kind ||
+              (reserving && (!minimum || !native_value_is_numeric_scalar(minimum) ||
+                             !minimum->getType()->isIntegerTy() ||
+                             minimum->getType()->isIntegerTy(1) ||
+                             normalize_nil_type(impl_->nilType(minimum)) == "bool"))) {
+            std::cerr << "[NativeCodegen] " << callee_name
+                      << " requires a supported typed array"
+                      << (reserving ? " and an integer capacity" : "") << '\n';
+            return false;
+          }
+          std::vector<llvm::Type *> parameters = {
+              llvm::PointerType::getUnqual(ctx), llvm::Type::getInt32Ty(ctx)};
+          std::vector<llvm::Value *> arguments = {array, kind};
+          if (reserving) {
+            auto *word = native_storage_word(minimum, "i64", "array__reserve");
+            if (!word) return false;
+            parameters.push_back(llvm::Type::getInt64Ty(ctx));
+            arguments.push_back(word);
+          }
+          auto *result_type = reserving ? llvm::Type::getInt32Ty(ctx) : llvm::Type::getInt64Ty(ctx);
+          auto *runtime_type = llvm::FunctionType::get(result_type, parameters, false);
+          auto runtime = impl_->module->getOrInsertFunction(
+              reserving ? "nyrt_array_reserve" : "nyrt_array_capacity", runtime_type);
+          auto *result = impl_->builder->CreateCall(runtime_type, runtime.getCallee(), arguments);
+          auto *zero = llvm::ConstantInt::get(result_type, 0);
+          auto *valid = reserving ? impl_->builder->CreateICmpNE(result, zero)
+                                  : impl_->builder->CreateICmpSGE(result, zero);
+          auto *success = llvm::BasicBlock::Create(ctx, "array.capacity.success", impl_->current_function);
+          auto *failure = llvm::BasicBlock::Create(ctx, "array.capacity.failure", impl_->current_function);
+          impl_->builder->CreateCondBr(valid, success, failure);
+          impl_->builder->SetInsertPoint(failure);
+          auto *message = impl_->builder->CreateGlobalString(
+              reserving ? "NIL native runtime error: array reservation failed\n"
+                        : "NIL native runtime error: invalid array capacity\n");
+          impl_->builder->CreateCall(get_runtime_failure_function(), {message});
+          impl_->builder->CreateUnreachable();
+          impl_->builder->SetInsertPoint(success);
+          if (!reserving)
+            impl_->pushValue(impl_->builder->CreateTrunc(result, llvm::Type::getInt32Ty(ctx)), "i32");
         } else if (is_legacy_builtin && callee_name == "array__push") {
           auto *value = impl_->popValue();
           auto *array = impl_->popValue();
@@ -8728,6 +8779,19 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       }
     }
 
+    // A folded literal condition has exactly one executable edge. Keep runtime
+    // conditions conservative, but use the same feasible edges for reachability
+    // and both must-analyses below (including joins into otherwise-live blocks).
+    const auto feasible_edge = [](llvm::BasicBlock *from, llvm::BasicBlock *to) {
+      const auto *branch = llvm::dyn_cast_or_null<llvm::BranchInst>(from->getTerminator());
+      if (branch && branch->isConditional()) {
+        const auto *condition = llvm::dyn_cast<llvm::ConstantInt>(branch->getCondition());
+        if (condition)
+          return branch->getSuccessor(condition->isZero() ? 1 : 0) == to;
+      }
+      return true;
+    };
+
     // A missing terminator in reachable NIL is malformed, not an implicit
     // scalar zero return. Only synthetic/dead blocks may receive unreachable.
     std::unordered_set<llvm::BasicBlock *> reachable_blocks;
@@ -8738,7 +8802,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       if (!reachable_blocks.insert(block).second || !block->getTerminator())
         continue;
       for (auto *successor : llvm::successors(block))
-        pending_blocks.push_back(successor);
+        if (feasible_edge(block, successor)) pending_blocks.push_back(successor);
     }
     for (auto &bb : *impl_->current_function) {
       if (!bb.getTerminator()) {
@@ -8861,7 +8925,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           initialized_fields incoming(field_count, block != entry);
           if (block != entry) {
             for (auto *predecessor : llvm::predecessors(block)) {
-              if (!reachable_blocks.count(predecessor))
+              if (!reachable_blocks.count(predecessor) || !feasible_edge(predecessor, block))
                 continue;
               for (std::size_t field = 0; field < field_count; ++field)
                 incoming[field] = incoming[field] && fields_out.at(predecessor)[field];
@@ -8925,7 +8989,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                                                   : all_locals;
       if (block != entry) {
         for (auto *predecessor : llvm::predecessors(block)) {
-          if (reachable_blocks.count(predecessor) == 0)
+          if (reachable_blocks.count(predecessor) == 0 || !feasible_edge(predecessor, block))
             continue;
           const auto &previous = locals_out.at(predecessor);
           for (auto local = incoming.begin(); local != incoming.end();) {
@@ -8950,7 +9014,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         continue;
       locals_out[block] = std::move(outgoing);
       for (auto *successor : llvm::successors(block)) {
-        if (queued_blocks.insert(successor).second)
+        if (feasible_edge(block, successor) && queued_blocks.insert(successor).second)
           local_worklist.push_back(successor);
       }
     }
@@ -9513,6 +9577,8 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_array_new_with_value",
                         &nyrt_array_new_with_value);
   expose_runtime_symbol("nyrt_array_length", &nyrt_array_length);
+  expose_runtime_symbol("nyrt_array_capacity", &nyrt_array_capacity);
+  expose_runtime_symbol("nyrt_array_reserve", &nyrt_array_reserve);
   expose_runtime_symbol("nyrt_array_get", &nyrt_array_get);
   expose_runtime_symbol("nyrt_array_set", &nyrt_array_set);
   expose_runtime_symbol("nyrt_array_push", &nyrt_array_push);

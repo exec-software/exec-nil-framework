@@ -1,0 +1,50 @@
+book nil.tests.queue_ring
+
+read everything from nil.std.core
+read everything from nil.std.collections
+
+main returns override integer begin paragraph
+    variable pending as queue of override integer is queue.with_capacity with 8
+    variable alias as queue of override integer is pending
+    when not (pending.is_empty with nothing) then give 1 end when
+    when not ((pending.dequeue with nothing).is_none with nothing) then give 2 end when
+    variable index as override integer is 0
+    repeat while index is less than 8
+        evaluate pending.enqueue with item being index
+        set index to index plus 1
+    end repeat
+    set index to 0
+    repeat while index is less than 5
+        when ((alias.dequeue with nothing).unwrap with nothing) does not equal index then give 3 end when
+        set index to index plus 1
+    end repeat
+    set index to 8
+    repeat while index is less than 20
+        evaluate alias.enqueue with item being index
+        set index to index plus 1
+    end repeat
+    when (pending.count with nothing) does not equal 15 then give 4 end when
+    when not (pending.remove with item being 8) then give 5 end when
+    when pending.contains with item being 8 then give 6 end when
+    when (alias.count with nothing) does not equal 14 then give 7 end when
+    set index to 5
+    repeat while index is less than 20
+        when index does not equal 8 then
+            when ((pending.dequeue with nothing).unwrap with nothing) does not equal index then give 8 end when
+        end when
+        set index to index plus 1
+    end repeat
+    when not (alias.is_empty with nothing) then give 9 end when
+    evaluate pending.enqueue with item being 42
+    evaluate alias.clear with nothing
+    when pending.contains with item being 42 then give 10 end when
+    evaluate alias.add with item being 99
+    evaluate pending.enqueue with item being 100
+    value copied as array of override integer is [minus 1, minus 1, minus 1, minus 1]
+    evaluate pending.copy_to with destination being copied, array_index being 1
+    when (copied at 0) does not equal minus 1 or (copied at 3) does not equal minus 1 then give 11 end when
+    when (copied at 1) does not equal 99 or (copied at 2) does not equal 100 then give 12 end when
+    when ((alias.peek with nothing).unwrap with nothing) does not equal 99 then give 13 end when
+    say "queue-matrix-wrap-alias-ok"
+    give 0
+end paragraph
