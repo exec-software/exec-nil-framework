@@ -342,3 +342,32 @@ fabricated nested-array default, now replaced by the documented read failure.
 All four affected tests, the dynamic-value unit controls and the surrounding
 array/native admission contracts pass after these corrections. A new clean
 full run is required; the earlier failed report remains intact.
+
+## Verified enum/nested-array development candidate
+
+The corrected clean revision `c6ac4febe1e8c7fdd02d332b842645f5212167b4`
+passes 624 of 627 local CTests with zero failures. Only the existing PostgreSQL
+client/provider and graphical-display dependencies are skipped. Evidence is
+retained under `enum-nested-arrays-20261126-u89bptwg`, including the earlier
+failed full run, the corrected full report and the 320-check focused contract.
+
+Its separate development SDK validates 11 root-level tools, 19 binary standard
+library modules, source STL, 76 HTML documentation pages and 279 sealed files.
+The capability record is verified for 21 groups and 43 proof fixtures, covering
+258 six-route observations. All 1,440 installed consumer executions pass:
+90 fixtures against both source and binary libraries, each using six execution
+routes and text/binary NIL through the standalone assembler/linker. Installed
+durable-I/O, console and global-contract checks also pass.
+
+Bounded compatibility passes four full Web test-source compilations, four pure
+Web suites with 393 assertions each, and eight synthetic WebView routes. Input
+SDK, repository and provider pins remain unchanged, and cleanup is verified.
+These checks start no server or desktop/browser UI. The SDK remains a separate
+candidate pinned to `c6ac4fe`; it is not activated or declared a stable release.
+Mainline consolidation and broader platform SDK qualification remain separate.
+
+[GitHub Source validation](https://github.com/exec-software/exec-nil-framework/actions/runs/45942067075)
+passes for exact `c6ac4fe`: LLVM enabled passes all 627 tests with zero skips;
+LLVM disabled passes 475 with 145 expected native-only skips and no failures;
+VS Code passes. This subsequent evidence-only notebook commit does not rebuild
+or relabel the tested SDK candidate.
