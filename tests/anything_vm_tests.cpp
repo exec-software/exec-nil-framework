@@ -91,6 +91,20 @@ void values() {
       {"CALL", {"array__push", "2"}}, {"LOAD_LOCAL", {"items"}}, {"PUSH_CONST", {"0"}},
       {"CALL", {"array__get", "2"}}, {"UNBOX_ANY", {"i64"}}, {"RET", {}}}), 29,
       "legacy direct array adapters preserve boxed values");
+  integer(module({{"PUSH_CONST", {"11"}}, {"BOX_ANY", {"i64"}},
+      {"PUSH_CONST", {"19"}}, {"BOX_ANY", {"i64"}}, {"NEW_ARRAY_LITERAL", {"2", "anything"}},
+      {"STORE_LOCAL", {"items"}}, {"PUSH_CONST", {"0"}}, {"STORE_LOCAL", {"index"}},
+      {"PUSH_CONST", {"0"}}, {"STORE_LOCAL", {"sum"}}, {"LABEL", {"loop"}},
+      {"LOAD_LOCAL", {"index"}}, {"PUSH_CONST", {"2"}}, {"CMP_LT", {}}, {"JMP_IF_NOT", {"done"}},
+      {"LOAD_LOCAL", {"sum"}}, {"LOAD_LOCAL", {"items"}}, {"LOAD_LOCAL", {"index"}},
+      {"GET_INDEX", {}}, {"UNBOX_ANY", {"i64"}}, {"ADD", {}}, {"STORE_LOCAL", {"sum"}},
+      {"LOAD_LOCAL", {"index"}}, {"PUSH_CONST", {"1"}}, {"ADD", {}}, {"STORE_LOCAL", {"index"}},
+      {"JMP", {"loop"}}, {"LABEL", {"done"}}, {"LOAD_LOCAL", {"sum"}}, {"RET", {}}}),
+      30, "legacy integer loop arithmetic preserves checked index provenance");
+  integer(module({{"PUSH_CONST", {"23"}}, {"BOX_ANY", {"i64"}},
+      {"NEW_ARRAY_LITERAL", {"1", "anything"}}, {"PUSH_CONST", {"0"}}, {"NEG", {}},
+      {"GET_INDEX", {}}, {"UNBOX_ANY", {"i64"}}, {"RET", {}}}), 23,
+      "legacy integer negation preserves checked index provenance");
   auto holder = module({{"NEW_STRUCT", {"Holder"}}, {"PUSH_CONST", {"19"}}, {"BOX_ANY", {"i64"}},
       {"SET_FIELD", {"item"}}, {"BOX_ANY", {"Holder"}}, {"UNBOX_ANY", {"Holder"}},
       {"GET_FIELD", {"item"}}, {"UNBOX_ANY", {"i64"}}, {"RET", {}}});
@@ -133,6 +147,17 @@ void invalid() {
   rejects(module({{"PUSH_CONST", {"4"}}, {"BOX_ANY", {"ptr<i64>"}}, {"POP", {}}, {"PUSH_CONST", {"0"}}, {"RET", {}}}), "exact proven", true);
   rejects(module({{"PUSH_CONST", {"4"}}, {"CAST", {"i32"}}, {"BOX_ANY", {"i64"}},
       {"POP", {}}, {"PUSH_CONST", {"0"}}, {"RET", {}}}), "exact proven", true);
+  rejects(module({{"PUSH_CONST", {"7"}}, {"BOX_ANY", {"i64"}},
+      {"NEW_ARRAY_LITERAL", {"1", "anything"}}, {"PUSH_CONST", {"0.0"}}, {"PUSH_CONST", {"0"}},
+      {"ADD", {}}, {"GET_INDEX", {}}, {"UNBOX_ANY", {"i64"}}, {"RET", {}}}),
+      "array index requires an integer", true);
+  rejects(module({{"PUSH_CONST", {"7"}}, {"BOX_ANY", {"i64"}},
+      {"NEW_ARRAY_LITERAL", {"1", "anything"}}, {"LOAD_LOCAL", {"unproven"}}, {"PUSH_CONST", {"0"}},
+      {"ADD", {}}, {"GET_INDEX", {}}, {"UNBOX_ANY", {"i64"}}, {"RET", {}}}),
+      "array index requires an integer", true);
+  rejects(module({{"PUSH_CONST", {"1"}}, {"CAST", {"i32"}}, {"PUSH_CONST", {"2"}},
+      {"CAST", {"i32"}}, {"ADD", {}}, {"BOX_ANY", {"i32"}}, {"POP", {}},
+      {"PUSH_CONST", {"0"}}, {"RET", {}}}), "exact proven", true);
   auto wrong_enum = module({{"NEW_VARIANT", {"First::Item", "0", "First", "void"}},
       {"BOX_ANY", {"Second"}}, {"POP", {}}, {"PUSH_CONST", {"0"}}, {"RET", {}}});
   wrong_enum.enums.push_back({"First", {{"Item", ""}}});

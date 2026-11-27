@@ -940,6 +940,11 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     for (auto &local : old.locals) {
       const auto found = state.locals.find(local.first);
       if (found == state.locals.end() || found->second != local.second) {
+        if (found != state.locals.end() && has_dynamic_operations &&
+            integer_category(local.second) && integer_category(found->second)) {
+          if (local.second != "#word") { local.second = "#word"; changed = true; }
+          continue;
+        }
         const bool tainted = class_provenance_type(local.second, module, provenance_types) ||
             (found != state.locals.end() && class_provenance_type(found->second, module, provenance_types));
         const std::string merged = tainted ? unproven_class_value : "?";
@@ -1587,9 +1592,13 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     case Opcode::JMP_IF: case Opcode::JMP_IF_NOT:
       reject_class_operands(1); pop(1); enqueue(labels.at(args[0]), state, false, pc); break;
     case Opcode::LABEL: case Opcode::NOP: break;
-    case Opcode::NEG:
+    case Opcode::NEG: {
       reject_class_operands(1);
-      pop(1); state.stack.push_back(args.empty() ? "?" : opaque_stack_type(args[0])); break;
+      const auto type = args.empty()
+          ? (integer_category(state.stack.back()) ? "#word" : "?")
+          : opaque_stack_type(args[0]);
+      pop(1); state.stack.push_back(type); break;
+    }
     case Opcode::MATH_SIN: case Opcode::MATH_COS: case Opcode::MATH_TAN:
     case Opcode::MATH_ASIN: case Opcode::MATH_ACOS: case Opcode::MATH_ATAN:
     case Opcode::MATH_SQRT: case Opcode::MATH_EXP: case Opcode::MATH_LOG:
@@ -1609,9 +1618,18 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     }
     case Opcode::ADD: case Opcode::SUB: case Opcode::MUL: case Opcode::DIV:
     case Opcode::MOD: case Opcode::BIT_AND: case Opcode::BIT_OR: case Opcode::BIT_XOR:
-    case Opcode::SHL: case Opcode::SHR:
+    case Opcode::SHL: case Opcode::SHR: {
       reject_class_operands(2);
-      pop(2); state.stack.push_back(args.empty() ? "?" : opaque_stack_type(args[0])); break;
+      // Legacy untyped arithmetic is also emitted for synthetic loop indices.
+      // Proven integer operands retain that category, but no exact width is
+      // invented for boxing or typed storage. Unknown/noninteger inputs stay
+      // unproven and cannot become checked array indices through arithmetic.
+      const auto type = args.empty()
+          ? (integer_category(state.stack[state.stack.size() - 2]) &&
+             integer_category(state.stack.back()) ? "#word" : "?")
+          : opaque_stack_type(args[0]);
+      pop(2); state.stack.push_back(type); break;
+    }
     case Opcode::COUNT: fail("invalid opcode", pc); break;
     }
     if (!terminal) enqueue(pc + 1, state, false, pc);

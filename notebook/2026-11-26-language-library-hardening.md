@@ -331,3 +331,14 @@ raw-NIL oracle had recorded the opposite order and is corrected explicitly.
 The implementation is ready for a clean committed-source full suite and a
 separate development SDK candidate. These focused results do not replace that
 qualification or establish a new cross-platform release claim.
+
+The first full run at `514204f` completed 627 tests: 620 passed, four failed and
+three skipped for the existing unavailable providers. Three failures traced to
+legacy untyped arithmetic in generated foreach loops losing integer provenance
+at the loop merge. The loader now preserves only the proven integer category,
+without inventing an exact width; float/unknown indices and guessed-width boxing
+remain rejected. The fourth failure was an old array-identity assertion for a
+fabricated nested-array default, now replaced by the documented read failure.
+All four affected tests, the dynamic-value unit controls and the surrounding
+array/native admission contracts pass after these corrections. A new clean
+full run is required; the earlier failed report remains intact.

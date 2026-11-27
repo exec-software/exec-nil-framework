@@ -79,10 +79,9 @@ void propagation() {
       {Opcode::NEW_ARRAY_LITERAL, {"1", "array<i64>"}},
       {Opcode::PUSH_CONST, {"0"}}, {Opcode::GET_INDEX, {}}})),
       "nested heap arrays preserve array identity");
-  check(std::holds_alternative<ny::ArrayHandle>(execute({
-      {Opcode::NEW_ARRAY_LITERAL, {"0", "array<i64>"}},
-      {Opcode::PUSH_CONST, {"0"}}, {Opcode::GET_INDEX, {}}})),
-      "out-of-bounds nested-array default retains array kind");
+  reject({{Opcode::NEW_ARRAY_LITERAL, {"0", "array<i64>"}},
+      {Opcode::PUSH_CONST, {"0"}}, {Opcode::GET_INDEX, {}}},
+      "nested array read is out of bounds or uninitialized");
   check(std::holds_alternative<ny::ArrayHandle>(execute({
       {Opcode::NEW_STRUCT, {"Box"}}, {Opcode::NEW_ARRAY_LITERAL, {"0", "i64"}},
       {Opcode::SET_FIELD, {"item"}}, {Opcode::GET_FIELD, {"item"}}})),
