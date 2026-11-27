@@ -157,14 +157,18 @@ Indices and counts are `i32` (`override integer` in Matrix). The exercised
 element types are `i32`, `i64`, `u8`, `bool`, `f64`, and NUL-free `text`.
 Paired tuple-array fixtures also cover generic construction, access and checked
 overlapping copies, preserving tuple schemas and contained reference identities.
-Native storage also supports exact declared non-class records, including concrete
-generic records with acyclic schemas. Copies preserve shared mutable record
-identity; replacing a slot does not replace an already extracted record. Array
-aliases and reachable record fields remain live through growth and collection.
-Raw tuple/record reads outside the array fail instead of returning a fabricated
-default; scalar defaults remain unchanged. Native enum, nested-array, class and
-reference-wrapper elements and cyclic aggregate schemas remain unsupported.
-Ny and Matrix consumer fixtures cover the shared APIs. See the
+Native storage also supports exact declared non-class records, enums/choices and
+nested arrays, including concrete generics with finite, supported schemas. Copies
+preserve shared mutable record identity; replacing a slot does not replace an
+already extracted record or enum value. Enum payloads preserve contained aliases.
+Nested arrays retain shared child handles and may be jagged; they do not clone
+rows. Growth and collection preserve reachable child arrays and payload values.
+Raw tuple/record/enum/nested-array reads outside the array or from uninitialized
+storage fail instead of fabricating a default; scalar defaults remain unchanged.
+Direct class/reference-wrapper elements, recursive aggregate schemas and `f32`
+array elements remain unsupported. Ny and Matrix consumer fixtures specify the
+shared APIs; storage support alone does not qualify every collection method,
+query shape or platform SDK. See the
 [checked-array contract](../docs/standard-library/index.md#checked-arrays)
 for signatures, naming, zero-length rules, and remaining work.
 

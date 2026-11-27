@@ -29,6 +29,7 @@ ROUTES = ("text-interpreter", "binary-interpreter", "bundle-text", "bundle-binar
 FIXTURES = ("scalar-array-parity", "stl-array-primitives", "native-nested-reference",
             "array-capacity", "queue-ring", "hashmap-buckets-scalar",
             "record-arrays", "record-arrays-matrix", "hashmap-buckets",
+            "enum-arrays", "enum-arrays-matrix", "nested-arrays", "nested-arrays-matrix",
             "definite-assignment", "definite-assignment-matrix",
             "native-global-contract", "native-time-contract", "native-scalar-fields",
             "module-global-contract", "native-managed-lifetime", "class-execution",

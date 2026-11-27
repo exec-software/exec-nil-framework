@@ -437,8 +437,18 @@ static bool is_native_word_element_type(const std::string &type) {
 static const nil_struct_def *
 find_native_record_array_definition(const nil_module &mod, const std::string &type);
 
+static const nil_enum_def *
+find_native_enum_array_definition(const nil_module &mod, const std::string &type);
+static std::optional<std::string>
+native_generic_argument(const std::string &type, const std::string &name);
+
 static std::optional<std::uint32_t>
-native_array_kind_for_element(const nil_module &mod, const std::string &type) {
+native_array_kind_for_element(const nil_module &mod, const std::string &type,
+                              unsigned depth = 0) {
+  if (depth >= 64) return std::nullopt;
+  if (const auto child = native_generic_argument(type, "array"))
+    return native_array_kind_for_element(mod, *child, depth + 1)
+        ? std::optional<std::uint32_t>(NYRT_ARRAY_NESTED) : std::nullopt;
   const std::string normalized = normalize_nil_type(type);
   if (normalized == "i32")
     return NYRT_ARRAY_I32;
@@ -458,6 +468,8 @@ native_array_kind_for_element(const nil_module &mod, const std::string &type) {
     return NYRT_ARRAY_TUPLE;
   if (find_native_record_array_definition(mod, type))
     return NYRT_ARRAY_RECORD;
+  if (find_native_enum_array_definition(mod, type))
+    return NYRT_ARRAY_ENUM;
   return std::nullopt;
 }
 
@@ -520,6 +532,25 @@ native_generic_argument(const std::string &type, const std::string &name) {
              ? std::optional<std::string>(arguments->front()) : std::nullopt;
 }
 
+static std::string native_array_element_identity(const nil_module &mod,
+                                                  const std::string &type,
+                                                  unsigned depth = 0) {
+  if (depth >= 64) return {};
+  if (const auto child = native_generic_argument(type, "array")) {
+    const auto identity = native_array_element_identity(mod, *child, depth + 1);
+    return identity.empty() ? std::string{} : "array<" + identity + ">";
+  }
+  if (const auto *record = find_native_record_array_definition(mod, type))
+    return compact_nil_type(record->name);
+  if (const auto *enumeration = find_native_enum_array_definition(mod, type))
+    return compact_nil_type(enumeration->name);
+  return canonical_array_type(type);
+}
+
+static bool native_array_requires_descriptor(std::uint32_t kind) {
+  return kind == NYRT_ARRAY_RECORD || kind == NYRT_ARRAY_ENUM || kind == NYRT_ARRAY_NESTED;
+}
+
 static native_handle_kind
 native_handle_kind_for_nil_type(const nil_module &mod, const std::string &type) {
   const std::string normalized = normalize_nil_type(type);
@@ -556,16 +587,17 @@ static bool native_handle_types_compatible(const nil_module &mod, const std::str
   if (expected_kind == native_handle_kind::scalar_array) {
     const auto actual_element = native_generic_argument(actual, "array");
     const auto expected_element = native_generic_argument(expected, "array");
-    if (actual_element && expected_element &&
-        (native_array_kind_for_element(mod, *actual_element) == NYRT_ARRAY_RECORD ||
-         native_array_kind_for_element(mod, *expected_element) == NYRT_ARRAY_RECORD)) {
-      const auto *actual_record = find_native_record_array_definition(mod, *actual_element);
-      return actual_record && actual_record ==
-          find_native_record_array_definition(mod, *expected_element);
+    if (actual_element && expected_element) {
+      const auto actual_storage = native_array_kind_for_element(mod, *actual_element);
+      const auto expected_storage = native_array_kind_for_element(mod, *expected_element);
+      if (actual_storage && expected_storage &&
+          (native_array_requires_descriptor(*actual_storage) ||
+           native_array_requires_descriptor(*expected_storage) ||
+           *actual_storage == NYRT_ARRAY_TUPLE || *expected_storage == NYRT_ARRAY_TUPLE))
+        return actual_storage == expected_storage &&
+            native_array_element_identity(mod, *actual_element) ==
+            native_array_element_identity(mod, *expected_element);
     }
-    if (actual_element && expected_element &&
-        (is_array_tuple_type(*actual_element) || is_array_tuple_type(*expected_element)))
-      return canonical_array_type(*actual_element) == canonical_array_type(*expected_element);
     return actual_element && expected_element &&
            native_array_kind_for_element(mod, *actual_element) ==
                native_array_kind_for_element(mod, *expected_element);
@@ -675,6 +707,19 @@ static const nil_enum_def *find_nil_enum_definition(const nil_module &mod,
     match = &definition;
   }
   return match;
+}
+
+static const nil_enum_def *
+find_native_enum_array_definition(const nil_module &mod, const std::string &type) {
+  if (is_array_tuple_type(type) || is_pointer_like_nil_type(type)) return nullptr;
+  const auto *definition = find_nil_enum_definition(mod, type);
+  // Array metadata is already resolved by the compiler. Unlike bare enum
+  // operations, it cannot infer a missing owner or accept a linker spelling.
+  if (!definition || compact_nil_type(definition->name) != compact_nil_type(type) ||
+      find_nil_class(mod, definition->name)) return nullptr;
+  for (const auto &record : mod.structs)
+    if (compact_nil_type(record.name) == compact_nil_type(definition->name)) return nullptr;
+  return definition;
 }
 
 static std::optional<std::vector<std::string>>
@@ -1976,6 +2021,24 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       }
       return impl_->builder->CreatePtrToInt(value, i64_type, "nil.anything.bits");
     }
+    if (const auto *enumeration = find_native_enum_array_definition(mod, element_type)) {
+      if (!value->getType()->isIntegerTy(64) ||
+          find_native_enum_array_definition(mod, impl_->nilType(value)) != enumeration) {
+        std::cerr << "[NativeCodegen] " << operation
+                  << " requires an exact enum element of type '" << element_type << "'\n";
+        return nullptr;
+      }
+      return value;
+    }
+    if (native_array_kind_for_element(mod, element_type) == NYRT_ARRAY_NESTED) {
+      if (!value->getType()->isPointerTy() ||
+          !native_handle_types_compatible(mod, impl_->nilType(value), element_type)) {
+        std::cerr << "[NativeCodegen] " << operation
+                  << " requires an exact nested array element of type '" << element_type << "'\n";
+        return nullptr;
+      }
+      return impl_->builder->CreatePtrToInt(value, i64_type, "nil.array.nested.bits");
+    }
     if (const auto *record = find_native_record_array_definition(mod, element_type)) {
       if (!value->getType()->isPointerTy() ||
           find_native_record_array_definition(mod, impl_->nilType(value)) != record) {
@@ -2055,7 +2118,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
   auto native_array_loaded_value =
       [&](llvm::Value *word, const std::string &element_type) -> llvm::Value * {
     const auto kind = native_array_kind_for_element(mod, element_type);
-    if (kind == NYRT_ARRAY_TUPLE || kind == NYRT_ARRAY_ANYTHING || kind == NYRT_ARRAY_RECORD)
+    if (kind == NYRT_ARRAY_TUPLE || kind == NYRT_ARRAY_ANYTHING || kind == NYRT_ARRAY_RECORD || kind == NYRT_ARRAY_NESTED)
       return impl_->builder->CreateIntToPtr(
           word, llvm::PointerType::getUnqual(ctx), "ny.array.tuple.value");
     if (kind == NYRT_ARRAY_F64)
@@ -2197,32 +2260,34 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
     return llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false));
   };
 
-  // Record descriptors retain the fully resolved nominal identity. Check it
-  // before using the common word-array ABI, including non-mutating operations.
-  auto require_record_array = [&](llvm::Value *array, const std::string &element) {
-    const auto *record = find_native_record_array_definition(mod, element);
-    if (!record) return;
-    const auto identity = compact_nil_type(record->name);
+  // Descriptor-backed arrays retain exact nominal/container element identity.
+  // Check it before every common word-array operation, including reads/length.
+  auto require_typed_array = [&](llvm::Value *array, const std::string &element) {
+    const auto kind = native_array_kind_for_element(mod, element);
+    if (!kind || !native_array_requires_descriptor(*kind)) return;
+    const auto identity = native_array_element_identity(mod, element);
     auto *type = llvm::FunctionType::get(llvm::PointerType::getUnqual(ctx),
-        {llvm::PointerType::getUnqual(ctx), llvm::PointerType::getUnqual(ctx),
-         llvm::Type::getInt64Ty(ctx)}, false);
-    auto runtime = impl_->module->getOrInsertFunction("nyrt_record_array_v1_require", type);
+        {llvm::PointerType::getUnqual(ctx), llvm::Type::getInt32Ty(ctx),
+         llvm::PointerType::getUnqual(ctx), llvm::Type::getInt64Ty(ctx)}, false);
+    auto runtime = impl_->module->getOrInsertFunction("nyrt_typed_array_v1_require", type);
     impl_->builder->CreateCall(runtime,
-        {array, impl_->builder->CreateGlobalString(identity),
+        {array, llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), *kind),
+         impl_->builder->CreateGlobalString(identity),
          llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), identity.size())});
   };
 
-  auto create_record_array = [&](const std::string &element, llvm::Value *length,
-                                 llvm::Value *initial) -> llvm::Value * {
-    const auto *record = find_native_record_array_definition(mod, element);
-    if (!record) return nullptr;
-    const auto identity = compact_nil_type(record->name);
+  auto create_typed_array = [&](const std::string &element, llvm::Value *length,
+                                llvm::Value *initial) -> llvm::Value * {
+    const auto kind = native_array_kind_for_element(mod, element);
+    if (!kind || !native_array_requires_descriptor(*kind)) return nullptr;
+    const auto identity = native_array_element_identity(mod, element);
     auto *word = llvm::Type::getInt64Ty(ctx);
     auto *type = llvm::FunctionType::get(llvm::PointerType::getUnqual(ctx),
-        {llvm::PointerType::getUnqual(ctx), word, word, word}, false);
-    auto runtime = impl_->module->getOrInsertFunction("nyrt_record_array_v1_new", type);
+        {llvm::Type::getInt32Ty(ctx), llvm::PointerType::getUnqual(ctx), word, word, word}, false);
+    auto runtime = impl_->module->getOrInsertFunction("nyrt_typed_array_v1_new", type);
     return impl_->builder->CreateCall(runtime,
-        {impl_->builder->CreateGlobalString(identity),
+        {llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), *kind),
+         impl_->builder->CreateGlobalString(identity),
          llvm::ConstantInt::get(word, identity.size()), length, initial});
   };
 
@@ -2230,7 +2295,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
     auto *kind = array_kind_constant(impl_->nilType(array_pointer));
     if (!kind)
       return nullptr;
-    require_record_array(array_pointer, *native_generic_argument(impl_->nilType(array_pointer), "array"));
+    require_typed_array(array_pointer, *native_generic_argument(impl_->nilType(array_pointer), "array"));
     auto type = llvm::FunctionType::get(
         llvm::Type::getInt64Ty(ctx),
         {llvm::PointerType::getUnqual(ctx), llvm::Type::getInt32Ty(ctx)},
@@ -2388,6 +2453,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
   std::unordered_set<const nil_struct_def *> reachable_structs;
   std::vector<const nil_struct_def *> struct_worklist;
   std::unordered_set<std::string> visited_layout_types;
+  std::vector<std::string> extended_array_layout_roots;
   bool valid_tuple_schemas = true;
   auto add_struct_type = [&](const std::string &type) {
     std::vector<std::string> pending{type};
@@ -2415,8 +2481,12 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       }
       if (definition && reachable_structs.insert(definition).second)
         struct_worklist.push_back(definition);
-      if (const auto element = native_generic_argument(current, "array"))
+      if (const auto element = native_generic_argument(current, "array")) {
         pending.push_back(*element);
+        const auto kind = native_array_kind_for_element(mod, *element);
+        if (kind == NYRT_ARRAY_ENUM || kind == NYRT_ARRAY_NESTED)
+          extended_array_layout_roots.push_back(*element);
+      }
       if (const auto *enumeration = find_nil_enum_definition(mod, current))
         for (const auto &variant : enumeration->variants)
           if (const auto payloads = native_enum_variant_payload_types(variant))
@@ -2446,7 +2516,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         add_struct_type(instruction.args[0]);
       }
       if (opcode == Opcode::NEW_ARRAY_LITERAL && instruction.args.size() >= 2)
-        add_struct_type(instruction.args[1]);
+        add_struct_type("array<" + instruction.args[1] + ">");
       if (opcode == Opcode::INTEROP_CALL && instruction.args.size() == 5 &&
           instruction.args[0] == "intrinsic" && is_array_intrinsic(instruction.args[1])) {
         add_struct_type(instruction.args[3]);
@@ -2493,9 +2563,13 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
       (void)field_name;
       // An array is a handle, but its aggregate element schema contributes
       // a dependency. Recursive aggregate graphs keep the existing rejection.
-      const auto element = native_generic_argument(field_type, "array");
-      if (const auto *nested = find_native_aggregate_definition(
-              mod, element ? *element : field_type)) {
+      auto dependency_type = field_type;
+      for (unsigned depth = 0; depth < 64; ++depth) {
+        const auto element = native_generic_argument(dependency_type, "array");
+        if (!element) break;
+        dependency_type = *element;
+      }
+      if (const auto *nested = find_native_aggregate_definition(mod, dependency_type)) {
         ++pending;
         dependent_structs[nested].push_back(definition);
       }
@@ -2522,6 +2596,100 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         break;
       }
     }
+    return false;
+  }
+
+  // Enum/nested element arrays need finite, concrete reachable schemas even
+  // when empty. Follow both records and enum payloads through array/ref handles;
+  // an indirection must not hide an unsupported recursive initialization graph.
+  std::unordered_map<std::string, std::vector<std::string>> array_schema_edges;
+  std::vector<std::string> array_schema_work = extended_array_layout_roots;
+  // Payload metadata retains the existing unique nominal-name resolution;
+  // exact array element names are checked separately by the storage classifier.
+  const auto array_schema_key = [&](std::string type) {
+    for (unsigned depth = 0; depth < 64; ++depth) {
+      const auto child = native_generic_argument(type, "array");
+      if (!child) break;
+      type = *child;
+    }
+    if (const auto *record = find_native_aggregate_definition(mod, type))
+      return std::string("record:") + compact_nil_type(record->name);
+    if (const auto *enumeration = find_nil_enum_definition(mod, type))
+      return std::string("enum:") + compact_nil_type(enumeration->name);
+    return std::string{};
+  };
+  for (std::size_t index = 0; index < array_schema_work.size(); ++index) {
+    auto type = array_schema_work[index];
+    for (unsigned depth = 0; depth < 64; ++depth) {
+      const auto child = native_generic_argument(type, "array");
+      if (!child) break;
+      type = *child;
+    }
+    const auto key = array_schema_key(type);
+    if (key.empty() || array_schema_edges.count(key)) continue;
+    if (array_schema_edges.size() >= 4096) {
+      std::cerr << "[NativeCodegen] array element schema graph exceeds its bound\n";
+      return false;
+    }
+    std::vector<std::string> children;
+    if (const auto *record = find_native_aggregate_definition(mod, type)) {
+      for (const auto &field : record->fields) children.push_back(field.second);
+      // An ancestor payload can hold any concrete descendant. Include those
+      // layouts just as the reachable-struct pass does, so a derived field
+      // cannot hide a recursive enum/record graph behind a base-class view.
+      if (find_nil_class(mod, record->name))
+        for (const auto &dynamic_class : mod.classes)
+          if (dynamic_class.name != record->name && !dynamic_class.is_abstract &&
+              nil_class_assignable(mod, record->name, dynamic_class.name))
+            children.push_back(dynamic_class.name);
+    } else if (const auto *enumeration = find_nil_enum_definition(mod, type)) {
+      std::unordered_set<std::string> variants;
+      if (enumeration->variants.empty()) {
+        std::cerr << "[NativeCodegen] enum array requires a declared nonempty variant schema\n";
+        return false;
+      }
+      for (const auto &variant : enumeration->variants) {
+        const auto payloads = native_enum_variant_payload_types(variant);
+        if (variant.name.empty() || !variants.insert(variant.name).second || !payloads) {
+          std::cerr << "[NativeCodegen] enum array has invalid or duplicate variant metadata\n";
+          return false;
+        }
+        for (const auto &payload : *payloads) {
+          if (!native_enum_payload_type_supported(payload)) {
+            std::cerr << "[NativeCodegen] enum array payload '" << payload
+                      << "' has no supported native layout\n";
+            return false;
+          }
+          children.push_back(payload);
+        }
+      }
+    }
+    auto &edges = array_schema_edges[key];
+    for (const auto &child : children) {
+      const auto dependency = array_schema_key(child);
+      if (!dependency.empty()) {
+        edges.push_back(dependency);
+        array_schema_work.push_back(child);
+      }
+    }
+  }
+  std::unordered_map<std::string, std::size_t> array_schema_pending;
+  std::unordered_map<std::string, std::vector<std::string>> array_schema_dependents;
+  std::deque<std::string> array_schema_ready;
+  for (const auto &[key, edges] : array_schema_edges) {
+    array_schema_pending[key] = edges.size();
+    if (edges.empty()) array_schema_ready.push_back(key);
+    for (const auto &dependency : edges) array_schema_dependents[dependency].push_back(key);
+  }
+  std::size_t array_schema_completed = 0;
+  while (!array_schema_ready.empty()) {
+    const auto key = array_schema_ready.front(); array_schema_ready.pop_front();
+    ++array_schema_completed;
+    for (const auto &dependent : array_schema_dependents[key])
+      if (--array_schema_pending[dependent] == 0) array_schema_ready.push_back(dependent);
+  }
+  if (array_schema_completed != array_schema_edges.size()) {
+    std::cerr << "[NativeCodegen] array element schema is a recursive aggregate or depends on one\n";
     return false;
   }
 
@@ -3867,7 +4035,8 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
               ((native_handle_kind_for_nil_type(mod, value_type) == native_handle_kind::text ||
                 native_handle_kind_for_nil_type(mod, value_type) == native_handle_kind::anything ||
                 is_array_tuple_type(value_type) ||
-                find_native_record_array_definition(mod, value_type))
+                find_native_record_array_definition(mod, value_type) ||
+                native_array_kind_for_element(mod, value_type) == NYRT_ARRAY_NESTED)
                    ? !val_arg->getType()->isPointerTy()
                    : !val_arg->getType()->isIntegerTy()) ||
               !impl_->current_function->getReturnType()->isPointerTy()) {
@@ -3890,8 +4059,8 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
               false);
           auto runtime = impl_->module->getOrInsertFunction(
               "nyrt_array_new_with_value", runtime_type);
-          llvm::Value *pointer = *kind == NYRT_ARRAY_RECORD
-              ? create_record_array(*element_type, size_i64, value_i64)
+          llvm::Value *pointer = native_array_requires_descriptor(*kind)
+              ? create_typed_array(*element_type, size_i64, value_i64)
               : impl_->builder->CreateCall(
                   runtime_type, runtime.getCallee(),
                   {llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)),
@@ -3923,7 +4092,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         }
 
         const auto kind = native_array_kind_for_element(mod, *element_type);
-        require_record_array(array, *element_type);
+        require_typed_array(array, *element_type);
         auto *runtime_type = llvm::FunctionType::get(
             llvm::Type::getInt64Ty(ctx),
             {llvm::PointerType::getUnqual(ctx), llvm::Type::getInt32Ty(ctx)},
@@ -3984,7 +4153,8 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
               ((native_handle_kind_for_nil_type(mod, fn.return_type) == native_handle_kind::text ||
                 native_handle_kind_for_nil_type(mod, fn.return_type) == native_handle_kind::anything ||
                 is_array_tuple_type(fn.return_type) ||
-                find_native_record_array_definition(mod, fn.return_type))
+                find_native_record_array_definition(mod, fn.return_type) ||
+                native_array_kind_for_element(mod, fn.return_type) == NYRT_ARRAY_NESTED)
                    ? !impl_->current_function->getReturnType()->isPointerTy()
                    : !impl_->current_function->getReturnType()->isIntegerTy())) {
             std::cerr << "[NativeCodegen] array.get intrinsic '" << fn.name
@@ -3993,7 +4163,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           }
 
           const auto kind = native_array_kind_for_element(mod, *element_type);
-          require_record_array(arr_arg, *element_type);
+          require_typed_array(arr_arg, *element_type);
           auto runtime_type = llvm::FunctionType::get(
               llvm::Type::getInt64Ty(ctx),
               {llvm::PointerType::getUnqual(ctx), llvm::Type::getInt32Ty(ctx),
@@ -4006,7 +4176,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
               {arr_arg,
                llvm::ConstantInt::get(ctx, llvm::APInt(32, static_cast<std::uint64_t>(*kind), false)),
                impl_->coerceToI64(idx_arg)});
-          if (*kind == NYRT_ARRAY_TEXT || *kind == NYRT_ARRAY_TUPLE || *kind == NYRT_ARRAY_ANYTHING || *kind == NYRT_ARRAY_RECORD)
+          if (*kind == NYRT_ARRAY_TEXT || *kind == NYRT_ARRAY_TUPLE || *kind == NYRT_ARRAY_ANYTHING || *kind == NYRT_ARRAY_RECORD || *kind == NYRT_ARRAY_NESTED)
             value = native_array_loaded_value(value, *element_type);
           else
             value = impl_->castInteger(value,
@@ -4044,7 +4214,8 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
               ((native_handle_kind_for_nil_type(mod, value_type) == native_handle_kind::text ||
                 native_handle_kind_for_nil_type(mod, value_type) == native_handle_kind::anything ||
                 is_array_tuple_type(value_type) ||
-                find_native_record_array_definition(mod, value_type))
+                find_native_record_array_definition(mod, value_type) ||
+                native_array_kind_for_element(mod, value_type) == NYRT_ARRAY_NESTED)
                    ? !val_arg->getType()->isPointerTy()
                    : !val_arg->getType()->isIntegerTy()) ||
               !impl_->current_function->getReturnType()->isVoidTy()) {
@@ -4054,7 +4225,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           }
 
           const auto kind = native_array_kind_for_element(mod, *element_type);
-          require_record_array(arr_arg, *element_type);
+          require_typed_array(arr_arg, *element_type);
           auto runtime_type = llvm::FunctionType::get(
               llvm::Type::getInt32Ty(ctx),
               {llvm::PointerType::getUnqual(ctx), llvm::Type::getInt32Ty(ctx),
@@ -5375,7 +5546,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                       << (reserving ? " and an integer capacity" : "") << '\n';
             return false;
           }
-          require_record_array(array, *native_generic_argument(impl_->nilType(array), "array"));
+          require_typed_array(array, *native_generic_argument(impl_->nilType(array), "array"));
           std::vector<llvm::Type *> parameters = {
               llvm::PointerType::getUnqual(ctx), llvm::Type::getInt32Ty(ctx)};
           std::vector<llvm::Value *> arguments = {array, kind};
@@ -5424,7 +5595,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                       << array_type << "' in function '" << fn.name << "'\n";
             return false;
           }
-          require_record_array(array, *element);
+          require_typed_array(array, *element);
           require_initialized_struct(value, "array__push");
           auto *stored_value = native_storage_word(value, *element, "array__push");
           if (!stored_value)
@@ -6979,15 +7150,10 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         impl_->builder->CreateUnreachable();
         impl_->builder->SetInsertPoint(shape_success);
 
-        // Push fields in reverse order (so pop retrieves f0, f1...)
-        // Memory: [Tag, Count, f0, f1...]
-        // Stack needs: [..., f1, f0] (Top)
-        // Pop -> f0.
-
-        // Loop from count-1 down to 0
-        for (std::size_t reverse_index = 0; reverse_index < count;
-             ++reverse_index) {
-          const std::size_t i = count - 1 - reverse_index;
+        // Match the interpreter and NIL provenance stack: push payloads in
+        // declaration order, leaving the last field on top for consumption.
+        // Memory: [Tag, Count, f0, f1...]; stack: [..., f0, f1...].
+        for (std::size_t i = 0; i < count; ++i) {
           // Offset = 16 + i * 8
           const std::uint64_t offset = 16 + i * 8;
 
@@ -7378,7 +7544,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
             array_intrinsic_contract contract;
             try {
               contract = parse_array_intrinsic(minstr.args,
-                  find_native_record_array_definition(mod, minstr.args[4]) != nullptr);
+                  native_array_kind_for_element(mod, minstr.args[4]).has_value());
             } catch (const std::exception &error) {
               std::cerr << "[NativeCodegen] " << error.what() << '\n';
               return false;
@@ -7436,8 +7602,8 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
               auto *type = llvm::FunctionType::get(pointer_type,
                   {kind_type, word_type, word_type}, false);
               auto runtime = impl_->module->getOrInsertFunction("nyrt_array_new_with_value", type);
-              llvm::Value *array = *kind == NYRT_ARRAY_RECORD
-                  ? create_record_array(contract.element, size, initial)
+              llvm::Value *array = native_array_requires_descriptor(*kind)
+                  ? create_typed_array(contract.element, size, initial)
                   : impl_->builder->CreateCall(type, runtime.getCallee(),
                                                {kind_value, size, initial});
               emit_allocation_null_check(array, func_name);
@@ -7451,7 +7617,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
               std::cerr << "[NativeCodegen] array intrinsic requires a matching typed array handle\n";
               return false;
             }
-            require_record_array(array, contract.element);
+            require_typed_array(array, contract.element);
             if (contract.operation == array_intrinsic_operation::length) {
               auto *length = array_length_value(array);
               checked_range(length, 0, "array length exceeds the i32 range");
@@ -8500,7 +8666,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
         auto runtime_new = impl_->module->getOrInsertFunction("nyrt_array_new",
                                                               runtime_new_type);
         llvm::Value *raw_ptr = nullptr;
-        if (*kind == NYRT_ARRAY_RECORD) {
+        if (native_array_requires_descriptor(*kind)) {
           llvm::Value *initial = llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), 0);
           if (count > 0) {
             if (impl_->value_stack.size() < static_cast<std::size_t>(count)) {
@@ -8512,7 +8678,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
                                           "NEW_ARRAY_LITERAL");
             if (!initial) return false;
           }
-          raw_ptr = create_record_array(element_type, size_val, initial);
+          raw_ptr = create_typed_array(element_type, size_val, initial);
         } else if (*kind == NYRT_ARRAY_ANYTHING && count > 0) {
           if (impl_->value_stack.size() < static_cast<std::size_t>(count)) {
             std::cerr << "[NativeCodegen] NEW_ARRAY_LITERAL requires all initialized elements\n";
@@ -8612,7 +8778,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
 
         llvm::Value *val = nullptr;
         if (handle_kind == native_handle_kind::scalar_array) {
-          require_record_array(arr_ptr, *element_type);
+          require_typed_array(arr_ptr, *element_type);
           auto runtime_type = llvm::FunctionType::get(
               llvm::Type::getInt64Ty(ctx),
               {llvm::PointerType::getUnqual(ctx), llvm::Type::getInt32Ty(ctx),
@@ -8714,7 +8880,7 @@ bool NativeCodegen::generateModule(const nil_module &mod) {
           return false;
         }
         if (handle_kind == native_handle_kind::scalar_array) {
-          require_record_array(arr_ptr, *element_type);
+          require_typed_array(arr_ptr, *element_type);
           auto runtime_type = llvm::FunctionType::get(
               llvm::Type::getInt32Ty(ctx),
               {llvm::PointerType::getUnqual(ctx), llvm::Type::getInt32Ty(ctx),
@@ -9672,6 +9838,8 @@ int NativeCodegen::executeJIT(const std::vector<std::string> &program_args) {
   expose_runtime_symbol("nyrt_nildata_v1_request", &nyrt_nildata_v1_request);
   expose_runtime_symbol("nyrt_regex_search", &nyrt_regex_search);
   expose_runtime_symbol("nyrt_regex_group_index", &nyrt_regex_group_index);
+  expose_runtime_symbol("nyrt_typed_array_v1_new", &nyrt_typed_array_v1_new);
+  expose_runtime_symbol("nyrt_typed_array_v1_require", &nyrt_typed_array_v1_require);
   expose_runtime_symbol("nyrt_record_array_v1_new", &nyrt_record_array_v1_new);
   expose_runtime_symbol("nyrt_record_array_v1_require", &nyrt_record_array_v1_require);
   expose_runtime_symbol("nyrt_array_new", &nyrt_array_new);

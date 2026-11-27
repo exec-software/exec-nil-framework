@@ -335,13 +335,33 @@ fields, including supported text, array and reference handles. This is shallow
 storage, not a recursive clone. The [record-array fixture](../../tests/language/record-arrays.ny)
 and [contract harness](../../tests/tools/native_record_array_contract.py) specify
 aliasing, generic schemas, initialized storage, checked overlap copies and lifetime
-behavior. Native enum, nested-array, class and reference-wrapper element arrays
-remain unsupported, as do cyclic aggregate schemas. Checked byte stores retain
-the existing `u8` conversion rules; these APIs validate indices and ranges, not
-numeric conversions.
-Raw scalar array accessors retain their zero/no-op bounds behavior. Raw tuple
-and record reads outside the array fail because no default value exists; use
-checked operations or validate bounds before reading.
+behavior.
+
+Native enum/choice arrays retain exact concrete enum identity, including generic
+arguments, variant tags and initialized payloads. Reading or copying an element
+preserves its value; replacing that slot leaves an extracted enum unchanged.
+Mutable records and arrays inside its payload retain their shared identities.
+Nested arrays store live child-array handles with exact element types at each
+depth. They may be jagged: each child has its own length and capacity. Repeating,
+filling, copying or gathering a child handle shares that child instead of cloning
+its rows. Mutating a child remains visible through its aliases; replacing an outer
+slot leaves an extracted child intact. GC traces nested children and enum payloads.
+The [enum fixtures](../../tests/language/enum-arrays.ny),
+[nested-array fixtures](../../tests/language/nested-arrays.ny), paired Matrix
+consumers and [contract harness](../../tests/tools/enum_nested_array_contract.py)
+specify identity, growth, initialized storage, aliases, lifetime and rejection
+behavior. Their native schema graphs must be finite and use supported payload and
+field layouts; recursive schemas remain rejected even through array indirection.
+Direct class/reference-wrapper elements and `f32` array elements remain unsupported.
+These storage contracts do not widen the query row/projection profile or certify
+all collection methods or platform SDKs.
+
+Checked byte stores retain the existing `u8` conversion rules; these APIs validate
+indices and ranges, not numeric conversions. Raw scalar array accessors retain
+their default-read/no-op-write bounds behavior. Invalid or uninitialized tuple,
+record, enum and nested-array reads fail because no default value exists; use
+checked operations or validate bounds before reading. Out-of-bounds writes of
+valid values remain no-ops.
 
 The related `copy_to` guards on `list`, `queue`, `stack`, `hash_set`, and
 `dictionary` now check remaining destination space by subtraction. Invalid
@@ -383,8 +403,10 @@ capacity, aliasing, growth, wraparound, collisions, minimum-i64 hashes, removal
 and reuse across all six execution routes. The Matrix queue has matching route
 coverage. The [record-key HashMap and record-queue fixture](../../tests/language/hashmap-buckets.ny)
 also covers all six routes, including collision chains, removal, aliasing, reuse
-and queue elements without a default value. Native enum, nested-array, class and
-reference-wrapper element layouts, cyclic aggregate schemas, resizing and strided
+and queue elements without a default value. Enum and nested-array storage now has
+its own exact-type, aliasing and lifetime contract above; it does not independently
+qualify every collection method for those elements. Direct class/reference-wrapper
+element layouts, recursive aggregate schemas, `f32` arrays, resizing and strided
 views with ownership rules remain separate work.
 
 ## Stable index ordering

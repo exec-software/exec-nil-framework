@@ -645,6 +645,16 @@ bool variant_owner_matches(const std::string &tag, const nil_enum_def &schema) {
                        "::" + owner) == 0);
 }
 
+// Keep container provenance structural and exact. A typed array carries one
+// element type even when that type itself contains generic arguments.
+std::optional<std::string> provenance_array_element(const std::string &raw) {
+  const auto type = canonical_dynamic_type(raw);
+  if (type.rfind("array<", 0) != 0 || type.back() != '>') return std::nullopt;
+  const auto elements = array_tuple_elements("tuple<" + type.substr(6, type.size() - 7) + ">");
+  return elements && elements->size() == 1
+      ? std::optional<std::string>(elements->front()) : std::nullopt;
+}
+
 bool class_sensitive_type(const std::string &raw, const nil_module &module,
                           provenance_type_index *types = nullptr) {
   if (!types) {
@@ -663,6 +673,8 @@ bool class_sensitive_type(const std::string &raw, const nil_module &module,
       if (visited.size() > 4096)
         throw std::runtime_error("NIL provenance type graph exceeds its bound");
       if (type == "anything") return true;
+      if (const auto element = provenance_array_element(type))
+        pending.push_back(*element);
       // Compiler-owned binding cells carry stack storage in native code. Use
       // the existing exact-provenance CFG analysis for these handles too, so
       // casts, unknown calls, globals, arrays and raw pointers cannot erase the
@@ -708,6 +720,8 @@ bool class_provenance_type(const std::string &type, const nil_module &module,
     return class_sensitive_type(type.substr(10), module, types);
   if (type.rfind("#enum:", 0) == 0)
     return class_sensitive_type(type.substr(6), module, types);
+  if (type.rfind("#typed:array<", 0) == 0)
+    return class_sensitive_type(type.substr(7), module, types);
   if (!type.empty() && (type.front() == '@' || type.front() == '!')) {
     const auto marker = type.find('@');
     if (marker != std::string::npos) return class_sensitive_type(type.substr(marker + 1), module, types);
@@ -992,6 +1006,26 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
         fail("enum argument or storage requires its exact proven nominal type", pc);
       if (checked.rfind("#callable:", 0) == 0 && checked != actual)
         fail("callable argument or storage requires its exact checked signature", pc);
+      if (checked.rfind("#typed:array<", 0) == 0 && checked != actual)
+        fail("array argument or storage requires its exact proven element type", pc);
+    };
+    const auto checked_array_element = [&](const std::string &receiver) {
+      if (receiver.rfind("#typed:array<", 0) != 0)
+        fail("array operation requires a proven typed array receiver", pc);
+      const auto element = provenance_array_element(receiver.substr(7));
+      if (!element) fail("array operation requires one exact element type", pc);
+      if (contains_binding_cell_type(*element))
+        fail("array storage cannot contain binding-reference cells", pc);
+      return *element;
+    };
+    const auto check_array_value = [&](const std::string &element,
+                                       const std::string &actual) {
+      check_class_argument(element, actual);
+      const auto expected = stack_type(element, module);
+      if (expected.rfind("#enum:", 0) == 0 && expected != actual)
+        fail("enum array storage requires its exact proven nominal type", pc);
+      if (class_type(actual) && expected != actual)
+        fail("array storage requires exact checked element provenance", pc);
     };
     const auto opaque_stack_type = [&](const std::string &raw) {
       const auto type = stack_type(raw, module);
@@ -1186,29 +1220,41 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     }
     case Opcode::SET_FIELD_PTR: case Opcode::WRITE_PTR: reject_class_operands(2); pop(2); break;
     case Opcode::GET_INDEX: {
-      reject_class_operands(2);
+      if (state.stack.size() < 2) fail("index read requires two operands", pc);
       const auto owner = state.stack[state.stack.size() - 2];
       std::string element = "?";
-      if (owner.rfind("#typed:array<", 0) == 0 || owner.rfind("#typed:ptr<", 0) == 0) {
-        const auto open = owner.find('<');
-        element = stack_type(owner.substr(open + 1, owner.size() - open - 2), module);
+      if (owner.rfind("#typed:array<", 0) == 0) {
+        if (!integer_category(state.stack.back())) fail("array index requires an integer", pc);
+        element = stack_type(checked_array_element(owner), module);
+      } else {
+        reject_class_operands(2);
+        if (owner.rfind("#typed:ptr<", 0) == 0) {
+          const auto open = owner.find('<');
+          element = stack_type(owner.substr(open + 1, owner.size() - open - 2), module);
+        }
       }
       pop(2); state.stack.push_back(element); break;
     }
     case Opcode::SET_INDEX: {
       if (state.stack.size() < 3) fail("index write requires three operands", pc);
       const auto owner = state.stack[state.stack.size() - 3];
-      if (owner == "#typed:array<anything>") {
-        if (state.stack.back() != "#anything") fail("anything array requires a boxed value", pc);
+      if (owner.rfind("#typed:array<", 0) == 0) {
+        if (!integer_category(state.stack[state.stack.size() - 2]))
+          fail("array index requires an integer", pc);
+        check_array_value(checked_array_element(owner), state.stack.back());
       } else reject_class_operands(3);
       pop(3); break;
     }
     case Opcode::NEW_ARRAY_LITERAL: {
       const auto count = static_cast<std::size_t>(std::stoull(args[0]));
       if (state.stack.size() < count) fail("array literal requires its declared operands", pc);
-      if (args.size() == 2 && args[1] == "anything") {
-        for (std::size_t index = state.stack.size() - count; index < state.stack.size(); ++index)
-          if (state.stack[index] != "#anything") fail("anything array requires boxed elements", pc);
+      if (args.size() == 2) {
+        const auto element = checked_array_element("#typed:array<" + args[1] + ">");
+        for (std::size_t index = state.stack.size() - count; index < state.stack.size(); ++index) {
+          if (element == "anything" && state.stack[index] != "#anything")
+            fail("anything array requires boxed elements", pc);
+          check_array_value(element, state.stack[index]);
+        }
       } else reject_class_operands(count);
       pop(count); state.stack.push_back(args.size() == 2 ? stack_type("array<" + args[1] + ">", module) : "?"); break;
     }
@@ -1300,22 +1346,24 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
         if (!reserving) state.stack.push_back(stack_type("i32", module));
         break;
       }
-      // Source array methods retain their historical direct-call adapters.
-      // Permit boxed elements only through a proven array<anything> receiver,
-      // never by relaxing the general external-call provenance boundary.
+      // Checked array adapters preserve exact element categories, including
+      // sensitive enum payloads and nested arrays. They are not foreign calls.
       if ((args[0] == "array__push" || args[0] == "array__set" ||
-           args[0] == "array__get" || args[0] == "array__len") && count != 0 &&
-          state.stack[state.stack.size() - count] == "#typed:array<anything>") {
-        const auto expected_count = args[0] == "array__set" ? 3U : args[0] == "array__len" ? 1U : 2U;
-        if (count != expected_count) fail("anything array method has an invalid argument count", pc);
-        if ((args[0] == "array__push" || args[0] == "array__set") && state.stack.back() != "#anything")
-          fail("anything array mutation requires a boxed value", pc);
+           args[0] == "array__get" || args[0] == "array__len" || args[0] == "array__length") &&
+          !provenance_types->functions.count(args[0]) && !state.locals.count(args[0]) &&
+          count != 0 && state.stack[state.stack.size() - count].rfind("#typed:array<", 0) == 0) {
+        const bool length = args[0] == "array__len" || args[0] == "array__length";
+        const auto expected_count = args[0] == "array__set" ? 3U : length ? 1U : 2U;
+        if (count != expected_count) fail("array method has an invalid argument count", pc);
+        const auto element = checked_array_element(state.stack[state.stack.size() - count]);
+        if (args[0] == "array__push" || args[0] == "array__set")
+          check_array_value(element, state.stack.back());
         if ((args[0] == "array__set" || args[0] == "array__get") &&
             !integer_category(state.stack[state.stack.size() - count + 1]))
-          fail("anything array index requires an integer", pc);
+          fail("array index requires an integer", pc);
         pop(count);
-        if (args[0] == "array__get") state.stack.push_back("#anything");
-        else if (args[0] == "array__len") state.stack.push_back(stack_type("i64", module));
+        if (args[0] == "array__get") state.stack.push_back(stack_type(element, module));
+        else if (length) state.stack.push_back(stack_type("i64", module));
         break;
       }
       const auto local_callable = state.locals.find(args[0]);
@@ -1423,18 +1471,36 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       break;
     }
     case Opcode::INTEROP_CALL: {
-      if (args.size() == 5 && args[0] == "intrinsic" && is_array_intrinsic(args[1]) && args[4] == "anything") {
-        const auto contract = parse_array_intrinsic(args);
+      if (args.size() == 5 && args[0] == "intrinsic" && is_array_intrinsic(args[1])) {
+        const auto element_type = canonical_dynamic_type(args[4]);
+        auto leaf = element_type;
+        bool nested = false;
+        for (unsigned depth = 0; depth < 64; ++depth) {
+          const auto child = provenance_array_element(leaf);
+          if (!child) break;
+          nested = true;
+          leaf = *child;
+        }
+        const auto records = provenance_types->records.find(leaf);
+        const bool record = records != provenance_types->records.end() && records->second.size() == 1 &&
+            !provenance_types->enumerations.count(leaf) && !provenance_types->classes.count(leaf);
+        const bool enumeration = exact_enum_schema(module, leaf, provenance_types) != nullptr;
+        const bool supported_leaf = record || enumeration || is_array_tuple_type(leaf) ||
+            leaf == "i32" || leaf == "i64" || leaf == "u8" || leaf == "bool" ||
+            leaf == "f64" || leaf == "text" || leaf == "anything";
+        const auto contract = parse_array_intrinsic(args, record || enumeration || (nested && supported_leaf));
         if (state.stack.size() < contract.argument_count) fail("array intrinsic requires its declared operands", pc);
         const auto start = state.stack.size() - contract.argument_count;
         const bool create = contract.operation == array_intrinsic_operation::create;
-        if (create ? !integer_category(state.stack[start]) : state.stack[start] != "#typed:array<anything>")
-          fail("anything array intrinsic requires its exact array or size operand", pc);
-        if (contract.operation == array_intrinsic_operation::create || contract.operation == array_intrinsic_operation::set) {
-          if (state.stack.back() != "#anything") fail("anything array mutation requires a boxed value", pc);
-        }
-        if ((contract.operation == array_intrinsic_operation::get || contract.operation == array_intrinsic_operation::set) && !integer_category(state.stack[start + 1]))
-          fail("anything array index requires an integer", pc);
+        if (create ? !integer_category(state.stack[start])
+                   : state.stack[start] != "#typed:array<" + contract.element + ">")
+          fail("array intrinsic requires its exact proven array or integer size operand", pc);
+        (void)checked_array_element("#typed:array<" + contract.element + ">");
+        if (contract.operation == array_intrinsic_operation::create || contract.operation == array_intrinsic_operation::set)
+          check_array_value(contract.element, state.stack.back());
+        if ((contract.operation == array_intrinsic_operation::get || contract.operation == array_intrinsic_operation::set) &&
+            !integer_category(state.stack[start + 1]))
+          fail("array index requires an integer", pc);
         pop(contract.argument_count);
         if (contract.result != "void") state.stack.push_back(stack_type(contract.result, module));
         break;
@@ -1471,6 +1537,10 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
       const auto source_type = state.stack.back();
       const auto target_type = stack_type(args[0], module);
       if (source_type == "#owned") fail("CAST cannot erase affine ownership provenance", pc);
+      if (source_type == target_type && source_type.rfind("#typed:array<", 0) == 0) {
+        (void)checked_array_element(source_type);
+        pop(1); state.stack.push_back(target_type); break;
+      }
       if (class_type(source_type) || class_type(target_type))
         fail("CAST cannot fabricate or erase class provenance; use CLASS_UPCAST", pc);
       if (target_type.rfind("#enum:", 0) == 0 && source_type != target_type)
@@ -1491,7 +1561,10 @@ nil_fault_analysis analyze_fault_body(const nil_function &function,
     case Opcode::TO_STRING: reject_class_operands(1); pop(1); state.stack.push_back("#text"); break;
     case Opcode::STR_CONCAT: reject_class_operands(2); pop(2); state.stack.push_back("#text"); break;
     case Opcode::LEN: case Opcode::STRLEN:
-      reject_class_operands(1); pop(1); state.stack.push_back(stack_type("i64", module)); break;
+      if (opcode == Opcode::LEN && !state.stack.empty() && state.stack.back().rfind("#typed:array<", 0) == 0)
+        (void)checked_array_element(state.stack.back());
+      else reject_class_operands(1);
+      pop(1); state.stack.push_back(stack_type("i64", module)); break;
     case Opcode::NOT:
       reject_class_operands(1); pop(1); state.stack.push_back(stack_type("bool", module)); break;
     case Opcode::TIME_NOW: state.stack.push_back(stack_type("i64", module)); break;
@@ -1837,9 +1910,19 @@ void validate_nil_class_provenance(const nil_module &module) {
       }
   bool dynamic_operations = false;
   for (const auto &function : module.functions)
-    for (const auto &instruction : function.body)
+    for (const auto &instruction : function.body) {
       dynamic_operations = dynamic_operations || instruction.opname == "BOX_ANY" ||
           instruction.opname == "UNBOX_ANY" || instruction.opname == "IS_ANY_TYPE";
+      if (instruction.opname == "NEW_ARRAY_LITERAL" && instruction.args.size() == 2 &&
+          instruction.args[1] == "anything")
+        dynamic_operations = true;
+      // Empty nested arrays can carry sensitive storage without any BOX_ANY
+      // instruction or nominal declaration in the module. Their type metadata
+      // still requires the same exact-provenance pass.
+      for (const auto &argument : instruction.args)
+        if (argument.find("anything") != std::string::npos && provenance_array_element(argument))
+          dynamic_operations = true;
+    }
   for (const auto &function : module.functions) {
     dynamic_operations = dynamic_operations || function.return_type.find("anything") != std::string::npos;
     for (const auto &parameter : function.params)

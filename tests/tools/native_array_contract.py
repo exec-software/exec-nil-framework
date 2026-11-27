@@ -174,7 +174,7 @@ def main() -> int:
                            "CALL array__push 2", "requires an exact f64 element"),
         "wrong-text-push": ("NEW_ARRAY_LITERAL 0 text\nPUSH_CONST 1\n"
                             "CALL array__push 2", "requires an exact text element"),
-        "nested-array": ("NEW_ARRAY_LITERAL 0 array<text>\nPOP",
+        "nested-unsupported-width": ("NEW_ARRAY_LITERAL 0 array<f32>\nPOP",
                          "pointer-valued array elements are not implemented"),
         "unsupported-width": ("NEW_ARRAY_LITERAL 0 f32\nPOP",
                               "floating-point array elements are not implemented"),

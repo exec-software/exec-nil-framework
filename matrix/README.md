@@ -159,19 +159,28 @@ See the [function reference](../docs/language-reference/functions.md#parameters)
 and [NIL-0019](../docs/design/NIL-0019-binding-reference-parameters.md) for the
 supported modes and their limits.
 
-## Record arrays
+## Record, choice and nested arrays
 
-The shared native backend supports arrays of exact declared, non-class records,
-including concrete generic records with acyclic schemas. Arrays store shared
-mutable record identities: reading or copying an element preserves the same
-record, while replacing an array slot leaves previously extracted records intact.
-Growth and garbage collection preserve aliases and reachable record fields.
-An invalid raw record read fails because no default record exists; checked array
-operations make bounds explicit.
+The shared native backend supports arrays of exact declared non-class records,
+choices and nested arrays, including concrete generics with finite, supported
+schemas. Record elements retain shared mutable identity: reading or copying an
+element preserves the same record, while replacing an array slot leaves a
+previously extracted record intact. Choice values retain their variant and
+payload; contained record and array handles continue to alias the same objects.
+Nested arrays share child handles, so rows may have different lengths and edits
+to a shared row remain visible through every alias. Growth and garbage collection
+preserve those reachable values.
 
-This storage contract enables record-key HashMap and record queues, and native
-HashSet/Dictionary copy checks. It does not include choice, nested-array, class
-or reference-wrapper elements, or cyclic aggregate schemas. See
+Invalid or uninitialized raw tuple, record, choice and nested-array reads fail
+because these element types have no default value. Scalar defaults and valid-value
+out-of-bounds no-op writes retain their existing behavior; checked array operations
+make bounds explicit. Direct class/reference-wrapper elements, recursive aggregate
+schemas and `f32` array elements remain unsupported.
+
+The record storage contract enables record-key HashMap and record queues, and
+native HashSet/Dictionary copy checks. The enum/nested-array fixtures specify the
+additional storage behavior; this does not establish new query, collection-method
+or platform SDK qualification. See
 [checked arrays](../docs/standard-library/index.md#checked-arrays) and
 [collection storage](../docs/standard-library/index.md#collection-storage-and-lookup)
 for the focused scope and evidence.

@@ -1689,6 +1689,34 @@ if(BUILD_TESTING)
             --expected-exit 0 --routes all
             --compiler-arg=--sdk-path --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
         )
+        foreach(nil_aggregate_array_fixture IN ITEMS enum-arrays nested-arrays)
+            add_ny_route_test(
+                ny.routes.${nil_aggregate_array_fixture}
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_aggregate_array_fixture}.ny"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_aggregate_array_fixture}.stdout"
+                --expected-exit 0 --routes all
+                --compiler-arg=--sdk-path --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+            )
+            add_ny_route_test(
+                ny.routes.${nil_aggregate_array_fixture}-matrix
+                --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_aggregate_array_fixture}-matrix.matrix"
+                --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_aggregate_array_fixture}-matrix.stdout"
+                --expected-exit 0 --routes all
+                --compiler-arg=--sdk-path --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+            )
+        endforeach()
+        add_test(
+            NAME ny.enum-nested-array-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/enum_nested_array_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --assembler $<TARGET_FILE:nilassembler>
+                    --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                    --llvm "${NIL_ENABLE_LLVM}"
+                    --runtime-tests $<TARGET_FILE:ny_native_runtime_tests>
+                    --runtime-tests $<TARGET_FILE:nil_shared_runtime_tests>
+        )
+        set_tests_properties(ny.enum-nested-array-contract PROPERTIES LABELS "native;arrays;nil" TIMEOUT 600)
         add_test(
             NAME ny.record-array-contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_record_array_contract.py"

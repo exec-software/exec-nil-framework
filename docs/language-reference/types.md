@@ -160,15 +160,23 @@ C-compatible ABI. Standard-library collections are separate APIs, not an
 implied built-in map literal or interchangeable `vec<T>` syntax.
 
 Native array elements include `i32`, `i64`, `u8`, `bool`, `f64`, NUL-free text,
-and supported structural tuples. Scalar out-of-range reads return the element's
-zero value; tuple-array reads fail because a tuple has no default zero value.
-Out-of-range writes do nothing. `push` requires a compatible element and
-preserves aliases when the descriptor grows. Use an explicit cast before
-pushing an integer into `array<f64>`; storage does not reinterpret its bits.
-Tuple arrays retain one exact ordered schema and permit whole-element
-replacement while tuple slots stay immutable. See the [tuple reference](tuples.md).
-Native arrays of records, enums and nested arrays, and raw
-`ptr<f64>`/`ptr<text>`, remain outside this subset.
+`anything`, supported structural tuples, concrete non-class records, enum values
+and finite nested arrays. Element types remain exact and invariant, including
+nominal generic arguments and nested array rank. Scalar out-of-range reads keep
+their defaults; tuple, record, enum, nested-array and `anything` reads fail when
+out of bounds or uninitialized. Valid-value out-of-range writes do nothing.
+`push` requires a compatible element and preserves aliases when the descriptor
+grows. Use an explicit cast before pushing an integer into `array<f64>`;
+storage does not reinterpret its bits.
+
+Tuple slots remain immutable, while record elements retain shared mutable
+identity. Enum values retain their variant when a slot is replaced; contained
+record/array handles remain shared. Nested arrays may be jagged and share child
+handles, including after an outer slot is replaced. Empty nested literals take
+their type from a checked destination. See the [tuple reference](tuples.md) and
+[checked arrays](../standard-library/index.md#checked-arrays). Direct class or
+reference-wrapper elements, recursive nominal schemas, `f32` arrays, and raw
+`ptr<f64>`/`ptr<text>` remain outside this native subset.
 
 ## Structs and generic enums
 
@@ -285,7 +293,13 @@ declaring owner; abstract method declarations have no executable body.
 Abstract-typed values may be passed and stored, and their virtual calls require
 an actual concrete implementation. Abstract construction remains rejected.
 
-Enums can carry a typed payload. Construction uses a dot; match arms use `->`:
+Enums can carry typed payloads. Construction uses a dot; match arms use `->`.
+A flat pattern such as `Message.Tagged(value, tag)` binds each payload in order;
+use `_` to discard a field. Pattern arity must match the variant. One tuple
+payload is distinct from several payload fields. Nested constructor and literal
+payload patterns are not yet lowered.
+
+For example:
 
 ```ny
 enum Option<T>

@@ -23,6 +23,18 @@
       "limitations": ["Only concrete declared acyclic record layouts are included; class/reference elements, enum elements, nested arrays, recursive layouts and aggregate globals remain separate contracts.", "Record reads have no default value: invalid reads fail. Extracted record aliases remain mutable; hash/equality-relevant key fields must remain stable while stored in a map. These fixtures do not prove arbitrary layouts, throughput, memory bounds or platform parity."]
     },
     {
+      "id": "enum-arrays",
+      "observed": "Ny and Matrix enum/choice arrays preserve exact concrete type and variant payloads through indexed access, replacement, growth and generic primitives across six routes. Extracted variants retain their values while record and array payloads preserve shared identity.",
+      "tests": ["ny.routes.enum-arrays", "ny.routes.enum-arrays-matrix"],
+      "limitations": ["Only concrete finite native payload schemas are included; recursive schemas, direct class/reference array elements and aggregate globals remain separate contracts.", "Enum reads have no fabricated default: invalid reads fail. These fixtures do not prove all payload combinations, sustained allocation bounds, throughput or platform parity."]
+    },
+    {
+      "id": "nested-arrays",
+      "observed": "Ny and Matrix nested arrays preserve exact rank and element types, jagged lengths, empty children and shared child identity through indexed mutation, replacement, growth and generic primitives across six routes. The Ny fixture includes scalar, tuple, record, enum and anything children.",
+      "tests": ["ny.routes.nested-arrays", "ny.routes.nested-arrays-matrix"],
+      "limitations": ["Container nesting is bounded and element types are invariant; direct class/reference elements, recursive nominal schemas and unsupported scalar widths remain outside this contract.", "Nested reads have no fabricated child: invalid reads fail. Copying an outer array shares children. These fixtures do not establish a deep-copy operation, all combinations, throughput, memory bounds or platform parity."]
+    },
+    {
       "id": "scalar-arithmetic",
       "observed": "Scalar arithmetic and comparisons at live-array handle addresses agree across the six execution routes for the contract and collision fixtures.",
       "tests": ["ny.routes.scalar-arithmetic-contract", "ny.routes.scalar-array-handle-collision"],
@@ -120,6 +132,10 @@
     }
   ],
   "proofs": [
+    {"test": "ny.routes.enum-arrays", "fixture": "enum-arrays", "stdlib": true},
+    {"test": "ny.routes.enum-arrays-matrix", "fixture": "enum-arrays-matrix", "stdlib": true},
+    {"test": "ny.routes.nested-arrays", "fixture": "nested-arrays", "stdlib": true},
+    {"test": "ny.routes.nested-arrays-matrix", "fixture": "nested-arrays-matrix", "stdlib": true},
     {"test": "ny.routes.record-arrays", "fixture": "record-arrays", "stdlib": true},
     {"test": "ny.routes.record-arrays-matrix", "fixture": "record-arrays-matrix", "stdlib": true},
     {"test": "ny.routes.hashmap-buckets", "fixture": "hashmap-buckets", "stdlib": true},

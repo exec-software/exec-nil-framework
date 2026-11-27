@@ -802,6 +802,21 @@ type_info type_checker::resolve_type(const std::string &name) {
     return {canonical + ") -> " + resolve_type(function->second).name, true};
   }
 
+  // Enum metadata uses parentheses for several independent payload fields.
+  // Source tuple types have already become tuple<T, U>; retain that distinction
+  // while resolving each field, including tuple/generic fields with commas.
+  // Treating the whole list as a generic name drops its closing parenthesis.
+  if (name.size() >= 2 && name.front() == '(' && name.back() == ')') {
+    const auto fields = parse_generic_type_string(
+        "tuple<" + name.substr(1, name.size() - 2) + ">");
+    std::string canonical = "(";
+    for (std::size_t index = 0; index < fields.type_args.size(); ++index) {
+      if (index) canonical += ", ";
+      canonical += resolve_type(fields.type_args[index]).name;
+    }
+    return {canonical + ")", false};
+  }
+
   const auto structural_tuple = parse_generic_type_string(name);
   if (structural_tuple.base_name == "tuple") {
     if (structural_tuple.type_args.empty()) return {"tuple", false};
@@ -1685,12 +1700,17 @@ bool type_checker::check_dynamic_enum_payload(ast_call_expr &call, const std::st
   if (!payload.empty() && payload.front() == '(' && payload.back() == ')')
     fields = parse_generic_type_string("tuple<" + payload.substr(1, payload.size() - 2) + ">").type_args;
   else fields.push_back(payload);
-  // Preserve existing generic constructor inference for unrelated payloads.
-  // Dynamic payloads need explicit checked boxing before NIL lowering.
-  bool dynamic = false;
-  for (const auto &field : fields)
-    dynamic = dynamic || resolve_type(field).name.find("anything") != std::string::npos;
-  if (!dynamic) return true;
+  // Preserve generic constructor inference for unrelated payloads. Managed
+  // payloads need the same checked boxing, class view and literal-context
+  // boundaries as ordinary parameters before NIL lowering.
+  bool checked_boundary = false;
+  for (const auto &field : fields) {
+    const auto type = resolve_type(field).name;
+    checked_boundary = checked_boundary || type.find("anything") != std::string::npos ||
+        type_contains_class(type) || type_contains_tuple(type) ||
+        parse_generic_type_string(type).base_name == "array";
+  }
+  if (!checked_boundary) return true;
   if (fields.size() != call.args.size()) {
     add_error(call.line, "Enum variant '" + variant_name + "' requires " +
         std::to_string(fields.size()) + " initialized payload values");
@@ -1751,6 +1771,25 @@ bool type_checker::check_assignment_type(const type_info &expected,
     if (value) value->rejected_tuple_operation = "Tuple storage type mismatch: expected '" + target + "', got '" + source + "'";
     return false;
   };
+  // Empty and partially empty nested literals gain their destination shape
+  // recursively. A nonliteral child is still an invariant existing handle,
+  // and a concrete scalar-element child cannot change its element width.
+  if (target_tuple.base_name == "array" && target_tuple.type_args.size() == 1 && value &&
+      value->kind == ast_node_kind::array_literal_expr_node) {
+    auto &array = static_cast<ast_array_literal_expr &>(*value);
+    if (array.elements.empty()) {
+      value->inferred_type = target;
+      return true;
+    }
+    if (parse_generic_type_string(target_tuple.type_args.front()).base_name == "array") {
+      for (auto &element : array.elements)
+        if (!element || !check_assignment_type(resolve_type(target_tuple.type_args.front()),
+              resolve_type(element->inferred_type.value_or("<unknown>")), element.get()))
+          return false;
+      value->inferred_type = target;
+      return true;
+    }
+  }
   // A newly constructed array can contextualize each fresh tuple. Existing
   // arrays retain invariant element layouts; no array handle is reinterpreted.
   if (target_tuple.base_name == "array" && target_tuple.type_args.size() == 1 &&
@@ -2627,11 +2666,15 @@ void type_checker::bind_pattern_to_type(ast_pattern &pattern,
         payload_index = 1;
       }
       if (payload_index.has_value()) {
+        if (pattern.subpatterns.size() != 1) {
+          add_error(line, "Enum pattern '" + pattern.name +
+              "' requires 1 payload pattern, got " + std::to_string(pattern.subpatterns.size()));
+          return;
+        }
         const std::string &payload_name = type_parts.type_args[*payload_index];
         const type_info payload_type{payload_name,
                                      is_primitive_name(payload_name)};
-        for (auto &subpattern : pattern.subpatterns)
-          bind_pattern_to_type(subpattern, payload_type, line);
+        bind_pattern_to_type(pattern.subpatterns.front(), payload_type, line);
         return;
       }
 
@@ -2655,31 +2698,30 @@ void type_checker::bind_pattern_to_type(ast_pattern &pattern,
         // Find the variant in the enum declaration
         for (const auto &v : enum_decl.variants) {
           if (v.name == variant_name) {
+            std::vector<std::string> payload_types;
             if (v.associated_type.has_value()) {
-              // Substitute generic params with concrete type args.
-              // e.g. option<i32> matched against some(T): T -> i32.
-              std::string assoc_type_name = *v.associated_type;
-              if (!enum_decl.generic_params.empty() &&
-                  !type_parts.type_args.empty()) {
-                for (size_t pi = 0; pi < enum_decl.generic_params.size() &&
-                                    pi < type_parts.type_args.size();
-                     ++pi) {
-                  const std::string &param = enum_decl.generic_params[pi].name;
-                  const std::string &concrete = type_parts.type_args[pi];
-                  if (assoc_type_name == param) {
-                    assoc_type_name = concrete;
-                    break;
-                  }
-                }
-              }
-              type_info assoc_type{assoc_type_name,
-                                   is_primitive_name(assoc_type_name)};
-              for (auto &sp : pattern.subpatterns) {
-                bind_pattern_to_type(sp, assoc_type, line);
-              }
+              // Substitute inside each payload's complete structure, then
+              // bind its corresponding pattern. A tuple payload is one
+              // field; the parenthesized enum payload list is several.
+              std::map<std::string, std::string> substitutions;
+              for (std::size_t index = 0; index < enum_decl.generic_params.size() &&
+                   index < type_parts.type_args.size(); ++index)
+                substitutions[enum_decl.generic_params[index].name] = type_parts.type_args[index];
+              const auto associated = instantiate_generic_type(*v.associated_type, substitutions);
+              if (associated.size() >= 2 && associated.front() == '(' && associated.back() == ')')
+                payload_types = parse_generic_type_string(
+                    "tuple<" + associated.substr(1, associated.size() - 2) + ">").type_args;
+              else payload_types.push_back(associated);
+            }
+            if (payload_types.size() != pattern.subpatterns.size()) {
+              add_error(line, "Enum pattern '" + pattern.name + "' requires " +
+                  std::to_string(payload_types.size()) + " payload patterns, got " +
+                  std::to_string(pattern.subpatterns.size()));
               return;
             }
-            break;
+            for (std::size_t index = 0; index < payload_types.size(); ++index)
+              bind_pattern_to_type(pattern.subpatterns[index], resolve_type(payload_types[index]), line);
+            return;
           }
         }
       }
@@ -3500,7 +3542,8 @@ void type_checker::visit(ast_variable_decl &p) {
       const auto context = parse_generic_type_string(declared.name);
       if (context.base_name == "array" && context.type_args.size() == 1 &&
           (type_contains_tuple(context.type_args.front()) || context.type_args.front() == "anything" ||
-           context.type_args.front() == "bool"))
+           context.type_args.front() == "bool" ||
+           parse_generic_type_string(context.type_args.front()).base_name == "array"))
         p.initializer->inferred_type = declared.name;
     }
     p.initializer->accept(*this);
@@ -4189,7 +4232,8 @@ void type_checker::visit(ast_return_stmt &s) {
       const auto context =
           parse_generic_type_string(current_function_return_type_->name);
       if ((array.elements.empty() || type_contains_tuple(current_function_return_type_->name) ||
-           (context.type_args.size() == 1 && (context.type_args[0] == "anything" || context.type_args[0] == "bool"))) &&
+           (context.type_args.size() == 1 && (context.type_args[0] == "anything" || context.type_args[0] == "bool" ||
+            parse_generic_type_string(context.type_args[0]).base_name == "array"))) &&
           context.base_name == "array" &&
           context.type_args.size() == 1 && context.type_args[0] != "any" &&
           context.type_args[0] != "<unknown>") {
@@ -5758,6 +5802,19 @@ void type_checker::visit(ast_call_expr &e) {
       for (std::size_t i = 0; i < function->generic_params.size() && i < e.type_args.size(); ++i)
         source_substitutions[function->generic_params[i].name] = e.type_args[i];
   }
+  const auto concrete_array_context = [&](const auto &self, const std::string &name,
+                                          unsigned depth) -> bool {
+    if (depth >= 64) return false;
+    const auto type = resolve_type(name).name;
+    if (type == "any" || type == "<unknown>") return false;
+    const auto shape = parse_generic_type_string(type);
+    for (const auto &argument : shape.type_args)
+      if (!self(self, argument, depth + 1)) return false;
+    if (shape.base_name == "array" || shape.base_name == "tuple" ||
+        type == "anything" || is_primitive_name(type)) return true;
+    const auto *owner = symbols_.lookup_type(shape.base_name);
+    return owner && owner->defining_node;
+  };
   std::size_t source_argument_index = 0;
   for (auto &arg : e.args) {
     // Fresh array literals can be heterogeneous only when their destination
@@ -5774,7 +5831,13 @@ void type_checker::visit(ast_call_expr &e) {
       if (parameter < source_signature->first.size()) {
         const auto expected = resolve_type(instantiate_generic_type(
             source_signature->first[parameter], source_substitutions)).name;
-        if (expected == "array<anything>" || expected == "array<bool>") arg->inferred_type = expected;
+        const auto shape = parse_generic_type_string(expected);
+        if (shape.base_name == "array" && shape.type_args.size() == 1 &&
+            (shape.type_args.front() == "anything" || shape.type_args.front() == "bool" ||
+             type_contains_tuple(shape.type_args.front()) ||
+             (parse_generic_type_string(shape.type_args.front()).base_name == "array" &&
+              concrete_array_context(concrete_array_context, expected, 0))))
+          arg->inferred_type = expected;
       }
     }
     ++source_argument_index;
@@ -6012,6 +6075,9 @@ void type_checker::visit(ast_call_expr &e) {
                 ". Expected '" + expected.name + "', got '" + actual.name + "'");
             if (tuple_boundary)
               e.rejected_tuple_operation = "Function argument has incompatible tuple storage type";
+          } else if (e.args[i] && e.args[i]->kind == ast_node_kind::array_literal_expr_node &&
+                     e.args[i]->inferred_type) {
+            arg_types[i] = resolve_type(*e.args[i]->inferred_type);
           }
         }
         for (std::size_t argument_index = 0;
@@ -8422,9 +8488,13 @@ void type_checker::visit(ast_array_literal_expr &e) {
     const auto context = parse_generic_type_string(context_type.name);
     if (context.base_name == "array" && context.type_args.size() == 1 &&
         (type_contains_tuple(context.type_args.front()) || context.type_args.front() == "anything" ||
-         context.type_args.front() == "bool")) {
+         context.type_args.front() == "bool" ||
+         parse_generic_type_string(context.type_args.front()).base_name == "array")) {
       const auto expected = resolve_type(context.type_args.front());
       for (auto &element : e.elements) {
+        if (element->kind == ast_node_kind::array_literal_expr_node &&
+            parse_generic_type_string(expected.name).base_name == "array")
+          element->inferred_type = expected.name;
         element->accept(*this);
         const auto actual = last_expr_type_.value_or(type_unknown);
         if (!check_assignment_type(expected, actual, element.get())) {
@@ -9467,6 +9537,20 @@ std::string type_checker::instantiate_generic_type(
       result += instantiate_generic_type(function->first[index], substitutions);
     }
     return result + ") -> " + instantiate_generic_type(function->second, substitutions);
+  }
+
+  // Several enum payload fields are a structural list, not a generic name.
+  // Substitute each field without dropping a nested tuple's surrounding list.
+  if (generic_type_name.size() >= 2 && generic_type_name.front() == '(' &&
+      generic_type_name.back() == ')') {
+    const auto fields = parse_generic_type_string(
+        "tuple<" + generic_type_name.substr(1, generic_type_name.size() - 2) + ">");
+    std::string result = "(";
+    for (std::size_t index = 0; index < fields.type_args.size(); ++index) {
+      if (index) result += ", ";
+      result += instantiate_generic_type(fields.type_args[index], substitutions);
+    }
+    return result + ")";
   }
 
   auto parts = parse_generic_type_string(generic_type_name);

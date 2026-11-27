@@ -278,25 +278,6 @@ def main() -> None:
                     assert not output.stdout, output.stdout
                     checks += 1
 
-        if args.llvm == 'ON':
-            unsupported = [
-                ('enums', 'enum Choice\nOne\nend enum\n',
-                 'choice-value begin choice\nwhen One\nend choice\n',
-                 'let items = [Choice.One]', 'value items is [choice-value.One]'),
-                ('nested-arrays', '', '', 'let items = [[1,2]]', 'value items is [[1,2]]'),
-            ]
-            for name, ny_decl, matrix_decl, ny_body, matrix_body in unsupported:
-                for language, declaration, body in [('ny', ny_decl, ny_body),
-                                                     ('matrix', matrix_decl, matrix_body)]:
-                    path = root / ('unsupported-' + name + '.' + language)
-                    path.write_text(program(language, body, declaration), newline='\n')
-                    output = root / 'protected-native'
-                    output.write_bytes(b'keep previous executable')
-                    result = run([compiler, '--quiet', '--no-stdlib', '--native', '-o', output, path], 1)
-                    assert ('[NativeCodegen]' in result.stderr and
-                            'array' in result.stderr.lower()), result.stderr
-                    assert output.read_bytes() == b'keep previous executable'
-                    checks += 1
     print(f'tuple array contract: {checks} checks passed')
 
 

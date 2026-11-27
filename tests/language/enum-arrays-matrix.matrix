@@ -1,0 +1,77 @@
+book enum_arrays_matrix
+read everything from nil.std.collections
+read everything from nil.std.core
+
+signal of type T begin choice
+    when Idle
+    when Data holding T
+    when Named holding text
+end choice
+
+tuple-signal begin choice
+    when Empty
+    when Pair holding tuple of (number, text)
+end choice
+
+signal-value receives input as signal of number returns number begin paragraph
+    consider input
+        when signal.Idle then give -1
+        when signal.Data holding amount then give amount
+        when signal.Named holding _ then give -2
+    end consider
+end paragraph
+
+main returns override integer begin paragraph
+    value first as signal of number is signal.Data holding (4294967296 becomes number)
+    value idle as signal of number is signal.Idle
+    value named as signal of number is signal.Named holding "retained"
+    value items as array of signal of number is [first, idle, named]
+    value alias is items
+    value retained is items at 0
+    set items at 0 to idle
+    say signal-value with input being (alias at 0)
+    say signal-value with input being retained
+    evaluate alias.reserve with 32
+    append retained to alias
+    say the length of items
+    say (items.capacity with nothing) is at least 32
+    consider items at 2
+        when signal.Named holding word then say word
+        when signal.Idle then say "wrong"
+        when signal.Data holding _ then say "wrong"
+    end consider
+
+    value filled is new-with-value of signal of number with size being 3, `value` being first
+    evaluate array-set of signal of number with arr being filled, idx being 1, `value` being idle
+    value selected is get of signal of number with arr being filled, idx being 1
+    say signal-value with input being selected
+    say length of signal of number with arr being filled
+    say try-copy-range of signal of number with source being filled, source-offset being 0, destination being filled, destination-offset being 1, count being 2
+    say signal-value with input being (filled at 1)
+    say signal-value with input being (filled at 2)
+
+    value present as Option of number is Option.Some holding (91 becomes number)
+    value absent as Option of number is Option.None
+    value options as array of Option of number is [present, absent]
+    consider options at 0
+        when Option.Some holding amount then say amount
+        when Option.None then say 0
+    end consider
+    consider options at 1
+        when Option.None then say "none"
+        when Option.Some holding _ then say "wrong"
+    end consider
+    value pair as tuple of (number, text) is ((113 becomes number), "tuple payload")
+    value wrapped as tuple-signal is tuple-signal.Pair holding pair
+    value tuple-items as array of tuple-signal is [wrapped]
+    value tuple-rows as array of array of tuple-signal is [tuple-items]
+    value saved is (tuple-rows at 0) at 0
+    set tuple-items at 0 to tuple-signal.Empty
+    consider saved
+        when tuple-signal.Pair holding fields then
+            say fields.0
+            say fields.1
+        when tuple-signal.Empty then say "wrong"
+    end consider
+    give 0
+end paragraph

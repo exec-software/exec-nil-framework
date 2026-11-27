@@ -181,13 +181,40 @@ routes, including queue elements without a default implementation. HashSet and
 Dictionary copies now join List/Queue/Stack on VM/JIT/AOT: the focused bounds
 harness passes 285 checks.
 
-**Next step / acceptance:** F07 remains open for native enum/choice, nested-array,
-class and reference-wrapper elements, and cyclic aggregate schemas. The record
-slice requires an acyclic schema using supported native field types; handles inside a
-record do not imply direct `array<ref<T>>` support. Keep unsupported shapes
-diagnosed explicitly and establish each new layout's identity, initialization,
-copy and lifetime contract. These focused results do not certify all collection
-methods, project queries or platform SDKs.
+**Implemented enum and nested-array slice:** Native arrays now retain exact
+concrete enum/choice schemas and nested-array element identities. Generic arguments
+and nominal case remain significant. Enum elements preserve immutable variant and
+payload values while contained record and array handles retain shared mutable
+identity. Replacing a slot does not change an extracted enum. Nested arrays hold
+live child-array handles, preserving aliases rather than cloning rows. Children
+may have different lengths and capacities; their aliases survive outer replacement,
+reservation and growth. GC follows child arrays and transitive enum payloads.
+
+Empty arrays retain their schema without manufacturing an element. Nonempty
+construction requires initialized values. Invalid or uninitialized enum/nested-array
+reads fail explicitly; no zero enum or empty child is synthesized. Valid-value
+out-of-bounds writes remain no-ops, and scalar read defaults are unchanged. The
+shared runtime owns exact descriptors and validates child handles; compiler
+admission proves complete nominal and tuple payload layouts. The VM additionally
+checks exact enum variants/payloads and distinct typed child-array handles.
+
+The paired Ny/Matrix [enum](../../tests/language/enum-arrays.ny) and
+[nested-array fixtures](../../tests/language/nested-arrays.ny), together with
+[the focused harness](../../tests/tools/enum_nested_array_contract.py), specify
+source/binary execution, JIT/AOT, cross-frontend libraries, exact schema rejection,
+initialized storage, aliases and GC. Runtime ABI tests cover owned descriptors,
+foreign/stale child handles, wrong widths/types/depths and transitive reclamation.
+Qualification results remain tied to the tested source revision and host; adding
+these fixtures does not itself establish a completed platform campaign.
+
+**Next step / acceptance:** F07 remains open for direct class/reference-wrapper
+elements, recursive aggregate schemas and `f32` array elements. Supported schemas
+must be finite and use supported native field/payload layouts; recursive graphs
+remain rejected even through array indirection. Handles inside a record or enum
+do not imply direct `array<ref<T>>` support. Keep unsupported shapes diagnosed
+explicitly and establish each new layout's identity, initialization, copy and
+lifetime contract. These focused results do not certify all collection methods,
+project queries or platform SDKs.
 
 ## Editor and authoring experience
 
@@ -677,7 +704,7 @@ on the native routes. The ordering below favors the 3D validation consumer.
 
 | Priority | Gap | Evidence and proposed scope |
 | --- | --- | --- |
-| 1 | Native application-data storage | F07 now implements exact declared non-class record elements with acyclic schemas, including concrete generics. Native enum/choice, nested-array, class and reference-wrapper elements, cyclic schemas and `f32` remain unsupported; each needs compiler/runtime contracts rather than only STL declarations. |
+| 1 | Native application-data storage | F07 now implements exact declared non-class records, enum/choice elements and nested arrays with finite supported schemas, including concrete generics and shared child identities. Direct class/reference-wrapper elements, recursive schemas and `f32` arrays remain unsupported; each needs compiler/runtime contracts rather than only STL declarations. |
 | 2 | Predictable buffers | [`vec.with_capacity`](../../nilstd/src/collections/vector.ny) now reserves real backing storage without changing logical length; `capacity()` reports reserved slots. Resizing, fresh clone/subrange and append-range operations, and checked slices/views remain gaps. A type-checker recognition of `resize` is not an implemented library contract. |
 | 3 | Collections that scale | [`HashMap`](../../nilstd/src/collections/hash_map.ny) now uses buckets and collision chains; [`queue`](../../nilstd/src/collections/queue.ny) uses a ring buffer with O(1) dequeue and amortized O(1) enqueue. Focused fixtures cover growth, collisions, wraparound and aliases. [`map`](../../nilstd/src/collections/map.ny) still uses linear storage; a deque API and measured performance benchmarks remain work. HashMap removal remains O(n), and collisions can make lookup linear. |
 | 4 | Strict serialization | The former NyData parser could return partially parsed objects/lists at EOF, skip child errors, and return a first value without validating the remaining input. Add checked parsing, source locations, input/depth limits, and malformed-input fixtures. The old experimental JSON module also lacked Unicode correctness. Superseded by F67 and the shared NILData engine. |
@@ -1737,9 +1764,10 @@ the active loop.
 Out-of-range tuple reads and uninitialized tuple slots fail explicitly. There
 is no synthetic default tuple. Out-of-range writes remain no-ops, and existing
 scalar-array read defaults are unchanged. F07 subsequently adds direct declared
-record elements under a separate nominal identity and lifetime contract. Native
-choice, nested-array, class and reference-wrapper elements and cyclic schemas
-remain excluded; tuple support does not establish a general aggregate-array ABI.
+record and choice elements plus nested arrays under explicit identity,
+initialization and lifetime contracts. Direct class/reference-wrapper elements,
+recursive schemas and `f32` arrays remain excluded; tuple support alone does not
+establish a general aggregate-array ABI.
 
 **Coverage:** Paired Ny/Matrix tuple-array fixtures and
 `tests/tools/tuple_array_contract.py` specify source and binary execution,
@@ -1751,9 +1779,9 @@ Raw text/binary NIL tests cover malformed nominal fields and initialization,
 legacy intrinsic wrappers, and collection at the tuple-initializer allocation
 boundary.
 
-**Follow-up:** F07 implements the direct record-array slice. Extend remaining
-aggregate-array layouts only with equally explicit schema, initialization and
-lifetime contracts. Nested declaration patterns,
+**Follow-up:** F07 implements direct record/choice arrays and nested arrays.
+Extend remaining aggregate-array layouts only with equally explicit schema,
+initialization and lifetime contracts. Nested declaration patterns,
 custom formatting and native FFI layout remain separate work from storing
 typed tuple handles.
 The VM still represents raw pointers as integers: a matching virtual address
@@ -1909,8 +1937,8 @@ the analysis gap, so this was not evidence of an executable double-move path.
 
 **Follow-up:** Grouping, joins, distinct, multiple order keys, lazy iteration and
 SQL translation remain separate work. F07 now supports ordinary arrays of
-declared records, but does not extend the query row/projection contract beyond
-its checked scalar/text/tuple profile. The current snapshot and sorted
+declared records, choices and nested arrays, but does not extend the query
+row/projection contract beyond its checked scalar/text/tuple profile. The current snapshot and sorted
 query allocate temporary arrays; profiling and optimization should preserve
 once-only effects and stable ordering rather than silently changing semantics.
 Generic helper bodies also reject query sources such as `array<T>` before
@@ -1932,12 +1960,13 @@ paths retain the nested type context and source argument evaluation order. The
 native enum fixture now exercises absent/present nested options, a floating
 payload, multiple nested payloads, and side-effect ordering.
 
-**Follow-up:** Multi-payload enum construction is covered, but destructuring a
-multi-payload variant in a match is still unsupported. The current checker can
-misreport each binding as the combined `(T, T)` payload, while code generation
-explicitly rejects multi-payload pattern lowering. Implement component typing,
-extraction and diagnostic consistency together; the current constructor fix does
-not imply that pattern support exists.
+**Enum-array follow-up:** Flat multi-payload patterns now bind each variable or
+wildcard to its corresponding substituted field and require exact arity.
+Lowering extracts the payloads in their declared order. Single tuple/generic
+payloads retain their own internal commas and canonical storage schema, distinct
+from the outer list of variant fields. The enum-array fixture covers tuple and
+Result payloads plus flat tuple/scalar destructuring across the execution routes.
+Nested constructor and literal payload patterns remain outside this profile.
 
 ### F59 — Pattern collection needs complete results and explicit empty-match behavior
 
@@ -2653,8 +2682,9 @@ mutation, and methods across the standard execution routes.
 
 **Earlier storage limitation:** An independent discovery probe also confirmed
 that native arrays of nominal records were outside the scalar-array profile,
-both as locals and aggregate fields. F07 now adds a focused declared-record
-layout and GC contract; other aggregate element layouts remain open. Enigma
+both as locals and aggregate fields. F07 now adds explicit record, choice and
+nested-array layout and GC contracts. Direct class/reference-wrapper elements
+and recursive schemas remain open. Enigma
 uses a bounded typed report batch with primitive columns and checked element
 access; its durable interchange still returns report objects.
 

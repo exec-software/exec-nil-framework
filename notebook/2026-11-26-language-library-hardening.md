@@ -255,3 +255,79 @@ LLVM disabled passes 470 with 145 expected native-only skips and zero failures;
 VS Code passes. Both configurations verify actual backend selection. This
 remote evidence does not change the locally packaged candidate's development
 qualification or substitute for Windows/macOS installed-consumer checks.
+
+## Enum and nested-array follow-up
+
+The next F07 slice adds native enum/choice elements and finite nested arrays.
+Both use additive typed-array runtime entry points with owned exact element
+identities; the earlier record ABI remains available. Enum words retain the
+existing variant representation. Nested stores require a live child array in
+the current runtime context with the expected rank and element kind/identity.
+Tuple children retain their existing compiler-proven shape contract. Native
+collection follows both enum payload graphs and nested array descriptors.
+
+Array element types remain invariant. Extracting an enum preserves its variant
+when a slot is replaced, while its mutable record/array payloads remain shared.
+Outer array copies share their children; replacing a child does not replace an
+already extracted child. Enum and nested-array reads cannot fabricate a default
+variant or child: invalid reads now fail on both interpreter and native routes.
+Scalar defaults and valid-value out-of-range write no-ops remain unchanged.
+
+Concrete enum payload schemas are materialized even for empty-only arrays,
+including generic records, generic enums and tuples behind a nongeneric enum.
+Native schema validation follows array indirections to reject unsupported
+recursive nominal graphs. Loader provenance checks preserve class/anything
+payload identity through nested arrays and checked operations without allowing
+binding-reference cells or opaque calls to erase that proof.
+
+New paired Ny/Matrix fixtures cover variants, jagged arrays, aliases,
+replacement, reserve/growth, generic primitives, overlapping copies and returned
+managed graphs. Focused controls cover text/binary NIL identity mismatches,
+invalid reads, forged handles, sensitive payload provenance, recursive schemas
+and both static/shared runtime ABIs. Initial fixture execution exposed missing
+context on fresh enum constructors and empty child literals; the lowering fix
+must propagate the checked destination type before emitting those children.
+
+The capability catalog now declares 21 groups and 43 proof fixtures (258 route
+observations); installed consumers include 90 fixtures. These are test
+registrations until fresh execution evidence is recorded below. Earlier SDKs
+and the active SDK remain unchanged. Mainline consolidation remains last.
+
+The runtime/storage ABI was checkpointed and pushed as `a746baa`; its two
+positive static/shared suites and 34 separate failure-mode invocations pass.
+The first integrated compiler run retains 18 passing focused tests and three
+failures exposing source context gaps. Both Matrix fixtures pass all six routes;
+24 separate cross-frontend imported generic-enum/nested-array executions pass,
+including binary-only providers and qualified/unqualified source names.
+
+Review also caught a concrete child-array width being rewritten when its outer
+literal was partially inferred. The lowering guard now preserves that child's
+ABI, while the checker supplies context to legitimate empty-first nested
+literals. Enum payload checking applies ordinary class-view conversion before
+lowering. Native array metadata requires exact enum schema names, and finite
+schema validation includes concrete descendants of class views so an ancestor
+payload cannot hide a recursive derived-field/enum graph. Focused regression
+controls accompany each repair; broader execution results follow separately.
+
+The storage tests additionally exposed lexical method dispatch when a local
+shares its type's name (`queue`), tuple/generic payload commas being mistaken
+for multiple enum fields, and inconsistent primitive alias normalization in
+nongeneric enum schemas. These are repaired at their source boundaries. Flat
+multi-payload patterns need distinct per-field types and exact arity; their
+lowering is extended only for variable/wildcard payloads, with structured nested
+patterns retaining their existing explicit rejection. Enum payload graphs use
+the established unique nominal resolution internally, while an array's own
+metadata still requires its exact declared element name.
+
+The completed focused run passes all four Ny/Matrix fixtures across six routes,
+the 320-check enum/nested-array contract, native NIL validation, generic enum
+construction and the retained structured-pattern rejection. Tests cover mixed
+wildcard positions and expression matches as well as statement matches. A
+fixture-only correction supplies the existing required final wildcard arm for
+match expressions. Native multi-payload extraction now follows declaration
+order, matching the interpreter and NIL provenance analysis; the prior native
+raw-NIL oracle had recorded the opposite order and is corrected explicitly.
+
+The implementation is ready for a clean committed-source full suite and a
+separate development SDK candidate. These focused results do not replace that
+qualification or establish a new cross-platform release claim.

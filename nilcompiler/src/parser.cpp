@@ -4831,11 +4831,14 @@ std::shared_ptr<ast_decl> parser::parse_enum_declaration(visibility_kind vis) {
     if (match(token_kind::left_paren)) {
       // Collect all types (comma-separated) into a tuple-like type string
       std::string type_str = parse_type_name();
+      bool multiple_payloads = false;
       while (match(token_kind::comma)) {
+        multiple_payloads = true;
         type_str += ", " + parse_type_name();
       }
-      // Wrap multiple types in tuple notation for consistency
-      if (type_str.find(", ") != std::string::npos) {
+      // Only commas at this argument-list level introduce multiple payloads.
+      // A single tuple or generic type can contain its own internal commas.
+      if (multiple_payloads) {
         type_str = "(" + type_str + ")";
       }
       associated_type = symbol_table_.canonicalize_type_name(type_str);

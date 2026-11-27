@@ -1,0 +1,54 @@
+book nested_arrays_matrix
+read everything from nil.std.collections
+
+counter begin record
+    field total as override integer
+end record
+
+main returns override integer begin paragraph
+    value inner as array of override integer is [1, 2]
+    value rows as array of array of override integer is [inner, inner, []]
+    value alias is rows
+    value retained is rows at 0
+    set (rows at 0) at 1 to 7
+    say inner at 1
+    say (rows at 1) at 1
+    set rows at 0 to [11, 13, 17]
+    say (alias at 0) at 2
+    say retained at 1
+    append 19 to retained
+    say the length of (rows at 1)
+    append 23 to (rows at 2)
+    say (rows at 2) at 0
+    evaluate alias.reserve with 32
+    append retained to rows
+    say the length of alias
+    say (rows.capacity with nothing) is at least 32
+
+    value cube as array of array of array of override integer is [rows, [[29], []]]
+    set ((cube at 0) at 1) at 0 to 31
+    say inner at 0
+    append 37 to ((cube at 1) at 1)
+    say ((cube at 1) at 1) at 0
+
+    value filled is new-with-value of array of override integer with size being 3, `value` being inner
+    set (filled at 0) at 0 to 41
+    say (filled at 2) at 0
+    evaluate array-set of array of override integer with arr being filled, idx being 1, `value` being [43, 47]
+    value selected is get of array of override integer with arr being filled, idx being 1
+    append 53 to selected
+    say (filled at 1) at 2
+    say length of array of override integer with arr being filled
+    say try-copy-range of array of override integer with source being filled, source-offset being 0, destination being filled, destination-offset being 1, count being 2
+    set (filled at 0) at 0 to 59
+    say (filled at 1) at 0
+    say (filled at 2) at 0
+
+    value object is build counter with total being 61
+    value records as array of array of counter is [[object], []]
+    append object to (records at 1)
+    set ((records at 0) at 0).total to 67
+    say object.total
+    say ((records at 1) at 0).total
+    give 0
+end paragraph

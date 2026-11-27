@@ -674,7 +674,9 @@ def main() -> int:
             process = subprocess.run(
                 [str(executable)], capture_output=True, text=True, timeout=30, check=False,
             )
-            if process.returncode or process.stdout != "42\nenum payload\n" or process.stderr:
+            # UNWRAP pushes declaration order, matching the VM: the last
+            # payload is printed first when the consumer pops immediately.
+            if process.returncode or process.stdout != "enum payload\n42\n" or process.stderr:
                 raise AssertionError(f"tuple-payload: invalid runtime result: {process}")
 
         print(f"native NIL validation: {len(invalid)} rejected cases, "

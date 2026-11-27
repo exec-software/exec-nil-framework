@@ -1596,6 +1596,30 @@ void VM::executeInstruction(const Instruction &instr) {
     }
     return schema;
   };
+  const auto enum_array_schema = [&](const std::string &type) -> const nil_enum_def * {
+    if (!class_metadata_ || type == "$integer" || type.rfind("fn(", 0) == 0 ||
+        is_array_storage_type(type) || is_array_tuple_type(type)) return nullptr;
+    const auto expected = canonical_array_type(type);
+    const auto scalar = canonical_array_scalar(expected);
+    if (scalar == "i8" || scalar == "i16" || scalar == "i32" || scalar == "i64" ||
+        scalar == "u8" || scalar == "u16" || scalar == "u32" || scalar == "u64" ||
+        scalar == "f32" || scalar == "f64" || scalar == "bool" || scalar == "char" ||
+        scalar == "text" || scalar == "anything" || scalar == "any" ||
+        expected.rfind("ptr<", 0) == 0 || expected.rfind("ref<", 0) == 0)
+      return nullptr;
+    const nil_enum_def *schema = nullptr;
+    for (const auto &candidate : class_metadata_->enums) {
+      if (canonical_array_type(candidate.name) != expected) continue;
+      if (schema)
+        throw std::runtime_error("enum array requires one exact declared element schema");
+      schema = &candidate;
+    }
+    if (schema)
+      for (const auto &record : class_metadata_->structs)
+        if (canonical_array_type(record.name) == expected)
+          throw std::runtime_error("enum array requires one exact declared element schema");
+    return schema;
+  };
   const auto array_default_value = [&](const HeapBlock &block) -> Value {
     if (block.element_type == "anything")
       throw std::runtime_error("anything array read is out of bounds or uninitialized");
@@ -1603,6 +1627,10 @@ void VM::executeInstruction(const Instruction &instr) {
       throw std::runtime_error("tuple array read is out of bounds or has an invalid handle");
     if (record_array_schema(block.element_type))
       throw std::runtime_error("record array read is out of bounds or uninitialized");
+    if (enum_array_schema(block.element_type))
+      throw std::runtime_error("enum array read is out of bounds or uninitialized");
+    if (is_array_storage_type(block.element_type))
+      throw std::runtime_error("nested array read is out of bounds or uninitialized");
     // Match intrinsic metadata normalization for supported scalar types.
     // Keep the original block metadata intact: nominal aggregate names are
     // case-sensitive even though built-in scalar aliases are normalized here.
@@ -1611,8 +1639,6 @@ void VM::executeInstruction(const Instruction &instr) {
       return std::string{};
     if (element == "f64")
       return 0.0;
-    if (is_array_storage_type(block.element_type))
-      return ArrayHandle{};
     return int64_t(0);
   };
   const auto validate_tuple_schema = [&](const auto &self, const std::string &type,
@@ -1644,8 +1670,8 @@ void VM::executeInstruction(const Instruction &instr) {
   };
   // A zero-length literal still establishes a typed mutable array. Prove its
   // declared element schema without requiring a fabricated record value. Keep
-  // the interpreter's wider enum/reference/nested-array surface independent
-  // from the deliberately smaller native element ABI.
+  // the interpreter's wider reference/class surface independent from the
+  // native element ABI; enums and nested arrays share exact metadata checks.
   const auto validate_array_element_schema = [&](const auto &self,
       const std::string &written, const std::string &operation, unsigned depth) -> void {
     const auto reject = [&]() {
@@ -1877,14 +1903,32 @@ void VM::executeInstruction(const Instruction &instr) {
          const std::string &operation) -> Value {
     const auto *record_schema = block.type_name == "array"
         ? record_array_schema(block.element_type) : nullptr;
+    const auto *enum_schema = block.type_name == "array"
+        ? enum_array_schema(block.element_type) : nullptr;
+    const bool nested = block.type_name == "array" && is_array_storage_type(block.element_type);
     if (block.type_name == "array" && (is_array_tuple_type(block.element_type) ||
-        block.element_type == "anything" || record_schema)) {
+        block.element_type == "anything" || record_schema || enum_schema || nested)) {
       if (record_schema) {
         const auto *object = std::get_if<StructValue>(&value);
         if (!object || record_array_schema(object->type_name) != record_schema)
           throw std::runtime_error(operation + ": record array requires its exact declared element type");
       }
-      validate_tuple_value(validate_tuple_value, value, block.element_type, operation, 0);
+      if (enum_schema) {
+        const auto *variant = std::get_if<EnumValue>(&value);
+        auto actual = variant ? variant->type_name : std::string{};
+        if (variant && actual.empty()) {
+          const auto tag = canonical_variant_name(variant->variant_name);
+          const auto separator = tag.rfind("::");
+          if (separator != std::string::npos) actual = tag.substr(0, separator);
+        }
+        if (!variant || actual.empty() || enum_array_schema(actual) != enum_schema)
+          throw std::runtime_error(operation + ": enum array requires its exact declared element type");
+      }
+      auto expected = block.element_type;
+      // Preserve legacy postfix metadata while storing a checked ArrayHandle.
+      if (nested && expected.size() > 2 && expected.compare(expected.size() - 2, 2, "[]") == 0)
+        expected = "array<" + expected.substr(0, expected.size() - 2) + ">";
+      validate_tuple_value(validate_tuple_value, value, expected, operation, 0);
       return value;
     }
     const std::string storage_type = canonical_array_scalar(
@@ -3194,8 +3238,14 @@ void VM::executeInstruction(const Instruction &instr) {
           metadata.push_back(found->second.element_type);
         }
       }
-      const bool declared_record = metadata.size() == 5 && record_array_schema(metadata[4]);
-      const auto contract = parse_array_intrinsic(metadata, declared_record);
+      bool validated_element = false;
+      if (metadata.size() == 5) {
+        validated_element = record_array_schema(metadata[4]) || enum_array_schema(metadata[4]) ||
+                            is_array_storage_type(metadata[4]);
+        if (validated_element)
+          validate_array_element_schema(validate_array_element_schema, metadata[4], fn_name, 0);
+      }
+      const auto contract = parse_array_intrinsic(metadata, validated_element);
       if (is_array_tuple_type(contract.element))
         (void)validate_tuple_schema(validate_tuple_schema, contract.element, fn_name, 0);
       if (args.size() != contract.argument_count)

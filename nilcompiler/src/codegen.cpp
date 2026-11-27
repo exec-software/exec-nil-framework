@@ -276,6 +276,19 @@ parse_generic_type_name(const std::string &raw_type_name) {
 
 static std::string canonical_nil_type_name(const std::string &raw_type_name) {
   const std::string type_name = trim_type_name(raw_type_name);
+  // Enum multi-payload lists retain their outer parentheses, while every
+  // field uses the same canonical spelling as its concrete storage schema.
+  if (type_name.size() >= 2 && type_name.front() == '(' && type_name.back() == ')') {
+    if (const auto fields = parse_generic_type_name(
+            "tuple<" + type_name.substr(1, type_name.size() - 2) + ">")) {
+      std::string canonical = "(";
+      for (std::size_t index = 0; index < fields->type_args.size(); ++index) {
+        if (index) canonical += ',';
+        canonical += canonical_nil_type_name(fields->type_args[index]);
+      }
+      return canonical + ')';
+    }
+  }
   const auto parsed = parse_generic_type_name(type_name);
   if (!parsed) {
     // NIL uses the language-facing ABI spelling for primitive aliases so an
@@ -625,7 +638,7 @@ resolve_concrete_enum_variant(codegen &cg, nil_module &module,
         return concrete_enum_variant_metadata{
             enum_name,
             variant.associated_type
-                ? *variant.associated_type
+                ? canonical_nil_type_name(*variant.associated_type)
                 : std::string("void")};
     }
     return std::nullopt;
@@ -1548,9 +1561,33 @@ public:
     return cg_.lookup_struct_decl(base) != nullptr && cg_.lookup_class_decl(base) == nullptr;
   }
 
-  void materialize_array_element_schema(const std::string &type, int line) {
+  bool validated_array_element(const std::string &type, unsigned depth = 0) {
+    if (depth >= 64) return false;
+    const auto parsed = parse_generic_type_name(type);
+    if (parsed && parsed->base_name == "array" && parsed->type_args.size() == 1)
+      return validated_array_element(parsed->type_args.front(), depth + 1);
+    const auto scalar = canonical_array_type(type);
+    return scalar == "i32" || scalar == "i64" || scalar == "u8" ||
+        scalar == "bool" || scalar == "f64" || scalar == "text" || scalar == "anything" ||
+        is_array_tuple_type(type) || declared_array_record(type) || is_declared_enum_type(cg_, type);
+  }
+
+  void materialize_array_element_schema(const std::string &type, int line,
+                                         unsigned depth = 0) {
+    if (depth >= 64) {
+      cg_.reject_codegen_construct(line, "array element schema exceeds its nesting limit",
+                                   "use a finite supported element schema");
+      return;
+    }
+    if (const auto parsed = parse_generic_type_name(type);
+        parsed && parsed->base_name == "array" && parsed->type_args.size() == 1) {
+      materialize_array_element_schema(parsed->type_args.front(), line, depth + 1);
+      return;
+    }
     if (is_array_tuple_type(type) || declared_array_record(type))
       cg_.materialize_struct_schema(type, mod_, line, 0, true);
+    // Generic enum schemas are materialized after all function bodies and
+    // specializations exist, including empty array instruction metadata.
   }
 
   bool emit_array_intrinsic(const ast_function_decl &declaration,
@@ -1586,7 +1623,7 @@ public:
     try {
       operands[3] = canonical_array_type(operands[3]);
       operands[4] = canonical_array_type(operands[4]);
-      contract = parse_array_intrinsic(operands, declared_array_record(operands[4]));
+      contract = parse_array_intrinsic(operands, validated_array_element(operands[4]));
     } catch (const std::runtime_error &error) {
       return reject(error.what());
     }
@@ -1783,6 +1820,30 @@ public:
       else if (result != type) return "any";
     }
     return result.empty() ? "any" : result;
+  }
+
+  std::optional<std::string> array_literal_context(
+      const ast_expr &expression, const std::string &expected) const {
+    if (expression.kind != ast_node_kind::array_literal_expr_node ||
+        !array_element_type_name(expected))
+      return std::nullopt;
+    const auto actual = unambiguous_expression_type(expression);
+    // Context may fill an empty/partial constructor, but cannot change an
+    // already concrete array ABI when compiling without the type checker.
+    const auto incomplete = [&](const auto &self, const std::string &type,
+                                unsigned depth) -> bool {
+      if (depth >= 64) return false;
+      if (type.empty() || type == "any" || type == "__local" ||
+          type == "<unknown>" || type == "<error>" || type == "$integer")
+        return true;
+      if (const auto parsed = parse_generic_type_name(type))
+        for (const auto &argument : parsed->type_args)
+          if (self(self, argument, depth + 1)) return true;
+      return false;
+    };
+    return canonical_nil_type_name(actual) == canonical_nil_type_name(expected) ||
+        incomplete(incomplete, actual, 0)
+        ? std::optional<std::string>(expected) : std::nullopt;
   }
 
   void emit_switch(const ast_expr_ptr &target,
@@ -2819,17 +2880,17 @@ public:
               arm.pattern.name.find("::") != std::string::npos ||
               arm.pattern.name.find('.') != std::string::npos;
           const bool supported_payload =
-              arm.pattern.subpatterns.empty() ||
-              (arm.pattern.subpatterns.size() == 1 &&
-               (arm.pattern.subpatterns[0].kind ==
-                    ast_pattern_kind::variable_pattern ||
-                arm.pattern.subpatterns[0].kind ==
-                    ast_pattern_kind::wildcard_pattern));
+              arm.pattern.subpatterns.size() <= 65'536 &&
+              std::all_of(arm.pattern.subpatterns.begin(), arm.pattern.subpatterns.end(),
+                  [](const auto &payload) {
+                    return payload.kind == ast_pattern_kind::variable_pattern ||
+                        payload.kind == ast_pattern_kind::wildcard_pattern;
+                  });
           if (!is_qualified || !supported_payload) {
             cg_.reject_codegen_construct(
                 match_s.line,
                 "match pattern is unavailable: NIL only lowers qualified "
-                "variants with zero payloads or one variable/wildcard payload",
+                "variants with at most 65536 flat variable/wildcard payloads",
                 "split or simplify this constructor pattern until structured "
                 "payload matching is implemented");
             continue;
@@ -2909,18 +2970,12 @@ public:
               push_instr("JMP_IF_NOT", {label_next}, match_s.line);
             }
 
-            // Bind subpatterns
-            if (!arm.pattern.subpatterns.empty()) {
-              // Assuming single argument for now (e.g. Some(v))
-              const auto &sub = arm.pattern.subpatterns[0];
-              if (sub.kind == ast_pattern_kind::variable_pattern) {
-                push_instr("LOAD_LOCAL", {tmp_target}, match_s.line);
-                emit_unwrap_variant(arm.pattern.subpatterns.size(), variant_fqn,
-                                    match_enum_type, match_s.line);
-                declare_local(sub.name);
-                push_instr("STORE_LOCAL", {sub.name}, match_s.line);
-              }
-            }
+            std::vector<std::string> bindings;
+            for (const auto &payload : arm.pattern.subpatterns)
+              bindings.push_back(payload.kind == ast_pattern_kind::wildcard_pattern || payload.name == "_"
+                  ? std::string{} : payload.name);
+            emit_variant_pattern_bindings(bindings, tmp_target, variant_fqn,
+                                          match_enum_type, match_s.line);
             break;
           }
           default: {
@@ -3610,9 +3665,6 @@ public:
       break;
     case ast_node_kind::array_literal_expr_node: {
       const auto &arr = static_cast<const ast_array_literal_expr &>(e);
-      for (const auto &elem : arr.elements) {
-        emit_expr(*elem);
-      }
       std::string element_type = "any";
       if (arr.inferred_type) {
         if (const auto inferred = array_element_type_name(*arr.inferred_type)) {
@@ -3633,6 +3685,15 @@ public:
       // Empty arrays still need a concrete aggregate schema even when no
       // constructor, parameter or return type otherwise materializes it.
       materialize_array_element_schema(element_type, arr.line);
+      // Resolve the destination before emitting children: nullary enum
+      // variants and empty nested literals cannot recover this type later.
+      for (const auto &elem : arr.elements) {
+        const auto element_context = element_type == "any" ? std::nullopt
+            : array_element_type_name(element_type)
+                ? array_literal_context(*elem, element_type)
+                : std::optional<std::string>(element_type);
+        emit_expr(*elem, element_context);
+      }
       push_instr("NEW_ARRAY_LITERAL",
                  {std::to_string(arr.elements.size()), element_type}, arr.line);
       break;
@@ -4075,7 +4136,8 @@ public:
         const auto &ma =
             static_cast<const ast_member_access_expr &>(*ce.callee);
         if (ma.object &&
-            ma.object->kind == ast_node_kind::identifier_expr_node) {
+            ma.object->kind == ast_node_kind::identifier_expr_node &&
+            !identifier_has_value_binding(static_cast<const ast_identifier_expr &>(*ma.object))) {
           const auto &obj_id =
               static_cast<const ast_identifier_expr &>(*ma.object);
           // Check if this is a known enum
@@ -4174,7 +4236,10 @@ public:
           std::function<std::string(const ast_expr &)> get_type_name_recurse =
               [&](const ast_expr &expr) -> std::string {
             if (expr.kind == ast_node_kind::identifier_expr_node) {
-              return static_cast<const ast_identifier_expr &>(expr).name;
+              const auto &identifier = static_cast<const ast_identifier_expr &>(expr);
+              // A local/global receiver wins over an equally named type,
+              // including the root of a chained field receiver.
+              return identifier_has_value_binding(identifier) ? std::string{} : identifier.name;
             } else if (expr.kind == ast_node_kind::member_access_expr_node) {
               const auto &ma_inner =
                   static_cast<const ast_member_access_expr &>(expr);
@@ -4440,9 +4505,19 @@ public:
 
             // Emit receiver (self) as first argument
             emit_expr(*ma.object);
-            // Emit remaining arguments
-            for (const auto &arg : ce.args)
-              emit_expr(*arg);
+            // Built-in mutation destinations supply constructor context just
+            // like a typed index assignment. Preserve concrete array handles.
+            const auto array_element = array_element_type_name(receiver_type);
+            for (std::size_t index = 0; index < ce.args.size(); ++index) {
+              std::optional<std::string> argument_context;
+              const bool element_argument =
+                  (ma.member_name == "push" && index == 0) ||
+                  (ma.member_name == "set" && index == 1);
+              if (array_element && element_argument)
+                argument_context = is_declared_enum_type(cg_, *array_element)
+                    ? array_element : array_literal_context(*ce.args[index], *array_element);
+              emit_expr(*ce.args[index], argument_context);
+            }
             if (ny::is_debug_enabled()) {
               std::fprintf(stderr, "[codegen] Emit method call '%s' -> '%s'\n",
                            ma.member_name.c_str(), mangled_name.c_str());
@@ -4566,12 +4641,12 @@ public:
             for (size_t i = 0; i < struct_decl->fields.size(); ++i) {
               const auto field_type = struct_field_type(
                   concrete_type, struct_decl->fields[i].name);
-              // Unit generic variants (Option.None) and nested enum payloads
-              // need their field context before emission. Other arguments
-              // retain their own storage type, including rejected array
-              // element types when compiling with --no-typecheck.
-              emit_expr(*ce.args[i], field_type && is_declared_enum_type(cg_, *field_type)
-                  ? field_type : std::nullopt);
+              // Fresh enum and array constructors need their field context
+              // before emission. A concrete mismatched array keeps its own ABI.
+              const auto argument_context = !field_type ? std::nullopt
+                  : is_declared_enum_type(cg_, *field_type) ? field_type
+                  : array_literal_context(*ce.args[i], *field_type);
+              emit_expr(*ce.args[i], argument_context);
               emit_scalar_boundary(field_type, ce.line);
               push_instr("SET_FIELD", {struct_decl->fields[i].name}, ce.line);
             }
@@ -4683,18 +4758,19 @@ public:
       }
       const auto emit_call_argument = [&](std::size_t index) {
         std::optional<std::string> argument_context;
-        if (call_declaration && native_dispatch_annotation_count(*call_declaration) == 0 &&
-            index < call_declaration->params.size()) {
+        if (call_declaration && index < call_declaration->params.size()) {
           const auto &parameter = call_declaration->params[index];
           if (parameter.type_name && !parameter.is_variadic) {
             const auto expected = substitute_nil_type_name(
                 *parameter.type_name, call_substitutions);
-            // Only enum construction needs this additional call context.
-            // In particular, a rejected array<i32> argument must retain its
-            // actual element ABI under --no-typecheck, not become array<i64>
-            // merely because that is the callee's declared parameter type.
+            // Fill fresh enum/array constructors before dispatch, including
+            // generic typed-array intrinsics. A concrete array<i32> argument
+            // must still retain its actual ABI under --no-typecheck when a
+            // callee requires array<i64>.
             if (is_declared_enum_type(cg_, expected))
               argument_context = expected;
+            else
+              argument_context = array_literal_context(*ce.args[index], expected);
           }
         }
         std::optional<std::string> scalar_type;
@@ -4726,7 +4802,7 @@ public:
             }
           }
         }
-        // Ordinary functions provide enum construction context without adding
+        // Ordinary functions provide construction context without adding
         // a conversion: their parameter prologue owns scalar boundaries.
         // Native providers retain the narrower conversion contract above.
         emit_expr(*ce.args[index], scalar_type ? scalar_type : argument_context);
@@ -4747,14 +4823,20 @@ public:
             for (size_t i = 0; i < fixed && i < ce.args.size(); ++i)
               emit_call_argument(i);
             size_t nvar = ce.args.size() > fixed ? ce.args.size() - fixed : 0;
-            for (size_t i = fixed; i < ce.args.size(); ++i)
-              emit_expr(*ce.args[i]);
             std::string variadic_element_type = "any";
             if (vdecl->params.back().type_name) {
               if (const auto inferred = array_element_type_name(
-                      *vdecl->params.back().type_name)) {
+                      substitute_nil_type_name(*vdecl->params.back().type_name,
+                                               call_substitutions))) {
                 variadic_element_type = *inferred;
               }
+            }
+            materialize_array_element_schema(variadic_element_type, ce.line);
+            for (size_t i = fixed; i < ce.args.size(); ++i) {
+              const auto argument_context = is_declared_enum_type(cg_, variadic_element_type)
+                  ? std::optional<std::string>(variadic_element_type)
+                  : array_literal_context(*ce.args[i], variadic_element_type);
+              emit_expr(*ce.args[i], argument_context);
             }
             push_instr("NEW_ARRAY_LITERAL",
                        {std::to_string(nvar), variadic_element_type}, ce.line);
@@ -5402,17 +5484,15 @@ public:
           }
 
           if (!variant_fqn.empty()) {
-            bool supported_payload = call.args.size() <= 1;
-            if (supported_payload && !call.args.empty()) {
-              supported_payload =
-                  call.args[0] &&
-                  call.args[0]->kind == ast_node_kind::identifier_expr_node;
-            }
+            const bool supported_payload = call.args.size() <= 65'536 &&
+                std::all_of(call.args.begin(), call.args.end(), [](const auto &argument) {
+                  return argument && argument->kind == ast_node_kind::identifier_expr_node;
+                });
             if (!supported_payload) {
               cg_.reject_codegen_construct(
                   case_item.pattern->line,
                   "match pattern is unavailable: NIL only lowers a variant "
-                  "with zero payloads or one variable/wildcard payload",
+                  "with at most 65536 flat variable/wildcard payloads",
                   "split or simplify this variant pattern until structured "
                   "payload matching is implemented");
               continue;
@@ -5423,37 +5503,13 @@ public:
             emit_is_variant(variant_fqn, match_enum_type, match_e.line);
             push_instr("JMP_IF_NOT", {label_next}, match_e.line);
 
-            // Bind variables if present
-            if (!call.args.empty()) {
-              push_instr("LOAD_LOCAL", {tmp_target}, match_e.line);
-              emit_unwrap_variant(call.args.size(), variant_fqn,
-                                  match_enum_type, match_e.line);
-              for (const auto &arg : call.args) {
-                if (arg->kind == ast_node_kind::identifier_expr_node) {
-                  const auto &arg_id =
-                      static_cast<const ast_identifier_expr &>(*arg);
-                  declare_local(arg_id.name);
-                  push_instr("STORE_LOCAL", {arg_id.name}, match_e.line);
-                } else {
-                  // Wildcard or literal pattern inside variant?
-                  // For now just pop to discard if not identifier
-                  // But UNWRAP pushes distinct values.
-                  // If we don't bind, we should probably POP?
-                  // Or STORE_LOCAL to _ (dummy)?
-                  // Since NIL machine has stack, we must consume the value.
-                  // For wildcards `_`, we can emit `POP`?
-                  // But `ast_identifier_expr` with `_` is handled as wildcard.
-                  // If `const`, we need to check equality?
-                  // Nested patterns not fully supported here yet.
-                  // For MVP, if not identifier, emit POP?
-                  // Actually, let's just assume identifier for now as per
-                  // previous code. But we should emit STORE for valid
-                  // identifiers. If wildcard, we should POP. Code
-                  // simplification: just loop assuming identifiers for this
-                  // fix.
-                }
-              }
+            std::vector<std::string> bindings;
+            for (const auto &argument : call.args) {
+              const auto &name = static_cast<const ast_identifier_expr &>(*argument).name;
+              bindings.push_back(name == "_" ? std::string{} : name);
             }
+            emit_variant_pattern_bindings(bindings, tmp_target, variant_fqn,
+                                          match_enum_type, match_e.line);
 
             emit_arm_value();
             continue;
@@ -5615,7 +5671,8 @@ public:
       const auto &ma = static_cast<const ast_member_access_expr &>(e);
 
       // Check if this is an enum unit variant access: Enum::Variant (no args)
-      if (ma.object && ma.object->kind == ast_node_kind::identifier_expr_node) {
+      if (ma.object && ma.object->kind == ast_node_kind::identifier_expr_node &&
+          !identifier_has_value_binding(static_cast<const ast_identifier_expr &>(*ma.object))) {
         const auto &obj_id =
             static_cast<const ast_identifier_expr &>(*ma.object);
         // Check if this is a known enum
@@ -5925,6 +5982,13 @@ private:
     if (identifier.resolved_function_name)
       return *identifier.resolved_function_name;
     return cg_.lookup_function_fqn(identifier.name, current_module_);
+  }
+
+  bool identifier_has_value_binding(const ast_identifier_expr &identifier) const {
+    return local_bindings.count(identifier.name) != 0 ||
+        identifier.resolved_global_name.has_value() ||
+        (!identifier.resolved_function_name &&
+         cg_.lookup_global_name(identifier.name, current_module_).has_value());
   }
 
   std::optional<std::string> resolve_global_operand(const ast_identifier_expr &id) const {
@@ -6279,6 +6343,47 @@ private:
     std::vector<std::string> arguments = {std::to_string(payload_count)};
     append_variant_metadata(arguments, variant_name, enum_type);
     push_instr("UNWRAP_VARIANT", arguments, debug_line);
+  }
+
+  void emit_variant_pattern_bindings(const std::vector<std::string> &bindings,
+                                     const std::string &target,
+                                     const std::string &variant_name,
+                                     const std::optional<std::string> &enum_type,
+                                     int line) {
+    const auto resolved = resolved_variant_name(variant_name, enum_type, line, true);
+    const auto metadata = enum_type
+        ? resolve_concrete_enum_variant(cg_, mod_, *enum_type, resolved) : std::nullopt;
+    std::vector<std::string> payload_types;
+    if (metadata && metadata->payload_type != "void") {
+      const auto &payload = metadata->payload_type;
+      if (payload.size() >= 2 && payload.front() == '(' && payload.back() == ')') {
+        if (const auto fields = parse_generic_type_name(
+                "tuple<" + payload.substr(1, payload.size() - 2) + ">"))
+          payload_types = fields->type_args;
+      } else payload_types.push_back(payload);
+    }
+    // Match the executable NIL operand-count bound. Multiple fields require
+    // an exact schema even for an all-wildcard arm; no guessed word payloads.
+    if (bindings.size() > 65'536 || (!metadata && bindings.size() > 1) ||
+        (metadata && payload_types.size() != bindings.size())) {
+      cg_.reject_codegen_construct(line, "enum pattern requires its exact payload schema and arity",
+                                   "bind one variable or wildcard for each declared payload field");
+      return;
+    }
+    if (std::all_of(bindings.begin(), bindings.end(), [](const auto &name) { return name.empty(); }))
+      return;
+    push_instr("LOAD_LOCAL", {target}, line);
+    emit_unwrap_variant(bindings.size(), resolved, enum_type, line);
+    // UNWRAP_VARIANT pushes fields in declaration order, leaving the last
+    // field on top. Consume every field, including discarded wildcards.
+    for (std::size_t reverse = 0; reverse < bindings.size(); ++reverse) {
+      const auto index = bindings.size() - reverse - 1;
+      if (bindings[index].empty()) push_instr("POP", {}, line);
+      else {
+        declare_local(bindings[index], metadata ? payload_types[index] : "__local");
+        push_instr("STORE_LOCAL", {bindings[index]}, line);
+      }
+    }
   }
 
   std::string new_label(const std::string &prefix) {
@@ -7435,7 +7540,7 @@ codegen::assemble_module(const ast_program &program,
         nil_enum_def::variant v;
         v.name = variant.name;
         if (variant.associated_type.has_value()) {
-          v.associated_type = *variant.associated_type;
+          v.associated_type = canonical_nil_type_name(*variant.associated_type);
         }
         def.variants.push_back(v);
       }
@@ -7515,9 +7620,7 @@ codegen::assemble_module(const ast_program &program,
     if (depth > 64 || !visited_enum_signatures.insert(type).second)
       return;
     const auto parsed = parse_generic_type_name(type);
-    if (!parsed)
-      return;
-    const auto base = canonical_builtin_enum_base(parsed->base_name);
+    const auto base = canonical_builtin_enum_base(parsed ? parsed->base_name : type);
     const auto *declaration = lookup_enum_decl(lookup_enum_fqn(base));
     if (declaration && !declaration->variants.empty()) {
       const auto metadata = resolve_concrete_enum_variant(
@@ -7531,22 +7634,41 @@ codegen::assemble_module(const ast_program &program,
             for (const auto &variant : schema.variants)
               if (!variant.associated_type.empty())
                 payload_types.push_back(variant.associated_type);
-        for (const auto &payload : payload_types)
-          materialize_enum_signature(payload, depth + 1);
+        for (const auto &payload : payload_types) {
+          if (payload.size() >= 2 && payload.front() == '(' && payload.back() == ')') {
+            if (const auto fields = array_tuple_elements("tuple<" + payload.substr(1, payload.size() - 2) + ">"))
+              for (const auto &field : *fields) {
+                materialize_struct_schema(field, *mod, 0, depth + 1, false);
+                materialize_enum_signature(field, depth + 1);
+              }
+          } else {
+            materialize_struct_schema(payload, *mod, 0, depth + 1, false);
+            materialize_enum_signature(payload, depth + 1);
+          }
+        }
       }
     }
-    for (const auto &argument : parsed->type_args)
-      materialize_enum_signature(argument, depth + 1);
+    if (parsed)
+      for (const auto &argument : parsed->type_args)
+        materialize_enum_signature(argument, depth + 1);
   };
   for (auto &function : mod->functions) {
     // Parameters already use this normalization at serialization. Return
     // types must share the exact schema key: String/text and spacing cannot
     // produce distinct native ABI identities for the same qualified enum.
     function.return_type = canonical_enum_signature(function.return_type);
-    for (const auto &instruction : function.body)
+    for (const auto &instruction : function.body) {
       if ((instruction.opname == "BOX_ANY" || instruction.opname == "UNBOX_ANY" ||
            instruction.opname == "IS_ANY_TYPE") && instruction.args.size() == 1)
         materialize_enum_signature(instruction.args.front(), 0);
+      if (instruction.opname == "NEW_ARRAY_LITERAL" && instruction.args.size() >= 2)
+        materialize_enum_signature(instruction.args[1], 0);
+      if (instruction.opname == "INTEROP_CALL" && instruction.args.size() == 5 &&
+          instruction.args[0] == "intrinsic" && is_array_intrinsic(instruction.args[1])) {
+        materialize_enum_signature(instruction.args[3], 0);
+        materialize_enum_signature(instruction.args[4], 0);
+      }
+    }
     materialize_struct_schema(function.return_type, *mod, function.source_line,
                               0, false);
     materialize_enum_signature(function.return_type, 0);
@@ -7560,6 +7682,13 @@ codegen::assemble_module(const ast_program &program,
         materialize_enum_signature(type, 0);
       }
     }
+  }
+  // Empty arrays and enum payloads can make record fields reachable without
+  // constructing either value. Preserve generic enum schemas behind those
+  // fields too; copy fields before materialization grows the schema vectors.
+  for (std::size_t index = 0; index < mod->structs.size(); ++index) {
+    const auto fields = mod->structs[index].fields;
+    for (const auto &field : fields) materialize_enum_signature(field.second, 0);
   }
   for (auto &klass : mod->classes) {
     for (auto &method : klass.methods) {
