@@ -159,6 +159,23 @@ See the [function reference](../docs/language-reference/functions.md#parameters)
 and [NIL-0019](../docs/design/NIL-0019-binding-reference-parameters.md) for the
 supported modes and their limits.
 
+## Record arrays
+
+The shared native backend supports arrays of exact declared, non-class records,
+including concrete generic records with acyclic schemas. Arrays store shared
+mutable record identities: reading or copying an element preserves the same
+record, while replacing an array slot leaves previously extracted records intact.
+Growth and garbage collection preserve aliases and reachable record fields.
+An invalid raw record read fails because no default record exists; checked array
+operations make bounds explicit.
+
+This storage contract enables record-key HashMap and record queues, and native
+HashSet/Dictionary copy checks. It does not include choice, nested-array, class
+or reference-wrapper elements, or cyclic aggregate schemas. See
+[checked arrays](../docs/standard-library/index.md#checked-arrays) and
+[collection storage](../docs/standard-library/index.md#collection-storage-and-lookup)
+for the focused scope and evidence.
+
 ## Switches and pattern matching
 
 `switch` selects literal cases or payload-free choice variants and automatically

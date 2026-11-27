@@ -65,6 +65,8 @@ struct nyrt_array {
   std::uint64_t capacity = 0;
   std::size_t allocated_bytes = 0;
   void *data = nullptr;
+  std::unique_ptr<char[]> record_type;
+  std::size_t record_type_size = 0;
 
   ~nyrt_array() noexcept {
     std::free(data);
@@ -182,6 +184,7 @@ std::uint64_t stride_for_kind(std::uint32_t kind) noexcept {
   case NYRT_ARRAY_TEXT:
   case NYRT_ARRAY_TUPLE:
   case NYRT_ARRAY_ANYTHING:
+  case NYRT_ARRAY_RECORD:
     return sizeof(std::int64_t);
   case NYRT_ARRAY_BOOL:
   case NYRT_ARRAY_U8:
@@ -265,6 +268,8 @@ nyrt_array *checked_array(void *value, std::uint32_t kind) noexcept {
       array->kind != kind || array->stride != expected_stride ||
       array->length > array->capacity ||
       array->allocated_bytes != expected_bytes ||
+      ((kind == NYRT_ARRAY_RECORD) !=
+       (array->record_type != nullptr && array->record_type_size != 0)) ||
       ((expected_bytes == 0) != (array->data == nullptr))) {
     return nullptr;
   }
@@ -363,7 +368,10 @@ bool move_buffer_offset(std::uint64_t current, std::uint64_t length,
   return true;
 }
 
-nyrt_array *make_array(std::uint32_t kind, std::uint64_t length) noexcept {
+nyrt_array *make_array(std::uint32_t kind, std::uint64_t length,
+                       std::string_view record_type = {}) noexcept {
+  if ((kind == NYRT_ARRAY_RECORD) != !record_type.empty())
+    return nullptr;
   const std::uint64_t stride = stride_for_kind(kind);
   std::size_t byte_count = 0;
   if (!allocation_size(length, stride, byte_count))
@@ -377,6 +385,12 @@ nyrt_array *make_array(std::uint32_t kind, std::uint64_t length) noexcept {
   array->length = length;
   array->capacity = length;
   array->allocated_bytes = byte_count;
+  if (!record_type.empty()) {
+    array->record_type.reset(new (std::nothrow) char[record_type.size()]);
+    if (!array->record_type) return nullptr;
+    std::memcpy(array->record_type.get(), record_type.data(), record_type.size());
+    array->record_type_size = record_type.size();
+  }
   if (byte_count != 0) {
     array->data = std::calloc(1, byte_count);
     if (array->data == nullptr)
@@ -388,7 +402,8 @@ nyrt_array *make_array(std::uint32_t kind, std::uint64_t length) noexcept {
     context.arrays.push_back(std::move(array));
     account_managed_bytes(byte_count);
     account_managed_bytes(sizeof(nyrt_array));
-    context.profile.allocate(result, sizeof(nyrt_array) + byte_count, "array");
+    account_managed_bytes(record_type.size());
+    context.profile.allocate(result, sizeof(nyrt_array) + byte_count + record_type.size(), "array");
   } catch (...) {
     return nullptr;
   }
@@ -493,6 +508,8 @@ void validate_array_value(std::uint32_t kind, std::uint64_t value) noexcept {
     nyrt_fail("NIL native runtime error: boolean requires 0 or 1\n");
   if (kind == NYRT_ARRAY_ANYTHING)
     (void)checked_dynamic_box(reinterpret_cast<const void *>(static_cast<std::uintptr_t>(value)));
+  if (kind == NYRT_ARRAY_RECORD && value == 0)
+    nyrt_fail("NIL native runtime error: record array requires a fully initialized object\n");
 }
 
 void set_error(const char **error_out, std::string_view message) noexcept {
@@ -541,6 +558,7 @@ std::uint64_t load_value(const nyrt_array &array,
   case NYRT_ARRAY_TEXT:
   case NYRT_ARRAY_TUPLE:
   case NYRT_ARRAY_ANYTHING:
+  case NYRT_ARRAY_RECORD:
     return static_cast<const std::uint64_t *>(array.data)[index];
   case NYRT_ARRAY_BOOL:
   case NYRT_ARRAY_U8:
@@ -576,6 +594,7 @@ void store_value(nyrt_array &array, std::uint64_t index,
   case NYRT_ARRAY_TEXT:
   case NYRT_ARRAY_TUPLE:
   case NYRT_ARRAY_ANYTHING:
+  case NYRT_ARRAY_RECORD:
     // f64 is an IEEE bit pattern; text is a context/static-lifetime address.
     // Neither is an integer conversion, nor does array growth own/free text.
     static_cast<std::uint64_t *>(array.data)[index] = value;
@@ -602,7 +621,7 @@ bool reserve(nyrt_array &array, std::uint64_t capacity) noexcept {
   array.capacity = capacity;
   account_managed_bytes(byte_count - array.allocated_bytes);
   array.allocated_bytes = byte_count;
-  context.profile.resize(&array, sizeof(nyrt_array) + byte_count);
+  context.profile.resize(&array, sizeof(nyrt_array) + byte_count + array.record_type_size);
   return true;
 }
 
@@ -1295,7 +1314,7 @@ std::uint64_t nyrt_managed_bytes() noexcept {
   std::uint64_t total = 0;
   for (const auto &item : context.allocations) total += item.size;
   for (const auto &item : context.arrays)
-    total += sizeof(nyrt_array) + item->allocated_bytes;
+    total += sizeof(nyrt_array) + item->allocated_bytes + item->record_type_size;
   return total;
 }
 
@@ -1368,6 +1387,7 @@ void nyrt_collect() noexcept {
       if (item.array) {
         if (item.array->kind == NYRT_ARRAY_TEXT ||
             item.array->kind == NYRT_ARRAY_TUPLE ||
+            item.array->kind == NYRT_ARRAY_RECORD ||
             item.array->kind == NYRT_ARRAY_ANYTHING)
           scan(item.array->data, item.array->length * item.array->stride);
       } else {
@@ -1545,6 +1565,32 @@ void *nyrt_array_new_with_value(std::uint32_t kind, std::int64_t length,
   return array;
 }
 
+void *nyrt_record_array_v1_new(const char *type, std::uint64_t type_length,
+                               std::int64_t length,
+                               std::uint64_t initial) noexcept {
+  if (!type || type_length == 0 || type_length > 1024ULL * 1024ULL ||
+      length < 0 || std::memchr(type, '\0', static_cast<std::size_t>(type_length)))
+    return nullptr;
+  if (length > 0 || initial != 0)
+    validate_array_value(NYRT_ARRAY_RECORD, initial);
+  auto *array = make_array(NYRT_ARRAY_RECORD, static_cast<std::uint64_t>(length),
+      std::string_view(type, static_cast<std::size_t>(type_length)));
+  if (!array) return nullptr;
+  for (std::uint64_t index = 0; index < array->length; ++index)
+    store_value(*array, index, initial);
+  return array;
+}
+
+void *nyrt_record_array_v1_require(const void *value, const char *type,
+                                   std::uint64_t type_length) noexcept {
+  const auto *array = checked_array(value, NYRT_ARRAY_RECORD);
+  if (!array || !type || type_length == 0 ||
+      type_length != array->record_type_size ||
+      std::memcmp(array->record_type.get(), type, array->record_type_size) != 0)
+    nyrt_fail("NIL native runtime error: record array requires its exact declared element type\n");
+  return const_cast<nyrt_array *>(array);
+}
+
 std::int64_t nyrt_array_length(const void *value,
                                std::uint32_t expected_kind) noexcept {
   const auto *array = checked_array(value, expected_kind);
@@ -1564,6 +1610,8 @@ std::uint64_t nyrt_array_get(const void *value, std::uint32_t expected_kind,
       nyrt_fail("NIL native runtime error: anything array read is out of bounds or has an invalid handle\n");
     if (expected_kind == NYRT_ARRAY_TUPLE)
       nyrt_fail("NIL native runtime error: tuple array read is out of bounds or has an invalid handle\n");
+    if (expected_kind == NYRT_ARRAY_RECORD)
+      nyrt_fail("NIL native runtime error: record array read is out of bounds or has an invalid handle\n");
     return 0;
   }
   const auto result = load_value(*array, static_cast<std::uint64_t>(index));

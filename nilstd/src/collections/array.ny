@@ -3,9 +3,13 @@ module nil.std.collections
 # Runtime-backed array primitives. Intrinsic declarations intentionally have
 # no fallback body; their annotations provide the implementation.
 # Element kinds include i32, i64, u8, bool, f64, text, and supported structural
-# tuples. The f32 declarations are reserved until their ABI is defined.
+# tuples, plus exact declared non-class records with acyclic native schemas.
+# Record elements preserve shared mutable identity, including concrete generic
+# records; copying an element does not clone its fields. Native enum, nested-array,
+# class and reference-wrapper elements and cyclic schemas remain unsupported.
+# The f32 declarations are reserved until their ABI is defined.
 # Sizes are nonnegative i32 values. Out-of-bounds scalar reads yield zero;
-# tuple reads fail because there is no default tuple. Writes outside the array
+# tuple/record reads fail because there is no default value. Writes outside the array
 # are no-ops, matching built-in array indexing.
 
 @intrinsic("array.new_with_value")

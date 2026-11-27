@@ -161,3 +161,44 @@ to 83 (1,328 source/binary-library execution and assembler/linker runs). Final
 candidate construction must record clean source/build identity before its full
 CTest run, then package and validate tools, binary STL, source STL and docs
 without activating or replacing an existing SDK.
+
+
+## Record-array and editor follow-up
+
+The earlier source-validation run at `b01e9b3` completed successfully. Built-in
+array member completion is committed separately as `8a934fb`: seven checked
+methods now appear without invented source declarations, while source-backed
+completion keeps its declaration/snapshot checks. The expanded member contract
+passes 114 checks and six surrounding analysis/editor contracts pass.
+
+The next F07 slice adds native arrays of concrete declared non-class records.
+Records retain the interpreter's shared mutable object identity. Filling,
+copying and reading elements preserve that identity; replacing a slot does not
+replace an extracted record. A distinct runtime array kind owns its exact
+resolved type descriptor, including namespace, case and generic arguments.
+LLVM validates that descriptor before each operation, and requires proven
+initialized records before storage. Empty arrays materialize their concrete
+schema even when no constructor or function signature otherwise uses it.
+
+The interpreter now validates record array reads/writes and empty element
+schemas. Missing record reads fail instead of yielding scalar zero. Existing
+scalar default reads and valid-value out-of-range write no-ops remain intact.
+Native GC traces record graphs; ABI tests cover descriptor ownership, growth,
+transitive text/array/record roots, reclamation and failed-allocation accounting.
+Raw NIL controls reject wrong identities, unknown/duplicate schemas, an enum
+and record sharing a name, incomplete native objects and forged handles.
+The raw-pointer classifier remains restricted to its existing integer kinds.
+
+Ny and Matrix fixtures cover storage, aliases, replacement and generic
+primitives. The Ny fixture adds nested fields, returned graphs, overlap copies
+and empty generic specialization. The record-key HashMap and no-default record
+queue now pass six routes. HashSet/Dictionary copy tests join List/Queue/Stack
+on VM/JIT/AOT: 285 cases pass. F07 remains open for enum/choice, nested-array,
+class/reference-wrapper elements and recursive schemas. Aggregate globals,
+callbacks, binary networking and broader platform qualification are separate.
+
+The capability catalog adds a record-array observation group (19 groups,
+39 proof fixtures, 234 six-route observations); installed consumer coverage now
+includes 86 fixtures. A fresh development candidate must be bound to clean
+source/build evidence and a complete CTest run before packaging. The prior SDK
+candidate and active SDK remain unchanged. Mainline consolidation stays last.

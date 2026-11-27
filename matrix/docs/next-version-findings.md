@@ -140,33 +140,54 @@ and Dictionary now check remaining capacity using subtraction.
 [The focused harness](../../tests/tools/collection_copy_bounds.py) checks
 19 cases: eight successful empty/start/middle/end/full copies and eleven
 rejected negative/minimum/outside/undersized/overflow cases. List, Queue, and
-Stack run on VM/JIT/AOT; HashSet and Dictionary run on VM: **19 × 11 = 209
-checks**. The harness checks panic text, exit status, copied values/order, and
-surrounding sentinels.
+Stack initially ran on VM/JIT/AOT while HashSet and Dictionary ran on VM,
+for 209 checks. With the record-array work in F07, all five collections now run
+on VM/JIT/AOT: **19 × 5 × 3 = 285 checks**. The harness checks panic text, exit
+status, copied values/order, and surrounding sentinels.
 
-**Next step / acceptance:** Keep `ny.collection-copy-bounds` green and extend
-the HashSet/Dictionary route matrix when F07 is resolved. These 209 checks are
-a specific copy/bounds proof, not blanket collection certification.
+**Next step / acceptance:** Keep `ny.collection-copy-bounds` green. These 285
+checks are a specific copy/bounds proof, not blanket collection certification.
 
 ### F07 — Aggregate and nested array layouts limit native collections
 
-**Status:** Open native-backend limitation.
+**Status:** Partially implemented; other native element layouts remain open.
 
-**Evidence:** Native HashSet compilation rejects the `items` field of
-`vec<map_entry<i32,bool>>` because `array<map_entry<i32,bool>>` lacks a supported
+**Original evidence:** Native HashSet compilation rejected the `items` field of
+`vec<map_entry<i32,bool>>` because `array<map_entry<i32,bool>>` lacked a supported
 native handle layout. Dictionary also relies on map-entry storage and
 `array<key_value_pair<i32,i32>>` destinations; its native compile likewise
-rejects the internal `array<map_entry<i32,i32>>` field before executable
+rejected the internal `array<map_entry<i32,i32>>` field before executable
 emission. A direct probe of `let rows: array<array<i32>> = [[1, 2]]` compiled to
 NIL but native compilation rejected `NEW_ARRAY_LITERAL` with
-`pointer-valued array elements are not implemented`. The copy harness therefore keeps
-HashSet/Dictionary coverage on the VM; passing scalar List/Queue/Stack cases
-does not establish record-array, nested-array, or complete collection support.
+`pointer-valued array elements are not implemented`. The copy harness therefore
+initially kept HashSet/Dictionary coverage on the VM.
 
-**Next step / acceptance:** Define supported aggregate/nested element layouts
-and ownership behavior, add direct array storage/copy/lifetime tests, then run
-HashSet and Dictionary copy and mutation fixtures through JIT/AOT. Keep unsupported
-shapes diagnosed explicitly until they execute correctly.
+**Implemented record slice:** Native arrays now carry exact declared non-class
+record schemas, including concrete generic records and empty specialized arrays.
+Element identity remains nominal and case-sensitive; structurally similar records
+cannot be interchanged. Arrays hold shared mutable records: reads, fills and copies
+retain identity, while replacing a slot leaves previously extracted records intact.
+Array aliases survive reservation and growth; GC traces the record and its reachable
+supported fields. Out-of-range or uninitialized record reads fail because there is
+no default record. Out-of-range writes remain no-ops.
+
+The paired [Ny](../../tests/language/record-arrays.ny) and
+[Matrix record-array fixtures](../../tests/language/record-arrays-matrix.matrix), and
+[contract harness](../../tests/tools/native_record_array_contract.py) specify
+literal/intrinsic/indexed storage, generic identity, checked overlap copies,
+retained values, GC and rejection of mismatched or uninitialized native storage.
+The record-key HashMap and record-queue fixture now passes all six execution
+routes, including queue elements without a default implementation. HashSet and
+Dictionary copies now join List/Queue/Stack on VM/JIT/AOT: the focused bounds
+harness passes 285 checks.
+
+**Next step / acceptance:** F07 remains open for native enum/choice, nested-array,
+class and reference-wrapper elements, and cyclic aggregate schemas. The record
+slice requires an acyclic schema using supported native field types; handles inside a
+record do not imply direct `array<ref<T>>` support. Keep unsupported shapes
+diagnosed explicitly and establish each new layout's identity, initialization,
+copy and lifetime contract. These focused results do not certify all collection
+methods, project queries or platform SDKs.
 
 ## Editor and authoring experience
 
@@ -656,9 +677,9 @@ on the native routes. The ordering below favors the 3D validation consumer.
 
 | Priority | Gap | Evidence and proposed scope |
 | --- | --- | --- |
-| 1 | Native application-data storage | F07 remains the prerequisite for arrays of records and nested arrays. Native array element support also excludes `f32`. Vertex records and many generic collections need compiler/runtime work, not just new STL declarations. |
-| 2 | Predictable buffers | [`vec.with_capacity`](../../nilstd/src/collections/vector.ny) ignores its argument; `capacity()` reports backing-array length. Implement actual reservation and resizing, fresh clone/subrange and append-range operations, then checked slices/views. A type-checker recognition of `resize` is not an implemented library contract. |
-| 3 | Collections that scale | [`HashMap`](../../nilstd/src/collections/hash_map.ny) stores hashes but still scans entries. [`map`](../../nilstd/src/collections/map.ny) explicitly uses linear storage. [`queue.dequeue`](../../nilstd/src/collections/queue.ny) removes index zero and shifts the tail. Add bucketed hashing and a ring queue/deque with measured growth and collision coverage. |
+| 1 | Native application-data storage | F07 now implements exact declared non-class record elements with acyclic schemas, including concrete generics. Native enum/choice, nested-array, class and reference-wrapper elements, cyclic schemas and `f32` remain unsupported; each needs compiler/runtime contracts rather than only STL declarations. |
+| 2 | Predictable buffers | [`vec.with_capacity`](../../nilstd/src/collections/vector.ny) now reserves real backing storage without changing logical length; `capacity()` reports reserved slots. Resizing, fresh clone/subrange and append-range operations, and checked slices/views remain gaps. A type-checker recognition of `resize` is not an implemented library contract. |
+| 3 | Collections that scale | [`HashMap`](../../nilstd/src/collections/hash_map.ny) now uses buckets and collision chains; [`queue`](../../nilstd/src/collections/queue.ny) uses a ring buffer with O(1) dequeue and amortized O(1) enqueue. Focused fixtures cover growth, collisions, wraparound and aliases. [`map`](../../nilstd/src/collections/map.ny) still uses linear storage; a deque API and measured performance benchmarks remain work. HashMap removal remains O(n), and collisions can make lookup linear. |
 | 4 | Strict serialization | The former NyData parser could return partially parsed objects/lists at EOF, skip child errors, and return a first value without validating the remaining input. Add checked parsing, source locations, input/depth limits, and malformed-input fixtures. The old experimental JSON module also lacked Unicode correctness. Superseded by F67 and the shared NILData engine. |
 | 5 | Numerically robust math | F27 adds scaled norms, checked normalization, and finite-value helpers to [`vec2`/`vec3`](../../nilstd/src/math/vector.ny). Interpolation and relative-plus-absolute comparison remain gaps; existing `approx_eq` uses absolute tolerance. Dot/cross products and squared lengths still use ordinary arithmetic. |
 | 6 | Reusable sequence algorithms | `vec.map`, `vec.filter`, and container-specific iterators exist. A common iterator contract, sequence zip/fold/chunks/windows, and comparator/key-based sorting remain gaps. Existing stable numeric/text sorts and checked copy/fill/gather should be reused. |
@@ -1715,9 +1736,10 @@ the active loop.
 
 Out-of-range tuple reads and uninitialized tuple slots fail explicitly. There
 is no synthetic default tuple. Out-of-range writes remain no-ops, and existing
-scalar-array read defaults are unchanged. Native arrays whose elements are
-records, choices or other arrays remain excluded; support for tuple handles
-does not establish a general aggregate-array ABI.
+scalar-array read defaults are unchanged. F07 subsequently adds direct declared
+record elements under a separate nominal identity and lifetime contract. Native
+choice, nested-array, class and reference-wrapper elements and cyclic schemas
+remain excluded; tuple support does not establish a general aggregate-array ABI.
 
 **Coverage:** Paired Ny/Matrix tuple-array fixtures and
 `tests/tools/tuple_array_contract.py` specify source and binary execution,
@@ -1729,8 +1751,9 @@ Raw text/binary NIL tests cover malformed nominal fields and initialization,
 legacy intrinsic wrappers, and collection at the tuple-initializer allocation
 boundary.
 
-**Follow-up:** Extend other aggregate-array layouts only with equally explicit
-schema, initialization and lifetime contracts. Nested declaration patterns,
+**Follow-up:** F07 implements the direct record-array slice. Extend remaining
+aggregate-array layouts only with equally explicit schema, initialization and
+lifetime contracts. Nested declaration patterns,
 custom formatting and native FFI layout remain separate work from storing
 typed tuple handles.
 The VM still represents raw pointers as integers: a matching virtual address
@@ -1867,9 +1890,9 @@ wrapper types to conceal this grammar friction.
 ### F57 — Query composition needs evaluation, ordering and lifetime contracts
 
 **Observation:** Existing callback-based collection helpers and experimental LINQ
-sources did not establish native closure lifetimes or query semantics. Native
-arrays still exclude direct records, enums and nested arrays, so a broad generic
-Enumerable promise would overstate the supported storage model.
+sources did not establish native closure lifetimes or query semantics. At this
+stage native arrays excluded direct records, enums and nested arrays, so a broad
+generic Enumerable promise would have overstated the supported storage model.
 
 **Implemented:** Collected queries share one checked AST and ordinary NIL loop
 lowering. Source and bounds execute once before a shallow snapshot. Filtering,
@@ -1885,8 +1908,9 @@ Current code generation already rejects the block-tail expression used to expose
 the analysis gap, so this was not evidence of an executable double-move path.
 
 **Follow-up:** Grouping, joins, distinct, multiple order keys, lazy iteration and
-SQL translation remain separate work. Aggregate-array support is still needed
-for ordinary arrays of application records. The current snapshot and sorted
+SQL translation remain separate work. F07 now supports ordinary arrays of
+declared records, but does not extend the query row/projection contract beyond
+its checked scalar/text/tuple profile. The current snapshot and sorted
 query allocate temporary arrays; profiling and optimization should preserve
 once-only effects and stable ordering rather than silently changing semantics.
 Generic helper bodies also reject query sources such as `array<T>` before
@@ -1931,9 +1955,10 @@ its input and complete output against 1 MiB before balanced concatenation.
 
 **Follow-up:** Each match search retains its own engine work budget. A shared
 operation budget, streaming consumers, replacement callbacks/templates and
-Unicode-aware progress need separate contracts. Collection returns whole-match
-text because native arrays of `PatternMatch` records remain unsupported; callers
-needing per-match captures can continue using first/next matching.
+Unicode-aware progress need separate contracts. Collection still returns whole-match
+text. F07 removes the blanket record-array storage blocker, but structured
+`PatternMatch` collections and capture results need their own API and coverage;
+callers needing per-match captures can continue using first/next matching.
 
 ### F60 — Indexed values lost their checked element type before lowering
 
@@ -2626,11 +2651,12 @@ Nominal owners remain intact, and native lookup keeps its exact schema checks.
 Paired `choice-text-fields` fixtures exercise construction, field reads,
 mutation, and methods across the standard execution routes.
 
-**Open limitation:** An independent discovery probe also confirmed that native
-arrays of nominal records are outside the current scalar-array profile, both
-as locals and aggregate fields. This patch does not extend their layout or GC
-contract. Enigma uses a bounded typed report batch with primitive columns and
-checked element access; its durable interchange still returns report objects.
+**Earlier storage limitation:** An independent discovery probe also confirmed
+that native arrays of nominal records were outside the scalar-array profile,
+both as locals and aggregate fields. F07 now adds a focused declared-record
+layout and GC contract; other aggregate element layouts remain open. Enigma
+uses a bounded typed report batch with primitive columns and checked element
+access; its durable interchange still returns report objects.
 
 ### F92 — A retained application object can outlive its file lock
 

@@ -186,10 +186,11 @@ context-owned stream tokens; they do not expose host file descriptors. Ordinary
 file operations retain their follow-link/overwrite semantics and are **not**
 substitutes for the stricter secure byte APIs. Native text is NUL-free:
 `read_text` rejects NUL-bearing content and directs callers to `read_bytes`.
-Native paths require valid UTF-8. `environment.list` still requires unsupported
-native named-struct-array lowering; do not infer enumeration support from the
-scalar environment operations. New source-tree verification is recorded in the
-Windows-port notebook; an older installed SDK does not acquire these additions.
+Native paths require valid UTF-8. `environment.list` remains outside this focused
+native qualification; record-array storage and scalar environment operations
+alone do not establish enumeration-provider support. New source-tree verification
+is recorded in the Windows-port notebook; an older installed SDK does not acquire
+these additions.
 
 The reviewed native release boundary is currently Linux. Development SDKs on
 Linux, Windows, Intel macOS and Apple Silicon macOS pass the full installed
@@ -325,18 +326,33 @@ The scalar test slice covers `i32`, `i64`, `u8`, `bool`, `f64`, and NUL-free
 `text`. The [tuple-array contract](../../tests/tools/tuple_array_contract.py)
 adds generic construction, indexed/intrinsic access and overlapping checked
 copies with exact tuple schemas. Copies preserve tuple values and contained
-reference identities. Native record, enum and nested-array element arrays
-remain unsupported. Checked byte stores retain the existing `u8` conversion
-rules; these APIs validate indices and ranges, not numeric conversions.
+reference identities. Native arrays also support exact declared non-class records,
+including concrete generic records with acyclic native schemas. Each element
+retains its record's shared mutable identity. Reads, fills and copies preserve
+that identity; replacing a slot leaves an already extracted record intact.
+Growth preserves array aliases, and garbage collection traces reachable record
+fields, including supported text, array and reference handles. This is shallow
+storage, not a recursive clone. The [record-array fixture](../../tests/language/record-arrays.ny)
+and [contract harness](../../tests/tools/native_record_array_contract.py) specify
+aliasing, generic schemas, initialized storage, checked overlap copies and lifetime
+behavior. Native enum, nested-array, class and reference-wrapper element arrays
+remain unsupported, as do cyclic aggregate schemas. Checked byte stores retain
+the existing `u8` conversion rules; these APIs validate indices and ranges, not
+numeric conversions.
 Raw scalar array accessors retain their zero/no-op bounds behavior. Raw tuple
-reads outside the array fail because no default tuple exists; use checked
-operations or validate bounds before reading.
+and record reads outside the array fail because no default value exists; use
+checked operations or validate bounds before reading.
 
 The related `copy_to` guards on `list`, `queue`, `stack`, `hash_set`, and
 `dictionary` now check remaining destination space by subtraction. Invalid
 copies still panic with the existing collection-specific messages before any
 write. This fixes the extreme-offset overflow identified by the independent
-3D validation project. Its copied SDK remains a historical test subject.
+3D validation project. Its copied SDK remains a historical test subject. The
+[copy harness](../../tests/tools/collection_copy_bounds.py) now runs all five
+collections on VM, JIT and AOT: 19 cases per collection and route, or 285 checks.
+HashSet and Dictionary use the record-array storage contract for their internal
+entries and copy destinations. This focused result does not certify every method
+or element shape.
 
 ### Collection storage and lookup
 
@@ -365,9 +381,11 @@ stable hash and equality behavior while stored.
 The `array-capacity`, `queue-ring` and `hashmap-buckets-scalar` fixtures exercise
 capacity, aliasing, growth, wraparound, collisions, minimum-i64 hashes, removal
 and reuse across all six execution routes. The Matrix queue has matching route
-coverage. Record-key maps and queues without a default element have interpreter
-and bundle coverage only. Native record/enum/nested-array layouts, resizing and
-strided views with ownership rules remain separate work.
+coverage. The [record-key HashMap and record-queue fixture](../../tests/language/hashmap-buckets.ny)
+also covers all six routes, including collision chains, removal, aliasing, reuse
+and queue elements without a default value. Native enum, nested-array, class and
+reference-wrapper element layouts, cyclic aggregate schemas, resizing and strided
+views with ownership rules remain separate work.
 
 ## Stable index ordering
 

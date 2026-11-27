@@ -14,7 +14,13 @@
       "id": "collection-storage-and-lookup",
       "observed": "Scalar collection fixtures agree across six routes for real array/vector reservation, alias-preserving growth, FIFO ring wraparound and reuse, bucket collisions, negative hashes, replacement and ordered removal.",
       "tests": ["ny.routes.array-capacity", "ny.routes.queue-ring", "ny.routes.hashmap-buckets-scalar"],
-      "limitations": ["Native record/enum/nested-array element layouts are outside this proof; record collections have separate interpreter tests.", "Queue slots can retain removed values; initial queue slot materialization is O(capacity). Dense ordered HashMap removal is O(n), and worst-case collision chains remain linear. These fixtures establish results, not throughput or memory bounds."]
+      "limitations": ["Native enum, nested-array, class/reference element and recursive record layouts remain outside this proof. Nominal record storage and record collections have a separate observed group.", "Queue slots can retain removed values; initial queue slot materialization is O(capacity). Dense ordered HashMap removal is O(n), and worst-case collision chains remain linear. These fixtures establish results, not throughput or memory bounds."]
+    },
+    {
+      "id": "record-arrays",
+      "observed": "Ny and Matrix nominal record-array fixtures preserve shared object identity through indexed mutation, replacement, growth and generic primitives. The Ny fixture additionally exercises nested record/reference/text/scalar-array fields, concrete generic schemas and checked overlap copies; record-key HashMap and record queue behavior agree across six routes.",
+      "tests": ["ny.routes.record-arrays", "ny.routes.record-arrays-matrix", "ny.routes.hashmap-buckets"],
+      "limitations": ["Only concrete declared acyclic record layouts are included; class/reference elements, enum elements, nested arrays, recursive layouts and aggregate globals remain separate contracts.", "Record reads have no default value: invalid reads fail. Extracted record aliases remain mutable; hash/equality-relevant key fields must remain stable while stored in a map. These fixtures do not prove arbitrary layouts, throughput, memory bounds or platform parity."]
     },
     {
       "id": "scalar-arithmetic",
@@ -114,6 +120,9 @@
     }
   ],
   "proofs": [
+    {"test": "ny.routes.record-arrays", "fixture": "record-arrays", "stdlib": true},
+    {"test": "ny.routes.record-arrays-matrix", "fixture": "record-arrays-matrix", "stdlib": true},
+    {"test": "ny.routes.hashmap-buckets", "fixture": "hashmap-buckets", "stdlib": true},
     {"test": "ny.routes.definite-assignment", "fixture": "definite-assignment", "stdlib": false},
     {"test": "ny.routes.definite-assignment-matrix", "fixture": "definite-assignment-matrix", "stdlib": false},
     {"test": "ny.routes.array-capacity", "fixture": "array-capacity", "stdlib": true},

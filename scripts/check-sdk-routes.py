@@ -28,6 +28,7 @@ ROUTES = ("text-interpreter", "binary-interpreter", "bundle-text", "bundle-binar
           "llvm-jit", "llvm-aot")
 FIXTURES = ("scalar-array-parity", "stl-array-primitives", "native-nested-reference",
             "array-capacity", "queue-ring", "hashmap-buckets-scalar",
+            "record-arrays", "record-arrays-matrix", "hashmap-buckets",
             "definite-assignment", "definite-assignment-matrix",
             "native-global-contract", "native-time-contract", "native-scalar-fields",
             "module-global-contract", "native-managed-lifetime", "class-execution",

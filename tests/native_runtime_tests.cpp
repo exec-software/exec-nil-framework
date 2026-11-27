@@ -385,6 +385,125 @@ void check_tuple_array_contract(bool &ok) {
                "tuple array intrinsic ignored case-sensitive nominal identity");
 }
 
+void check_record_array_contract(bool &ok) {
+  const auto bits = [](const void *value) {
+    return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(value));
+  };
+  constexpr char type[] = "catalog::Entry<i64>";
+  constexpr auto type_length = sizeof(type) - 1;
+  ok &= expect(nyrt_array_new(NYRT_ARRAY_RECORD, 0) == nullptr &&
+                   nyrt_array_new_with_value(NYRT_ARRAY_RECORD, 1, 1) == nullptr &&
+                   nyrt_buffer_new(NYRT_ARRAY_RECORD, 1) == nullptr,
+               "record arrays accepted an untyped constructor or raw pointer layout");
+  ok &= expect(nyrt_record_array_v1_new(nullptr, type_length, 0, 0) == nullptr &&
+                   nyrt_record_array_v1_new(type, 0, 0, 0) == nullptr &&
+                   nyrt_record_array_v1_new(type, sizeof(type), 0, 0) == nullptr &&
+                   nyrt_record_array_v1_new(type, type_length, -1, 0) == nullptr,
+               "record array accepted invalid descriptor or length metadata");
+  const auto objects_before_failure = nyrt_managed_objects();
+  const auto bytes_before_failure = nyrt_managed_bytes();
+  ok &= expect(nyrt_record_array_v1_new(type, type_length,
+                   std::numeric_limits<std::int64_t>::max(), 1) == nullptr &&
+                   nyrt_managed_objects() == objects_before_failure &&
+                   nyrt_managed_bytes() == bytes_before_failure,
+               "failed record array allocation retained a descriptor or managed bytes");
+  auto *text = nyrt_i64_to_text(987654321);
+  auto *nested_array = nyrt_array_new_with_value(NYRT_ARRAY_I64, 1, 73);
+  auto *nested = static_cast<std::uint64_t *>(nyrt_alloc(16));
+  auto *record = static_cast<std::uint64_t *>(nyrt_alloc(16));
+  if (!expect(text && nested_array && nested && record,
+              "could not allocate record array graph")) { ok = false; return; }
+  nested[0] = bits(text);
+  nested[1] = bits(nested_array);
+  record[0] = bits(nested);
+  record[1] = 42;
+  std::string descriptor(type);
+  void *array = nyrt_record_array_v1_new(descriptor.data(), descriptor.size(), 2, bits(record));
+  if (!expect(array != nullptr, "could not allocate typed record array")) { ok = false; return; }
+  descriptor.assign(descriptor.size(), 'x');
+  ok &= expect(nyrt_record_array_v1_require(array, type, type_length) == array,
+               "record array borrowed its descriptor instead of copying it");
+  ok &= expect(nyrt_array_reserve(array, NYRT_ARRAY_RECORD, 128) == 1 &&
+                   nyrt_array_length(array, NYRT_ARRAY_RECORD) == 2,
+               "record array reserve changed its initialized length");
+  for (int index = 0; index < 160; ++index)
+    ok &= expect(nyrt_array_push(array, NYRT_ARRAY_RECORD, bits(record)) == 1,
+                 "record array growth failed");
+  record[1] = 43;
+  ok &= expect(nyrt_record_array_v1_require(array, type, type_length) == array &&
+                   nyrt_array_get(array, NYRT_ARRAY_RECORD, 161) == bits(record) &&
+                   nyrt_array_length(array, NYRT_ARRAY_TUPLE) == -1 &&
+                   nyrt_array_set(array, NYRT_ARRAY_RECORD, -1, bits(record)) == 0 &&
+                   nyrt_array_set(array, NYRT_ARRAY_RECORD, 162, bits(record)) == 0 &&
+                   nyrt_array_length(array, NYRT_ARRAY_RECORD) == 162,
+               "record array growth changed shared identity or admitted a wrong kind/index");
+  std::uint64_t root = bits(array);
+  const void *slots[] = {&root};
+  nyrt_roots_enter(slots, 1);
+  nyrt_collect();
+  ok &= expect(nyrt_managed_objects() == 5 && record[1] == 43 &&
+                   nyrt_array_get(nested_array, NYRT_ARRAY_I64, 0) == 73,
+               "record array tracing lost shared identity or its transitive graph");
+  ok &= expect_text(reinterpret_cast<const char *>(static_cast<std::uintptr_t>(nested[0])),
+                    "987654321", "record array lost transitive managed text");
+  auto *replacement = static_cast<std::uint64_t *>(nyrt_alloc(16));
+  if (replacement) {
+    replacement[1] = 99;
+    for (int index = 0; index < 162; ++index)
+      ok &= expect(nyrt_array_set(array, NYRT_ARRAY_RECORD, index, bits(replacement)) == 1,
+                   "record array replacement failed");
+    nyrt_collect();
+    ok &= expect(nyrt_managed_objects() == 2 &&
+                     nyrt_array_get(array, NYRT_ARRAY_RECORD, 0) == bits(replacement),
+                 "replaced record elements retained an unreachable graph");
+  } else ok = false;
+  root = 0;
+  nyrt_collect();
+  ok &= expect(nyrt_managed_objects() == 0,
+               "unrooted record array graph survived collection");
+  nyrt_roots_leave(slots);
+  auto *empty = nyrt_record_array_v1_new(type, type_length, 0, 0);
+  ok &= expect(empty && nyrt_record_array_v1_require(empty, type, type_length) == empty &&
+                   nyrt_array_length(empty, NYRT_ARRAY_RECORD) == 0,
+               "empty record array required a fabricated default object");
+}
+
+// Each mode is a separate process: runtime contract failures deliberately exit
+// instead of permitting a malformed record handle to reach generated code.
+int record_array_failure_case(const std::string &mode) {
+  nyrt_context_begin(0, nullptr);
+  constexpr char type[] = "catalog::Entry<i64>";
+  constexpr auto length = sizeof(type) - 1;
+  void *array = nyrt_record_array_v1_new(type, length, 0, 0);
+  if (mode == "identity-case")
+    nyrt_record_array_v1_require(array, "catalog::entry<i64>", length);
+  else if (mode == "identity-generic")
+    nyrt_record_array_v1_require(array, "catalog::Entry<u64>", length);
+  else if (mode == "identity-namespace")
+    nyrt_record_array_v1_require(array, "catalog__Entry<i64>", length);
+  else if (mode == "wrong-kind")
+    nyrt_record_array_v1_require(nyrt_array_new(NYRT_ARRAY_TUPLE, 0), type, length);
+  else if (mode == "foreign")
+    nyrt_record_array_v1_require(reinterpret_cast<const void *>(std::uintptr_t{1}), type, length);
+  else if (mode == "stale") {
+    std::uint64_t root = 0;
+    const void *slots[] = {&root};
+    nyrt_roots_enter(slots, 1);
+    nyrt_collect();
+    nyrt_record_array_v1_require(array, type, length);
+  } else if (mode == "default")
+    nyrt_record_array_v1_new(type, length, 1, 0);
+  else if (mode == "empty-read")
+    nyrt_array_get(array, NYRT_ARRAY_RECORD, 0);
+  else if (mode == "negative-read")
+    nyrt_array_get(array, NYRT_ARRAY_RECORD, -1);
+  else if (mode == "null-push")
+    nyrt_array_push(array, NYRT_ARRAY_RECORD, 0);
+  else return 2;
+  std::cerr << "record array failure case unexpectedly succeeded\n";
+  return 0;
+}
+
 void check_buffer_contract(bool &ok) {
   ok &= expect(nyrt_buffer_new(999, 1) == nullptr,
                "unknown buffer kind was accepted");
@@ -972,7 +1091,9 @@ void check_durable_io_contract(bool &ok) {
 
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
+  if (argc == 3 && std::string(argv[1]) == "--record-array-failure")
+    return record_array_failure_case(argv[2]);
   bool ok = true;
   ok &= expect(nyrt_abi_version() == 1, "native runtime ABI version changed");
   const auto sleep_started = std::chrono::steady_clock::now();
@@ -1020,6 +1141,7 @@ int main() {
   check_conversion_contract(ok);
   check_file_contract(ok);
   check_tuple_array_contract(ok);
+  check_record_array_contract(ok);
 
   auto *owned = static_cast<unsigned char *>(nyrt_alloc(8));
   ok &= expect(owned != nullptr, "could not allocate context-owned storage");

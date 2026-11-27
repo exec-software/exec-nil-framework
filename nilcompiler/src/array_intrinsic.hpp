@@ -119,8 +119,9 @@ struct array_intrinsic_contract {
 // Typed array intrinsics use the existing five-operand INTEROP_CALL form:
 // provider, operation, arity, exact result type, exact element type. The final
 // operand is a language type, never a guessed host FFI calling convention.
+// The caller may admit a nominal record only after resolving its concrete schema.
 inline array_intrinsic_contract parse_array_intrinsic(
-    const std::vector<std::string> &operands) {
+    const std::vector<std::string> &operands, bool declared_record = false) {
   if (operands.size() != 5 || operands[0] != "intrinsic" ||
       !is_array_intrinsic(operands[1]))
     throw std::runtime_error("array intrinsic requires exact typed metadata");
@@ -128,7 +129,7 @@ inline array_intrinsic_contract parse_array_intrinsic(
   const std::string element = canonical_array_type(operands[4]);
   if (element != "i32" && element != "i64" && element != "u8" &&
       element != "bool" && element != "f64" && element != "text" && element != "anything" &&
-      !is_array_tuple_type(element))
+      !is_array_tuple_type(element) && !declared_record)
     throw std::runtime_error("array intrinsic has unsupported element type '" + element + "'");
   if ((name.find("_u8") != std::string::npos && element != "u8") ||
       name.find("_f32") != std::string::npos)

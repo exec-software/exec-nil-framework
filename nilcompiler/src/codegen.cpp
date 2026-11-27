@@ -1542,6 +1542,17 @@ public:
       push_instr("CAST", {resolved}, line);
   }
 
+  bool declared_array_record(const std::string &type) {
+    const auto parsed = parse_generic_type_name(type);
+    const auto base = parsed ? parsed->base_name : type;
+    return cg_.lookup_struct_decl(base) != nullptr && cg_.lookup_class_decl(base) == nullptr;
+  }
+
+  void materialize_array_element_schema(const std::string &type, int line) {
+    if (is_array_tuple_type(type) || declared_array_record(type))
+      cg_.materialize_struct_schema(type, mod_, line, 0, true);
+  }
+
   bool emit_array_intrinsic(const ast_function_decl &declaration,
                             const std::string &name,
                             const std::vector<std::string> &type_arguments,
@@ -1575,7 +1586,7 @@ public:
     try {
       operands[3] = canonical_array_type(operands[3]);
       operands[4] = canonical_array_type(operands[4]);
-      contract = parse_array_intrinsic(operands);
+      contract = parse_array_intrinsic(operands, declared_array_record(operands[4]));
     } catch (const std::runtime_error &error) {
       return reject(error.what());
     }
@@ -1602,8 +1613,7 @@ public:
       if (actual != expected[index])
         return reject("array intrinsic declaration has an invalid parameter type");
     }
-    if (is_array_tuple_type(contract.element))
-      cg_.materialize_struct_schema(contract.element, mod_, line, 0, true);
+    materialize_array_element_schema(contract.element, line);
     push_instr("INTEROP_CALL", operands, line);
     return true;
   }
@@ -3394,8 +3404,7 @@ public:
     auto jump = [&](const std::string &name) { instruction("JMP", {name}); };
     auto jump_if_not = [&](const std::string &name) { instruction("JMP_IF_NOT", {name}); };
     auto array = [&](const std::string &slot, const std::string &type) {
-      if (is_array_tuple_type(type))
-        cg_.materialize_struct_schema(type, mod_, line, 0, true);
+      materialize_array_element_schema(type, line);
       instruction("NEW_ARRAY_LITERAL", {"0", type}); store(slot);
     };
     auto at = [&](const std::string &values, const std::string &index) {
@@ -3621,10 +3630,9 @@ public:
       // instead of accepting a wildcard handle or trusting the first value.
       if (element_type == "any")
         element_type = unambiguous_array_element_type(arr);
-      // An empty array still exposes its tuple shape through its element
-      // metadata, even when no tuple constructor otherwise emits the schema.
-      if (is_array_tuple_type(element_type))
-        cg_.materialize_struct_schema(element_type, mod_, arr.line, 0, true);
+      // Empty arrays still need a concrete aggregate schema even when no
+      // constructor, parameter or return type otherwise materializes it.
+      materialize_array_element_schema(element_type, arr.line);
       push_instr("NEW_ARRAY_LITERAL",
                  {std::to_string(arr.elements.size()), element_type}, arr.line);
       break;

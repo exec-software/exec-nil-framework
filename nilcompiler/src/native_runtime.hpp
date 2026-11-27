@@ -19,6 +19,9 @@ enum nyrt_array_kind : std::uint32_t {
   // traces the handles; exact tuple schema identity remains in typed NIL.
   NYRT_ARRAY_TUPLE = 7,
   NYRT_ARRAY_ANYTHING = 8,
+  // Nominal records retain shared object identity and an exact, concrete
+  // element descriptor. Construct/check these through the record-array API.
+  NYRT_ARRAY_RECORD = 9,
 };
 
 // Versioned UI ABI. Success is 1, failure 0. Text outputs are copied into
@@ -196,6 +199,20 @@ std::int64_t nyrt_regex_group_index(const char *pattern, const char *name) noexc
 void *nyrt_array_new(std::uint32_t kind, std::int64_t length) noexcept;
 void *nyrt_array_new_with_value(std::uint32_t kind, std::int64_t length,
                                 std::uint64_t value) noexcept;
+// Compiler-internal record-array ABI. The descriptor is an exact canonical
+// schema name (including concrete generic arguments), copied into the array.
+// The compiler must prove that each stored word is a fully initialized object
+// of that schema; this ABI never infers a schema from an arbitrary pointer.
+// Nonempty creation requires an initializer. Empty creation may pass zero.
+// Check the descriptor before every generic array operation; mismatch faults.
+// Managed records are traced, while unmanaged callers retain their existing
+// manual object-lifetime obligations. Repeated initialization aliases the same
+// object; neither array growth nor element replacement copies/frees a record.
+void *nyrt_record_array_v1_new(const char *type, std::uint64_t type_length,
+                               std::int64_t length,
+                               std::uint64_t initial) noexcept;
+void *nyrt_record_array_v1_require(const void *array, const char *type,
+                                   std::uint64_t type_length) noexcept;
 std::int64_t nyrt_array_length(const void *array,
                                std::uint32_t expected_kind) noexcept;
 // Additive capacity operations preserve the descriptor, length and elements.

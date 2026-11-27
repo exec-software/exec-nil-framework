@@ -2,9 +2,8 @@
 """Check collection copy offsets and contents on the VM, JIT, and native routes.
 
 Dictionary copies use arrays of key_value_pair records, and HashSet uses arrays
-of map_entry records internally. The native array ABI does not support those
-yet. They are deliberately covered on the VM only; List, Queue, and Stack must
-pass every route when LLVM is enabled.
+of map_entry records internally. All five collections must agree on the VM,
+JIT and AOT routes when LLVM is enabled.
 """
 
 from __future__ import annotations
@@ -161,7 +160,7 @@ def main() -> int:
             routes: list[tuple[str, list[object]]] = [
                 ("VM", [interpreter, "--no-ai", artifact, "--"]),
             ]
-            if args.llvm == "ON" and collection not in ("hash_set", "dictionary"):
+            if args.llvm == "ON":
                 executable = root / f"{collection}.native"
                 compile_ok([*base, "--native", "-o", executable, source])
                 routes.extend((
@@ -186,8 +185,7 @@ def main() -> int:
                     passed += 1
 
     native = "VM, JIT, and AOT" if args.llvm == "ON" else "VM (LLVM disabled)"
-    print(f"collection copy bounds: {passed} cases passed; list/queue/stack: {native}; "
-          "hash_set/dictionary: VM only (native record arrays unsupported)")
+    print(f"collection copy bounds: {passed} cases passed; all five collections: {native}")
     return 0
 
 

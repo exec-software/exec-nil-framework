@@ -157,9 +157,14 @@ Indices and counts are `i32` (`override integer` in Matrix). The exercised
 element types are `i32`, `i64`, `u8`, `bool`, `f64`, and NUL-free `text`.
 Paired tuple-array fixtures also cover generic construction, access and checked
 overlapping copies, preserving tuple schemas and contained reference identities.
-Raw tuple-array reads outside the array fail instead of returning a default
-tuple; scalar defaults remain unchanged. Ny and Matrix consumer fixtures cover
-the shared APIs. See the
+Native storage also supports exact declared non-class records, including concrete
+generic records with acyclic schemas. Copies preserve shared mutable record
+identity; replacing a slot does not replace an already extracted record. Array
+aliases and reachable record fields remain live through growth and collection.
+Raw tuple/record reads outside the array fail instead of returning a fabricated
+default; scalar defaults remain unchanged. Native enum, nested-array, class and
+reference-wrapper elements and cyclic aggregate schemas remain unsupported.
+Ny and Matrix consumer fixtures cover the shared APIs. See the
 [checked-array contract](../docs/standard-library/index.md#checked-arrays)
 for signatures, naming, zero-length rules, and remaining work.
 
@@ -201,13 +206,15 @@ bytes as an independent oracle; Matrix quoted literals remain raw.
 The collection `copy_to` guards in list, queue, stack, hash_set, and dictionary
 also use subtraction-safe remaining-capacity checks. This addresses the
 extreme-offset defect from the independent validation SDK without changing its
-historical copy. Scalar list/queue/stack copies have VM and native coverage;
-hash_set/dictionary internals still require aggregate-array native support.
+historical copy. List/queue/stack and hash_set/dictionary copy cases now run on
+VM, JIT and AOT: 285 focused checks of bounds, panic behavior, order and sentinels.
+This does not certify every collection method or element type.
 
 Vector construction now reserves real backing storage. Queue uses a ring buffer,
 and HashMap uses buckets with collision chains while retaining dense insertion
-order. Scalar fixtures cover all six execution routes; record collections keep
-their interpreter-only boundary. See [collection storage and lookup](../docs/standard-library/index.md#collection-storage-and-lookup)
+order. Scalar fixtures and the record-key HashMap/record-queue fixture cover all
+six execution routes. The record queue does not require a default element. See
+[collection storage and lookup](../docs/standard-library/index.md#collection-storage-and-lookup)
 for complexity, retained references and remaining native-layout work.
 
 The checked-byte subset adds `Convert.try_hex_to_bytes` and 16 bounded endian

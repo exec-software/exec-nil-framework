@@ -1673,7 +1673,7 @@ if(BUILD_TESTING)
             )
         endfunction()
 
-        foreach(nil_collection_fixture IN ITEMS array-capacity queue-ring hashmap-buckets-scalar)
+        foreach(nil_collection_fixture IN ITEMS array-capacity queue-ring hashmap-buckets-scalar record-arrays)
             add_ny_route_test(
                 ny.routes.${nil_collection_fixture}
                 --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/${nil_collection_fixture}.ny"
@@ -1682,12 +1682,30 @@ if(BUILD_TESTING)
                 --compiler-arg=--sdk-path --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
             )
         endforeach()
-        # Nominal record elements remain outside the native array profile.
         add_ny_route_test(
-            ny.routes.hashmap-buckets-records
+            ny.routes.record-arrays-matrix
+            --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/record-arrays-matrix.matrix"
+            --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/record-arrays-matrix.stdout"
+            --expected-exit 0 --routes all
+            --compiler-arg=--sdk-path --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
+        )
+        add_test(
+            NAME ny.record-array-contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools/native_record_array_contract.py"
+                    --compiler $<TARGET_FILE:nilcompiler>
+                    --interpreter $<TARGET_FILE:nilinterpreter>
+                    --assembler $<TARGET_FILE:nilassembler>
+                    --stdlib "${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src"
+                    --llvm "${NIL_ENABLE_LLVM}"
+                    --runtime-tests $<TARGET_FILE:ny_native_runtime_tests>
+                    --runtime-tests $<TARGET_FILE:nil_shared_runtime_tests>
+        )
+        set_tests_properties(ny.record-array-contract PROPERTIES LABELS "native;arrays;nil" TIMEOUT 600)
+        add_ny_route_test(
+            ny.routes.hashmap-buckets
             --source "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/hashmap-buckets.ny"
             --expected-stdout "${CMAKE_CURRENT_SOURCE_DIR}/tests/language/hashmap-buckets.stdout"
-            --expected-exit 0 --routes text-interpreter,binary-interpreter,bundle-text,bundle-binary
+            --expected-exit 0 --routes all
             --compiler-arg=--sdk-path --compiler-arg=${CMAKE_CURRENT_SOURCE_DIR}/nilstd/src
         )
         add_ny_route_test(

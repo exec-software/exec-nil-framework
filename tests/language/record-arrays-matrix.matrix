@@ -1,0 +1,47 @@
+book record_arrays_matrix
+read everything from nil.std.collections
+
+counter begin record
+    field total as override integer
+end record
+
+array-identity of type T receives items as array of T returns array of T begin paragraph
+    give items
+end paragraph
+
+main returns override integer begin paragraph
+    value original is build counter with total being 3
+    value items as array of counter is [original]
+    value alias is array-identity of counter with items being items
+    value retained is items at 0
+    set original.total to 5
+    say (items at 0).total
+    set (items at 0).total to 7
+    say retained.total
+    set items at 0 to (build counter with total being 13)
+    say (alias at 0).total
+    say retained.total
+    append original to alias
+    say the length of items
+    say (items at 1).total
+
+    value empty as array of counter is []
+    value independent as array of counter is []
+    evaluate empty.reserve with 16
+    say the length of empty
+    say (empty.capacity with nothing) is at least 16
+    append original to empty
+    say the length of independent
+    say (empty at 0).total
+
+    value filled is new-with-value of counter with size being 3, `value` being original
+    set (filled at 0).total to 19
+    say (filled at 2).total
+    say original.total
+    evaluate array-set of counter with arr being filled, idx being 1, `value` being (build counter with total being 23)
+    value selected is get of counter with arr being filled, idx being 1
+    say selected.total
+    say length of counter with arr being filled
+    say (items at 1).total
+    give 0
+end paragraph

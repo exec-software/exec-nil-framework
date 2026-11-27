@@ -252,9 +252,12 @@ such as `say formatted "value={5}"`; it works on interpreted and native routes.
 Current hardening adds lexical Matrix name resolution and completion,
 [definite-assignment diagnostics](docs/language-reference/statements.md#definite-assignment),
 and [real collection reservation, a ring queue and bucketed HashMap](docs/standard-library/index.md#collection-storage-and-lookup).
-These changes extend focused execution contracts; native aggregate arrays,
-binary networking, callbacks and platform SDK qualification remain separate
-work. The [notebook](notebook/2026-11-26-language-library-hardening.md) records
+Native arrays now support exact declared, non-class records with acyclic schemas,
+including concrete generic records and shared mutable element identity. Focused
+collection coverage includes record-key HashMap, record queues, and native
+HashSet/Dictionary copies. Native enum, nested-array, class and reference-wrapper
+elements, cyclic aggregate schemas, binary networking, callbacks and platform
+SDK qualification remain separate work. The [notebook](notebook/2026-11-26-language-library-hardening.md) records
 validation and the remaining sequence before mainline consolidation.
 
 The current version is **1.0.0-rc.1**. Development coverage spans Linux x86_64,

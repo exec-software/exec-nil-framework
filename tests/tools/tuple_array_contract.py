@@ -280,10 +280,6 @@ def main() -> None:
 
         if args.llvm == 'ON':
             unsupported = [
-                ('records', 'struct Record\nvalue: i32\nend struct\n',
-                 'record-value begin record\nfield item as override integer\nend record\n',
-                 'let items = [Record { value: 1 }]',
-                 'value items is [(build record-value with item being 1)]'),
                 ('enums', 'enum Choice\nOne\nend enum\n',
                  'choice-value begin choice\nwhen One\nend choice\n',
                  'let items = [Choice.One]', 'value items is [choice-value.One]'),

@@ -1573,11 +1573,36 @@ void VM::executeInstruction(const Instruction &instr) {
       message << ", so the valid indices are 0 to " << (length - 1);
     throw std::runtime_error(message.str());
   };
-  const auto array_default_value = [](const HeapBlock &block) -> Value {
+  const auto record_array_schema = [&](const std::string &type) -> const nil_struct_def * {
+    if (!class_metadata_ || type == "$integer" || type.rfind("fn(", 0) == 0 ||
+        is_array_storage_type(type) ||
+        is_array_tuple_type(type)) return nullptr;
+    const auto expected = canonical_array_type(type);
+    const auto scalar = canonical_array_scalar(expected);
+    if (scalar == "i8" || scalar == "i16" || scalar == "i32" || scalar == "i64" ||
+        scalar == "u8" || scalar == "u16" || scalar == "u32" || scalar == "u64" ||
+        scalar == "f32" || scalar == "f64" || scalar == "bool" || scalar == "char" ||
+        scalar == "text" || scalar == "anything" || scalar == "any" ||
+        expected.rfind("array<", 0) == 0 || expected.rfind("ptr<", 0) == 0 ||
+        expected.rfind("ref<", 0) == 0)
+      return nullptr;
+    if (find_nil_class(*class_metadata_, expected)) return nullptr;
+    const nil_struct_def *schema = nullptr;
+    for (const auto &candidate : class_metadata_->structs) {
+      if (canonical_array_type(candidate.name) != expected) continue;
+      if (schema)
+        throw std::runtime_error("record array requires one exact declared element schema");
+      schema = &candidate;
+    }
+    return schema;
+  };
+  const auto array_default_value = [&](const HeapBlock &block) -> Value {
     if (block.element_type == "anything")
       throw std::runtime_error("anything array read is out of bounds or uninitialized");
     if (is_array_tuple_type(block.element_type))
       throw std::runtime_error("tuple array read is out of bounds or has an invalid handle");
+    if (record_array_schema(block.element_type))
+      throw std::runtime_error("record array read is out of bounds or uninitialized");
     // Match intrinsic metadata normalization for supported scalar types.
     // Keep the original block metadata intact: nominal aggregate names are
     // case-sensitive even though built-in scalar aliases are normalized here.
@@ -1616,6 +1641,59 @@ void VM::executeInstruction(const Instruction &instr) {
         (void)self(self, (*shape)[index], operation, depth + 1);
     }
     return schema;
+  };
+  // A zero-length literal still establishes a typed mutable array. Prove its
+  // declared element schema without requiring a fabricated record value. Keep
+  // the interpreter's wider enum/reference/nested-array surface independent
+  // from the deliberately smaller native element ABI.
+  const auto validate_array_element_schema = [&](const auto &self,
+      const std::string &written, const std::string &operation, unsigned depth) -> void {
+    const auto reject = [&]() {
+      throw std::runtime_error(operation +
+          ": array element requires one exact declared schema for '" + written + "'");
+    };
+    if (depth >= 64) reject();
+    const auto compact = canonical_dynamic_type(written);
+    if (compact == "$integer" || compact == "any") return;
+    if (compact.size() > 2 && compact.compare(compact.size() - 2, 2, "[]") == 0) {
+      self(self, compact.substr(0, compact.size() - 2), operation, depth + 1);
+      return;
+    }
+    // Callable storage retains its existing signature/provenance validation.
+    if (compact.rfind("fn(", 0) == 0) return;
+    const auto type = canonical_array_type(compact);
+    const auto scalar = canonical_array_scalar(type);
+    if (scalar == "i8" || scalar == "i16" || scalar == "i32" || scalar == "i64" ||
+        scalar == "u8" || scalar == "u16" || scalar == "u32" || scalar == "u64" ||
+        scalar == "isize" || scalar == "usize" || scalar == "f32" || scalar == "f64" ||
+        scalar == "bool" || scalar == "char" || scalar == "text" || scalar == "anything")
+      return;
+    if (const auto elements = array_tuple_elements(type)) {
+      (void)validate_tuple_schema(validate_tuple_schema, type, operation, depth);
+      for (const auto &element : *elements)
+        self(self, element, operation, depth + 1);
+      return;
+    }
+    const auto open = type.find('<');
+    if (open != std::string::npos) {
+      const auto container = type.substr(0, open);
+      if (container == "array" || container == "ptr" || container == "ref" ||
+          container == "mut_ref" || container == "slice" || container == "owned") {
+        const auto arguments = array_tuple_elements("tuple<" +
+            type.substr(open + 1, type.size() - open - 2) + ">");
+        if (!arguments || arguments->size() != 1) reject();
+        if (container != "ptr" || arguments->front() != "void")
+          self(self, arguments->front(), operation, depth + 1);
+        return;
+      }
+    }
+    if (!class_metadata_) reject();
+    std::size_t matches = 0;
+    for (const auto &schema : class_metadata_->structs)
+      matches += canonical_array_type(schema.name) == type;
+    for (const auto &schema : class_metadata_->enums)
+      matches += canonical_array_type(schema.name) == type;
+    if (matches != 1) reject();
   };
   const auto resolve_storage_schema = [&](const auto &definitions, const std::string &type) {
     using Definition = typename std::decay_t<decltype(definitions)>::value_type;
@@ -1797,7 +1875,15 @@ void VM::executeInstruction(const Instruction &instr) {
   const auto canonical_pointer_value =
       [&](const HeapBlock &block, const Value &value,
          const std::string &operation) -> Value {
-    if (block.type_name == "array" && (is_array_tuple_type(block.element_type) || block.element_type == "anything")) {
+    const auto *record_schema = block.type_name == "array"
+        ? record_array_schema(block.element_type) : nullptr;
+    if (block.type_name == "array" && (is_array_tuple_type(block.element_type) ||
+        block.element_type == "anything" || record_schema)) {
+      if (record_schema) {
+        const auto *object = std::get_if<StructValue>(&value);
+        if (!object || record_array_schema(object->type_name) != record_schema)
+          throw std::runtime_error(operation + ": record array requires its exact declared element type");
+      }
       validate_tuple_value(validate_tuple_value, value, block.element_type, operation, 0);
       return value;
     }
@@ -2417,7 +2503,7 @@ void VM::executeInstruction(const Instruction &instr) {
         auto it = heap_.find(handle);
         if (it != heap_.end() && it->second.type_name == "array" &&
             idx >= 0 && idx < (int64_t)it->second.data.size()) {
-          pushStack(it->second.data[(size_t)idx]);
+          pushStack(canonical_pointer_value(it->second, it->second.data[(size_t)idx], "array__get"));
         } else {
           pushStack(it != heap_.end() && it->second.type_name == "array"
                         ? array_default_value(it->second) : Value(int64_t(0)));
@@ -3108,7 +3194,8 @@ void VM::executeInstruction(const Instruction &instr) {
           metadata.push_back(found->second.element_type);
         }
       }
-      const auto contract = parse_array_intrinsic(metadata);
+      const bool declared_record = metadata.size() == 5 && record_array_schema(metadata[4]);
+      const auto contract = parse_array_intrinsic(metadata, declared_record);
       if (is_array_tuple_type(contract.element))
         (void)validate_tuple_schema(validate_tuple_schema, contract.element, fn_name, 0);
       if (args.size() != contract.argument_count)
@@ -3168,7 +3255,7 @@ void VM::executeInstruction(const Instruction &instr) {
       if (contract.operation == array_intrinsic_operation::get) {
         const auto value = in_bounds ? block.data[static_cast<std::size_t>(index)]
                                      : array_default_value(block);
-        pushStack(contract.element == "anything" ? canonical_pointer_value(block, value, fn_name) : value);
+        pushStack(canonical_pointer_value(block, value, fn_name));
       } else {
         const auto value = canonical_pointer_value(block, args[2], fn_name);
         if (in_bounds)
@@ -7607,8 +7694,8 @@ void VM::executeInstruction(const Instruction &instr) {
     HeapBlock block;
     block.type_name = "array";
     block.element_type = instr.args.size() >= 2 ? instr.args[1] : "any";
-    if (is_array_tuple_type(block.element_type))
-      (void)validate_tuple_schema(validate_tuple_schema, block.element_type, "NEW_ARRAY_LITERAL", 0);
+    validate_array_element_schema(validate_array_element_schema,
+        block.element_type, "NEW_ARRAY_LITERAL", 0);
     block.element_count = count;
     block.data.resize(count);
 
@@ -7652,9 +7739,8 @@ void VM::executeInstruction(const Instruction &instr) {
       if (array && exact != heap_.end() && exact->second.type_name == "array") {
         if (idx >= 0 &&
             static_cast<std::size_t>(idx) < exact->second.data.size())
-          value = exact->second.element_type == "anything"
-              ? canonical_pointer_value(exact->second, exact->second.data[static_cast<std::size_t>(idx)], "GET_INDEX")
-              : exact->second.data[static_cast<std::size_t>(idx)];
+          value = canonical_pointer_value(exact->second,
+              exact->second.data[static_cast<std::size_t>(idx)], "GET_INDEX");
         else {
           bounds_fault("read from", idx, exact->second.data.size());
           value = array_default_value(exact->second);
