@@ -1,0 +1,52 @@
+book regression.lexical_names
+read nil.std.core.result
+
+answer returns Result of number, text begin paragraph
+    give Result.Error holding "failure"
+end paragraph
+
+later returns number begin paragraph
+    value result as number is 7
+    give RESULT
+end paragraph
+
+first receives Mixed-Arg as number returns number begin paragraph
+    give mixedarg
+end paragraph
+
+second receives mixed_arg as number returns number begin paragraph
+    give MIXED-ARG
+end paragraph
+
+main returns number begin paragraph
+    consider answer with nothing
+        when Result.Error holding Message-Text then
+            say MESSAGETEXT
+        when Result.Ok holding message_text then
+            say MESSAGE-TEXT
+    end consider
+    say later with nothing
+    say first with 11
+    say second with 12
+    variable Sample-Value as number is 20
+    when yes then
+        value sample_value as number is SAMPLEVALUE plus 1
+        say SAMPLE-VALUE
+    otherwise
+        say SAMPLEVALUE
+    end when
+    say samplevalue
+    repeat for sample_value from 0 to 2
+        say SAMPLEVALUE
+    end repeat
+    say SAMPLEVALUE
+    say later_function with nothing
+    say GLOBALCOUNT
+    give 0
+end paragraph
+
+later-function returns number begin paragraph
+    give 31
+end paragraph
+
+constant Global-Count as number is 32

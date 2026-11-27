@@ -84,11 +84,10 @@ public:
   bool has_original_spans() const { return original_spans_available_; }
   const std::string &diagnostic_source() const { return processed_source_; }
 
-  // Editor suggestions must pass the same page-wide declaration folding as
-  // a newly inserted identifier; expose resolution without parsing a new AST.
-  std::string resolve_completion_name(const std::string &written) const {
-    return resolve_name(written);
-  }
+  // After parsing, resolve editor suggestions in the lexical scope at the
+  // original source offset, using exactly the same declaration spellings.
+  std::string resolve_completion_name(const std::string &written,
+                                      std::size_t offset) const;
 
 private:
   std::vector<token> tokens_;
@@ -109,8 +108,33 @@ private:
   // readable spelling the author declared. Ny's checker is case-sensitive, so
   // this canonicalisation has to happen before the AST is handed over.
   //
-  // Populated by a pre-scan so a reference may precede its declaration.
+  // Only module declarations are pre-scanned: locals must never rename an
+  // unrelated paragraph, an imported constructor, or an earlier expression.
   std::unordered_map<std::string, std::string> declared_;
+
+  struct local_name {
+    std::string symbol;
+    std::size_t visible_after;
+  };
+  struct lexical_scope {
+    std::size_t parent, begin, end;
+    std::unordered_map<std::string, local_name> names;
+  };
+  std::vector<lexical_scope> lexical_scopes_;
+  std::vector<std::size_t> active_scopes_;
+  void enter_name_scope();
+  void leave_name_scope();
+  void declare_local(const token &name);
+  void declare_local(const std::string &name);
+  class name_scope {
+  public:
+    explicit name_scope(parser &owner) : owner_(owner) { owner_.enter_name_scope(); }
+    ~name_scope() { owner_.leave_name_scope(); }
+    name_scope(const name_scope &) = delete;
+    name_scope &operator=(const name_scope &) = delete;
+  private:
+    parser &owner_;
+  };
 
   // Type names only (records, choices, classes), keyed the same way. Case
   // folding means 'Tagged' and 'tagged' are one name, so a value named after

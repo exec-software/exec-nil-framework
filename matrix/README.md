@@ -83,6 +83,11 @@ resolve to that page's declared spelling. Emitted NIL symbols preserve the
 declaration's case and replace `-` with `_`. Qualified names, imported names
 not declared on the page, and member names preserve their written case; use
 the declaration's spelling for these references. Subtraction uses `minus`.
+Local and parameter folding follows lexical scope: a later binding in another
+paragraph cannot rename an imported type or function. A local becomes visible
+after its initializer, nested bindings shadow outer ones only inside their
+block, and module declarations retain forward references. Completion uses the
+same scope at the requested source position, including partial buffers.
 Negation reads `negative offset`, with `minus offset` retained as an alias.
 An adjacent sign is also accepted on numeric literals: `-1.6`, `-1.6e-3`,
 and `-42`. The sign must touch the digits; `total - 1` is not subtraction.

@@ -167,6 +167,31 @@ def main():
         cursor = len(unicode_query.split('|')[0].encode()) - 1
         query(unicode_query, name='unicode_boundary.matrix', available=False, offset=cursor)
 
+        # Matrix folding follows lexical scopes, including when another
+        # paragraph declares the same key with a different canonical spelling.
+        independent = ('book lexical-completion\n'
+                       'other receives sample_item as number returns number begin paragraph\n'
+                       'give sample_item\nend paragraph\n'
+                       'compute receives Sample-Item as number returns number begin paragraph\n'
+                       'give SAM|\nend paragraph\n')
+        assert set(items(query(independent, name='independent.matrix'))) == {'Sample-Item'}
+        nested = ('book nested-completion\ncompute returns number begin paragraph\n'
+                  'value Sample-Item is 7\nwhen yes then\n'
+                  'value sample_item is "inner"\nsay SAM|\nend when\ngive 0\nend paragraph\n')
+        found = items(query(nested, name='nested.matrix'))
+        assert set(found) == {'sample_item'} and found['sample_item']['type'] == 'text', found
+        restored = nested.replace('say SAM|', 'say sample_item').replace('give 0', 'give SAM|')
+        found = items(query(restored, name='restored.matrix'))
+        assert set(found) == {'Sample-Item'} and found['Sample-Item']['type'] == 'override integer', found
+        initializer = nested.replace('is "inner"', 'is SAM|').replace('say SAM|', 'say sample_item')
+        assert set(items(query(initializer, name='initializer.matrix'))) == {'Sample-Item'}
+        imported_scope = ('book imported-scope\nread everything from helper\n'
+                          'other receives Sample-Public as number returns number begin paragraph\n'
+                          'give SAMPLEPUBLIC\nend paragraph\n'
+                          'main returns override integer begin paragraph\ngive sam|\nend paragraph\n')
+        assert set(items(query(imported_scope, name='imported_scope.matrix',
+                               dependencies={'helper.ny': ny_dependency}))) == {'sample_public'}
+
         # Parse/import/earlier-checker failures and unsupported positions must
         # remain explicit nulls. Member completion requires a checked receiver.
         query('fn main( sam|', name='parse.ny', available=False)

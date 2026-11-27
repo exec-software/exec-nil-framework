@@ -763,11 +763,95 @@ void test_matrix_generic_parameter_separators() {
         "a variadic parameter follows a generic parameter type");
 }
 
+
+void test_matrix_lexical_name_scopes() {
+  const std::string source =
+      "book lexical-scopes\nread nil.std.core.result\n"
+      "answer returns Result of number, text begin paragraph\n"
+      "give Result.Error holding \"failure\"\nend paragraph\n"
+      "later receives result as number returns number begin paragraph\n"
+      "give RESULT\nend paragraph\n"
+      "first receives Mixed-Arg as number returns number begin paragraph\n"
+      "give mixedarg\nend paragraph\n"
+      "second receives mixed_arg as number returns number begin paragraph\n"
+      "give MIXED-ARG\nend paragraph\n"
+      "main returns number begin paragraph\n"
+      "variable Outer-Name as number is 20\n"
+      "when yes then\nvalue outer_name as number is OUTERNAME plus 1\n"
+      "say outername\notherwise\nsay OUTER_NAME\nend when\n"
+      "say OUTER-NAME\n"
+      "repeat for outer_name from OuterName to 22\nsay OUTERNAME\nend repeat\n"
+      "say Outer_Name\n"
+      "consider answer with nothing\n"
+      "when Result.Error holding Message-Text then\nsay MESSAGETEXT\n"
+      "when Result.Ok holding message_text then\nsay MESSAGE-TEXT\nend consider\n"
+      "say later_function with nothing\nsay GLOBALCOUNT\ngive 0\nend paragraph\n"
+      "later-function returns number begin paragraph\ngive 31\nend paragraph\n"
+      "constant Global-Count as number is 32\n";
+  matrix::parser parser(source);
+  const auto program = parser.parse_program();
+  check(program && !parser.has_errors(), "Matrix local folding must use lexical scopes");
+  if (!program || parser.has_errors()) {
+    for (const auto &diagnostic : parser.diagnostics()) std::cerr << diagnostic.message << '\n';
+    return;
+  }
+  const auto resolve = [&](const std::string &context, const std::string &written,
+                           const std::string &expected) {
+    const auto beginning = source.find(context);
+    const auto within = context.find(written);
+    check(beginning != std::string::npos && within != std::string::npos,
+          "lexical completion fixture context: " + context);
+    if (beginning != std::string::npos && within != std::string::npos)
+      check(parser.resolve_completion_name(written, beginning + within) == expected,
+            "lexical resolution at " + context + " must select " + expected);
+  };
+  resolve("give Result.Error", "Result", "Result");
+  resolve("give RESULT", "RESULT", "result");
+  resolve("give mixedarg", "mixedarg", "Mixed_Arg");
+  resolve("give MIXED-ARG", "MIXED-ARG", "mixed_arg");
+  resolve("is OUTERNAME plus", "OUTERNAME", "Outer_Name");
+  resolve("say outername", "outername", "outer_name");
+  resolve("say OUTER_NAME", "OUTER_NAME", "Outer_Name");
+  resolve("say OUTER-NAME", "OUTER-NAME", "Outer_Name");
+  resolve("from OuterName to", "OuterName", "Outer_Name");
+  resolve("say OUTERNAME", "OUTERNAME", "outer_name");
+  resolve("say Outer_Name", "Outer_Name", "Outer_Name");
+  resolve("say MESSAGETEXT", "MESSAGETEXT", "Message_Text");
+  resolve("say MESSAGE-TEXT", "MESSAGE-TEXT", "message_text");
+  resolve("say later_function", "later_function", "later_function");
+  resolve("say GLOBALCOUNT", "GLOBALCOUNT", "Global_Count");
+
+  // Verify actual lowering as well as the completion projection: the original
+  // defect type-checked but emitted an unresolved plain call instead of Result.
+  const auto answer = std::dynamic_pointer_cast<ny::ast_function_decl>(program->declarations.at(2));
+  const auto body = answer ? std::dynamic_pointer_cast<ny::ast_block_stmt>(answer->body) : nullptr;
+  const auto statement = body ? std::dynamic_pointer_cast<ny::ast_return_stmt>(body->statements.at(0)) : nullptr;
+  const auto call = statement ? std::dynamic_pointer_cast<ny::ast_call_expr>(statement->value) : nullptr;
+  const auto member = call ? std::dynamic_pointer_cast<ny::ast_member_access_expr>(call->callee) : nullptr;
+  const auto owner = member ? std::dynamic_pointer_cast<ny::ast_identifier_expr>(member->object) : nullptr;
+  check(owner && owner->name == "Result" && member->member_name == "Error",
+        "an unrelated result parameter must not rename the imported choice constructor");
+
+  matrix::parser collision("book collision\nmain begin paragraph\n"
+      "value First-Name is 1\nvalue first_name is 2\nend paragraph\n");
+  collision.parse_program();
+  check(collision.has_errors(), "case/separator collisions in one local scope are diagnosed");
+
+  const std::string unfinished = "book unfinished\nmain begin paragraph\n"
+      "value Sample-Value is 1\nsay SAM";
+  matrix::parser partial(unfinished);
+  partial.parse_program();
+  check(partial.has_errors(), "unfinished paragraph retains its normal parser error");
+  check(partial.resolve_completion_name("SAMPLEVALUE", unfinished.find("say SAM") + 4) == "Sample_Value",
+        "partial-buffer resolution retains known locals without requiring a clean parse");
+}
+
 } // namespace
 
 int main() {
   test_leading_method_annotations();
   test_matrix_generic_parameter_separators();
+  test_matrix_lexical_name_scopes();
   test_variable_visibility_and_source_lines();
   test_decoded_string_quotes_are_content();
   test_bitwise_complement_precedence();

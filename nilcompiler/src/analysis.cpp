@@ -482,7 +482,8 @@ std::string analysis_session::completion_json() const {
         return "null";
     } else {
       matrix_names.emplace(text);
-      if (matrix_names->resolve_completion_name(text.substr(query.span.start, query.span.length)) != query.name)
+      matrix_names->parse_program();
+      if (matrix_names->resolve_completion_name(text.substr(query.span.start, query.span.length), query.span.start) != query.name)
         return "null";
     }
   } else {
@@ -522,9 +523,9 @@ std::string analysis_session::completion_json() const {
     const std::string display = matrix_language && matrix_declaration ? original : candidate.name;
     std::string insertion = display;
     if (matrix_language) {
-      // A different declaration anywhere on this page can redirect a folded
-      // name. Omit such a candidate rather than inserting the wrong binding.
-      if (!query.member && matrix_names->resolve_completion_name(display) != candidate.name) continue;
+      // Only declarations visible at this cursor may redirect a folded name.
+      // An unrelated paragraph's local must not hide a valid suggestion.
+      if (!query.member && matrix_names->resolve_completion_name(display, query.span.start) != candidate.name) continue;
       if (escaped || matrix::keyword_for(matrix::fold_key(display)) != matrix::kw::not_a_keyword)
         insertion = '`' + display + '`';
       matrix::lexer scanner(insertion);

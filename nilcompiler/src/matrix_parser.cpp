@@ -256,80 +256,106 @@ parser::parser(const std::string &source, const parser_options &opts)
   }
 }
 
-// A declaration's spelling is the canonical NIL symbol for its name. This
-// pre-scan collects those spellings so that a reference written in any case or
-// with either separator resolves to it -- including a reference that appears
-// before the declaration.
-//
-// Only declaring positions are recorded. A name this page never declares falls
-// back to its written spelling in resolve_name, which is the right answer for
-// the standard library: 'read-regular-bytes' becomes 'read_regular_bytes',
-// matching Ny's snake_case declaration.
+// Module spellings permit forward references; local spellings are registered
+// while parsing their lexical scopes. In particular, a parameter or local in
+// a later paragraph cannot change an earlier imported constructor's identity.
 void parser::prescan_declarations() {
-  const auto record = [&](const token &t) {
-    if (!t.is_name()) return;
-    declared_.emplace(t.key, nil_symbol(t.lexeme));
-  };
-  const auto record_type = [&](const token &t) {
-    if (!t.is_name()) return;
-    declared_types_.emplace(t.key, t.lexeme);
-  };
+  std::vector<std::string> bodies;
   for (size_t i = 0; i + 1 < tokens_.size(); ++i) {
     const token &here = tokens_[i];
     const token &next = tokens_[i + 1];
-
-    // A top-level declaration: '<name> receives|returns|begin|means ...'
-    if (here.is_name() &&
-        (next.is(kw::receives) || next.is(kw::returns) || next.is(kw::begin) ||
-         next.is(kw::means)))
-      record(here);
-
-    // Any TOP-LEVEL declaration, for collision detection. Two declarations in
-    // one book whose folded keys match but whose spellings differ are one
-    // name, which the checker reports only as "already declared in this
-    // scope" without saying that case folding is the reason.
-    if (here.is_name() && here.column == 1 &&
-        (next.is(kw::receives) || next.is(kw::returns) || next.is(kw::begin) ||
-         next.is(kw::means) || next.is(kw::inherits) || next.is(kw::provides)))
-      record_type(here);
-    if ((here.is(kw::constant) || here.is(kw::value) ||
-         here.is(kw::variable)) && here.column <= 8 && next.is_name())
-      record_type(next);
-
-    // A type declaration specifically: '<name> begin record|choice|class' or
-    // '<name> inherits ...'.
-    if (here.is_name() &&
-        (here.is_name() && next.is(kw::begin) && i + 2 < tokens_.size() &&
-         (tokens_[i + 2].is(kw::record) || tokens_[i + 2].is(kw::choice) ||
-          tokens_[i + 2].is(kw::class_))))
-      record_type(here);
-    if (here.is_name() && next.is(kw::inherits))
-      record_type(here);
-
-    // '<name> of type T begin ...' -- a generic record, choice or paragraph.
-    if (here.is_name() && next.is(kw::of) && i + 2 < tokens_.size() &&
-        tokens_[i + 2].is(kw::type))
-      record(here);
-
-    // 'field <name> as', 'value|variable|constant <name>', 'allocate <name> as'
-    if ((here.is(kw::field) || here.is(kw::value) || here.is(kw::variable) ||
-         here.is(kw::constant) || here.is(kw::allocate) || here.is(kw::own)) &&
-        next.is_name())
-      record(next);
-
-    // A parameter binding: '<name> as <type>' anywhere in a header.
-    if (here.is_name() && next.is(kw::as))
-      record(here);
-
-    // Loop variables, bound payloads, moves and borrows.
-    if ((here.is(kw::for_) || here.is(kw::holding) || here.is(kw::into) ||
-         here.is(kw::borrow)) && next.is_name())
-      record(next);
-    if (here.is(kw::for_) && next.reads("each") && i + 2 < tokens_.size())
-      record(tokens_[i + 2]);
-    if (here.is(kw::from) && next.reads("each") && i + 2 < tokens_.size())
-      record(tokens_[i + 2]);
+    if (here.is(kw::begin)) {
+      bodies.push_back(next.key);
+      continue;
+    }
+    if (here.is(kw::end) && !bodies.empty() && bodies.back() == next.key) {
+      bodies.pop_back();
+      ++i;
+      continue;
+    }
+    if (!bodies.empty()) continue;
+    if (here.is(kw::read) && next.is_name()) {
+      auto alias = i + 2;
+      while (alias + 1 < tokens_.size() &&
+             (tokens_[alias].kind == token_kind::dot ||
+              tokens_[alias].kind == token_kind::double_colon)) alias += 2;
+      if (alias + 1 < tokens_.size() && tokens_[alias].is(kw::as) && tokens_[alias + 1].is_name())
+        declared_.emplace(tokens_[alias + 1].key, nil_symbol(tokens_[alias + 1].lexeme));
+    }
+    if ((here.is(kw::constant) || here.is(kw::value) || here.is(kw::variable)) &&
+        next.is_name()) {
+      declared_.emplace(next.key, nil_symbol(next.lexeme));
+      continue;
+    }
+    if (!here.is_name()) continue;
+    const bool generic = next.is(kw::of) && i + 2 < tokens_.size() &&
+                         tokens_[i + 2].is(kw::type);
+    if (next.is(kw::receives) || next.is(kw::returns) || next.is(kw::begin) ||
+        next.is(kw::means) || next.is(kw::inherits) || generic)
+      declared_.emplace(here.key, nil_symbol(here.lexeme));
+    size_t kind = i + 2;
+    if (generic) {
+      while (kind + 1 < tokens_.size() && !tokens_[kind].is(kw::begin) &&
+             !tokens_[kind].is(kw::receives) && !tokens_[kind].is(kw::returns)) ++kind;
+      ++kind;
+    }
+    if (next.is(kw::means) || next.is(kw::inherits) ||
+        ((next.is(kw::begin) || generic) && kind < tokens_.size() &&
+         (tokens_[kind].is(kw::record) || tokens_[kind].is(kw::choice) ||
+          tokens_[kind].is(kw::class_) || tokens_[kind].is(kw::contract))))
+      declared_types_.emplace(here.key, here.lexeme);
   }
+}
+
+void parser::enter_name_scope() {
+  const auto none = static_cast<std::size_t>(-1);
+  lexical_scopes_.push_back({active_scopes_.empty() ? none : active_scopes_.back(),
+                            peek().start, peek().start, {}});
+  active_scopes_.push_back(lexical_scopes_.size() - 1);
+}
+
+void parser::leave_name_scope() {
+  auto &scope = lexical_scopes_[active_scopes_.back()];
+  scope.end = std::max(scope.begin, previous().start + previous().length);
+  active_scopes_.pop_back();
+}
+
+void parser::declare_local(const token &name) {
+  if (active_scopes_.empty()) return;
+  auto &names = lexical_scopes_[active_scopes_.back()].names;
+  const auto symbol = nil_symbol(name.lexeme);
+  const auto [previous, inserted] = names.emplace(name.key, local_name{symbol, peek().start});
+  if (!inserted && previous->second.symbol != symbol)
+    error(name, "local declaration '" + name.lexeme + "' conflicts with '" +
+                previous->second.symbol + "' in this scope",
+          "Matrix names fold case and separators; rename one declaration");
+}
+
+void parser::declare_local(const std::string &name) {
+  token binding = previous();
+  binding.lexeme = name;
+  binding.key = fold_key(name);
+  declare_local(binding);
+}
+
+std::string parser::resolve_completion_name(const std::string &written,
+                                             std::size_t offset) const {
+  if (written.find('.') != std::string::npos || written.find("::") != std::string::npos)
+    return nil_path(written);
+  const auto key = fold_key(written);
+  const auto none = static_cast<std::size_t>(-1);
+  for (auto candidate = lexical_scopes_.size(); candidate > 0; --candidate) {
+    const auto &scope = lexical_scopes_[candidate - 1];
+    if (offset < scope.begin || offset >= scope.end) continue;
+    for (auto current = candidate - 1; current != none; current = lexical_scopes_[current].parent) {
+      const auto found = lexical_scopes_[current].names.find(key);
+      if (found != lexical_scopes_[current].names.end() && offset >= found->second.visible_after)
+        return found->second.symbol;
+    }
+    break;
+  }
+  const auto found = declared_.find(key);
+  return found == declared_.end() ? nil_symbol(written) : found->second;
 }
 
 // A value may not be named after a declared type in different case. Folding
@@ -368,7 +394,12 @@ std::string parser::resolve_name(const std::string &written) const {
   if (written.find('.') != std::string::npos ||
       written.find("::") != std::string::npos)
     return nil_path(written);
-  const auto it = declared_.find(fold_key(written));
+  const auto key = fold_key(written);
+  for (auto scope = active_scopes_.rbegin(); scope != active_scopes_.rend(); ++scope) {
+    const auto found = lexical_scopes_[*scope].names.find(key);
+    if (found != lexical_scopes_[*scope].names.end()) return found->second.symbol;
+  }
+  const auto it = declared_.find(key);
   return it == declared_.end() ? nil_symbol(written) : it->second;
 }
 
@@ -968,6 +999,7 @@ parser::parse_parameters(std::vector<std::string> &names) {
     params.back().name_span = name_span(name_token);
     params.back().is_ref = reference_binding;
     names.push_back(name);
+    declare_local(name_token);
 
     if (variadic) break; // a variadic tail is final
     if (match(matrix::token_kind::comma)) continue;
@@ -990,6 +1022,7 @@ std::shared_ptr<ny::ast_function_decl>
 parser::parse_paragraph(bool is_public, int line, const std::string &name,
                         paragraph_context context, bool is_abstract,
                         bool is_virtual, bool is_override) {
+  name_scope parameters(*this);
   std::vector<std::string> param_names;
   std::vector<ny::ast_param> params;
   if (match(kw::receives)) params = parse_parameters(param_names);
@@ -1074,9 +1107,7 @@ parser::parse_paragraph(bool is_public, int line, const std::string &name,
   // unrelated names: a contract 'Fingerprint' and its method 'fingerprint'
   // are one key, and the method would silently take the contract's spelling.
   // Only a free paragraph is a top-level name.
-  const std::string emitted = context == paragraph_context::free
-                                  ? resolve_name(name)
-                                  : nil_symbol(name);
+  const std::string emitted = nil_symbol(name);
   auto decl = std::make_shared<ny::ast_function_decl>(
       emitted, params, return_type, body,
       std::vector<ny::ast_generic_param>{}, is_public, line,
@@ -1768,7 +1799,10 @@ std::shared_ptr<ny::ast_stmt> parser::parse_attempt() {
     }
   };
 
-  collect(body);
+  {
+    name_scope attempt_scope(*this);
+    collect(body);
+  }
   for (;;) {
     skip_terminators();
     if (at_end()) {
@@ -1783,10 +1817,12 @@ std::shared_ptr<ny::ast_stmt> parser::parse_attempt() {
       if (cleanup)
         error(previous(), "an attempt has at most one 'always' block");
       cleanup = std::make_shared<ny::ast_block_stmt>(peek().line);
+      name_scope cleanup_scope(*this);
       collect(cleanup);
       continue;
     }
     if (match(kw::caught)) {
+      name_scope handler_scope(*this);
       // 'caught anything as token' is the catch-all. The token is opaque: it
       // may be ignored or re-raised, and nothing else.
       std::optional<std::string> fault_type;
@@ -1798,8 +1834,10 @@ std::shared_ptr<ny::ast_stmt> parser::parse_attempt() {
       std::optional<ny::source_span> bound_span;
       if (match(kw::as)) {
         if (peek().is_name()) {
-          bound_span = name_span(peek());
-          bound = resolve_name(advance().lexeme);
+          const auto binder = advance();
+          bound_span = name_span(binder);
+          bound = nil_symbol(binder.lexeme);
+          declare_local(binder);
         }
         else expected_name("after 'as' in a handler");
       } else {
@@ -1889,6 +1927,7 @@ std::shared_ptr<ny::ast_stmt> parser::make_ownership_binding(
   auto decl = std::make_shared<ny::ast_variable_decl>(
       name, call, std::move(declared_type), is_mut, false, line);
   decl->name_span = name_span(name_token);
+  declare_local(name_token);
   return std::make_shared<ny::ast_decl_stmt>(decl, line);
 }
 
@@ -1902,7 +1941,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_own() {
     return nullptr;
   }
   const token &name_token = peek();
-  const std::string name = resolve_name(advance().lexeme);
+  const std::string name = nil_symbol(advance().lexeme);
   reject_type_name_collision(name_token, name_token.lexeme);
   if (!expect(kw::as, "after the owner name")) return nullptr;
   auto type = parse_type();
@@ -1934,7 +1973,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_borrow() {
     return nullptr;
   }
   const token &name_token = peek();
-  const std::string name = resolve_name(advance().lexeme);
+  const std::string name = nil_symbol(advance().lexeme);
   if (!expect(kw::from, "after the view name")) return nullptr;
   if (!peek().is_name()) {
     expected_name("as the owner after 'from'");
@@ -1969,7 +2008,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_move() {
     return nullptr;
   }
   const token &destination_token = peek();
-  const std::string destination = resolve_name(advance().lexeme);
+  const std::string destination = nil_symbol(advance().lexeme);
   skip_terminators();
   // A move destination chooses its own binding mutability; default to mutable
   // so the moved buffer stays writable.
@@ -2058,6 +2097,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_assembly() {
 // '<name> begin test ... end test'
 std::shared_ptr<ny::ast_decl> parser::parse_test(int line,
                                                  const std::string &name) {
+  name_scope locals(*this);
   advance(); // 'begin'
   advance(); // 'test'
   auto body = std::make_shared<ny::ast_block_stmt>(peek().line);
@@ -2087,6 +2127,7 @@ std::shared_ptr<ny::ast_decl> parser::parse_test(int line,
 std::shared_ptr<ny::ast_decl>
 parser::finish_intrinsic(bool is_public, int line, const std::string &name,
                          std::vector<ny::ast_annotation> annotations) {
+  name_scope parameters(*this);
   std::vector<std::string> param_names;
   std::vector<ny::ast_param> params;
   if (match(kw::receives)) params = parse_parameters(param_names);
@@ -2094,7 +2135,7 @@ parser::finish_intrinsic(bool is_public, int line, const std::string &name,
   if (match(kw::returns)) return_type = parse_type();
   skip_terminators();
   auto decl = std::make_shared<ny::ast_function_decl>(
-      resolve_name(name), params, return_type, nullptr,
+      nil_symbol(name), params, return_type, nullptr,
       std::vector<ny::ast_generic_param>{}, is_public, line,
       std::move(annotations));
   decl->source_file = filename_;
@@ -2107,6 +2148,7 @@ parser::finish_intrinsic(bool is_public, int line, const std::string &name,
 
 // Parse statements until 'end <closing_kind>', consuming the terminator.
 std::shared_ptr<ny::ast_stmt> parser::parse_block(kw closing_kind) {
+  name_scope locals(*this);
   auto block = std::make_shared<ny::ast_block_stmt>(peek().line);
   for (;;) {
     skip_terminators();
@@ -2158,6 +2200,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_binding_statement() {
     if (!expect(kw::is, "before the tuple value")) return nullptr;
     declaration->initializer = parse_expression();
     skip_terminators();
+    for (const auto &binding : declaration->tuple_bindings) declare_local(binding->name);
     return std::make_shared<ny::ast_decl_stmt>(declaration, line);
   }
 
@@ -2187,6 +2230,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_binding_statement() {
       name, init, type, mutable_binding, false, line);
   decl->name_span = name_span(name_token);
   decl->is_const = constant_binding;
+  declare_local(name_token);
   return std::make_shared<ny::ast_decl_stmt>(decl, line);
 }
 
@@ -2260,6 +2304,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_when_statement() {
   if (!expect(kw::then, "after the condition")) return nullptr;
 
   auto then_branch = std::make_shared<ny::ast_block_stmt>(peek().line);
+  auto arm_scope = std::make_unique<name_scope>(*this);
   std::shared_ptr<ny::ast_stmt> else_branch;
 
   for (;;) {
@@ -2273,12 +2318,14 @@ std::shared_ptr<ny::ast_stmt> parser::parse_when_statement() {
       break;
     }
     if (check(kw::otherwise)) {
+      arm_scope.reset();
       advance();
       if (check(kw::when)) {
         // 'otherwise when' is an elseif: recurse and attach as the else arm.
         else_branch = parse_when_statement();
         break; // the recursive call consumed this construct's 'end when'
       }
+      arm_scope = std::make_unique<name_scope>(*this);
       auto tail = std::make_shared<ny::ast_block_stmt>(peek().line);
       for (;;) {
         skip_terminators();
@@ -2337,6 +2384,8 @@ std::shared_ptr<ny::ast_stmt> parser::parse_repeat() {
       if (bindings.empty()) error(previous(), "tuple loop binding requires at least one name");
       if (!expect(kw::in_, "after tuple loop bindings")) return nullptr;
       auto iterable = parse_expression();
+      name_scope loop_scope(*this);
+      for (const auto &binding : bindings) declare_local(binding.name);
       auto body = parse_block(kw::repeat);
       auto loop = std::make_shared<ny::ast_for_in_stmt>(bindings, iterable, body, line);
       loop->tuple_pattern = true;
@@ -2356,6 +2405,8 @@ std::shared_ptr<ny::ast_stmt> parser::parse_repeat() {
     if (each) {
       if (!expect(kw::in_, "after the loop variable")) return nullptr;
       auto iterable = parse_expression();
+      name_scope loop_scope(*this);
+      declare_local(var_token);
       auto body = parse_block(kw::repeat);
       std::vector<ny::ast_param> loop_vars{
           ny::ast_param(var, std::nullopt, false, var_line, std::nullopt)};
@@ -2373,6 +2424,8 @@ std::shared_ptr<ny::ast_stmt> parser::parse_repeat() {
     auto start = parse_expression();
     if (!expect(kw::to, "after the range start")) return nullptr;
     auto stop = parse_expression();
+    name_scope loop_scope(*this);
+    declare_local(var_token);
     auto body = parse_block(kw::repeat);
 
     auto range_callee = std::make_shared<ny::ast_identifier_expr>("range", line);
@@ -3143,6 +3196,7 @@ ny::ast_expr_ptr parser::parse_primary() {
   // native indirect calls are not implemented, so this is interpreted-route
   // only -- a route fact the sample comments repeat.
   if (match(kw::anonymous)) {
+    name_scope parameters(*this);
     std::vector<std::string> param_names;
     std::vector<ny::ast_param> params;
     if (match(kw::receives)) params = parse_parameters(param_names);
@@ -3241,6 +3295,7 @@ ny::ast_expr_ptr parser::parse_markup_expression() {
   const token start = advance(); // markup_begin
   auto markup = std::make_shared<ny::ast_markup_expr>(start.line);
   ny::markup_structure document;
+  std::vector<std::unique_ptr<name_scope>> directive_scopes;
 
   while (!check(matrix::token_kind::markup_end) && !at_end()) {
     if (match(matrix::token_kind::formatted_text)) {
@@ -3261,9 +3316,12 @@ ny::ast_expr_ptr parser::parse_markup_expression() {
       if (is_when) {
         advance();
         document.open_when(parse_expression(), opening.line);
+        directive_scopes.push_back(std::make_unique<name_scope>(*this));
       } else if (is_otherwise) {
         advance();
+        if (!directive_scopes.empty()) directive_scopes.pop_back();
         document.else_arm(match(kw::when) ? parse_expression() : nullptr, opening.line);
+        directive_scopes.push_back(std::make_unique<name_scope>(*this));
       } else if (is_repeat) {
         advance();
         if (!match(kw::for_)) error(peek(), "expected 'for each' after '{repeat'");
@@ -3272,13 +3330,17 @@ ny::ast_expr_ptr parser::parse_markup_expression() {
         else
           advance();
         std::string binding;
+        token binder = peek();
         if (!peek().is_name()) {
           error(peek(), "expected a row name after '{repeat for each'");
         } else {
-          binding = resolve_name(advance().lexeme);
+          binding = nil_symbol(advance().lexeme);
         }
         if (!match(kw::in_)) error(peek(), "expected 'in' after the row name");
-        document.open_repeat(std::move(binding), parse_expression(), opening.line);
+        auto source = parse_expression();
+        document.open_repeat(std::move(binding), source, opening.line);
+        directive_scopes.push_back(std::make_unique<name_scope>(*this));
+        if (binder.is_name()) declare_local(binder);
       } else {
         advance(); // end
         const bool closing_when = match(kw::when);
@@ -3286,6 +3348,7 @@ ny::ast_expr_ptr parser::parse_markup_expression() {
         if (!closing_when && !closing_repeat)
           error(peek(), "expected '{end when}' or '{end repeat}'");
         document.close_directive(closing_repeat ? 2 : 1, opening.line);
+        if (!directive_scopes.empty()) directive_scopes.pop_back();
       }
       if (!check(matrix::token_kind::interpolation_end))
         error(peek(), "expected '}' after the directive");
@@ -3334,12 +3397,14 @@ ny::ast_expr_ptr parser::parse_query_expression() {
     expected_name("after 'from each'");
   } else {
     const token binder = advance();
-    query->binding.name = resolve_name(binder.lexeme);
+    query->binding.name = nil_symbol(binder.lexeme);
     query->binding.name_span = name_span(binder);
     query->binding.line = binder.line;
   }
   require_word("in");
   query->source = parse_expression();
+  name_scope query_scope(*this);
+  declare_local(query->binding.name);
   int previous_clause = 0;
   while (!at_end() && !check(kw::end)) {
     skip_terminators();
@@ -3598,6 +3663,7 @@ ny::ast_pattern parser::parse_pattern() {
     return pattern;
   }
 
+  const token name_token = peek();
   const std::string name = ny::canonical_std_namespace(nil_symbol(parse_dotted_name()));
 
   // A dotted name is a constructor; a bare name binds the value. This is the
@@ -3611,7 +3677,9 @@ ny::ast_pattern parser::parse_pattern() {
     ny::ast_pattern bound;
     if (peek().is_name()) {
       bound.kind = ny::ast_pattern_kind::variable_pattern;
-      bound.name = nil_symbol(advance().lexeme);
+      const auto binder = advance();
+      bound.name = nil_symbol(binder.lexeme);
+      declare_local(binder);
     } else {
       bound.kind = ny::ast_pattern_kind::wildcard_pattern;
       bound.name = "_";
@@ -3622,6 +3690,7 @@ ny::ast_pattern parser::parse_pattern() {
   pattern.kind = qualified ? ny::ast_pattern_kind::constructor_pattern
                            : ny::ast_pattern_kind::variable_pattern;
   pattern.name = name;
+  if (!qualified) declare_local(name_token);
   return pattern;
 }
 
@@ -3671,6 +3740,7 @@ std::vector<ny::ast_switch_arm> parser::parse_switch_arms() {
       error(peek(), "expected 'end switch' after switch cases");
       break;
     }
+    name_scope arm_scope(*this);
     const token label_token = peek();
     ny::ast_expr_ptr label;
     if (exact_phrase_word(peek(), "case")) {
@@ -3761,6 +3831,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_consider_statement() {
     }
 
     if (match(kw::otherwise)) {
+      name_scope arm_scope(*this);
       // Unbracketed wildcard bodies retain their existing end-consider boundary.
       auto body = arm_body(true);
       ny::ast_pattern wildcard;
@@ -3775,6 +3846,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_consider_statement() {
       while (!at_end() && peek().line == bad) advance();
       continue;
     }
+    name_scope arm_scope(*this);
     auto pattern = parse_pattern();
     ny::ast_expr_ptr guard;
     // A guard uses 'provided', not a second 'when', so an arm and its guard
@@ -3807,6 +3879,7 @@ ny::ast_expr_ptr parser::parse_consider_expression() {
       break;
     }
 
+    name_scope arm_scope(*this);
     ny::ast_expr_ptr pattern_expr;
     ny::ast_expr_ptr guard;
     if (match(kw::otherwise)) {
@@ -3897,9 +3970,12 @@ ny::ast_expr_ptr parser::parse_consider_expression() {
       }
       if (match(kw::holding)) {
         std::vector<ny::ast_expr_ptr> bound;
-        if (peek().is_name())
+        if (peek().is_name()) {
+          const auto binder = advance();
           bound.push_back(std::make_shared<ny::ast_identifier_expr>(
-              nil_symbol(advance().lexeme), arm_line));
+              nil_symbol(binder.lexeme), arm_line));
+          declare_local(binder);
+        }
         base = std::make_shared<ny::ast_call_expr>(
             base, std::move(bound), std::vector<std::string>{}, arm_line);
       }
@@ -3948,6 +4024,7 @@ std::shared_ptr<ny::ast_stmt> parser::parse_allocate() {
   auto decl = std::make_shared<ny::ast_variable_decl>(name, init, type, true,
                                                       false, line);
   decl->name_span = name_span(name_token);
+  declare_local(name_token);
   return std::make_shared<ny::ast_decl_stmt>(decl, line);
 }
 
