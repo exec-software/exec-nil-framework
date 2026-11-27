@@ -415,11 +415,15 @@ completion: {
 Items come from lexical lookup and the current module's imports, including
 visibility checks, shadowing and declaration order. Source functions declared
 later in the module remain available according to normal function lookup.
-Candidates require a verified original declaration token. Member queries use
+Source-backed candidates require a verified original declaration token. Member queries use
 the checked receiver type to select source-backed fields and instance methods,
 including imports, inheritance and supported generic substitutions. Accessibility
-and ambiguous member lookup use the same rules as checking. Type names, static
-member contexts, unlocated intrinsics and unsupported bindings are omitted. `type` is
+and ambiguous member lookup use the same rules as checking. Direct built-in array
+receivers also offer `len`, `length`, `get`, `set`, `push`, `capacity` and `reserve`
+from their checked contracts, without fabricating source declarations. These
+methods use the same exact query token and consumed-source snapshot validation.
+Type names, static member contexts, other unlocated intrinsics and unsupported
+bindings are omitted. `type` is
 display metadata, using Matrix vocabulary for a Matrix query; function entries
 and method entries expose their return type rather than a complete signature.
 Source-backed library declarations behind `@pragma once` and `@schema` headers
@@ -428,7 +432,7 @@ macro expansion and conditional rewriting still require a general source map.
 
 The compiler filters by the prefix ending at the requested cursor. Ny matching
 is case-sensitive. Matrix matching uses its ASCII case/separator folding, and
-the insertion is checked against the same page-wide name resolver used by the
+the insertion is checked against the same cursor-local name resolver used by the
 frontend. A spelling redirected to another declaration is omitted. Member queries instead
 validate receiver-directed spelling and do not use the page-wide resolver. Matrix
 declarations retain their written display spelling; Ny declarations retain

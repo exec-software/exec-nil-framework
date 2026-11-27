@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Source-backed member completion follows checked receivers and visibility."""
+"""Member completion follows checked receivers, builtins and source visibility."""
 import argparse
 import json
 from pathlib import Path
@@ -84,6 +84,64 @@ def main():
         query((record + entry).replace('value.it|', 'missing.it|'), available=False)
         query((record + entry).replace('value.it|', 'Sample.it|'), status=0, available=False)
         query((record + entry).replace('return value.it|', 'println(missing)\nreturn value.it|'), available=False)
+
+        # Array primitives have checked contracts without source declarations.
+        # Their exact insertion must compile, and broad member heuristics must
+        # not turn unsupported container methods into editor suggestions.
+        array_head = 'fn main() -> i32\nlet values: array<i32> = [1, 2]\n'
+        for prefix, names, arguments, expected_type in (
+                ('le', ('len', 'length'), '', 'i32'),
+                ('ge', ('get',), '0', 'i32'),
+                ('se', ('set',), '0, 7', 'void'),
+                ('pu', ('push',), '7', 'void'),
+                ('cap', ('capacity',), '', 'i32'),
+                ('res', ('reserve',), '8', 'void')):
+            call = f'values.{prefix}|({arguments})'
+            statement = call if expected_type == 'void' else f'let observed = {call}'
+            marked = array_head + statement + '\nreturn 0\nend fn\n'
+            result = query(marked)
+            assert set(items(result)) == set(names), result
+            for name in names:
+                candidate = items(result)[name]
+                assert candidate['kind'] == 'method' and candidate['type'] == expected_type, result
+                apply(marked, result, candidate, name=f'array_{name}.ny')
+        capacity = array_head + 'return values.cap|()\nend fn\n'
+        middle = capacity.replace('cap|', 'cap|_unfinished')
+        result = query(middle)
+        assert result['length'] == len('cap_unfinished'), result
+        apply(middle, result, items(result)['capacity'], name='array_middle.ny')
+        assert not query(capacity.replace('cap|', 'CAP|'))['items']
+        for unsupported in ('po', 'cle', 'si', 'ad'):
+            assert not query(capacity.replace('cap|', unsupported + '|'), status=1)['items']
+        alias = 'type Numbers = array<i32>\n' + capacity.replace('array<i32>', 'Numbers')
+        result = query(alias)
+        apply(alias, result, items(result)['capacity'], name='array_alias.ny')
+        words = ('fn main() -> text\nlet values: array<text> = ["first"]\n'
+                 'return values.ge|(0)\nend fn\n')
+        result = query(words)
+        assert items(result)['get']['type'] == 'String', result
+        apply(words, result, items(result)['get'], name='array_text.ny')
+        query(capacity.replace('return values.cap|()', 'println(missing)\nreturn values.cap|()'), available=False)
+        query('@define UNUSED 7\n' + capacity, available=False)
+        for wrapper in ('ptr', 'ref'):
+            wrapped = f'fn inspect(values: {wrapper}<array<i32>>) -> i32\nreturn values.cap|()\nend fn\n'
+            query(wrapped, available=False)
+        text_capacity = 'fn main() -> i32\nlet values = "text"\nreturn values.cap|()\nend fn\n'
+        query(text_capacity, status=0, available=False)
+
+        # Matrix folds the query prefix, preserves the whole replacement span,
+        # and escapes builtin keyword spellings just like source-backed names.
+        matrix_array_head = ('book builtin-members\n!!! é😀\nmain returns override integer begin paragraph\n'
+                             'value values is [1, 2]\n')
+        for member, invocation, expected_type in (
+                ('capacity', 'say values.CA_P|_unfinished with nothing', 'override integer'),
+                ('reserve', 'evaluate values.RE_S| with 8', 'nothing'),
+                ('set', 'evaluate values.SE| with 0, 7', 'nothing')):
+            marked = matrix_array_head + invocation + '\ngive 0\nend paragraph\n'
+            result = query(marked, name=f'matrix_array_{member}.matrix')
+            assert set(items(result)) == {member}, result
+            assert items(result)[member]['type'] == expected_type, result
+            apply(marked, result, items(result)[member], name=f'matrix_array_{member}_applied.matrix')
 
         # Same-spelled locals and fields select the receiver's actual type.
         shadow = ('struct Textual\nitem: String\nend struct\n' + record +

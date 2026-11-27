@@ -32,10 +32,10 @@ query may be available when ordinary analysis returns `success: false` and exit
 status `1`. No query flag means no new member; an unsupported query returns
 `completion: null`.
 
-Candidates are actual source-backed functions, variables and parameters. The
+Lexical candidates are actual source-backed functions, variables and parameters. The
 compiler filters the prefix using Ny's case-sensitive spelling or Matrix's
 case/separator folding. Matrix insertion spellings pass the frontend's actual
-page-wide resolver so an unrelated folded declaration cannot silently redirect
+cursor-local resolver so an unrelated folded declaration cannot silently redirect
 the insertion. Required backticks belong to the insertion, and replacement
 ranges include existing delimiters. These edits replace the whole current
 identifier, including a suffix after the cursor.
@@ -46,8 +46,14 @@ actual receiver's record fields, implementation methods, inherited class members
 and extensions. Field and method types use ordinary member resolution, including
 generic substitutions and supported reference/pointer dereferencing. Private and
 ambiguous members are omitted. Wrapped receivers currently offer fields only;
-method receiver conversion requires additional coverage. Source-backed primitive extensions are eligible;
-builtin method heuristics have no declaration span and are not fabricated.
+method receiver conversion requires additional coverage. Source-backed primitive
+extensions are eligible. Direct built-in array receivers additionally expose
+`len`, `length`, `get`, `set`, `push`, `capacity` and `reserve`. These candidates
+carry explicit built-in provenance internally; they do not invent a declaration
+path or span. The checked receiver supplies their result types, and they retain
+the same original query token, snapshot validation and response limits. Broader
+container-member heuristics do not establish an executable method contract and
+are not offered as completions.
 
 Member candidates preserve their receiver-specific declaration spelling. Matrix
 prefix matching still folds case and separators, but inserted members bypass
@@ -92,4 +98,5 @@ mixed-language imports, Matrix spellings, replacement ranges, failure cases,
 input routes, and independent query budgets.
 The member contract additionally checks receiver shadowing, generic fields and
 methods, imported privacy, inherited class members, ordinary compilation of applied
-insertions, and rejection of unsupported receiver contexts.
+insertions, built-in array methods in both frontends, and rejection of unsupported
+receiver contexts.

@@ -401,6 +401,28 @@ void type_checker::capture_member_completion(
   for (unsigned depth = 0; depth < 32 &&
       (parts.base_name == "ref" || parts.base_name == "ptr") && parts.type_args.size() == 1; ++depth)
     parts = parse_generic_type_string(resolve_type(parts.type_args.front()).name);
+  if (!wrapped_receiver && parts.base_name == "array" && parts.type_args.size() == 1) {
+    completion_ = completion_result{true, path, expression.member_name, span, {}, true};
+    std::size_t builtin_bytes = 0;
+    // These operations have concrete checker and lowering contracts. Do not
+    // expose the broader container-member heuristics as executable methods.
+    for (const auto *name : {"len", "length", "get", "set", "push", "capacity", "reserve"}) {
+      const auto before = diagnostics_.size();
+      const auto type = resolve_member_type(receiver, name, expression.line);
+      const bool invalid = diagnostics_.size() != before;
+      diagnostics_.resize(before);
+      if (type && !invalid) {
+        builtin_bytes += std::string(name).size() + 6 + type->size();
+        if (builtin_bytes > 4 * 1024 * 1024) {
+          completion_->available = false;
+          completion_->candidates.clear();
+          return;
+        }
+        completion_->candidates.push_back(
+            {name, "method", *type, {}, {}, completion_origin::builtin});
+      }
+    }
+  }
   const symbol *owner = symbols_.lookup(parts.base_name);
   if (!owner || !owner->defining_node) {
     if (const auto imported = resolve_type_name_with_imports(parts.base_name)) {
@@ -414,7 +436,8 @@ void type_checker::capture_member_completion(
   const bool record = node_kind == ast_node_kind::struct_decl_node;
   const bool class_type = node_kind == ast_node_kind::class_decl_node;
   if (!record && !class_type && (owner->defining_node || owner->members.empty())) return;
-  completion_ = completion_result{true, path, expression.member_name, span, {}, true};
+  if (!completion_)
+    completion_ = completion_result{true, path, expression.member_name, span, {}, true};
   auto &result = *completion_;
 
   std::set<std::string> names;
@@ -437,6 +460,8 @@ void type_checker::capture_member_completion(
   if (names.size() > 32768) { result.available = false; return; }
 
   std::size_t bytes = 0;
+  for (const auto &candidate : result.candidates)
+    bytes += candidate.name.size() + candidate.kind.size() + candidate.type.size() + candidate.path.size();
   for (const auto &name : names) {
     const ast_node *declaration = nullptr;
     std::optional<source_span> declaration_span;

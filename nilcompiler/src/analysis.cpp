@@ -509,17 +509,27 @@ std::string analysis_session::completion_json() const {
   for (const auto &candidate : query.candidates) {
     const auto key = matrix_language ? matrix::fold_key(candidate.name) : candidate.name;
     if (key.compare(0, folded_prefix.size(), folded_prefix) != 0) continue;
-    const auto source = sources.find(candidate.path);
-    if (source == sources.end() || !candidate.span.length || candidate.span.start > source->second.size() ||
-        candidate.span.length > source->second.size() - candidate.span.start) continue;
-    auto extension = std::filesystem::path(candidate.path).extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
-      return static_cast<char>(std::tolower(c));
-    });
-    const bool matrix_declaration = extension == ".matrix" || extension == ".mat";
-    if (!matrix_declaration && extension != ".ny") continue;
-    const auto original = source->second.substr(candidate.span.start, candidate.span.length);
-    if ((matrix_declaration ? matrix::nil_symbol(original) : original) != candidate.name) continue;
+    bool matrix_declaration = false;
+    std::string original = candidate.name;
+    if (candidate.origin == completion_origin::source) {
+      const auto source = sources.find(candidate.path);
+      if (source == sources.end() || !candidate.span.length || candidate.span.start > source->second.size() ||
+          candidate.span.length > source->second.size() - candidate.span.start) continue;
+      auto extension = std::filesystem::path(candidate.path).extension().string();
+      std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+      });
+      matrix_declaration = extension == ".matrix" || extension == ".mat";
+      if (!matrix_declaration && extension != ".ny") continue;
+      original = source->second.substr(candidate.span.start, candidate.span.length);
+      if ((matrix_declaration ? matrix::nil_symbol(original) : original) != candidate.name) continue;
+    } else if (candidate.origin != completion_origin::builtin || !query.member ||
+               candidate.kind != "method" || !candidate.path.empty() ||
+               candidate.span.start || candidate.span.length) {
+      // Only explicitly checked builtin members can lack a declaration. They
+      // still use the exact query token and complete source snapshot above.
+      continue;
+    }
     const std::string display = matrix_language && matrix_declaration ? original : candidate.name;
     std::string insertion = display;
     if (matrix_language) {

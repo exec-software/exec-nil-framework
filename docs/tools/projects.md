@@ -285,7 +285,8 @@ variables, parameters and direct/imported functions, including unsaved sources.
 Compiler completion supplies visible locals, parameters and imported functions
 at supported identifier expressions, including unresolved prefixes. Nonempty
 member prefixes use the checked receiver type to suggest available source-backed
-fields and methods. Signature help follows supported resolved calls, including
+fields and methods, plus built-in array `len`, `length`, `get`, `set`, `push`,
+`capacity` and `reserve` operations. Signature help follows supported resolved calls, including
 imports, methods and immutable callbacks, and maps Matrix named arguments to
 the selected callable's parameter order. Both queries validate every consumed
 source snapshot before displaying results. Parse recovery remains limited;

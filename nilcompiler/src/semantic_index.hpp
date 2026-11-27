@@ -27,9 +27,13 @@ struct completion_request {
   std::string path;
   std::size_t cursor;
 };
+enum class completion_origin { source, builtin };
 struct completion_candidate {
   std::string name, kind, type, path;
   source_span span;
+  // Builtins have checked receiver contracts, but no source declaration.
+  // Keep that provenance explicit instead of manufacturing a source span.
+  completion_origin origin = completion_origin::source;
 };
 struct completion_result {
   bool available = true;
