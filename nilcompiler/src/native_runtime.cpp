@@ -65,8 +65,8 @@ struct nyrt_array {
   std::uint64_t capacity = 0;
   std::size_t allocated_bytes = 0;
   void *data = nullptr;
-  std::unique_ptr<char[]> record_type;
-  std::size_t record_type_size = 0;
+  std::unique_ptr<char[]> element_type;
+  std::size_t element_type_size = 0;
 
   ~nyrt_array() noexcept {
     std::free(data);
@@ -185,6 +185,8 @@ std::uint64_t stride_for_kind(std::uint32_t kind) noexcept {
   case NYRT_ARRAY_TUPLE:
   case NYRT_ARRAY_ANYTHING:
   case NYRT_ARRAY_RECORD:
+  case NYRT_ARRAY_ENUM:
+  case NYRT_ARRAY_NESTED:
     return sizeof(std::int64_t);
   case NYRT_ARRAY_BOOL:
   case NYRT_ARRAY_U8:
@@ -243,6 +245,32 @@ std::uint64_t maximum_array_capacity(std::uint64_t stride) noexcept {
   return std::min(abi_limit, size_limit / stride);
 }
 
+bool typed_array_kind(std::uint32_t kind) noexcept {
+  return kind == NYRT_ARRAY_RECORD || kind == NYRT_ARRAY_ENUM ||
+         kind == NYRT_ARRAY_NESTED;
+}
+
+// The compiler supplies canonical types. Bound the nested container spelling
+// before retaining it; no parser recursion or allocations are needed here.
+bool nested_array_identity(std::string_view type) noexcept {
+  if (type.size() <= 7 || type.substr(0, 6) != "array<" || type.back() != '>')
+    return false;
+  unsigned depth = 0;
+  for (std::size_t index = 0; index < type.size(); ++index) {
+    const unsigned char ch = static_cast<unsigned char>(type[index]);
+    if (ch == '<') {
+      if (++depth >= 64) return false;
+    } else if (ch == '>') {
+      if (!depth || (--depth == 0 && index + 1 != type.size())) return false;
+    } else if (ch == ',') {
+      if (depth < 2) return false; // array itself has exactly one argument.
+    } else if (!std::isalnum(ch) && ch != '_' && ch != ':' && ch != '.' && ch != '-') {
+      return false;
+    }
+  }
+  return depth == 0;
+}
+
 nyrt_array *checked_array(void *value, std::uint32_t kind) noexcept {
   if (value == nullptr)
     return nullptr;
@@ -268,8 +296,8 @@ nyrt_array *checked_array(void *value, std::uint32_t kind) noexcept {
       array->kind != kind || array->stride != expected_stride ||
       array->length > array->capacity ||
       array->allocated_bytes != expected_bytes ||
-      ((kind == NYRT_ARRAY_RECORD) !=
-       (array->record_type != nullptr && array->record_type_size != 0)) ||
+      (typed_array_kind(kind) !=
+       (array->element_type != nullptr && array->element_type_size != 0)) ||
       ((expected_bytes == 0) != (array->data == nullptr))) {
     return nullptr;
   }
@@ -369,8 +397,8 @@ bool move_buffer_offset(std::uint64_t current, std::uint64_t length,
 }
 
 nyrt_array *make_array(std::uint32_t kind, std::uint64_t length,
-                       std::string_view record_type = {}) noexcept {
-  if ((kind == NYRT_ARRAY_RECORD) != !record_type.empty())
+                       std::string_view element_type = {}) noexcept {
+  if (typed_array_kind(kind) != !element_type.empty())
     return nullptr;
   const std::uint64_t stride = stride_for_kind(kind);
   std::size_t byte_count = 0;
@@ -385,11 +413,11 @@ nyrt_array *make_array(std::uint32_t kind, std::uint64_t length,
   array->length = length;
   array->capacity = length;
   array->allocated_bytes = byte_count;
-  if (!record_type.empty()) {
-    array->record_type.reset(new (std::nothrow) char[record_type.size()]);
-    if (!array->record_type) return nullptr;
-    std::memcpy(array->record_type.get(), record_type.data(), record_type.size());
-    array->record_type_size = record_type.size();
+  if (!element_type.empty()) {
+    array->element_type.reset(new (std::nothrow) char[element_type.size()]);
+    if (!array->element_type) return nullptr;
+    std::memcpy(array->element_type.get(), element_type.data(), element_type.size());
+    array->element_type_size = element_type.size();
   }
   if (byte_count != 0) {
     array->data = std::calloc(1, byte_count);
@@ -402,8 +430,8 @@ nyrt_array *make_array(std::uint32_t kind, std::uint64_t length,
     context.arrays.push_back(std::move(array));
     account_managed_bytes(byte_count);
     account_managed_bytes(sizeof(nyrt_array));
-    account_managed_bytes(record_type.size());
-    context.profile.allocate(result, sizeof(nyrt_array) + byte_count + record_type.size(), "array");
+    account_managed_bytes(element_type.size());
+    context.profile.allocate(result, sizeof(nyrt_array) + byte_count + element_type.size(), "array");
   } catch (...) {
     return nullptr;
   }
@@ -510,6 +538,54 @@ void validate_array_value(std::uint32_t kind, std::uint64_t value) noexcept {
     (void)checked_dynamic_box(reinterpret_cast<const void *>(static_cast<std::uintptr_t>(value)));
   if (kind == NYRT_ARRAY_RECORD && value == 0)
     nyrt_fail("NIL native runtime error: record array requires a fully initialized object\n");
+  if (kind == NYRT_ARRAY_ENUM && value == 0)
+    nyrt_fail("NIL native runtime error: enum array requires a fully initialized variant\n");
+  if (kind == NYRT_ARRAY_NESTED && value == 0)
+    nyrt_fail("NIL native runtime error: nested array requires a live child array\n");
+}
+
+void validate_nested_array_value(std::string_view type, std::uint64_t value) noexcept {
+  const auto *pointer = reinterpret_cast<const void *>(static_cast<std::uintptr_t>(value));
+  const nyrt_array *child = nullptr;
+  // Validate membership before reading even the kind from an opaque word.
+  for (const auto &candidate : context.arrays)
+    if (candidate.get() == pointer) {
+      child = checked_array(pointer, candidate->kind);
+      break;
+    }
+  if (!child || !nested_array_identity(type))
+    nyrt_fail("NIL native runtime error: nested array requires a live typed child array\n");
+  const auto expected = type.substr(6, type.size() - 7);
+  bool matches = false;
+  switch (child->kind) {
+  case NYRT_ARRAY_I32: matches = expected == "i32"; break;
+  case NYRT_ARRAY_I64: matches = expected == "i64"; break;
+  case NYRT_ARRAY_U8: matches = expected == "u8"; break;
+  case NYRT_ARRAY_BOOL: matches = expected == "bool"; break;
+  case NYRT_ARRAY_F64: matches = expected == "f64"; break;
+  case NYRT_ARRAY_TEXT: matches = expected == "text"; break;
+  case NYRT_ARRAY_ANYTHING: matches = expected == "anything"; break;
+  case NYRT_ARRAY_TUPLE:
+    // The historical tuple-array ABI has no runtime schema descriptor. Its
+    // exact shape is a mandatory compiler admission proof, never inferred here.
+    matches = expected.size() > 7 && expected.substr(0, 6) == "tuple<" && expected.back() == '>';
+    break;
+  case NYRT_ARRAY_RECORD:
+  case NYRT_ARRAY_ENUM:
+  case NYRT_ARRAY_NESTED:
+    matches = expected == std::string_view(child->element_type.get(), child->element_type_size);
+    break;
+  default: break;
+  }
+  if (!matches)
+    nyrt_fail("NIL native runtime error: nested array requires its exact child element type\n");
+}
+
+void validate_array_item(const nyrt_array &array, std::uint64_t value) noexcept {
+  validate_array_value(array.kind, value);
+  if (array.kind == NYRT_ARRAY_NESTED)
+    validate_nested_array_value(
+        std::string_view(array.element_type.get(), array.element_type_size), value);
 }
 
 void set_error(const char **error_out, std::string_view message) noexcept {
@@ -559,6 +635,8 @@ std::uint64_t load_value(const nyrt_array &array,
   case NYRT_ARRAY_TUPLE:
   case NYRT_ARRAY_ANYTHING:
   case NYRT_ARRAY_RECORD:
+  case NYRT_ARRAY_ENUM:
+  case NYRT_ARRAY_NESTED:
     return static_cast<const std::uint64_t *>(array.data)[index];
   case NYRT_ARRAY_BOOL:
   case NYRT_ARRAY_U8:
@@ -595,6 +673,8 @@ void store_value(nyrt_array &array, std::uint64_t index,
   case NYRT_ARRAY_TUPLE:
   case NYRT_ARRAY_ANYTHING:
   case NYRT_ARRAY_RECORD:
+  case NYRT_ARRAY_ENUM:
+  case NYRT_ARRAY_NESTED:
     // f64 is an IEEE bit pattern; text is a context/static-lifetime address.
     // Neither is an integer conversion, nor does array growth own/free text.
     static_cast<std::uint64_t *>(array.data)[index] = value;
@@ -621,7 +701,7 @@ bool reserve(nyrt_array &array, std::uint64_t capacity) noexcept {
   array.capacity = capacity;
   account_managed_bytes(byte_count - array.allocated_bytes);
   array.allocated_bytes = byte_count;
-  context.profile.resize(&array, sizeof(nyrt_array) + byte_count + array.record_type_size);
+  context.profile.resize(&array, sizeof(nyrt_array) + byte_count + array.element_type_size);
   return true;
 }
 
@@ -1314,7 +1394,7 @@ std::uint64_t nyrt_managed_bytes() noexcept {
   std::uint64_t total = 0;
   for (const auto &item : context.allocations) total += item.size;
   for (const auto &item : context.arrays)
-    total += sizeof(nyrt_array) + item->allocated_bytes + item->record_type_size;
+    total += sizeof(nyrt_array) + item->allocated_bytes + item->element_type_size;
   return total;
 }
 
@@ -1388,6 +1468,8 @@ void nyrt_collect() noexcept {
         if (item.array->kind == NYRT_ARRAY_TEXT ||
             item.array->kind == NYRT_ARRAY_TUPLE ||
             item.array->kind == NYRT_ARRAY_RECORD ||
+            item.array->kind == NYRT_ARRAY_ENUM ||
+            item.array->kind == NYRT_ARRAY_NESTED ||
             item.array->kind == NYRT_ARRAY_ANYTHING)
           scan(item.array->data, item.array->length * item.array->stride);
       } else {
@@ -1585,9 +1667,42 @@ void *nyrt_record_array_v1_require(const void *value, const char *type,
                                    std::uint64_t type_length) noexcept {
   const auto *array = checked_array(value, NYRT_ARRAY_RECORD);
   if (!array || !type || type_length == 0 ||
-      type_length != array->record_type_size ||
-      std::memcmp(array->record_type.get(), type, array->record_type_size) != 0)
+      type_length != array->element_type_size ||
+      std::memcmp(array->element_type.get(), type, array->element_type_size) != 0)
     nyrt_fail("NIL native runtime error: record array requires its exact declared element type\n");
+  return const_cast<nyrt_array *>(array);
+}
+
+void *nyrt_typed_array_v1_new(std::uint32_t kind, const char *type,
+                              std::uint64_t type_length, std::int64_t length,
+                              std::uint64_t initial) noexcept {
+  if (!typed_array_kind(kind) || !type || type_length == 0 ||
+      type_length > 1024ULL * 1024ULL || length < 0 ||
+      std::memchr(type, '\0', static_cast<std::size_t>(type_length)))
+    return nullptr;
+  const auto descriptor = std::string_view(type, static_cast<std::size_t>(type_length));
+  if (kind == NYRT_ARRAY_NESTED && !nested_array_identity(descriptor))
+    return nullptr;
+  if (length > 0 || initial != 0) {
+    validate_array_value(kind, initial);
+    if (kind == NYRT_ARRAY_NESTED)
+      validate_nested_array_value(descriptor, initial);
+  }
+  auto *array = make_array(kind, static_cast<std::uint64_t>(length), descriptor);
+  if (!array) return nullptr;
+  for (std::uint64_t index = 0; index < array->length; ++index)
+    store_value(*array, index, initial);
+  return array;
+}
+
+void *nyrt_typed_array_v1_require(const void *value, std::uint32_t kind,
+                                  const char *type,
+                                  std::uint64_t type_length) noexcept {
+  const auto *array = typed_array_kind(kind) ? checked_array(value, kind) : nullptr;
+  if (!array || !type || type_length == 0 ||
+      type_length != array->element_type_size ||
+      std::memcmp(array->element_type.get(), type, array->element_type_size) != 0)
+    nyrt_fail("NIL native runtime error: typed array requires its exact declared element type\n");
   return const_cast<nyrt_array *>(array);
 }
 
@@ -1612,10 +1727,14 @@ std::uint64_t nyrt_array_get(const void *value, std::uint32_t expected_kind,
       nyrt_fail("NIL native runtime error: tuple array read is out of bounds or has an invalid handle\n");
     if (expected_kind == NYRT_ARRAY_RECORD)
       nyrt_fail("NIL native runtime error: record array read is out of bounds or has an invalid handle\n");
+    if (expected_kind == NYRT_ARRAY_ENUM)
+      nyrt_fail("NIL native runtime error: enum array read is out of bounds or has an invalid handle\n");
+    if (expected_kind == NYRT_ARRAY_NESTED)
+      nyrt_fail("NIL native runtime error: nested array read is out of bounds or has an invalid handle\n");
     return 0;
   }
   const auto result = load_value(*array, static_cast<std::uint64_t>(index));
-  validate_array_value(expected_kind, result);
+  validate_array_item(*array, result);
   if (expected_kind == NYRT_ARRAY_TUPLE && result == 0)
     nyrt_fail("NIL native runtime error: tuple array read encountered an uninitialized element\n");
   return result;
@@ -1645,6 +1764,7 @@ std::int32_t nyrt_array_set(void *value, std::uint32_t expected_kind,
   auto *array = checked_array(value, expected_kind);
   if (array == nullptr)
     return 0;
+  validate_array_item(*array, item);
   if (index < 0 || static_cast<std::uint64_t>(index) >= array->length)
     return 0;
   store_value(*array, static_cast<std::uint64_t>(index), item);
@@ -1658,6 +1778,7 @@ std::int32_t nyrt_array_push(void *value, std::uint32_t expected_kind,
   if (array == nullptr ||
       array->length == std::numeric_limits<std::uint64_t>::max())
     return 0;
+  validate_array_item(*array, item);
   if (array->length == array->capacity) {
     const std::uint64_t maximum = maximum_array_capacity(array->stride);
     if (array->capacity >= maximum)

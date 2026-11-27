@@ -22,6 +22,8 @@ enum nyrt_array_kind : std::uint32_t {
   // Nominal records retain shared object identity and an exact, concrete
   // element descriptor. Construct/check these through the record-array API.
   NYRT_ARRAY_RECORD = 9,
+  NYRT_ARRAY_ENUM = 10,
+  NYRT_ARRAY_NESTED = 11,
 };
 
 // Versioned UI ABI. Success is 1, failure 0. Text outputs are copied into
@@ -213,6 +215,22 @@ void *nyrt_record_array_v1_new(const char *type, std::uint64_t type_length,
                                std::uint64_t initial) noexcept;
 void *nyrt_record_array_v1_require(const void *array, const char *type,
                                    std::uint64_t type_length) noexcept;
+// Additive typed-handle array ABI for RECORD, ENUM and NESTED element kinds.
+// The descriptor identifies the canonical element type: a concrete nominal
+// schema for records/enums, or array<T> for nested elements. As with the record
+// wrappers, compiler proof establishes initialized nominal/tuple schemas; this
+// runtime does not infer them from payload bits. Nested words additionally must
+// name live arrays in this context, with matching scalar kind or owned element
+// descriptor. Legacy tuple children retain their compiler-proven shape.
+// No enum or nested default exists. Empty creation may pass zero; nonempty
+// creation requires an initializer. Enum variants are immutable objects whose
+// contained record/array handles retain identity; nested arrays share children.
+void *nyrt_typed_array_v1_new(std::uint32_t kind, const char *type,
+                              std::uint64_t type_length, std::int64_t length,
+                              std::uint64_t initial) noexcept;
+void *nyrt_typed_array_v1_require(const void *array, std::uint32_t kind,
+                                  const char *type,
+                                  std::uint64_t type_length) noexcept;
 std::int64_t nyrt_array_length(const void *array,
                                std::uint32_t expected_kind) noexcept;
 // Additive capacity operations preserve the descriptor, length and elements.

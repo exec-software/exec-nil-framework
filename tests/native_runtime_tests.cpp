@@ -504,6 +504,156 @@ int record_array_failure_case(const std::string &mode) {
   return 0;
 }
 
+void check_enum_nested_array_contract(bool &ok) {
+  const auto bits = [](const void *value) {
+    return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(value));
+  };
+  const auto create = [](std::uint32_t kind, const std::string &type,
+                         std::int64_t length, std::uint64_t initial) {
+    return nyrt_typed_array_v1_new(kind, type.data(), type.size(), length, initial);
+  };
+  const auto require = [](const void *array, std::uint32_t kind, const std::string &type) {
+    return nyrt_typed_array_v1_require(array, kind, type.data(), type.size());
+  };
+  for (auto kind : {NYRT_ARRAY_ENUM, NYRT_ARRAY_NESTED})
+    ok &= expect(nyrt_array_new(kind, 0) == nullptr &&
+                     nyrt_array_new_with_value(kind, 1, 1) == nullptr &&
+                     nyrt_buffer_new(kind, 1) == nullptr,
+                 "typed array accepted an untyped constructor or raw buffer layout");
+  ok &= expect(create(NYRT_ARRAY_I32, "i32", 0, 0) == nullptr &&
+                   create(NYRT_ARRAY_NESTED, "array<>", 0, 0) == nullptr &&
+                   create(NYRT_ARRAY_NESTED, "array<i32,i64>", 0, 0) == nullptr &&
+                   create(NYRT_ARRAY_NESTED, "array<i32>trailing", 0, 0) == nullptr &&
+                   create(NYRT_ARRAY_ENUM, "", 0, 0) == nullptr,
+               "typed array accepted malformed kind or descriptor metadata");
+
+  std::uint64_t root = 0, retained = 0;
+  const void *slots[] = {&root, &retained};
+  nyrt_roots_enter(slots, 2);
+  nyrt_collect(); // Start with a closed graph independent of earlier ABI tests.
+  auto *text = nyrt_i64_to_text(314159);
+  auto *numbers = nyrt_array_new_with_value(NYRT_ARRAY_I32, 1, 17);
+  auto *record = static_cast<std::uint64_t *>(nyrt_alloc(16));
+  auto *variant = static_cast<std::uint64_t *>(nyrt_alloc(24));
+  if (!expect(text && numbers && record && variant,
+              "could not allocate enum payload graph")) {
+    ok = false; nyrt_roots_leave(slots); return;
+  }
+  record[0] = bits(text); record[1] = bits(numbers);
+  variant[0] = bits("catalog::Choice::Data"); variant[1] = 1; variant[2] = bits(record);
+  const std::string enum_type = "catalog::Choice<i32>";
+  const std::string nested_type = "array<" + enum_type + ">";
+  const std::string outer_type = "array<" + nested_type + ">";
+  std::string descriptor = enum_type;
+  void *variants = create(NYRT_ARRAY_ENUM, descriptor, 2, bits(variant));
+  descriptor.assign(descriptor.size(), 'x');
+  void *nested = create(NYRT_ARRAY_NESTED, nested_type, 2, bits(variants));
+  void *outer = create(NYRT_ARRAY_NESTED, outer_type, 1, bits(nested));
+  if (!expect(variants && nested && outer, "could not allocate nested enum array graph")) {
+    ok = false; nyrt_roots_leave(slots); return;
+  }
+  ok &= expect(require(variants, NYRT_ARRAY_ENUM, enum_type) == variants &&
+                   require(nested, NYRT_ARRAY_NESTED, nested_type) == nested &&
+                   require(outer, NYRT_ARRAY_NESTED, outer_type) == outer,
+               "typed array descriptor identity was borrowed or changed");
+  for (int index = 0; index < 80; ++index)
+    ok &= expect(nyrt_array_push(variants, NYRT_ARRAY_ENUM, bits(variant)) == 1,
+                 "enum array growth failed");
+  ok &= expect(nyrt_array_reserve(nested, NYRT_ARRAY_NESTED, 128) == 1 &&
+                   nyrt_array_length(nested, NYRT_ARRAY_NESTED) == 2 &&
+                   nyrt_array_get(nested, NYRT_ARRAY_NESTED, 1) == bits(variants) &&
+                   nyrt_array_get(variants, NYRT_ARRAY_ENUM, 81) == bits(variant),
+               "typed array growth changed alias identity or length");
+  root = bits(outer);
+  nyrt_collect();
+  ok &= expect(nyrt_managed_objects() == 7 &&
+                   nyrt_array_get(numbers, NYRT_ARRAY_I32, 0) == 17,
+               "nested enum array tracing lost its transitive payload graph");
+  ok &= expect_text(reinterpret_cast<const char *>(static_cast<std::uintptr_t>(record[0])),
+                    "314159", "nested enum array lost managed text");
+  retained = bits(variant);
+  void *replacement = create(NYRT_ARRAY_ENUM, enum_type, 0, 0);
+  ok &= expect(replacement &&
+                   nyrt_array_set(nested, NYRT_ARRAY_NESTED, 0, bits(replacement)) == 1 &&
+                   nyrt_array_set(nested, NYRT_ARRAY_NESTED, 1, bits(replacement)) == 1 &&
+                   nyrt_array_set(nested, NYRT_ARRAY_NESTED, -1, bits(variants)) == 0 &&
+                   nyrt_array_set(nested, NYRT_ARRAY_NESTED, 2, bits(variants)) == 0,
+               "nested replacement or no-op bounds changed existing slots");
+  nyrt_collect();
+  ok &= expect(nyrt_managed_objects() == 7 && variant[2] == bits(record) &&
+                   nyrt_array_get(nested, NYRT_ARRAY_NESTED, 0) == bits(replacement),
+               "replacement lost an extracted enum or retained the removed child descriptor");
+  retained = 0; nyrt_collect();
+  ok &= expect(nyrt_managed_objects() == 3,
+               "unreachable enum payload graph survived nested replacement");
+  root = 0; nyrt_collect();
+  ok &= expect(nyrt_managed_objects() == 0,
+               "unrooted nested array graph survived collection");
+  nyrt_roots_leave(slots);
+
+  auto *child = nyrt_array_new_with_value(NYRT_ARRAY_I32, 1, 5);
+  auto *rows = create(NYRT_ARRAY_NESTED, "array<i32>", 2, bits(child));
+  auto *empty = create(NYRT_ARRAY_NESTED, "array<i32>", 0, 0);
+  ok &= expect(child && rows && empty &&
+                   nyrt_array_reserve(empty, NYRT_ARRAY_NESTED, 32) == 1 &&
+                   nyrt_array_push(empty, NYRT_ARRAY_NESTED, bits(child)) == 1 &&
+                   nyrt_array_set(child, NYRT_ARRAY_I32, 0, 29) == 1 &&
+                   nyrt_array_get(rows, NYRT_ARRAY_NESTED, 0) == bits(child) &&
+                   nyrt_array_get(rows, NYRT_ARRAY_NESTED, 1) == bits(child) &&
+                   nyrt_array_get(child, NYRT_ARRAY_I32, 0) == 29,
+               "nested scalar arrays did not preserve shared mutable child identity");
+  auto *tuple_child = nyrt_array_new(NYRT_ARRAY_TUPLE, 0);
+  auto *tuple_rows = create(NYRT_ARRAY_NESTED, "array<tuple<i32,text>>", 1, bits(tuple_child));
+  ok &= expect(tuple_rows && nyrt_array_get(tuple_rows, NYRT_ARRAY_NESTED, 0) == bits(tuple_child),
+               "nested tuple arrays rejected their compiler-proven tuple layout");
+}
+
+int typed_array_failure_case(const std::string &mode) {
+  nyrt_context_begin(0, nullptr);
+  const auto bits = [](const void *value) {
+    return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(value));
+  };
+  const auto create = [](std::uint32_t kind, const std::string &type,
+                         std::int64_t length, std::uint64_t initial) {
+    return nyrt_typed_array_v1_new(kind, type.data(), type.size(), length, initial);
+  };
+  const auto require = [](const void *array, std::uint32_t kind, const std::string &type) {
+    return nyrt_typed_array_v1_require(array, kind, type.data(), type.size());
+  };
+  void *enums = create(NYRT_ARRAY_ENUM, "catalog::Choice<i32>", 0, 0);
+  void *nested = create(NYRT_ARRAY_NESTED, "array<i32>", 0, 0);
+  if (mode == "enum-identity-case") require(enums, NYRT_ARRAY_ENUM, "catalog::choice<i32>");
+  else if (mode == "enum-identity-generic") require(enums, NYRT_ARRAY_ENUM, "catalog::Choice<i64>");
+  else if (mode == "enum-wrong-kind") require(enums, NYRT_ARRAY_RECORD, "catalog::Choice<i32>");
+  else if (mode == "enum-default") create(NYRT_ARRAY_ENUM, "catalog::Choice<i32>", 1, 0);
+  else if (mode == "enum-empty-read") nyrt_array_get(enums, NYRT_ARRAY_ENUM, 0);
+  else if (mode == "enum-null-push") nyrt_array_push(enums, NYRT_ARRAY_ENUM, 0);
+  else if (mode == "nested-default") create(NYRT_ARRAY_NESTED, "array<i32>", 1, 0);
+  else if (mode == "nested-empty-read") nyrt_array_get(nested, NYRT_ARRAY_NESTED, 0);
+  else if (mode == "nested-null-push") nyrt_array_push(nested, NYRT_ARRAY_NESTED, 0);
+  else if (mode == "nested-forged-child") nyrt_array_push(nested, NYRT_ARRAY_NESTED, 1);
+  else if (mode == "nested-pointer-child") nyrt_array_push(nested, NYRT_ARRAY_NESTED, bits(nyrt_buffer_new(NYRT_ARRAY_I32, 1)));
+  else if (mode == "nested-wrong-width") nyrt_array_push(nested, NYRT_ARRAY_NESTED, bits(nyrt_array_new(NYRT_ARRAY_I64, 0)));
+  else if (mode == "nested-wrong-record") {
+    auto *rows = create(NYRT_ARRAY_NESTED, "array<catalog::Record>", 0, 0);
+    nyrt_array_push(rows, NYRT_ARRAY_NESTED, bits(create(NYRT_ARRAY_RECORD, "catalog__Record", 0, 0)));
+  } else if (mode == "nested-wrong-enum") {
+    auto *rows = create(NYRT_ARRAY_NESTED, "array<catalog::Choice<i32>>", 0, 0);
+    nyrt_array_push(rows, NYRT_ARRAY_NESTED, bits(create(NYRT_ARRAY_ENUM, "catalog::Choice<i64>", 0, 0)));
+  } else if (mode == "nested-wrong-depth") {
+    auto *rows = create(NYRT_ARRAY_NESTED, "array<array<i32>>", 0, 0);
+    nyrt_array_push(rows, NYRT_ARRAY_NESTED, bits(nyrt_array_new(NYRT_ARRAY_I32, 0)));
+  } else if (mode == "nested-stale-child") {
+    auto *child = nyrt_array_new(NYRT_ARRAY_I32, 0);
+    std::uint64_t root = bits(nested);
+    const void *slots[] = {&root}; nyrt_roots_enter(slots, 1); nyrt_collect();
+    nyrt_array_push(nested, NYRT_ARRAY_NESTED, bits(child));
+  } else if (mode == "nested-foreign-parent") require(reinterpret_cast<void *>(std::uintptr_t{1}), NYRT_ARRAY_NESTED, "array<i32>");
+  else return 2;
+  std::cerr << "typed array failure case unexpectedly succeeded\n";
+  return 0;
+}
+
 void check_buffer_contract(bool &ok) {
   ok &= expect(nyrt_buffer_new(999, 1) == nullptr,
                "unknown buffer kind was accepted");
@@ -1094,6 +1244,8 @@ void check_durable_io_contract(bool &ok) {
 int main(int argc, char **argv) {
   if (argc == 3 && std::string(argv[1]) == "--record-array-failure")
     return record_array_failure_case(argv[2]);
+  if (argc == 3 && std::string(argv[1]) == "--typed-array-failure")
+    return typed_array_failure_case(argv[2]);
   bool ok = true;
   ok &= expect(nyrt_abi_version() == 1, "native runtime ABI version changed");
   const auto sleep_started = std::chrono::steady_clock::now();
@@ -1142,6 +1294,7 @@ int main(int argc, char **argv) {
   check_file_contract(ok);
   check_tuple_array_contract(ok);
   check_record_array_contract(ok);
+  check_enum_nested_array_contract(ok);
 
   auto *owned = static_cast<unsigned char *>(nyrt_alloc(8));
   ok &= expect(owned != nullptr, "could not allocate context-owned storage");
