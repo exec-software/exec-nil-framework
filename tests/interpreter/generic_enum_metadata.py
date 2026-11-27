@@ -176,6 +176,9 @@ def require_instruction(
 
 
 def verify_metadata(instructions: List[Instruction]) -> None:
+    # Inspect first-arm match checks: checked exhaustive matches can omit their
+    # final comparison. Reordering those two fixture arms retains every schema,
+    # payload and debug-line assertion without depending on a redundant check.
     result_bytes = "nil::std::core::Result<array<u8>,text>"
     result_bool = "nil::std::core::Result<bool,text>"
     option_text = "nil::std::core::Option<text>"

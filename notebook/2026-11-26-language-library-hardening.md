@@ -126,6 +126,13 @@ Literal-dead calls preserve exact handler proof; live and runtime-conditional
 calls remain unknown. Full committed-source and installed-candidate results
 will be retained as external qualification artifacts.
 
+The first committed-source run (`bca511f`) passed 615 of 619 tests with three
+provider skips and one stale generic-enum bytecode-shape assertion. Exhaustive
+matching legitimately omits the last comparison. The metadata fixture now puts
+the required variants first, preserving every metadata/debug-line assertion
+and exact output. Its focused rerun passes; the original full-run evidence is
+retained before repeating qualification against the corrected commit.
+
 The capability catalog now declares 18 observed groups and 36 proof fixtures;
 its validation tests pass. The installed consumer set grows by five fixtures
 to 83 (1,328 source/binary-library execution and assembler/linker runs). Final

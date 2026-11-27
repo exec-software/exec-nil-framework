@@ -37,8 +37,8 @@ fn main() -> i32
 
     let byte_failure: Result<array<u8>, text> = byte_result(false)
     match byte_failure
-        Result.Ok(_) -> println("unexpected-byte-success")
         Result.Error(message) -> println(message)
+        Result.Ok(_) -> println("unexpected-byte-success")
     end match
 
     let bool_value: Result<bool, text> = bool_result(true)
@@ -57,8 +57,8 @@ fn main() -> i32
 
     let no_text: Option<text> = text_option(false)
     match no_text
-        Option.Some(_) -> println("unexpected-some")
         Option.None -> println("none")
+        Option.Some(_) -> println("unexpected-some")
     end match
     return 0
 end fn
