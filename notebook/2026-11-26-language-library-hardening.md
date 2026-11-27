@@ -451,3 +451,40 @@ reports an invalid declaration at its own source line as well as the call site.
 All four negative fixtures still reject with no artifact; their two shared
 expected-output files now include the declaration diagnostic. The failed full
 report is retained, and the corrected revision requires a new complete run.
+
+## Verified class/reference, recursive and binary32 development candidate
+
+The corrected clean revision `600a25ae0bfbff01304a78dd7c85079e822ba403`
+passes 635 of 638 local CTests with zero failures. Only the existing PostgreSQL
+client/provider and graphical-display dependencies are skipped. Both full
+reports and the focused regression evidence remain under
+`class-recursive-arrays-20261127-7ah5wa2y`.
+
+Its separate `sdk-candidate` validates 11 root-level tools, 19 binary standard
+library modules, source STL, 76 HTML documentation pages and 279 sealed files.
+The manifest SHA-256 is
+`fbd046422607d1176c78637e75bf16715f0edd7261c1d5eb373bde1cc4dd8ba7`.
+Capability evidence records 24 groups and 50 proof fixtures with 300 six-route
+observations. All 1,552 installed consumer executions pass: 97 fixtures against
+source and binary libraries, each using six execution routes plus text/binary
+NIL through the standalone assembler/linker. Payload validation confirms the
+sealed SDK is unchanged after these checks.
+
+Installed durable-I/O, console and global-contract checks also pass, including
+their ABI/library rejection controls and verified cleanup. Bounded compatibility
+passes four complete Web test compilations, four pure Web suites with 393 checks
+each, and eight synthetic WebView routes. The SDK, Web/WebView repositories and
+provider remain pinned and unchanged. These checks start no server or actual
+browser/desktop UI and do not qualify those host integrations.
+
+[GitHub Source validation](https://github.com/exec-software/exec-nil-framework/actions/runs/45950383679)
+passes for exact `600a25a`: LLVM enabled passes all 638 tests with zero skips;
+LLVM disabled passes 486 with 145 expected native-only skips and no failures;
+VS Code passes all 213 tests and its production build. The earlier LLVM-disabled
+campaign's 40 ms PostgreSQL startup-budget failure is retained in its log; the
+same client test passes in both corrected jobs without a database-code change.
+
+This remains a separate development SDK pinned to `600a25a`. No active SDK is
+replaced, and mainline consolidation and Windows/macOS SDK qualification remain
+separate work. This evidence-only notebook checkpoint does not rebuild or
+relabel the tested candidate or declare a stable language release.
